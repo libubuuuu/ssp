@@ -1,0 +1,35 @@
+# AI 创意平台 - 后端依赖
+fastapi==0.109.2
+uvicorn[standard]==0.27.1
+python-multipart==0.0.9
+pydantic==2.6.1
+pydantic-settings==2.1.0
+
+# 数据库
+# 直接使用 sqlite3，跳过 SQLAlchemy
+
+# Redis / 任务队列
+redis==5.0.1
+
+# HTTP 客户端
+httpx==0.26.0
+aiofiles==23.2.1
+
+# 环境变量
+python-dotenv==1.0.0
+
+# 文件处理
+Pillow==10.2.0
+
+# 阿里云短信 (可选)
+alibabacloud-dysmsapi20170525==3.0.0
+
+# 认证
+PyJWT==2.8.0
+bcrypt==4.1.2
+
+# FAL AI
+fal-client==0.5.6
+
+# 系统监控
+psutil==5.9.8

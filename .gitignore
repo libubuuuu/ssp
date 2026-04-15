@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+venv/
+__pycache__/
+*.pyc
+
+# Next.js
+.next/
+out/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Build
+build/
+dist/
+
+# Prisma generated
+src/generated/prisma/
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Temp
+tmp/

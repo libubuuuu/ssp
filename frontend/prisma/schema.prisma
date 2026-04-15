@@ -1,0 +1,125 @@
+// AI 创意平台 - Prisma Schema
+// 3D 穿衣设计定制平台
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// 用户表
+model User {
+  id               String           @id @default(uuid())
+  email            String           @unique
+  name             String?
+  avatarUrl        String?
+  role             String           @default("user") // user | merchant | admin
+  bodyMeasurements BodyMeasurement?
+  orders           Order[]
+  merchantProfile  Merchant?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+}
+
+// 身材数据表
+model BodyMeasurement {
+  id       String @id @default(uuid())
+  userId   String @unique
+  height   Float? // 身高 cm
+  weight   Float? // 体重 kg
+  chest    Float? // 胸围 cm
+  waist    Float? // 腰围 cm
+  hips     Float? // 臀围 cm
+  shoulder Float? // 肩宽 cm
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// 商家表
+model Merchant {
+  id       String    @id @default(uuid())
+  userId   String    @unique
+  shopName String?
+  shopDesc String?
+  products Product[]
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// 产品表（商家上传）
+model Product {
+  id           String      @id @default(uuid())
+  merchantId   String
+  name         String
+  description  String?
+  category     String // 上衣/裤子/裙子/外套/连衣裙...
+  gender       String // 男装/女装/中性
+  price        Float
+  images       String? // 产品图片 JSON 数组
+  model3DUrl   String? // 3D 服装模型 URL
+  thumbnailUrl String?
+  fabrics      Fabric[]
+  accessories  Accessory[]
+  sizes        String? // S/M/L/XL JSON 数组
+  stock        Int         @default(0)
+  isPublished  Boolean     @default(false)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  merchant     Merchant    @relation(fields: [merchantId], references: [id])
+}
+
+// 布料表
+model Fabric {
+  id           String    @id @default(uuid())
+  name         String
+  textureUrl   String // 布料纹理贴图
+  materialType String // 棉/麻/丝/牛仔/羊毛...
+  price        Float     @default(0)
+  thumbnailUrl String?
+  products     Product[]
+}
+
+// 配件表
+model Accessory {
+  id           String    @id @default(uuid())
+  name         String
+  type         String // 纽扣/拉链/口袋/帽子/领子/袖子...
+  model3DUrl   String?
+  price        Float     @default(0)
+  thumbnailUrl String?
+  products     Product[]
+}
+
+// 订单表
+model Order {
+  id          String      @id @default(uuid())
+  userId      String
+  totalAmount Float
+  status      String      @default("pending") // pending/paid/shipping/delivered/cancelled
+  items       OrderItem[]
+  user        User        @relation(fields: [userId], references: [id])
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+}
+
+// 订单明细
+model OrderItem {
+  id            String  @id @default(uuid())
+  orderId       String
+  productId     String
+  quantity      Int
+  size          String
+  customization String? // 自定义设计配置 JSON
+  order         Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+}
+
+// 3D 人体模型表
+model BodyModel {
+  id             String   @id @default(uuid())
+  userId         String
+  sourceImageUrl String // 用户上传的源图片
+  model3DUrl     String // 生成的 3D 模型 URL
+  thumbnailUrl   String?
+  measurements   String? // 从图片估算的身材数据 JSON
+  createdAt      DateTime @default(now())
+}
