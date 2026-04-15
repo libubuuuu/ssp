@@ -4,31 +4,39 @@
 - 任务队列状态
 - 平台统计数据
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional
 from ..services.circuit_breaker import get_circuit_breaker
 from ..services.task_queue import get_task_queue
 from ..database import get_db
+from .auth import get_current_user
 
 router = APIRouter()
 
 
+def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    """验证管理员权限"""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    return current_user
+
+
 @router.get("/models/status")
-async def get_models_status():
+async def get_models_status(_admin: dict = Depends(require_admin)):
     """获取所有模型健康状态"""
     circuit_breaker = get_circuit_breaker()
     return {"models": circuit_breaker.get_all_models_status()}
 
 
 @router.get("/models/{model_name}/status")
-async def get_model_status(model_name: str):
+async def get_model_status(model_name: str, _admin: dict = Depends(require_admin)):
     """获取指定模型健康状态"""
     circuit_breaker = get_circuit_breaker()
     return circuit_breaker.get_state(model_name)
 
 
 @router.post("/models/{model_name}/reset")
-async def reset_model(model_name: str):
+async def reset_model(model_name: str, _admin: dict = Depends(require_admin)):
     """重置模型状态（手动恢复）"""
     circuit_breaker = get_circuit_breaker()
 
@@ -56,14 +64,14 @@ async def reset_model(model_name: str):
 
 
 @router.get("/queue/status")
-async def get_queue_status():
+async def get_queue_status(_admin: dict = Depends(require_admin)):
     """获取全局任务队列状态"""
     task_queue = get_task_queue()
     return task_queue.get_all_queues_status()
 
 
 @router.get("/stats/overview")
-async def get_stats_overview():
+async def get_stats_overview(_admin: dict = Depends(require_admin)):
     """获取平台统计概览"""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -118,7 +126,7 @@ async def get_stats_overview():
 
 
 @router.get("/tasks/recent")
-async def get_recent_tasks(limit: Optional[int] = 20):
+async def get_recent_tasks(limit: Optional[int] = 20, _admin: dict = Depends(require_admin)):
     """获取最近的任务"""
     with get_db() as conn:
         cursor = conn.cursor()

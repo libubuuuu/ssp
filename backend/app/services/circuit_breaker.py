@@ -101,29 +101,25 @@ class CircuitBreaker:
             with get_db() as conn:
                 cursor = conn.cursor()
 
-                if success:
+                # 先检查记录是否存在
+                cursor.execute("SELECT id, success_count, failure_count FROM model_health WHERE model_name = ?", (model_name,))
+                row = cursor.fetchone()
+
+                if row:
+                    # 记录存在，更新计数
+                    success_count = row[1] + (1 if success else 0)
+                    failure_count = row[2] + (0 if success else 1)
                     cursor.execute("""
-                        INSERT OR REPLACE INTO model_health
-                        (id, model_name, success_count, failure_count, updated_at)
-                        SELECT
-                            COALESCE((SELECT id FROM model_health WHERE model_name = ?), hex(random())),
-                            ?,
-                            COALESCE((SELECT success_count FROM model_health WHERE model_name = ?), 0) + 1,
-                            COALESCE((SELECT failure_count FROM model_health WHERE model_name = ?), 0),
-                            CURRENT_TIMESTAMP
-                    """, (model_name, model_name, model_name, model_name))
+                        UPDATE model_health
+                        SET success_count = ?, failure_count = ?, last_error_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE last_error_at END, updated_at = CURRENT_TIMESTAMP
+                        WHERE model_name = ?
+                    """, (success_count, failure_count, not success, model_name))
                 else:
+                    # 记录不存在，插入新记录
                     cursor.execute("""
-                        INSERT OR REPLACE INTO model_health
-                        (id, model_name, success_count, failure_count, last_error_at, updated_at)
-                        SELECT
-                            COALESCE((SELECT id FROM model_health WHERE model_name = ?), hex(random())),
-                            ?,
-                            COALESCE((SELECT success_count FROM model_health WHERE model_name = ?), 0),
-                            COALESCE((SELECT failure_count FROM model_health WHERE model_name = ?), 0) + 1,
-                            CURRENT_TIMESTAMP,
-                            CURRENT_TIMESTAMP
-                    """, (model_name, model_name, model_name, model_name))
+                        INSERT INTO model_health (model_name, success_count, failure_count, last_error_at, updated_at)
+                        VALUES (?, ?, ?, CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END, CURRENT_TIMESTAMP)
+                    """, (model_name, 1 if success else 0, 0 if success else 1, not success))
 
                 # 如果失败次数达到阈值，禁用模型
                 cursor.execute("SELECT failure_count FROM model_health WHERE model_name = ?", (model_name,))

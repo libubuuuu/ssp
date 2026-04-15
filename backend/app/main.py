@@ -30,9 +30,23 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# 路由之前的配置验证
+try:
+    settings.validate()
+    log_info("配置验证通过")
+except ValueError as e:
+    log_error(f"配置验证失败：{e}")
+    raise
+
+# CORS 配置 — 从环境变量读取可信域名
+ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "").split(",")
+if not ALLOWED_ORIGINS or ALLOWED_ORIGINS == [""]:
+    # 开发环境默认允许 localhost
+    ALLOWED_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

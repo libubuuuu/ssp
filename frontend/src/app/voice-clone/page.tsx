@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -23,14 +23,14 @@ export default function VoiceClonePage() {
   const [error, setError] = useState<string | null>(null);
 
   // 加载预设音色
-  useState(() => {
+  useEffect(() => {
     fetch(`${API_BASE}/api/avatar/voice/presets`)
       .then((res) => res.json())
       .then((data) => {
         if (data.voices) setVoicePresets(data.voices);
       })
       .catch(() => {});
-  });
+  }, []);
 
   // 处理参考音频上传
   const handleReferenceAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {

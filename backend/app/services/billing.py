@@ -97,5 +97,6 @@ def create_consumption_record(
             conn.commit()
             return True
     except Exception as e:
-        print(f"创建消费记录失败：{e}")
+        from .logger import log_error
+        log_error("创建消费记录失败", exc_info=True, error=str(e))
         return False

@@ -191,6 +191,14 @@ def init_db():
         )
         """)
 
+        # 创建索引优化查询性能
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_generation_history_user_id ON generation_history(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_credit_orders_user_id ON credit_orders(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+
         conn.commit()
         print("Database initialized successfully!")
 

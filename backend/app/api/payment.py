@@ -6,8 +6,7 @@
 """
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
-from typing import Optional, List
-from datetime import datetime
+from typing import Optional, List, Literal
 from ..api.auth import get_current_user
 from ..database import get_db
 import uuid

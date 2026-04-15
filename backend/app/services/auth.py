@@ -4,6 +4,7 @@
 - JWT Token 生成和验证
 - 密码加密
 """
+import uuid
 import jwt
 import bcrypt
 from datetime import datetime, timedelta
@@ -13,8 +14,10 @@ from ..config import get_settings
 
 settings = get_settings()
 
-# JWT 配置
-JWT_SECRET = settings.JWT_SECRET if hasattr(settings, 'JWT_SECRET') and settings.JWT_SECRET else "your-secret-key-change-in-production"
+# JWT 配置 — 强制从环境变量读取，不允许 fallback
+if not settings.JWT_SECRET:
+    raise ValueError("JWT_SECRET 环境变量未设置，服务无法启动")
+JWT_SECRET = settings.JWT_SECRET
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24 * 7  # 7 天
 
@@ -102,7 +105,6 @@ def create_user(email: str, password: str, name: Optional[str] = None) -> Option
     with get_db() as conn:
         cursor = conn.cursor()
         try:
-            import uuid
             user_id = str(uuid.uuid4())
             hashed = hash_password(password)
             cursor.execute("""

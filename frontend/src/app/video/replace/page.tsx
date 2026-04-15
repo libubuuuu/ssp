@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -13,6 +13,24 @@ export default function VideoReplacePage() {
   const [resultVideoUrl, setResultVideoUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const pollIntervalRef = useRef<number | null>(null);
+  const pollTimeoutRef = useRef<number | null>(null);
+
+  const clearPolling = () => {
+    if (pollIntervalRef.current !== null) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+    if (pollTimeoutRef.current !== null) {
+      clearTimeout(pollTimeoutRef.current);
+      pollTimeoutRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return clearPolling;
+  }, []);
 
   // 处理图片上传
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -38,6 +56,7 @@ export default function VideoReplacePage() {
     setTaskId(null);
     setResultVideoUrl(null);
     setError(null);
+    clearPolling();
 
     try {
       const res = await fetch(`${API_BASE}/api/video/replace/element`, {
@@ -55,7 +74,6 @@ export default function VideoReplacePage() {
       if (data.task_id) {
         setTaskId(data.task_id);
         setTaskStatus("pending");
-        // 开始轮询状态
         pollTaskStatus(data.task_id);
       } else {
         setError(data.detail || "提交失败");
@@ -69,7 +87,9 @@ export default function VideoReplacePage() {
 
   // 轮询任务状态
   const pollTaskStatus = async (id: string) => {
-    const interval = setInterval(async () => {
+    clearPolling();
+
+    const poll = async () => {
       try {
         const res = await fetch(`${API_BASE}/api/video/status/${id}`);
         const data = await res.json();
@@ -77,18 +97,22 @@ export default function VideoReplacePage() {
 
         if (data.status === "completed" && data.video_url) {
           setResultVideoUrl(data.video_url);
-          clearInterval(interval);
+          clearPolling();
         } else if (data.status === "failed") {
           setError(data.error || "视频生成失败");
-          clearInterval(interval);
+          clearPolling();
         }
       } catch {
-        clearInterval(interval);
+        clearPolling();
       }
-    }, 5000);
+    };
 
-    // 5 分钟超时
-    setTimeout(() => clearInterval(interval), 300000);
+    pollIntervalRef.current = setInterval(poll, 5000) as unknown as number;
+    pollTimeoutRef.current = setTimeout(() => {
+      clearPolling();
+    }, 300000) as unknown as number;
+
+    poll();
   };
 
   return (

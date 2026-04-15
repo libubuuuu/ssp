@@ -44,12 +44,19 @@ class Settings(BaseSettings):
     ALIYUN_SMS_TEMPLATE_CODE: str = ""  # 短信模板代码
     DEVELOPER_PHONE: str = ""  # 开发者手机号
 
-    # JWT 认证
-    JWT_SECRET: str = "change-this-secret-in-production-2026"
+    # JWT 认证（必须从环境变量设置，无默认值）
+    JWT_SECRET: str = ""
 
     class Config:
         env_file = str(_ENV_PATH)
         extra = "ignore"
+
+    def validate(self) -> None:
+        """验证关键配置是否存在"""
+        if not self.JWT_SECRET or self.JWT_SECRET == "change-this-secret-in-production-2026":
+            raise ValueError("JWT_SECRET 必须从环境变量设置，且不能使用默认值")
+        if not self.FAL_KEY:
+            raise ValueError("FAL_KEY 必须从环境变量设置")
 
 
 @lru_cache()
