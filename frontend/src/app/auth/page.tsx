@@ -126,6 +126,17 @@ export default function AuthPage() {
             {mode === "login" ? "没有账号？去注册" : "已有账号？去登录"}
           </button>
         </div>
+
+        {mode === "login" && (
+          <div className="mt-3 text-center">
+            <Link
+              href="/auth/forgot-password"
+              className="text-sm text-zinc-500 hover:text-amber-400 transition-colors"
+            >
+              忘记密码？
+            </Link>
+          </div>
+        )}
       </div>
     </div>
   );
