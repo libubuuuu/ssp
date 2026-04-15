@@ -3,16 +3,15 @@
 - 链接改造
 - 文生视频
 - 图生视频工作流
-- 额度扣费：任务提交时扣费，失败返还
+- 额度扣费：使用 @require_credits 装饰器自动处理
 """
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional, List
 from enum import Enum
 from app.services.fal_service import get_video_service
-from app.services.billing import get_task_cost, check_user_credits, deduct_credits, add_credits, create_consumption_record
+from app.services.decorators import require_credits
 from app.api.auth import get_current_user
-import uuid
 
 router = APIRouter()
 
@@ -166,46 +165,21 @@ async def text_to_video(req: TextToVideoRequest):
 
 
 @router.post("/image-to-video")
+@require_credits("video/image-to-video")
 async def image_to_video(req: ImageToVideoRequest, current_user: dict = Depends(get_current_user)):
     """图生视频 (Kling)"""
     service = get_video_service()
 
-    # 获取任务成本
-    cost = get_task_cost("video/image-to-video")
+    result = await service.generate_from_image(req.image_url, req.prompt)
 
-    # 检查额度
-    if not check_user_credits(current_user["id"], cost):
-        raise HTTPException(status_code=402, detail=f"额度不足，需要 {cost} 积分")
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
 
-    # 扣减额度
-    if not deduct_credits(current_user["id"], cost):
-        raise HTTPException(status_code=500, detail="扣费失败，请重试")
-
-    try:
-        result = await service.generate_from_image(req.image_url, req.prompt)
-
-        if "error" in result:
-            # 失败返还
-            add_credits(current_user["id"], cost)
-            raise HTTPException(status_code=500, detail=result["error"])
-
-        # 创建消费记录
-        task_id = str(uuid.uuid4())
-        create_consumption_record(
-            user_id=current_user["id"],
-            task_id=task_id,
-            module="video/image-to-video",
-            cost=cost,
-            description=f"图生视频：{req.prompt[:50] if req.prompt else '无提示词'}..."
-        )
-
-        return {**result, "cost": cost}
-    except HTTPException:
-        raise
-    except Exception as e:
-        # 未知错误也返还
-        add_credits(current_user["id"], cost)
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "success": True,
+        **result,
+        "description": f"图生视频：{req.prompt[:50] if req.prompt else '无提示词'}...",
+    }
 
 
 @router.get("/status/{task_id}")
@@ -228,119 +202,66 @@ async def image_to_video_workflow(req: ImageToVideoWorkflowRequest):
 
 
 @router.post("/replace/element")
+@require_credits("video/replace/element")
 async def replace_video_element(req: VideoElementReplaceRequest, current_user: dict = Depends(get_current_user)):
     """
     视频元素替换
     使用 Kling O1 Edit 模型，根据自然语言指令替换视频中的元素
     """
-    # 获取任务成本
-    cost = get_task_cost("video/replace/element")
+    # 调用 FAL AI 视频编辑服务
+    video_service = get_video_service()
+    result = await video_service.replace_element(
+        video_url=req.video_url,
+        element_image_url=req.element_image_url,
+        instruction=req.instruction
+    )
 
-    # 检查额度
-    if not check_user_credits(current_user["id"], cost):
-        raise HTTPException(status_code=402, detail=f"额度不足，需要 {cost} 积分")
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
 
-    # 扣减额度
-    if not deduct_credits(current_user["id"], cost):
-        raise HTTPException(status_code=500, detail="扣费失败，请重试")
+    task_id = result.get("task_id", "unknown")
 
-    try:
-        # 调用 FAL AI 视频编辑服务
-        video_service = get_video_service()
-        result = await video_service.replace_element(
-            video_url=req.video_url,
-            element_image_url=req.element_image_url,
-            instruction=req.instruction
-        )
-
-        if "error" in result:
-            # 失败返还
-            add_credits(current_user["id"], cost)
-            raise HTTPException(status_code=500, detail=result["error"])
-
-        # 创建消费记录
-        task_id = result.get("task_id", str(uuid.uuid4()))
-        create_consumption_record(
-            user_id=current_user["id"],
-            task_id=task_id,
-            module="video/replace/element",
-            cost=cost,
-            description=f"视频元素替换：{req.instruction[:50]}..."
-        )
-
-        return {
-            "task_id": task_id,
-            "status": result.get("status", "pending"),
-            "message": "视频元素替换任务已提交，预计需要 2-5 分钟",
-            "instruction": req.instruction,
-            "model": result.get("model"),
-            "cost": cost,
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        # 失败返还
-        add_credits(current_user["id"], cost)
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "success": True,
+        "task_id": task_id,
+        "status": result.get("status", "pending"),
+        "message": "视频元素替换任务已提交，预计需要 2-5 分钟",
+        "instruction": req.instruction,
+        "model": result.get("model"),
+        "description": f"视频元素替换：{req.instruction[:50]}...",
+    }
 
 
 @router.post("/clone")
+@require_credits("video/clone")
 async def clone_video(req: VideoCloneRequest, current_user: dict = Depends(get_current_user)):
     """
     视频翻拍复刻
     提取参考视频的运镜、节奏、动作，将主体替换为用户的模特和产品
     使用 Kling O1 Edit 模型
     """
-    # 获取任务成本
-    cost = get_task_cost("video/clone")
+    video_service = get_video_service()
+    result = await video_service.clone_video(
+        reference_video_url=req.reference_video_url,
+        model_image_url=req.model_image_url,
+        product_image_url=req.product_image_url
+    )
 
-    # 检查额度
-    if not check_user_credits(current_user["id"], cost):
-        raise HTTPException(status_code=402, detail=f"额度不足，需要 {cost} 积分")
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
 
-    # 扣减额度
-    if not deduct_credits(current_user["id"], cost):
-        raise HTTPException(status_code=500, detail="扣费失败，请重试")
+    task_id = result.get("task_id", "unknown")
 
-    try:
-        # 调用 FAL AI 视频翻拍服务
-        video_service = get_video_service()
-        result = await video_service.clone_video(
-            reference_video_url=req.reference_video_url,
-            model_image_url=req.model_image_url,
-            product_image_url=req.product_image_url
-        )
-
-        if "error" in result:
-            # 失败返还
-            add_credits(current_user["id"], cost)
-            raise HTTPException(status_code=500, detail=result["error"])
-
-        # 创建消费记录
-        task_id = result.get("task_id", str(uuid.uuid4()))
-        create_consumption_record(
-            user_id=current_user["id"],
-            task_id=task_id,
-            module="video/clone",
-            cost=cost,
-            description=f"视频翻拍：{req.reference_video_url[:50]}..."
-        )
-
-        return {
-            "task_id": task_id,
-            "status": result.get("status", "pending"),
-            "message": "视频翻拍任务已提交，预计需要 3-5 分钟",
-            "reference_video": req.reference_video_url,
-            "model_image": req.model_image_url,
-            "model": result.get("model"),
-            "cost": cost,
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        # 失败返还
-        add_credits(current_user["id"], cost)
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "success": True,
+        "task_id": task_id,
+        "status": result.get("status", "pending"),
+        "message": "视频翻拍任务已提交，预计需要 3-5 分钟",
+        "reference_video": req.reference_video_url,
+        "model_image": req.model_image_url,
+        "model": result.get("model"),
+        "description": f"视频翻拍：{req.reference_video_url[:50]}...",
+    }
 
 
 # ============== 视频剪辑台 API ==============
