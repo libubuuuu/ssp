@@ -101,10 +101,13 @@ npm run dev
 
 ### 3. 环境变量
 
-**backend/.env**（必须配置）:
+**backend/.env**（必须配置，从 https://fal.ai 申请）:
 ```bash
-FAL_KEY=your_fal_key
-JWT_SECRET=your-random-secret-key
+# 从 fal.ai 申请 API Key
+FAL_KEY=your_fal_key_here
+
+# 生产环境使用强随机密钥，如：openssl rand -hex 32
+JWT_SECRET=your_jwt_secret_here
 ```
 
 **backend/.env**（可选）:
@@ -127,9 +130,7 @@ NEXT_PUBLIC_WS_URL=ws://localhost:8000
 
 ## 文档
 
-- [SPECIFICATION.md](./SPECIFICATION.md) - 详细技术规格
-- [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md) - 部署指南
-- [PROJECT_FINAL_SUMMARY.md](./PROJECT_FINAL_SUMMARY.md) - 项目总览
+> 注意：启动前需配置 `.env` 文件中的 FAL_KEY 和 JWT_SECRET，切勿提交到 Git！
 
 ## 定价
 
