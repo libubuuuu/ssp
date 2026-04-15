@@ -1,13 +1,18 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { Canvas } from "@react-three/fiber";
+import { useState, useCallback, Suspense } from "react";
+import { Canvas, useLoader } from "@react-three/fiber";
 import { OrbitControls, Stage, PerspectiveCamera } from "@react-three/drei";
-import { Suspense } from "react";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as THREE from "three";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const RPM_API = process.env.NEXT_PUBLIC_READY_PLAYER_ME_API || "https://api.readyplayer.me";
+
+// 3D 模型加载组件
+function Model({ url }: { url: string }) {
+  const gltf = useLoader(GLTFLoader, url);
+  return <primitive object={gltf.scene} />;
+}
 
 // 3D 模型显示组件
 function ModelViewer({ modelUrl }: { modelUrl: string }) {
@@ -16,9 +21,9 @@ function ModelViewer({ modelUrl }: { modelUrl: string }) {
       <PerspectiveCamera makeDefault position={[0, 0, 5]} />
       <ambientLight intensity={0.5} />
       <directionalLight position={[5, 5, 5]} intensity={1} castShadow />
-      <Suspense fallback={null}>
+      <Suspense fallback={<text fill="white" fontSize={0.5} textAnchor="middle">加载中...</text>}>
         <Stage environment={null} shadows="contact" intensity={0.5}>
-          <primitive object={new THREE.Group()} />
+          <Model url={modelUrl} />
         </Stage>
       </Suspense>
       <OrbitControls makeDefault minPolarAngle={0} maxPolarAngle={Math.PI / 2} />

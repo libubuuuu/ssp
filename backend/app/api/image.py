@@ -6,7 +6,7 @@
 - 额度扣费：任务提交时扣费，失败返还
 """
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
 from app.services.fal_service import get_image_service
 from app.services.billing import get_task_cost, check_user_credits, deduct_credits, add_credits, create_consumption_record
@@ -17,32 +17,40 @@ router = APIRouter()
 
 
 class ImageStyleRequest(BaseModel):
-    prompt: str
-    style: Optional[str] = "advertising"
-    size: Optional[str] = "1024x1024"
-    color_tone: Optional[str] = None
-    model: Optional[str] = "nano-banana-2"  # nano-banana-2 | flux/schnell
+    prompt: str = Field(..., min_length=1, max_length=1000)
+    style: Optional[str] = Field("advertising", max_length=50)
+    size: Optional[str] = Field("1024x1024", max_length=20)
+    color_tone: Optional[str] = Field(None, max_length=50)
+    model: Optional[str] = Field("nano-banana-2", max_length=50)
 
 
 class ImageRealisticRequest(BaseModel):
-    prompt: str
-    refine_prompt: Optional[str] = None
-    model: Optional[str] = "nano-banana-2"
+    prompt: str = Field(..., min_length=1, max_length=1000)
+    refine_prompt: Optional[str] = Field(None, max_length=500)
+    model: Optional[str] = Field("nano-banana-2", max_length=50)
 
 
 class ImageInpaintRequest(BaseModel):
     image_url: str
     mask_url: Optional[str] = None
-    prompt: str
+    prompt: str = Field(..., min_length=1, max_length=1000)
 
 
 class ImageMultiReferenceRequest(BaseModel):
     """多参考图生图请求"""
-    prompt: str
-    reference_images: List[str]  # 参考图 URL 列表，顺序决定权重
-    style: Optional[str] = "custom"
-    size: Optional[str] = "1024x1024"
-    model: Optional[str] = "nano-banana-2"
+    prompt: str = Field(..., min_length=1, max_length=1000)
+    reference_images: List[str] = Field(..., min_length=1, max_length=5)
+    style: Optional[str] = Field("custom", max_length=50)
+    size: Optional[str] = Field("1024x1024", max_length=20)
+    model: Optional[str] = Field("nano-banana-2", max_length=50)
+
+    @field_validator("size")
+    @classmethod
+    def validate_size(cls, v: str) -> str:
+        allowed = {"512x512", "768x768", "1024x1024", "512x768", "768x512", "1024x768", "768x1024"}
+        if v not in allowed:
+            raise ValueError(f"size 必须是以下值之一: {', '.join(sorted(allowed))}")
+        return v
 
 
 @router.post("/style")
