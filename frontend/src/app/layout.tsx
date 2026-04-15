@@ -1,3 +1,6 @@
+"use client";
+
+import { useState, useEffect } from "react";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
@@ -14,8 +17,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AI 创意平台 - 3D 穿衣设计定制",
-  description: "3D 试衣 | 服装设计 | 在线定制",
+  title: "AI 创意平台",
+  description: "图片生成 | 视频生成 | 数字人 | 语音克隆",
 };
 
 export default function RootLayout({
@@ -23,6 +26,19 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const [user, setUser] = useState<{ name: string; credits: number } | null>(null);
+
+  useEffect(() => {
+    const stored = localStorage.getItem("user");
+    if (stored) {
+      try {
+        setUser(JSON.parse(stored));
+      } catch {
+        localStorage.removeItem("user");
+      }
+    }
+  }, []);
+
   return (
     <html
       lang="zh-CN"
@@ -34,18 +50,29 @@ export default function RootLayout({
             AI 创意平台
           </Link>
           <div className="flex-1" />
-          <Link href="/canvas" className="text-zinc-400 hover:text-white transition-colors">
-            3D 画布
+          <Link href="/image" className="text-zinc-400 hover:text-white transition-colors">
+            图片
           </Link>
-          <Link href="/try-on" className="text-zinc-400 hover:text-white transition-colors">
-            3D 试穿
+          <Link href="/video" className="text-zinc-400 hover:text-white transition-colors">
+            视频
           </Link>
-          <Link href="/products" className="text-zinc-400 hover:text-white transition-colors">
-            服装商城
+          <Link href="/avatar" className="text-zinc-400 hover:text-white transition-colors">
+            数字人
           </Link>
-          <Link href="/merchant" className="px-4 py-2 rounded-lg bg-amber-500 text-black font-medium hover:bg-amber-400 transition-colors">
-            商家后台
+          <Link href="/voice-clone" className="text-zinc-400 hover:text-white transition-colors">
+            语音
           </Link>
+          {user ? (
+            <>
+              <Link href="/profile" className="text-zinc-400 hover:text-white transition-colors">
+                {user.name} · {user.credits} 积分
+              </Link>
+            </>
+          ) : (
+            <Link href="/auth" className="px-4 py-2 rounded-lg bg-amber-500 text-black text-sm font-medium hover:bg-amber-400 transition-colors">
+              登录
+            </Link>
+          )}
         </nav>
         <main className="flex-1">{children}</main>
       </body>

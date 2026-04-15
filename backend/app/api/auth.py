@@ -6,8 +6,9 @@
 - 刷新 Token
 """
 from fastapi import APIRouter, HTTPException, Depends, Header
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
+import re
 from ..services.auth import (
     create_user,
     get_user_by_email,
@@ -15,20 +16,31 @@ from ..services.auth import (
     create_jwt_token,
     decode_jwt_token,
     get_user_by_id,
+    hash_password,
 )
+from ..database import get_db
 
 router = APIRouter()
 
 
 class RegisterRequest(BaseModel):
-    email: str
-    password: str
-    name: Optional[str] = None
+    email: str = Field(..., min_length=1, max_length=254)
+    password: str = Field(..., min_length=6, max_length=128)
+    name: Optional[str] = Field(None, max_length=50)
 
 
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class UpdateNameRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=50)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=6, max_length=128)
 
 
 class AuthResponse(BaseModel):
@@ -148,3 +160,44 @@ async def refresh_token(authorization: Optional[str] = Header(None)):
     new_token = create_jwt_token(payload["user_id"], payload["email"], payload["role"])
 
     return {"token": new_token}
+
+
+@router.put("/me")
+async def update_user_name(req: UpdateNameRequest, current_user: dict = Depends(get_current_user)):
+    """更新用户昵称"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE users SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+        """, (req.name, current_user["id"]))
+        conn.commit()
+    return {"message": "昵称已更新", "name": req.name}
+
+
+@router.post("/change-password")
+async def change_password(req: ChangePasswordRequest, current_user: dict = Depends(get_current_user)):
+    """修改密码"""
+    # 验证当前密码
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT password_hash FROM users WHERE id = ?", (current_user["id"],))
+        row = cursor.fetchone()
+        if not row or not verify_password(req.current_password, row[0]):
+            raise HTTPException(status_code=400, detail="当前密码错误")
+
+        # 更新密码
+        new_hash = hash_password(req.new_password)
+        cursor.execute("""
+            UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+        """, (new_hash, current_user["id"]))
+        conn.commit()
+
+    return {"message": "密码已修改"}
+
+
+@router.post("/forgot-password")
+async def forgot_password(req: dict):
+    """密码找回 - 发送重置链接（模拟）"""
+    email = req.get("email", "")
+    # TODO: 实际部署时发送重置邮件
+    return {"message": "重置链接已发送到邮箱", "email": email}
