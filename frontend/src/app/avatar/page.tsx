@@ -1,303 +1,134 @@
 "use client";
+import { useState, useEffect, useRef } from "react";
+import Sidebar from "@/components/Sidebar";
 
-import { useState, useRef, useEffect } from "react";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://43.134.71.189:8000";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export default function AvatarPage(){
+  const [image,setImage]=useState<File|null>(null);
+  const [audio,setAudio]=useState<File|null>(null);
+  const [model,setModel]=useState("hunyuan-avatar");
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState("");
+  const [gallery,setGallery]=useState<any[]>([]);
+  const imgRef=useRef<HTMLInputElement>(null);
+  const audRef=useRef<HTMLInputElement>(null);
 
-export default function AvatarPage() {
-  const [characterImage, setCharacterImage] = useState<string | null>(null);
-  const [audioFile, setAudioFile] = useState<string | null>(null);
-  const [taskId, setTaskId] = useState<string | null>(null);
-  const [taskStatus, setTaskStatus] = useState<string | null>(null);
-  const [resultVideoUrl, setResultVideoUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  useEffect(()=>{
+    const saved=localStorage.getItem("avatar_gallery");
+    if(saved){try{setGallery(JSON.parse(saved));}catch{}}
+  },[]);
 
-  const pollIntervalRef = useRef<number | null>(null);
-  const pollTimeoutRef = useRef<number | null>(null);
-
-  const clearPolling = () => {
-    if (pollIntervalRef.current !== null) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
-    }
-    if (pollTimeoutRef.current !== null) {
-      clearTimeout(pollTimeoutRef.current);
-      pollTimeoutRef.current = null;
-    }
+  const saveGallery=(g:any[])=>{
+    setGallery(g);
+    localStorage.setItem("avatar_gallery",JSON.stringify(g.slice(0,50)));
   };
 
-  // 组件卸载时清理轮询
-  useEffect(() => {
-    return clearPolling;
-  }, []);
-
-  // 处理图片上传
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      setCharacterImage(e.target?.result as string);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  // 处理音频上传
-  const handleAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      setAudioFile(e.target?.result as string);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  // 提交生成任务
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!characterImage || !audioFile) {
-      setError("请上传人物图片和音频文件");
-      return;
-    }
-
-    setLoading(true);
-    setTaskId(null);
-    setResultVideoUrl(null);
-    setError(null);
-    clearPolling();
-
-    try {
-      const res = await fetch(`${API_BASE}/api/avatar/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          character_image_url: characterImage,
-          audio_url: audioFile,
-          model: "hunyuan-avatar",
-        }),
+  const generate=async()=>{
+    if(!image||!audio){setError("请上传图片和音频");return;}
+    setError("");setLoading(true);
+    try{
+      const token=localStorage.getItem("token")||"";
+      const fd=new FormData();
+      fd.append("image",image);
+      fd.append("audio",audio);
+      fd.append("model",model);
+      const res=await fetch(`${API_BASE}/api/digital-human/generate`,{
+        method:"POST",
+        headers:{"Authorization":`Bearer ${token}`},
+        body:fd,
       });
-
-      const data = await res.json();
-
-      if (data.task_id) {
-        setTaskId(data.task_id);
-        setTaskStatus("pending");
-        pollTaskStatus(data.task_id);
-      } else {
-        setError(data.detail || "提交失败");
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "网络错误");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 轮询任务状态
-  const pollTaskStatus = async (id: string) => {
-    clearPolling();
-
-    const poll = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/api/video/status/${id}`);
-        const data = await res.json();
-        setTaskStatus(data.status);
-
-        if (data.status === "completed" && data.video_url) {
-          setResultVideoUrl(data.video_url);
-          clearPolling();
-        } else if (data.status === "failed") {
-          setError(data.error || "视频生成失败");
-          clearPolling();
-        }
-      } catch {
-        clearPolling();
-      }
-    };
-
-    pollIntervalRef.current = setInterval(poll, 5000) as unknown as number;
-    pollTimeoutRef.current = setTimeout(() => {
-      clearPolling();
-    }, 180000) as unknown as number;
-
-    // 立即执行一次
-    poll();
+      const data=await res.json();
+      if(!res.ok)throw new Error(data.detail||"生成失败");
+      if(!data.video_url)throw new Error("未返回视频");
+      saveGallery([{url:data.video_url,prompt:`${model} · 数字人`,time:Date.now()},...gallery]);
+    }catch(e:any){setError(e.message);}
+    finally{setLoading(false);}
   };
 
   return (
-    <div className="max-w-3xl mx-auto py-12 px-6">
-      <h1 className="text-2xl font-bold mb-2">数字人 AI</h1>
-      <p className="text-zinc-400 mb-8 text-sm">
-        上传人物半身照和音频，AI 生成精准口型同步的数字人视频
-      </p>
+    <div style={{display:"flex",minHeight:"100vh",background:"#edeae4",fontFamily:"-apple-system,BlinkMacSystemFont,sans-serif"}}>
+      <Sidebar/>
 
-      {/* 核心卖点 */}
-      <div className="mb-8 p-4 rounded-lg bg-amber-500/10 border border-amber-500/30">
-        <h3 className="text-sm font-semibold text-amber-400 mb-2">克制型数字人</h3>
-        <ul className="space-y-1 text-sm text-zinc-300">
-          <li>• 仅驱动面部表情和唇形，无多余手势</li>
-          <li>• 口型与音频精准同步</li>
-          <li>• 适合知识付费、口播带货</li>
-          <li>• 专业感强，不浮夸</li>
-        </ul>
-      </div>
-
-      <form onSubmit={handleSubmit} className="space-y-6">
-        {/* 人物图片上传 */}
-        <div>
-          <label className="block text-sm text-zinc-400 mb-2">
-            人物半身照 *
-          </label>
-          <div className="space-y-3">
-            <label className="block w-full h-40 border-2 border-dashed border-zinc-700 rounded-lg hover:border-amber-500 transition-colors cursor-pointer flex items-center justify-center">
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleImageUpload}
-                className="hidden"
-              />
-              <div className="text-center text-zinc-500">
-                <p className="text-2xl mb-2">👤</p>
-                <p className="text-sm">点击上传人物图片</p>
-                <p className="text-xs mt-1">建议：正面或 45 度半身照，背景简洁</p>
-              </div>
-            </label>
-            {characterImage && (
-              <div className="relative inline-block">
-                <img
-                  src={characterImage}
-                  alt="人物"
-                  className="h-40 rounded-lg border border-zinc-700"
-                />
-                <button
-                  type="button"
-                  onClick={() => setCharacterImage(null)}
-                  className="absolute top-2 right-2 w-6 h-6 bg-red-500 rounded-full text-white text-sm flex items-center justify-center hover:bg-red-600"
-                >
-                  ✕
-                </button>
-              </div>
-            )}
+      <main style={{flex:1,padding:"2rem 2.5rem",overflowY:"auto"}}>
+        <div style={{marginBottom:"1.5rem",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div>
+            <div style={{fontSize:"0.85rem",color:"#999",marginBottom:"0.3rem"}}>数字人</div>
+            <h1 style={{fontSize:"1.6rem",fontWeight:400,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>数字人<span style={{fontStyle:"italic"}}> 画布</span></h1>
           </div>
+          {gallery.length>0 && <button onClick={()=>{if(confirm("清空画布？")){saveGallery([]);}}} style={{background:"none",border:"1px solid #ddd",padding:"0.5rem 1rem",borderRadius:"999px",color:"#666",fontSize:"0.85rem",cursor:"pointer"}}>清空画布</button>}
         </div>
 
-        {/* 音频上传 */}
-        <div>
-          <label className="block text-sm text-zinc-400 mb-2">
-            音频文件 *
-          </label>
-          <div className="space-y-3">
-            <label className="block w-full h-32 border-2 border-dashed border-zinc-700 rounded-lg hover:border-amber-500 transition-colors cursor-pointer flex items-center justify-center">
-              <input
-                type="file"
-                accept="audio/*"
-                onChange={handleAudioUpload}
-                className="hidden"
-              />
-              <div className="text-center text-zinc-500">
-                <p className="text-2xl mb-2">🎙️</p>
-                <p className="text-sm">点击上传音频</p>
-                <p className="text-xs mt-1">支持 MP3、WAV 格式</p>
-              </div>
-            </label>
-            {audioFile && (
-              <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-700">
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl">🔊</span>
-                  <span className="text-sm text-zinc-400 flex-1">
-                    已上传音频文件
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setAudioFile(null)}
-                    className="w-6 h-6 bg-red-500 rounded-full text-white text-sm flex items-center justify-center hover:bg-red-600"
-                  >
-                    ✕
-                  </button>
+        <div style={{background:"#fafaf7",backgroundImage:"linear-gradient(rgba(0,0,0,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.05) 1px, transparent 1px)",backgroundSize:"40px 40px",borderRadius:"24px",minHeight:"calc(100vh - 180px)",padding:"2rem",border:"2px dashed rgba(0,0,0,0.2)"}}>
+          {gallery.length===0 && !loading && (
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"500px",color:"#bbb"}}>
+              <div style={{fontSize:"3.5rem",marginBottom:"1rem",color:"#ddd"}}>◉</div>
+              <div style={{fontSize:"0.95rem",color:"#999"}}>还没有数字人作品，开始你的第一次创作吧</div>
+              <div style={{fontSize:"0.8rem",color:"#bbb",marginTop:"0.5rem"}}>上传人物图片和音频，点击「开始生成」</div>
+            </div>
+          )}
+          {loading && (
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"500px"}}>
+              <div style={{width:"40px",height:"40px",border:"3px solid #eee",borderTopColor:"#0d0d0d",borderRadius:"50%",animation:"spin 1s linear infinite"}}></div>
+              <div style={{marginTop:"1rem",color:"#888",fontSize:"0.9rem"}}>AI 正在驱动口型... (1-3 分钟)</div>
+              <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+            </div>
+          )}
+          {gallery.length>0 && (
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:"1rem"}}>
+              {gallery.map((item,i)=>(
+                <div key={i} style={{borderRadius:"14px",overflow:"hidden",background:"#fff",position:"relative",aspectRatio:"9/16",boxShadow:"0 4px 12px rgba(0,0,0,0.04)"}}>
+                  <video src={item.url} controls style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                  <div style={{position:"absolute",bottom:0,left:0,right:0,padding:"0.75rem",background:"linear-gradient(transparent,rgba(0,0,0,0.75))",color:"#fff",fontSize:"0.75rem",pointerEvents:"none"}}>{(item.prompt||"").slice(0,40)}</div>
                 </div>
-                <audio src={audioFile} controls className="w-full mt-2" />
-              </div>
-            )}
+              ))}
+            </div>
+          )}
+        </div>
+      </main>
+
+      <aside style={{width:"340px",background:"#fff",borderLeft:"1px solid rgba(0,0,0,0.06)",padding:"2rem 1.75rem",display:"flex",flexDirection:"column",gap:"1.25rem",height:"100vh",position:"sticky",top:0,overflowY:"auto"}}>
+        <div>
+          <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>模型</div>
+          <div style={{display:"flex",flexDirection:"column",gap:"0.4rem"}}>
+            {[
+              {k:"hunyuan-avatar",l:"腾讯混元",d:"高质量口型驱动"},
+              {k:"pixverse-lipsync",l:"Pixverse",d:"速度快，适合预览"}
+            ].map(m=>(
+              <button key={m.k} onClick={()=>setModel(m.k)}
+                style={{textAlign:"left",padding:"0.7rem 0.9rem",border:model===m.k?"2px solid #0d0d0d":"1px solid #e5e5e5",background:model===m.k?"#f9f7f2":"#fff",borderRadius:"10px",cursor:"pointer"}}>
+                <div style={{fontSize:"0.88rem",fontWeight:500,color:"#0d0d0d"}}>{m.l}</div>
+                <div style={{fontSize:"0.72rem",color:"#888",marginTop:"0.15rem"}}>{m.d}</div>
+              </button>
+            ))}
           </div>
         </div>
 
-        {/* 提交按钮 */}
-        <button
-          type="submit"
-          disabled={loading || !characterImage || !audioFile}
-          className="w-full py-3 rounded-lg bg-amber-500 text-black font-medium hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          {loading ? "提交中..." : "生成数字人视频"}
+        <div>
+          <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>人物图片</div>
+          <input ref={imgRef} type="file" accept="image/*" onChange={e=>setImage(e.target.files?.[0]||null)} style={{display:"none"}}/>
+          <button onClick={()=>imgRef.current?.click()} style={{width:"100%",padding:"0.9rem",border:"2px dashed #ccc",background:"#fafaf7",borderRadius:"12px",cursor:"pointer",color:"#666",fontSize:"0.85rem"}}>
+            {image?`✓ ${image.name}`:"点击上传图片"}
+          </button>
+        </div>
+
+        <div>
+          <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>音频文件</div>
+          <input ref={audRef} type="file" accept="audio/*" onChange={e=>setAudio(e.target.files?.[0]||null)} style={{display:"none"}}/>
+          <button onClick={()=>audRef.current?.click()} style={{width:"100%",padding:"0.9rem",border:"2px dashed #ccc",background:"#fafaf7",borderRadius:"12px",cursor:"pointer",color:"#666",fontSize:"0.85rem"}}>
+            {audio?`✓ ${audio.name}`:"点击上传音频"}
+          </button>
+        </div>
+
+        <div style={{flex:1}}/>
+
+        {error && <div style={{color:"#c00",background:"#ffeaea",padding:"0.7rem",borderRadius:"10px",fontSize:"0.8rem"}}>{error}</div>}
+
+        <button onClick={generate} disabled={loading}
+          style={{padding:"0.9rem",background:loading?"#999":"#0d0d0d",color:"#fff",border:"none",borderRadius:"12px",cursor:loading?"wait":"pointer",fontSize:"0.95rem",fontWeight:500}}>
+          {loading?"生成中...":"开始生成"}
         </button>
-      </form>
-
-      {/* 错误提示 */}
-      {error && (
-        <div className="mt-6 p-4 rounded-lg bg-red-900/20 border border-red-700">
-          <p className="text-red-400 text-sm">{error}</p>
-        </div>
-      )}
-
-      {/* 任务状态 */}
-      {taskId && !resultVideoUrl && (
-        <div className="mt-6 p-6 rounded-lg bg-zinc-900 border border-zinc-700">
-          <p className="text-sm text-zinc-400 mb-2">任务状态</p>
-          <p className="font-mono text-amber-400 text-sm mb-3">{taskId}</p>
-          <div className="flex items-center gap-2">
-            <div
-              className={`w-2 h-2 rounded-full ${
-                taskStatus === "processing"
-                  ? "bg-yellow-400 animate-pulse"
-                  : taskStatus === "completed"
-                  ? "bg-green-400"
-                  : "bg-zinc-500"
-              }`}
-            />
-            <span className="text-sm text-zinc-300">
-              {taskStatus === "pending" ? "等待处理..." : taskStatus === "processing" ? "正在生成中..." : taskStatus || "等待中..."}
-            </span>
-          </div>
-          <p className="text-xs text-zinc-500 mt-4">
-            数字人视频生成需要 1-3 分钟，请耐心等待
-          </p>
-        </div>
-      )}
-
-      {/* 结果视频 */}
-      {resultVideoUrl && (
-        <div className="mt-6 space-y-4">
-          <div className="rounded-lg overflow-hidden border border-zinc-700">
-            <video src={resultVideoUrl} controls className="w-full" />
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-zinc-400">Hunyuan Avatar</span>
-            <a
-              href={resultVideoUrl}
-              download
-              target="_blank"
-              className="px-4 py-2 rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors text-sm"
-            >
-              下载视频
-            </a>
-          </div>
-        </div>
-      )}
-
-      {/* 使用提示 */}
-      <div className="mt-12 p-6 rounded-lg bg-zinc-900/50 border border-zinc-800">
-        <h3 className="text-sm font-semibold text-zinc-300 mb-3">使用提示</h3>
-        <ul className="space-y-2 text-sm text-zinc-500">
-          <li>• 人物图片建议为正面或 45 度半身照</li>
-          <li>• 背景简洁，光线均匀，面部清晰</li>
-          <li>• 音频质量越高，口型同步效果越好</li>
-          <li>• 适合口播、知识付费、产品讲解场景</li>
-          <li>• 生成时间约 1-3 分钟</li>
-        </ul>
-      </div>
+      </aside>
     </div>
   );
 }

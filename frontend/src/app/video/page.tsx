@@ -1,250 +1,135 @@
 "use client";
+import { useState, useEffect } from "react";
+import Sidebar from "@/components/Sidebar";
 
-import { useState, useRef, useEffect } from "react";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://43.134.71.189:8000";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const MODES = [
+  { key:"image-to-video", label:"图生视频", desc:"上传首帧，AI 生成动态视频" },
+  { key:"element-replace", label:"元素替换", desc:"替换视频中的商品/人物" },
+  { key:"remake", label:"翻拍复刻", desc:"提取运镜节奏，换素材翻拍" },
+];
 
-type VideoMode = "image-to-video" | "link" | "workflow" | "replace";
+export default function VideoPage(){
+  const [mode,setMode]=useState("image-to-video");
+  const [imageUrl,setImageUrl]=useState("");
+  const [prompt,setPrompt]=useState("");
+  const [duration,setDuration]=useState(5);
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState("");
+  const [gallery,setGallery]=useState<any[]>([]);
 
-export default function VideoPage() {
-  const [mode, setMode] = useState<VideoMode>("image-to-video");
-  const [imageUrl, setImageUrl] = useState("");
-  const [motionPrompt, setMotionPrompt] = useState("");
-  const [taskId, setTaskId] = useState<string | null>(null);
-  const [taskStatus, setTaskStatus] = useState<string | null>(null);
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  useEffect(()=>{
+    const saved=localStorage.getItem("video_gallery");
+    if(saved){try{setGallery(JSON.parse(saved));}catch{}}
+  },[]);
 
-  const pollIntervalRef = useRef<number | null>(null);
-  const pollTimeoutRef = useRef<number | null>(null);
-
-  const clearPolling = () => {
-    if (pollIntervalRef.current !== null) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
-    }
-    if (pollTimeoutRef.current !== null) {
-      clearTimeout(pollTimeoutRef.current);
-      pollTimeoutRef.current = null;
-    }
+  const saveGallery=(g:any[])=>{
+    setGallery(g);
+    localStorage.setItem("video_gallery",JSON.stringify(g.slice(0,50)));
   };
 
-  // 组件卸载时清理轮询
-  useEffect(() => {
-    return clearPolling;
-  }, []);
-
-  // 提交图生视频任务
-  const handleImageToVideo = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setTaskId(null);
-    setVideoUrl(null);
-    setError(null);
-    clearPolling();
-
-    try {
-      const res = await fetch(`${API_BASE}/api/video/image-to-video`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image_url: imageUrl, prompt: motionPrompt }),
+  const generate=async()=>{
+    if(!imageUrl.trim()){setError("请输入首帧图片 URL");return;}
+    setError("");setLoading(true);
+    try{
+      const token=localStorage.getItem("token")||"";
+      const res=await fetch(`${API_BASE}/api/video/image-to-video`,{
+        method:"POST",
+        headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
+        body:JSON.stringify({image_url:imageUrl,prompt,duration_sec:duration}),
       });
-      const data = await res.json();
-
-      if (data.task_id) {
-        setTaskId(data.task_id);
-        setTaskStatus("pending");
-        pollTaskStatus(data.task_id);
-      } else {
-        setError(data.detail || "提交失败");
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "网络错误");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 轮询任务状态
-  const pollTaskStatus = async (id: string) => {
-    clearPolling();
-
-    const poll = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/api/video/status/${id}`);
-        const data = await res.json();
-        setTaskStatus(data.status);
-
-        if (data.status === "completed" && data.video_url) {
-          setVideoUrl(data.video_url);
-          clearPolling();
-        } else if (data.status === "failed") {
-          setError(data.error || "视频生成失败");
-          clearPolling();
-        }
-      } catch {
-        clearPolling();
-      }
-    };
-
-    pollIntervalRef.current = setInterval(poll, 5000) as unknown as number;
-    pollTimeoutRef.current = setTimeout(() => {
-      clearPolling();
-    }, 180000) as unknown as number;
-
-    // 立即执行一次
-    poll();
-  };
-
-  // 链接改造（暂未实现）
-  const handleLinkInit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("链接改造功能尚未实现，请使用图生视频");
+      const data=await res.json();
+      if(!res.ok)throw new Error(data.detail||"生成失败");
+      const url=data.video_url||data.url||data.data?.video_url;
+      if(!url)throw new Error("未返回视频");
+      saveGallery([{url,prompt:prompt||"图生视频",time:Date.now()},...gallery]);
+    }catch(e:any){setError(e.message);}
+    finally{setLoading(false);}
   };
 
   return (
-    <div className="max-w-2xl mx-auto py-12 px-6">
-      <h1 className="text-2xl font-bold mb-8">视频生成</h1>
+    <div style={{display:"flex",minHeight:"100vh",background:"#edeae4",fontFamily:"-apple-system,BlinkMacSystemFont,sans-serif"}}>
+      <Sidebar/>
 
-      {/* 模式切换 */}
-      <div className="flex flex-wrap gap-2 mb-6">
-        {([
-          { value: "image-to-video", label: "图生视频" },
-          { value: "replace", label: "元素替换" },
-          { value: "clone", label: "翻拍复刻", href: "/video/clone" },
-          { value: "link", label: "链接改造" },
-          { value: "workflow", label: "多镜头工作流" },
-        ] as const).map((m) => (
-          <button
-            key={m.value}
-            onClick={() => "href" in m ? window.location.href = m.href : setMode(m.value)}
-            className={`px-4 py-2 rounded-lg transition-colors ${
-              mode === m.value ? "bg-amber-500 text-black" : "bg-zinc-800 text-zinc-400"
-            }`}
-          >
-            {m.label}
-          </button>
-        ))}
-      </div>
-
-      {/* 图生视频 */}
-      {mode === "image-to-video" && (
-        <form onSubmit={handleImageToVideo} className="space-y-4">
+      <main style={{flex:1,padding:"2rem 2.5rem",overflowY:"auto"}}>
+        <div style={{marginBottom:"1.5rem",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div>
-            <label className="block text-sm text-zinc-400 mb-2">首帧图片 URL *</label>
-            <input
-              type="url"
-              value={imageUrl}
-              onChange={(e) => setImageUrl(e.target.value)}
-              placeholder="输入图片 URL（需要是可公开访问的链接）"
-              className="w-full px-4 py-3 rounded-lg bg-zinc-900 border border-zinc-700 focus:border-amber-500 outline-none"
-              required
-            />
+            <div style={{fontSize:"0.85rem",color:"#999",marginBottom:"0.3rem"}}>视频创作</div>
+            <h1 style={{fontSize:"1.6rem",fontWeight:400,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>视频<span style={{fontStyle:"italic"}}> 画布</span></h1>
           </div>
-          <div>
-            <label className="block text-sm text-zinc-400 mb-2">运动描述（可选）</label>
-            <textarea
-              value={motionPrompt}
-              onChange={(e) => setMotionPrompt(e.target.value)}
-              placeholder="描述视频中期望的运动效果..."
-              className="w-full h-24 px-4 py-3 rounded-lg bg-zinc-900 border border-zinc-700 focus:border-amber-500 outline-none resize-none"
-            />
-          </div>
-          <p className="text-sm text-zinc-500">
-            使用 Kling 模型生成，预计需要 1-3 分钟
-          </p>
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-3 rounded-lg bg-amber-500 text-black font-medium hover:bg-amber-400 disabled:opacity-50 transition-colors"
-          >
-            {loading ? "提交中..." : "生成视频"}
-          </button>
-        </form>
-      )}
-
-      {/* 链接改造（暂未实现） */}
-      {mode === "link" && (
-        <form onSubmit={handleLinkInit} className="space-y-4">
-          <input
-            type="url"
-            placeholder="输入国内外视频链接"
-            className="w-full px-4 py-3 rounded-lg bg-zinc-900 border border-zinc-700 focus:border-amber-500 outline-none"
-          />
-          <p className="text-sm text-zinc-500">
-            解析后将询问是否替换人物/背景，产品是否一致等
-          </p>
-          <button
-            type="submit"
-            className="w-full py-3 rounded-lg bg-amber-500 text-black font-medium hover:bg-amber-400 opacity-50 cursor-not-allowed"
-            disabled
-          >
-            功能开发中
-          </button>
-        </form>
-      )}
-
-      {/* 多镜头工作流（暂未实现） */}
-      {mode === "workflow" && (
-        <div className="p-6 rounded-lg bg-zinc-900 border border-zinc-700">
-          <p className="text-zinc-400 mb-4">
-            上传首帧或首尾帧，按镜头填写脚本与分镜，保持人物一致与连贯性。
-          </p>
-          <p className="text-sm text-zinc-500">功能开发中...</p>
+          {gallery.length>0 && <button onClick={()=>{if(confirm("清空画布？")){saveGallery([]);}}} style={{background:"none",border:"1px solid #ddd",padding:"0.5rem 1rem",borderRadius:"999px",color:"#666",fontSize:"0.85rem",cursor:"pointer"}}>清空画布</button>}
         </div>
-      )}
 
-      {/* 错误提示 */}
-      {error && (
-        <div className="mt-6 p-4 rounded-lg bg-red-900/20 border border-red-700">
-          <p className="text-red-400 text-sm">{error}</p>
+        <div style={{background:"#fafaf7",backgroundImage:"linear-gradient(rgba(0,0,0,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.05) 1px, transparent 1px)",backgroundSize:"40px 40px",borderRadius:"24px",minHeight:"calc(100vh - 180px)",padding:"2rem",border:"2px dashed rgba(0,0,0,0.2)"}}>
+          {gallery.length===0 && !loading && (
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"500px",color:"#bbb"}}>
+              <div style={{fontSize:"3.5rem",marginBottom:"1rem",color:"#ddd"}}>▶</div>
+              <div style={{fontSize:"0.95rem",color:"#999"}}>还没有视频作品，开始你的第一次创作吧</div>
+              <div style={{fontSize:"0.8rem",color:"#bbb",marginTop:"0.5rem"}}>在右侧输入参数，点击「开始生成」</div>
+            </div>
+          )}
+          {loading && (
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"500px"}}>
+              <div style={{width:"40px",height:"40px",border:"3px solid #eee",borderTopColor:"#0d0d0d",borderRadius:"50%",animation:"spin 1s linear infinite"}}></div>
+              <div style={{marginTop:"1rem",color:"#888",fontSize:"0.9rem"}}>AI 正在生成视频... (1-3 分钟)</div>
+              <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+            </div>
+          )}
+          {gallery.length>0 && (
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:"1rem"}}>
+              {gallery.map((item,i)=>(
+                <div key={i} style={{borderRadius:"14px",overflow:"hidden",background:"#fff",position:"relative",aspectRatio:"16/9",boxShadow:"0 4px 12px rgba(0,0,0,0.04)"}}>
+                  <video src={item.url} controls style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                  <div style={{position:"absolute",bottom:0,left:0,right:0,padding:"0.75rem",background:"linear-gradient(transparent,rgba(0,0,0,0.75))",color:"#fff",fontSize:"0.75rem",pointerEvents:"none"}}>{(item.prompt||"").slice(0,40)}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-      )}
+      </main>
 
-      {/* 任务状态 */}
-      {taskId && !videoUrl && (
-        <div className="mt-6 p-4 rounded-lg bg-zinc-900 border border-zinc-700">
-          <p className="text-sm text-zinc-400">任务状态</p>
-          <p className="font-mono text-amber-400 text-sm mt-1">{taskId}</p>
-          <div className="flex items-center gap-2 mt-2">
-            <div className={`w-2 h-2 rounded-full ${
-              taskStatus === "processing" ? "bg-yellow-400 animate-pulse" :
-              taskStatus === "completed" ? "bg-green-400" :
-              "bg-zinc-500"
-            }`} />
-            <span className="text-sm text-zinc-300">
-              {taskStatus === "pending" ? "等待处理..." :
-               taskStatus === "processing" ? "正在生成中..." :
-               taskStatus || "等待中..."}
-            </span>
+      <aside style={{width:"340px",background:"#fff",borderLeft:"1px solid rgba(0,0,0,0.06)",padding:"2rem 1.75rem",display:"flex",flexDirection:"column",gap:"1.25rem",height:"100vh",position:"sticky",top:0,overflowY:"auto"}}>
+        <div>
+          <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>模式</div>
+          <div style={{display:"flex",flexDirection:"column",gap:"0.4rem"}}>
+            {MODES.map(m=>(
+              <button key={m.key} onClick={()=>setMode(m.key)}
+                style={{textAlign:"left",padding:"0.7rem 0.9rem",border:mode===m.key?"2px solid #0d0d0d":"1px solid #e5e5e5",background:mode===m.key?"#f9f7f2":"#fff",borderRadius:"10px",cursor:"pointer"}}>
+                <div style={{fontSize:"0.88rem",fontWeight:500,color:"#0d0d0d"}}>{m.label}</div>
+                <div style={{fontSize:"0.72rem",color:"#888",marginTop:"0.15rem"}}>{m.desc}</div>
+              </button>
+            ))}
           </div>
         </div>
-      )}
 
-      {/* 视频结果 */}
-      {videoUrl && (
-        <div className="mt-6 space-y-4">
-          <div className="rounded-lg overflow-hidden border border-zinc-700">
-            <video
-              src={videoUrl}
-              controls
-              className="w-full"
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-zinc-400">Kling Video</span>
-            <a
-              href={videoUrl}
-              download
-              target="_blank"
-              className="px-4 py-2 rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors text-sm"
-            >
-              下载视频
-            </a>
-          </div>
+        <div>
+          <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>首帧图片 URL</div>
+          <input value={imageUrl} onChange={e=>setImageUrl(e.target.value)} placeholder="https://..."
+            style={{width:"100%",padding:"0.65rem 0.9rem",border:"1px solid #e5e5e5",borderRadius:"10px",fontSize:"0.85rem",background:"#fff !important",color:"#333 !important"}}/>
         </div>
-      )}
+
+        <div>
+          <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>时长（秒）</div>
+          <select value={duration} onChange={e=>setDuration(parseInt(e.target.value))} style={{width:"100%",padding:"0.65rem 0.9rem",border:"1px solid #e5e5e5",borderRadius:"10px",fontSize:"0.85rem",background:"#fff !important",color:"#333 !important"}}>
+            <option value="5">5 秒</option>
+            <option value="10">10 秒</option>
+          </select>
+        </div>
+
+        <div style={{flex:1,display:"flex",flexDirection:"column"}}>
+          <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>运动描述（可选）</div>
+          <textarea value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="描述视频中期望的运动效果..." 
+            style={{width:"100%",padding:"0.75rem 0.9rem",border:"1px solid #e5e5e5",borderRadius:"12px",fontSize:"0.88rem",minHeight:"120px",resize:"vertical",fontFamily:"inherit",background:"#fff !important",color:"#333 !important",flex:1}}/>
+        </div>
+
+        {error && <div style={{color:"#c00",background:"#ffeaea",padding:"0.7rem",borderRadius:"10px",fontSize:"0.8rem"}}>{error}</div>}
+
+        <button onClick={generate} disabled={loading}
+          style={{padding:"0.9rem",background:loading?"#999":"#0d0d0d",color:"#fff",border:"none",borderRadius:"12px",cursor:loading?"wait":"pointer",fontSize:"0.95rem",fontWeight:500}}>
+          {loading?"生成中...":"开始生成"}
+        </button>
+      </aside>
     </div>
   );
 }
