@@ -1,193 +1,144 @@
 "use client";
-
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import Sidebar from "@/components/Sidebar";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://43.134.71.189:8000";
 
-interface ModelInfo {
-  endpoint: string;
-  label: string;
-  desc: string;
-}
+const STYLES = [
+  { key:"advertising", label:"广告视觉" },
+  { key:"minimalist", label:"精致简约" },
+  { key:"custom", label:"仅提示词" },
+];
 
-const DEFAULT_MODELS: Record<string, ModelInfo> = {
-  "nano-banana-2": {
-    endpoint: "fal-ai/nano-banana-2",
-    label: "经济模式",
-    desc: "最低成本，速度较慢",
-  },
-  "flux/schnell": {
-    endpoint: "fal-ai/flux/schnell",
-    label: "快速模式",
-    desc: "生成速度快，质量高",
-  },
-};
+const MODELS = [
+  { key:"nano-banana-2", label:"经济模式", desc:"最低成本，速度较慢" },
+  { key:"flux/schnell", label:"快速模式", desc:"生成速度快，质量高" },
+  { key:"flux/dev", label:"专业模式", desc:"更高质量的生成效果" },
+];
 
-export default function ImagePage() {
-  const router = useRouter();
-  const [mode, setMode] = useState<"style" | "realistic" | "multi-reference">("style");
-  const [prompt, setPrompt] = useState("");
-  const [style, setStyle] = useState("advertising");
-  const [model, setModel] = useState("nano-banana-2");
-  const [models, setModels] = useState(DEFAULT_MODELS);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export default function ImagePage(){
+  const [prompt,setPrompt]=useState("");
+  const [style,setStyle]=useState("advertising");
+  const [model,setModel]=useState("nano-banana-2");
+  const [size,setSize]=useState("1024x1024");
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState("");
+  const [gallery,setGallery]=useState<any[]>([]);
 
-  useEffect(() => {
-    fetch(`${API_BASE}/api/image/models`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.models) setModels(data.models);
-      })
-      .catch(() => {});
-  }, []);
+  useEffect(()=>{
+    const saved=localStorage.getItem("img_gallery");
+    if(saved){try{setGallery(JSON.parse(saved));}catch{}}
+  },[]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!prompt.trim()) return;
+  const saveGallery=(g:any[])=>{
+    setGallery(g);
+    localStorage.setItem("img_gallery",JSON.stringify(g.slice(0,50)));
+  };
 
-    setLoading(true);
-    setError(null);
-
-    try {
-      const endpoint = mode === "style" ? "/api/image/style" : "/api/image/realistic";
-      const body: Record<string, unknown> = { prompt, model };
-      if (mode === "style") {
-        body.style = style;
-        body.size = "1024x1024";
-      }
-
-      const res = await fetch(`${API_BASE}${endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${localStorage.getItem("token") || ""}` },
-        body: JSON.stringify(body),
+  const generate=async()=>{
+    if(!prompt.trim()){setError("请输入提示词");return;}
+    setError("");setLoading(true);
+    try{
+      const token=localStorage.getItem("token")||"";
+      const res=await fetch(`${API_BASE}/api/image/style`,{
+        method:"POST",
+        headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
+        body:JSON.stringify({prompt,style,model,size}),
       });
-      const data = await res.json();
-
-      if (data.success) {
-        // 跳转到详情页
-        const detailData = {
-          image_url: data.image_url,
-          width: data.width,
-          height: data.height,
-          model: data.model,
-          model_label: data.model_label,
-          prompt,
-          style,
-          content_type: "image",
-        };
-        const encoded = encodeURIComponent(JSON.stringify(detailData));
-        router.push(`/detail?data=${encoded}`);
-      } else {
-        setError(data.detail || data.error || "生成失败");
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "网络错误");
-    } finally {
-      setLoading(false);
-    }
+      const data=await res.json();
+      if(!res.ok)throw new Error(data.detail||"生成失败");
+      const url=data.image_url||data.url||data.data?.image_url;
+      if(!url)throw new Error("未返回图片");
+      saveGallery([{url,prompt,time:Date.now()},...gallery]);
+    }catch(e:any){setError(e.message);}
+    finally{setLoading(false);}
   };
 
   return (
-    <div className="max-w-2xl mx-auto py-12 px-6">
-      <h1 className="text-2xl font-bold mb-8">图片生成</h1>
+    <div style={{display:"flex",minHeight:"100vh",background:"#edeae4",fontFamily:"-apple-system,BlinkMacSystemFont,sans-serif"}}>
+      <Sidebar/>
 
-      {/* 模型选择 */}
-      <div className="flex gap-3 mb-6">
-        {Object.entries(models).map(([key, info]) => (
-          <button
-            key={key}
-            onClick={() => setModel(key)}
-            className={`px-4 py-2 rounded-lg transition-colors text-left ${
-              model === key
-                ? "bg-amber-500 text-black"
-                : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
-            }`}
-          >
-            <div className="font-medium text-sm">{info.label}</div>
-            <div className={`text-xs ${model === key ? "text-black/60" : "text-zinc-500"}`}>
-              {info.desc}
+      <main style={{flex:1,padding:"2.5rem 3rem",overflowY:"auto"}}>
+        <div style={{marginBottom:"2rem"}}>
+          <div style={{fontSize:"0.85rem",color:"#999",marginBottom:"0.3rem"}}>创作 / 图片生成</div>
+          <h1 style={{fontSize:"1.8rem",fontWeight:400,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>图片<span style={{fontStyle:"italic"}}> 画布</span></h1>
+        </div>
+
+        <div style={{background:"#fff",borderRadius:"20px",minHeight:"500px",padding:"2rem",border:"1px solid rgba(0,0,0,0.04)"}}>
+          {gallery.length===0 && !loading && (
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"440px",color:"#bbb"}}>
+              <div style={{fontSize:"3rem",marginBottom:"1rem",color:"#ddd"}}>◧</div>
+              <div style={{fontSize:"0.9rem"}}>还没有作品，开始你的第一次创作吧</div>
             </div>
-          </button>
-        ))}
-      </div>
-
-      {/* 模式切换 */}
-      <div className="flex flex-wrap gap-3 mb-6">
-        <button
-          onClick={() => setMode("style")}
-          className={`px-4 py-2 rounded-lg transition-colors ${
-            mode === "style" ? "bg-amber-500 text-black" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
-          }`}
-        >
-          风格化 / 广告级
-        </button>
-        <button
-          onClick={() => setMode("realistic")}
-          className={`px-4 py-2 rounded-lg transition-colors ${
-            mode === "realistic" ? "bg-amber-500 text-black" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
-          }`}
-        >
-          写实 / 可控
-        </button>
-        <button
-          onClick={() => router.push("/image/multi-reference")}
-          className={`px-4 py-2 rounded-lg transition-colors ${
-            mode === "multi-reference" ? "bg-amber-500 text-black" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
-          }`}
-        >
-          多参考图生图
-        </button>
-      </div>
-
-      {/* 风格选择（仅风格化模式） */}
-      {mode === "style" && (
-        <div className="flex gap-3 mb-6">
-          {[
-            { value: "advertising", label: "广告视觉效果" },
-            { value: "minimalist", label: "精致简约风" },
-            { value: "custom", label: "仅提示词" },
-          ].map((s) => (
-            <button
-              key={s.value}
-              onClick={() => setStyle(s.value)}
-              className={`px-3 py-1.5 rounded-md text-sm transition-colors ${
-                style === s.value
-                  ? "bg-amber-500/20 text-amber-400 border border-amber-500"
-                  : "bg-zinc-900 text-zinc-400 border border-zinc-700"
-              }`}
-            >
-              {s.label}
-            </button>
-          ))}
+          )}
+          {loading && (
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"440px"}}>
+              <div style={{width:"40px",height:"40px",border:"3px solid #eee",borderTopColor:"#0d0d0d",borderRadius:"50%",animation:"spin 1s linear infinite"}}></div>
+              <div style={{marginTop:"1rem",color:"#888",fontSize:"0.9rem"}}>AI 正在为您创作...</div>
+              <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+            </div>
+          )}
+          {gallery.length>0 && (
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:"1rem"}}>
+              {gallery.map((item,i)=>(
+                <div key={i} style={{borderRadius:"12px",overflow:"hidden",background:"#f5f3ed",position:"relative",aspectRatio:"1"}}>
+                  <img src={item.url} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                  <div style={{position:"absolute",bottom:0,left:0,right:0,padding:"0.75rem",background:"linear-gradient(transparent,rgba(0,0,0,0.7))",color:"#fff",fontSize:"0.75rem"}}>{item.prompt?.slice(0,40)}...</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-      )}
+      </main>
 
-      {/* 输入表单 */}
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <textarea
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          placeholder="描述你想要的图片..."
-          className="w-full h-32 px-4 py-3 rounded-lg bg-zinc-900 border border-zinc-700 focus:border-amber-500 outline-none resize-none"
-          required
-        />
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full py-3 rounded-lg bg-amber-500 text-black font-medium hover:bg-amber-400 disabled:opacity-50 transition-colors"
-        >
-          {loading ? "生成中..." : "生成图片"}
-        </button>
-      </form>
-
-      {/* 错误提示 */}
-      {error && (
-        <div className="mt-6 p-4 rounded-lg bg-red-900/20 border border-red-700">
-          <p className="text-red-400 text-sm">{error}</p>
+      <aside style={{width:"360px",background:"#fff",borderLeft:"1px solid rgba(0,0,0,0.06)",padding:"2rem",display:"flex",flexDirection:"column",gap:"1.5rem",height:"100vh",position:"sticky",top:0,overflowY:"auto"}}>
+        <div>
+          <div style={{fontSize:"0.75rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.75rem"}}>模式</div>
+          <div style={{display:"flex",flexDirection:"column",gap:"0.5rem"}}>
+            {MODELS.map(m=>(
+              <button key={m.key} onClick={()=>setModel(m.key)}
+                style={{textAlign:"left",padding:"0.75rem 1rem",border:model===m.key?"2px solid #0d0d0d":"1px solid #e5e5e5",background:model===m.key?"#f9f7f2":"#fff",borderRadius:"10px",cursor:"pointer",transition:"all 0.15s"}}>
+                <div style={{fontSize:"0.9rem",fontWeight:500,color:"#0d0d0d"}}>{m.label}</div>
+                <div style={{fontSize:"0.75rem",color:"#888",marginTop:"0.2rem"}}>{m.desc}</div>
+              </button>
+            ))}
+          </div>
         </div>
-      )}
+
+        <div>
+          <div style={{fontSize:"0.75rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.75rem"}}>风格</div>
+          <div style={{display:"flex",gap:"0.5rem",flexWrap:"wrap"}}>
+            {STYLES.map(s=>(
+              <button key={s.key} onClick={()=>setStyle(s.key)}
+                style={{padding:"0.5rem 1rem",border:style===s.key?"2px solid #0d0d0d":"1px solid #e5e5e5",background:style===s.key?"#f9f7f2":"#fff",borderRadius:"999px",cursor:"pointer",fontSize:"0.85rem",color:"#333"}}>
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <div style={{fontSize:"0.75rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.75rem"}}>尺寸</div>
+          <select value={size} onChange={e=>setSize(e.target.value)} style={{width:"100%",padding:"0.7rem 1rem",border:"1px solid #e5e5e5",borderRadius:"10px",fontSize:"0.9rem",background:"#fff !important",color:"#333 !important"}}>
+            <option value="1024x1024">正方形 1:1</option>
+            <option value="768x1024">竖版 3:4</option>
+            <option value="1024x768">横版 4:3</option>
+          </select>
+        </div>
+
+        <div>
+          <div style={{fontSize:"0.75rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.75rem"}}>提示词</div>
+          <textarea value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="描述你想要的图片..." 
+            style={{width:"100%",padding:"0.75rem 1rem",border:"1px solid #e5e5e5",borderRadius:"12px",fontSize:"0.9rem",minHeight:"100px",resize:"vertical",fontFamily:"inherit",background:"#fff !important",color:"#333 !important"}}/>
+        </div>
+
+        {error && <div style={{color:"#c00",background:"#ffeaea",padding:"0.75rem",borderRadius:"10px",fontSize:"0.85rem"}}>{error}</div>}
+
+        <button onClick={generate} disabled={loading}
+          style={{padding:"0.9rem",background:loading?"#999":"#0d0d0d",color:"#fff",border:"none",borderRadius:"12px",cursor:loading?"wait":"pointer",fontSize:"0.95rem",fontWeight:500,marginTop:"auto"}}>
+          {loading?"生成中...":"开始生成"}
+        </button>
+      </aside>
     </div>
   );
 }
