@@ -64,7 +64,7 @@ export default function ImagePage(){
           <h1 style={{fontSize:"1.8rem",fontWeight:400,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>图片<span style={{fontStyle:"italic"}}> 画布</span></h1>
         </div>
 
-        <div style={{background:"#fff",borderRadius:"20px",minHeight:"500px",padding:"2rem",border:"1px solid rgba(0,0,0,0.04)"}}>
+        <div style={{background:"#fafaf7",borderRadius:"20px",minHeight:"560px",padding:"2rem",border:"2px dashed rgba(0,0,0,0.15)"}}>
           {gallery.length===0 && !loading && (
             <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"440px",color:"#bbb"}}>
               <div style={{fontSize:"3rem",marginBottom:"1rem",color:"#ddd"}}>◧</div>
