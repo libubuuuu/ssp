@@ -19,7 +19,7 @@ export default function Sidebar() {
         xL
       </div>
 
-      <button onClick={()=>router.push("/")} title="首页"
+      <button onClick={()=>router.push("/dashboard")} title="工作台"
         style={{width:"48px",height:"48px",borderRadius:"12px",border:"none",background:"#f5f3ed",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.2rem",color:"#333",transition:"all 0.15s"}}
         onMouseEnter={e=>{e.currentTarget.style.background="#e8e4d9";}}
         onMouseLeave={e=>{e.currentTarget.style.background="#f5f3ed";}}>
