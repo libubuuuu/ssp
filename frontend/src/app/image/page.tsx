@@ -60,7 +60,7 @@ export default function ImagePage() {
 
       const res = await fetch(`${API_BASE}${endpoint}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${localStorage.getItem("token") || ""}` },
         body: JSON.stringify(body),
       });
       const data = await res.json();

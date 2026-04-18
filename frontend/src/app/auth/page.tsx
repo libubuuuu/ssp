@@ -2,139 +2,71 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-type Mode = "login" | "register";
-
 export default function AuthPage() {
   const router = useRouter();
-  const [mode, setMode] = useState<Mode>("login");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [form, setForm] = useState({ email: "", password: "", name: "" });
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-
+  const handleSubmit = async () => {
+    setError(""); setLoading(true);
     try {
-      const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/register";
-      const body: Record<string, string> = { email, password };
-      if (mode === "register") {
-        body.name = name;
-      }
-
-      const res = await fetch(`${API_BASE}${endpoint}`, {
+      const url = mode === "login" ? `${API_BASE}/api/auth/login` : `${API_BASE}/api/auth/register`;
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify(form),
       });
-
       const data = await res.json();
-
-      if (data.token) {
-        // 保存 Token
-        localStorage.setItem("token", data.token);
-        localStorage.setItem("user", JSON.stringify(data.user));
-        router.push("/");
-      } else {
-        setError(data.detail || "操作失败");
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "网络错误");
+      if (!res.ok) throw new Error(data.detail || "请求失败");
+      localStorage.setItem("token", data.token);
+      localStorage.setItem("user", JSON.stringify(data.user));
+      router.push("/");
+    } catch (e: any) {
+      setError(e.message);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-[80vh] flex items-center justify-center px-4">
-      <div className="w-full max-w-md p-8 rounded-xl bg-zinc-900 border border-zinc-800">
-        <h1 className="text-2xl font-bold text-center mb-2">
-          {mode === "login" ? "登录" : "注册"}
-        </h1>
-        <p className="text-zinc-400 text-center mb-8">
-          {mode === "login" ? "欢迎回来" : "创建新账号，赠送 100 积分"}
+    <div style={{minHeight:"100vh",background:"#0a0a0a",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{background:"#1a1a1a",padding:"2rem",borderRadius:"12px",width:"100%",maxWidth:"400px"}}>
+        <h2 style={{color:"#fff",textAlign:"center",marginBottom:"0.5rem"}}>{mode === "login" ? "登录" : "注册"}</h2>
+        <p style={{color:"#888",textAlign:"center",marginBottom:"1.5rem",fontSize:"0.9rem"}}>
+          {mode === "register" ? "创建新账号，赠送 100 积分" : "欢迎回来"}
         </p>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {mode === "register" && (
-            <div>
-              <label className="block text-sm text-zinc-400 mb-2">昵称</label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="可选，默认为邮箱前缀"
-                className="w-full px-4 py-3 rounded-lg bg-zinc-800 border border-zinc-700 focus:border-amber-500 outline-none"
-              />
-            </div>
+        {mode === "register" && (
+          <input placeholder="昵称" value={form.name}
+            onChange={e => setForm({...form, name: e.target.value})}
+            style={{width:"100%",padding:"0.75rem",marginBottom:"1rem",background:"#2a2a2a",border:"1px solid #333",borderRadius:"8px",color:"#fff",boxSizing:"border-box"}}/>
+        )}
+        <input placeholder="邮箱" value={form.email}
+          onChange={e => setForm({...form, email: e.target.value})}
+          style={{width:"100%",padding:"0.75rem",marginBottom:"1rem",background:"#2a2a2a",border:"1px solid #333",borderRadius:"8px",color:"#fff",boxSizing:"border-box"}}/>
+        <input type="password" placeholder="密码" value={form.password}
+          onChange={e => setForm({...form, password: e.target.value})}
+          style={{width:"100%",padding:"0.75rem",marginBottom:"1rem",background:"#2a2a2a",border:"1px solid #333",borderRadius:"8px",color:"#fff",boxSizing:"border-box"}}/>
+        {error && <div style={{color:"#ff4444",background:"#2a1a1a",padding:"0.75rem",borderRadius:"8px",marginBottom:"1rem",border:"1px solid #ff4444"}}>{error}</div>}
+        <button onClick={handleSubmit} disabled={loading}
+          style={{width:"100%",padding:"0.75rem",background:"#f59e0b",border:"none",borderRadius:"8px",color:"#000",fontWeight:"bold",cursor:"pointer",fontSize:"1rem"}}>
+          {loading ? "请稍候..." : mode === "login" ? "登录" : "注册"}
+        </button>
+        <div style={{textAlign:"center",marginTop:"1rem",color:"#888",fontSize:"0.9rem"}}>
+          {mode === "login" ? (
+            <span>没有账号？<span onClick={() => setMode("register")} style={{color:"#f59e0b",cursor:"pointer"}}>去注册</span></span>
+          ) : (
+            <span>已有账号？<span onClick={() => setMode("login")} style={{color:"#f59e0b",cursor:"pointer"}}>去登录</span></span>
           )}
-
-          <div>
-            <label className="block text-sm text-zinc-400 mb-2">邮箱</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="your@email.com"
-              className="w-full px-4 py-3 rounded-lg bg-zinc-800 border border-zinc-700 focus:border-amber-500 outline-none"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm text-zinc-400 mb-2">密码</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="至少 6 位"
-              className="w-full px-4 py-3 rounded-lg bg-zinc-800 border border-zinc-700 focus:border-amber-500 outline-none"
-              minLength={6}
-              required
-            />
-          </div>
-
-          {error && (
-            <div className="p-3 rounded-lg bg-red-900/20 border border-red-700">
-              <p className="text-red-400 text-sm">{error}</p>
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-3 rounded-lg bg-amber-500 text-black font-medium hover:bg-amber-400 disabled:opacity-50 transition-colors"
-          >
-            {loading ? "处理中..." : mode === "login" ? "登录" : "注册"}
-          </button>
-        </form>
-
-        <div className="mt-6 text-center">
-          <button
-            onClick={() => {
-              setMode(mode === "login" ? "register" : "login");
-              setError(null);
-            }}
-            className="text-sm text-zinc-400 hover:text-amber-400 transition-colors"
-          >
-            {mode === "login" ? "没有账号？去注册" : "已有账号？去登录"}
-          </button>
         </div>
-
         {mode === "login" && (
-          <div className="mt-3 text-center">
-            <Link
-              href="/auth/forgot-password"
-              className="text-sm text-zinc-500 hover:text-amber-400 transition-colors"
-            >
-              忘记密码？
-            </Link>
+          <div style={{textAlign:"center",marginTop:"0.5rem"}}>
+            <Link href="/auth/forgot-password" style={{color:"#666",fontSize:"0.85rem"}}>忘记密码？</Link>
           </div>
         )}
       </div>
