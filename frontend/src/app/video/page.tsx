@@ -66,8 +66,8 @@ export default function VideoPage(){
       });
       const data=await res.json();
       if(!res.ok)throw new Error(data.detail||"生成失败");
-      const url=data.video_url||data.url||data.data?.video_url;
-      if(!url)throw new Error("未返回视频");
+      const url=data.video_url||data.url||data.data?.video_url||data.video?.url||data.data?.url;
+      if(!url){console.log("后端返回:",data);throw new Error("未返回视频 - "+JSON.stringify(data).slice(0,150));}
       saveGallery([{url,prompt:prompt||"图生视频",time:Date.now()},...gallery]);
     }catch(e:any){setError(e.message);}
     finally{setLoading(false);}
