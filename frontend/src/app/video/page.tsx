@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://43.134.71.189:8000";
@@ -12,12 +12,14 @@ const MODES = [
 
 export default function VideoPage(){
   const [mode,setMode]=useState("image-to-video");
-  const [imageUrl,setImageUrl]=useState("");
+  const [imageFile,setImageFile]=useState<File|null>(null);
+  const [imagePreview,setImagePreview]=useState("");
   const [prompt,setPrompt]=useState("");
   const [duration,setDuration]=useState(5);
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState("");
   const [gallery,setGallery]=useState<any[]>([]);
+  const fileRef=useRef<HTMLInputElement>(null);
 
   useEffect(()=>{
     const saved=localStorage.getItem("video_gallery");
@@ -29,15 +31,38 @@ export default function VideoPage(){
     localStorage.setItem("video_gallery",JSON.stringify(g.slice(0,50)));
   };
 
+  const handleFile=(f:File)=>{
+    setImageFile(f);
+    const reader=new FileReader();
+    reader.onload=e=>setImagePreview(e.target?.result as string);
+    reader.readAsDataURL(f);
+  };
+
+  const uploadFile=async(f:File)=>{
+    const token=localStorage.getItem("token")||"";
+    const fd=new FormData();
+    fd.append("file",f);
+    const res=await fetch(`${API_BASE}/api/content/upload`,{
+      method:"POST",
+      headers:{"Authorization":`Bearer ${token}`},
+      body:fd,
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.detail||"上传失败");
+    return data.url||data.image_url;
+  };
+
   const generate=async()=>{
-    if(!imageUrl.trim()){setError("请输入首帧图片 URL");return;}
+    if(!imageFile){setError("请上传首帧图片");return;}
     setError("");setLoading(true);
     try{
       const token=localStorage.getItem("token")||"";
+      let imgUrl="";
+      try{imgUrl=await uploadFile(imageFile);}catch(e){imgUrl=imagePreview;}
       const res=await fetch(`${API_BASE}/api/video/image-to-video`,{
         method:"POST",
         headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
-        body:JSON.stringify({image_url:imageUrl,prompt,duration_sec:duration}),
+        body:JSON.stringify({image_url:imgUrl,prompt,duration_sec:duration}),
       });
       const data=await res.json();
       if(!res.ok)throw new Error(data.detail||"生成失败");
@@ -66,7 +91,7 @@ export default function VideoPage(){
             <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"500px",color:"#bbb"}}>
               <div style={{fontSize:"3.5rem",marginBottom:"1rem",color:"#ddd"}}>▶</div>
               <div style={{fontSize:"0.95rem",color:"#999"}}>还没有视频作品，开始你的第一次创作吧</div>
-              <div style={{fontSize:"0.8rem",color:"#bbb",marginTop:"0.5rem"}}>在右侧输入参数，点击「开始生成」</div>
+              <div style={{fontSize:"0.8rem",color:"#bbb",marginTop:"0.5rem"}}>在右侧上传首帧图片，点击「开始生成」</div>
             </div>
           )}
           {loading && (
@@ -104,13 +129,23 @@ export default function VideoPage(){
         </div>
 
         <div>
-          <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>首帧图片 URL</div>
-          <input value={imageUrl} onChange={e=>setImageUrl(e.target.value)} placeholder="https://..."
-            style={{width:"100%",padding:"0.65rem 0.9rem",border:"1px solid #e5e5e5",borderRadius:"10px",fontSize:"0.85rem",background:"#fff !important",color:"#333 !important"}}/>
+          <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>首帧图片</div>
+          <input ref={fileRef} type="file" accept="image/*" onChange={e=>{const f=e.target.files?.[0];if(f)handleFile(f);}} style={{display:"none"}}/>
+          {imagePreview ? (
+            <div onClick={()=>fileRef.current?.click()} style={{position:"relative",cursor:"pointer",borderRadius:"12px",overflow:"hidden",aspectRatio:"16/9",background:"#fafaf7"}}>
+              <img src={imagePreview} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+              <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:"0.85rem",opacity:0,transition:"opacity 0.2s"}} onMouseEnter={e=>e.currentTarget.style.opacity="1"} onMouseLeave={e=>e.currentTarget.style.opacity="0"}>点击更换</div>
+            </div>
+          ) : (
+            <button onClick={()=>fileRef.current?.click()} style={{width:"100%",padding:"1.5rem 0.9rem",border:"2px dashed #ccc",background:"#fafaf7",borderRadius:"12px",cursor:"pointer",color:"#888",fontSize:"0.85rem",display:"flex",flexDirection:"column",alignItems:"center",gap:"0.5rem"}}>
+              <span style={{fontSize:"1.5rem",color:"#bbb"}}>↑</span>
+              点击上传图片
+            </button>
+          )}
         </div>
 
         <div>
-          <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>时长（秒）</div>
+          <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>时长</div>
           <select value={duration} onChange={e=>setDuration(parseInt(e.target.value))} style={{width:"100%",padding:"0.65rem 0.9rem",border:"1px solid #e5e5e5",borderRadius:"10px",fontSize:"0.85rem",background:"#fff !important",color:"#333 !important"}}>
             <option value="5">5 秒</option>
             <option value="10">10 秒</option>
@@ -120,7 +155,7 @@ export default function VideoPage(){
         <div style={{flex:1,display:"flex",flexDirection:"column"}}>
           <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>运动描述（可选）</div>
           <textarea value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="描述视频中期望的运动效果..." 
-            style={{width:"100%",padding:"0.75rem 0.9rem",border:"1px solid #e5e5e5",borderRadius:"12px",fontSize:"0.88rem",minHeight:"120px",resize:"vertical",fontFamily:"inherit",background:"#fff !important",color:"#333 !important",flex:1}}/>
+            style={{width:"100%",padding:"0.75rem 0.9rem",border:"1px solid #e5e5e5",borderRadius:"12px",fontSize:"0.88rem",minHeight:"100px",resize:"vertical",fontFamily:"inherit",background:"#fff !important",color:"#333 !important",flex:1}}/>
         </div>
 
         {error && <div style={{color:"#c00",background:"#ffeaea",padding:"0.7rem",borderRadius:"10px",fontSize:"0.8rem"}}>{error}</div>}
