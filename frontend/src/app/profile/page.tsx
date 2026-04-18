@@ -1,281 +1,145 @@
 "use client";
-
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
+import Sidebar from "@/components/Sidebar";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://43.134.71.189:8000";
 
-export default function ProfilePage() {
-  const router = useRouter();
-  const [user, setUser] = useState<{ id: string; name: string; email: string; credits: number } | null>(null);
-  const [token, setToken] = useState<string | null>(null);
+export default function ProfilePage(){
+  const router=useRouter();
+  const [user,setUser]=useState<any>(null);
+  const [name,setName]=useState("");
+  const [curPwd,setCurPwd]=useState("");
+  const [newPwd,setNewPwd]=useState("");
+  const [nameMsg,setNameMsg]=useState("");
+  const [pwdMsg,setPwdMsg]=useState("");
+  const [nameErr,setNameErr]=useState("");
+  const [pwdErr,setPwdErr]=useState("");
 
-  // 表单状态
-  const [name, setName] = useState("");
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
+  useEffect(()=>{
+    const token=localStorage.getItem("token");
+    const u=localStorage.getItem("user");
+    if(!token||!u){router.push("/auth");return;}
+    try{
+      const obj=JSON.parse(u);
+      setUser(obj);
+      setName(obj.name||"");
+    }catch{}
+  },[router]);
 
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-
-  useEffect(() => {
-    // 获取存储的用户信息
-    const storedUser = localStorage.getItem("user");
-    const storedToken = localStorage.getItem("token");
-
-    if (!storedUser || !storedToken) {
-      router.push("/auth");
-      return;
-    }
-
-    setUser(JSON.parse(storedUser));
-    setToken(storedToken);
-    setName(JSON.parse(storedUser).name || "");
-  }, [router]);
-
-  const handleUpdateName = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    setSuccess(null);
-
-    try {
-      const res = await fetch(`${API_BASE}/api/auth/me`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-        },
-        body: JSON.stringify({ name }),
+  const saveName=async()=>{
+    setNameMsg("");setNameErr("");
+    try{
+      const token=localStorage.getItem("token")||"";
+      const res=await fetch(`${API_BASE}/api/auth/me`,{
+        method:"PUT",
+        headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
+        body:JSON.stringify({name}),
       });
-
-      if (res.ok) {
-        const updatedUser = { ...user, name };
-        localStorage.setItem("user", JSON.stringify(updatedUser));
-        setUser(updatedUser);
-        setSuccess("昵称已更新");
-      } else {
-        const data = await res.json();
-        setError(data.detail || "更新失败");
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "网络错误");
-    } finally {
-      setLoading(false);
-    }
+      const data=await res.json();
+      if(!res.ok)throw new Error(data.detail||"保存失败");
+      const newUser={...user,name};
+      setUser(newUser);
+      localStorage.setItem("user",JSON.stringify(newUser));
+      setNameMsg("✓ 昵称已更新");
+      setTimeout(()=>setNameMsg(""),2000);
+    }catch(e:any){setNameErr(e.message);}
   };
 
-  const handleChangePassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (newPassword !== confirmPassword) {
-      setError("两次输入的新密码不一致");
-      return;
-    }
-
-    if (newPassword.length < 6) {
-      setError("新密码至少需要 6 位");
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-    setSuccess(null);
-
-    try {
-      const res = await fetch(`${API_BASE}/api/auth/change-password`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          current_password: currentPassword,
-          new_password: newPassword,
-        }),
+  const changePwd=async()=>{
+    setPwdMsg("");setPwdErr("");
+    if(newPwd.length<6){setPwdErr("新密码至少6位");return;}
+    try{
+      const token=localStorage.getItem("token")||"";
+      const res=await fetch(`${API_BASE}/api/auth/change-password`,{
+        method:"POST",
+        headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
+        body:JSON.stringify({current_password:curPwd,new_password:newPwd}),
       });
-
-      if (res.ok) {
-        setSuccess("密码已修改，请重新登录");
-        setCurrentPassword("");
-        setNewPassword("");
-        setConfirmPassword("");
-        // 3 秒后跳转到登录页
-        setTimeout(() => {
-          localStorage.removeItem("token");
-          localStorage.removeItem("user");
-          router.push("/auth");
-        }, 3000);
-      } else {
-        const data = await res.json();
-        setError(data.detail || "修改失败");
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "网络错误");
-    } finally {
-      setLoading(false);
-    }
+      const data=await res.json();
+      if(!res.ok)throw new Error(data.detail||"修改失败");
+      setPwdMsg("✓ 密码已修改");
+      setCurPwd("");setNewPwd("");
+      setTimeout(()=>setPwdMsg(""),2000);
+    }catch(e:any){setPwdErr(e.message);}
   };
 
-  const handleLogout = () => {
+  const logout=()=>{
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     router.push("/");
   };
 
-  if (!user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-zinc-400">加载中...</div>
-      </div>
-    );
-  }
+  if(!user)return <div style={{minHeight:"100vh",background:"#edeae4"}}/>;
 
   return (
-    <div className="min-h-screen px-6 py-12">
-      <div className="max-w-2xl mx-auto">
-        {/* 头部 */}
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold mb-2">个人中心</h1>
-          <p className="text-zinc-400">管理您的个人信息和账户设置</p>
+    <div style={{display:"flex",minHeight:"100vh",background:"#edeae4",fontFamily:"-apple-system,BlinkMacSystemFont,sans-serif"}}>
+      <Sidebar/>
+      <main style={{flex:1,padding:"3rem 4rem",overflowY:"auto",maxWidth:"800px"}}>
+        <div style={{marginBottom:"2.5rem"}}>
+          <div style={{fontSize:"0.85rem",color:"#999",marginBottom:"0.3rem"}}>账户设置</div>
+          <h1 style={{fontSize:"2rem",fontWeight:300,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>个人 <span style={{fontStyle:"italic"}}>中心</span></h1>
         </div>
 
-        {/* 用户信息卡片 */}
-        <div className="p-6 rounded-xl border border-zinc-800 bg-zinc-900/50 mb-6">
-          <div className="flex items-center gap-4 mb-4">
-            <div className="w-16 h-16 rounded-full bg-amber-500/20 flex items-center justify-center text-2xl font-bold text-amber-400">
-              {user.name?.[0]?.toUpperCase() || "U"}
+        <div style={{background:"#fff",borderRadius:"20px",padding:"2rem",marginBottom:"1.25rem",border:"1px solid rgba(0,0,0,0.04)"}}>
+          <div style={{display:"flex",alignItems:"center",gap:"1.25rem",marginBottom:"1.5rem"}}>
+            <div style={{width:"64px",height:"64px",borderRadius:"50%",background:"#0d0d0d",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.5rem",fontWeight:500}}>
+              {(user.name||user.email||"?").charAt(0).toUpperCase()}
+            </div>
+            <div style={{flex:1}}>
+              <div style={{fontSize:"1.2rem",fontWeight:500,color:"#0d0d0d",marginBottom:"0.25rem"}}>{user.name||"未设置昵称"}</div>
+              <div style={{fontSize:"0.85rem",color:"#888"}}>{user.email}</div>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:"2rem",paddingTop:"1.25rem",borderTop:"1px solid #f0ede8"}}>
+            <div>
+              <div style={{fontSize:"1.6rem",fontWeight:300,color:"#0d0d0d"}}>{user.credits||0}</div>
+              <div style={{fontSize:"0.75rem",color:"#888"}}>可用积分</div>
             </div>
             <div>
-              <h2 className="text-lg font-semibold">{user.name || user.email}</h2>
-              <p className="text-zinc-400 text-sm">{user.email}</p>
+              <div style={{fontSize:"1.6rem",fontWeight:300,color:"#0d0d0d"}}>{user.role==="admin"?"管理员":"普通用户"}</div>
+              <div style={{fontSize:"0.75rem",color:"#888"}}>账户类型</div>
             </div>
+            <button onClick={()=>router.push("/pricing")} style={{marginLeft:"auto",alignSelf:"center",background:"#0d0d0d",color:"#fff",border:"none",padding:"0.65rem 1.4rem",borderRadius:"999px",cursor:"pointer",fontSize:"0.85rem"}}>充值积分 →</button>
           </div>
-          <div className="flex items-center justify-between py-3 border-t border-zinc-800">
-            <span className="text-zinc-400 text-sm">账户余额</span>
-            <span className="text-amber-400 font-semibold">{user.credits} 积分</span>
-          </div>
-          <Link
-            href="/pricing"
-            className="block w-full py-2 mt-3 text-center rounded-lg bg-amber-500 text-black font-medium hover:bg-amber-400 transition-colors text-sm"
-          >
-            充值中心
-          </Link>
         </div>
 
-        {/* 修改昵称 */}
-        <form onSubmit={handleUpdateName} className="p-6 rounded-xl border border-zinc-800 bg-zinc-900/50 mb-6">
-          <h3 className="text-lg font-semibold mb-4">修改昵称</h3>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm text-zinc-400 mb-2">昵称</label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full px-4 py-3 rounded-lg bg-zinc-800 border border-zinc-700 focus:border-amber-500 outline-none"
-                placeholder="输入新昵称"
-              />
-            </div>
-
-            {error && (
-              <div className="p-3 rounded-lg bg-red-900/20 border border-red-700">
-                <p className="text-red-400 text-sm">{error}</p>
-              </div>
-            )}
-            {success && (
-              <div className="p-3 rounded-lg bg-green-900/20 border border-green-700">
-                <p className="text-green-400 text-sm">{success}</p>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3 rounded-lg bg-amber-500 text-black font-medium hover:bg-amber-400 disabled:opacity-50 transition-colors"
-            >
-              {loading ? "保存中..." : "保存"}
-            </button>
+        <div style={{background:"#fff",borderRadius:"20px",padding:"2rem",marginBottom:"1.25rem",border:"1px solid rgba(0,0,0,0.04)"}}>
+          <div style={{fontSize:"1rem",fontWeight:500,color:"#0d0d0d",marginBottom:"1.25rem"}}>修改昵称</div>
+          <div style={{marginBottom:"0.75rem"}}>
+            <input value={name} onChange={e=>setName(e.target.value)} placeholder="昵称"
+              style={{width:"100%",padding:"0.75rem 1rem",border:"1px solid #e5e5e5",borderRadius:"10px",fontSize:"0.9rem",background:"#fafaf7 !important",color:"#333 !important",boxSizing:"border-box"}}/>
           </div>
-        </form>
+          {nameErr && <div style={{color:"#c00",fontSize:"0.8rem",marginBottom:"0.75rem"}}>{nameErr}</div>}
+          {nameMsg && <div style={{color:"#0a7",fontSize:"0.8rem",marginBottom:"0.75rem"}}>{nameMsg}</div>}
+          <button onClick={saveName} style={{padding:"0.65rem 1.5rem",background:"#0d0d0d",color:"#fff",border:"none",borderRadius:"10px",cursor:"pointer",fontSize:"0.85rem"}}>保存修改</button>
+        </div>
 
-        {/* 修改密码 */}
-        <form onSubmit={handleChangePassword} className="p-6 rounded-xl border border-zinc-800 bg-zinc-900/50 mb-6">
-          <h3 className="text-lg font-semibold mb-4">修改密码</h3>
-          <div className="space-y-4">
+        <div style={{background:"#fff",borderRadius:"20px",padding:"2rem",marginBottom:"1.25rem",border:"1px solid rgba(0,0,0,0.04)"}}>
+          <div style={{fontSize:"1rem",fontWeight:500,color:"#0d0d0d",marginBottom:"1.25rem"}}>修改密码</div>
+          <div style={{display:"flex",flexDirection:"column",gap:"0.75rem",marginBottom:"1rem"}}>
             <div>
-              <label className="block text-sm text-zinc-400 mb-2">当前密码</label>
-              <input
-                type="password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                className="w-full px-4 py-3 rounded-lg bg-zinc-800 border border-zinc-700 focus:border-amber-500 outline-none"
-                placeholder="输入当前密码"
-              />
+              <label style={{display:"block",fontSize:"0.75rem",color:"#999",marginBottom:"0.35rem"}}>当前密码</label>
+              <input type="password" value={curPwd} onChange={e=>setCurPwd(e.target.value)} placeholder="输入当前密码"
+                style={{width:"100%",padding:"0.75rem 1rem",border:"1px solid #e5e5e5",borderRadius:"10px",fontSize:"0.9rem",background:"#fafaf7 !important",color:"#333 !important",boxSizing:"border-box"}}/>
             </div>
             <div>
-              <label className="block text-sm text-zinc-400 mb-2">新密码</label>
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                className="w-full px-4 py-3 rounded-lg bg-zinc-800 border border-zinc-700 focus:border-amber-500 outline-none"
-                placeholder="至少 6 位"
-                minLength={6}
-              />
+              <label style={{display:"block",fontSize:"0.75rem",color:"#999",marginBottom:"0.35rem"}}>新密码</label>
+              <input type="password" value={newPwd} onChange={e=>setNewPwd(e.target.value)} placeholder="至少 6 位"
+                style={{width:"100%",padding:"0.75rem 1rem",border:"1px solid #e5e5e5",borderRadius:"10px",fontSize:"0.9rem",background:"#fafaf7 !important",color:"#333 !important",boxSizing:"border-box"}}/>
             </div>
-            <div>
-              <label className="block text-sm text-zinc-400 mb-2">确认新密码</label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className="w-full px-4 py-3 rounded-lg bg-zinc-800 border border-zinc-700 focus:border-amber-500 outline-none"
-                placeholder="再次输入新密码"
-                minLength={6}
-              />
-            </div>
-
-            {error && (
-              <div className="p-3 rounded-lg bg-red-900/20 border border-red-700">
-                <p className="text-red-400 text-sm">{error}</p>
-              </div>
-            )}
-            {success && (
-              <div className="p-3 rounded-lg bg-green-900/20 border border-green-700">
-                <p className="text-green-400 text-sm">{success}</p>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading || !currentPassword || !newPassword || !confirmPassword}
-              className="w-full py-3 rounded-lg bg-amber-500 text-black font-medium hover:bg-amber-400 disabled:opacity-50 transition-colors"
-            >
-              {loading ? "修改中..." : "修改密码"}
-            </button>
           </div>
-        </form>
+          {pwdErr && <div style={{color:"#c00",fontSize:"0.8rem",marginBottom:"0.75rem"}}>{pwdErr}</div>}
+          {pwdMsg && <div style={{color:"#0a7",fontSize:"0.8rem",marginBottom:"0.75rem"}}>{pwdMsg}</div>}
+          <button onClick={changePwd} style={{padding:"0.65rem 1.5rem",background:"#0d0d0d",color:"#fff",border:"none",borderRadius:"10px",cursor:"pointer",fontSize:"0.85rem"}}>确认修改</button>
+        </div>
 
-        {/* 退出登录 */}
-        <button
-          onClick={handleLogout}
-          className="w-full py-3 rounded-lg border border-zinc-700 text-zinc-400 hover:bg-zinc-800 transition-colors"
-        >
-          退出登录
-        </button>
-
-        {/* 返回主页 */}
-        <Link
-          href="/"
-          className="block w-full py-3 mt-3 text-center rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
-        >
-          返回主页
-        </Link>
-      </div>
+        <div style={{background:"#fff",borderRadius:"20px",padding:"2rem",border:"1px solid rgba(0,0,0,0.04)"}}>
+          <div style={{fontSize:"1rem",fontWeight:500,color:"#0d0d0d",marginBottom:"0.5rem"}}>退出登录</div>
+          <div style={{fontSize:"0.85rem",color:"#888",marginBottom:"1rem"}}>退出后需要重新登录才能使用服务</div>
+          <button onClick={logout} style={{padding:"0.65rem 1.5rem",background:"none",color:"#c00",border:"1px solid #c00",borderRadius:"10px",cursor:"pointer",fontSize:"0.85rem"}}>退出登录</button>
+        </div>
+      </main>
     </div>
   );
 }
