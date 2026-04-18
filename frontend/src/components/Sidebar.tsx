@@ -15,11 +15,11 @@ export default function Sidebar() {
 
   return (
     <aside style={{width:"80px",background:"#fff",borderRight:"1px solid rgba(0,0,0,0.06)",padding:"1.5rem 0.75rem",display:"flex",flexDirection:"column",alignItems:"center",gap:"1rem",height:"100vh",position:"sticky",top:0,flexShrink:0}}>
-      <div onClick={()=>router.push("/dashboard")} style={{cursor:"pointer",marginBottom:"1rem",fontSize:"1.1rem",fontFamily:"Georgia,serif",fontStyle:"italic",fontWeight:700,color:"#0d0d0d",textAlign:"center"}}>
+      <div onClick={()=>router.push("/")} style={{cursor:"pointer",marginBottom:"1rem",fontSize:"1.1rem",fontFamily:"Georgia,serif",fontStyle:"italic",fontWeight:700,color:"#0d0d0d",textAlign:"center"}}>
         xL
       </div>
 
-      <button onClick={()=>router.push("/dashboard")} title="工作台"
+      <button onClick={()=>router.push("/")} title="首页"
         style={{width:"48px",height:"48px",borderRadius:"12px",border:"none",background:"#f5f3ed",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.2rem",color:"#333",transition:"all 0.15s"}}
         onMouseEnter={e=>{e.currentTarget.style.background="#e8e4d9";}}
         onMouseLeave={e=>{e.currentTarget.style.background="#f5f3ed";}}>
