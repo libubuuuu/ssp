@@ -1,313 +1,176 @@
 "use client";
-
 import { useState, useEffect } from "react";
+import Sidebar from "@/components/Sidebar";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-interface VoicePreset {
-  id: string;
-  name: string;
-  gender: string;
-  style: string;
-}
+const MODES = [
+  { key: "clone", label: "声音克隆", desc: "上传参考音频，克隆专属音色" },
+  { key: "tts", label: "文本转语音", desc: "选择预设音色，文字转语音" },
+];
+
+interface VoicePreset { id: string; name: string; gender: string; style: string; }
 
 export default function VoiceClonePage() {
-  const [mode, setMode] = useState<"clone" | "tts">("clone");
+  const [mode, setMode] = useState("clone");
   const [referenceAudio, setReferenceAudio] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [selectedVoice, setSelectedVoice] = useState("default");
   const [voicePresets, setVoicePresets] = useState<VoicePreset[]>([]);
-  const [clonedVoiceId, setClonedVoiceId] = useState<string | null>(null);
   const [resultAudioUrl, setResultAudioUrl] = useState<string | null>(null);
+  const [clonedVoiceId, setClonedVoiceId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const [gallery, setGallery] = useState<any[]>([]);
 
-  // 加载预设音色
   useEffect(() => {
-    fetch(`${API_BASE}/api/avatar/voice/presets`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.voices) setVoicePresets(data.voices);
-      })
-      .catch(() => {});
+    fetch(`${API_BASE}/api/avatar/voice/presets`).then(r => r.json()).then(d => { if (d.voices) setVoicePresets(d.voices); }).catch(() => {});
+    const saved = localStorage.getItem("voice_gallery");
+    if (saved) { try { setGallery(JSON.parse(saved)); } catch {} }
   }, []);
 
-  // 处理参考音频上传
-  const handleReferenceAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const saveGallery = (g: any[]) => {
+    setGallery(g);
+    localStorage.setItem("voice_gallery", JSON.stringify(g.slice(0, 50)));
+  };
+
+  const handleAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     const reader = new FileReader();
-    reader.onload = (e) => {
-      setReferenceAudio(e.target?.result as string);
-    };
+    reader.onload = e => setReferenceAudio(e.target?.result as string);
     reader.readAsDataURL(file);
   };
 
-  // 克隆声音
-  const handleCloneVoice = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!referenceAudio || !text) {
-      setError("请上传参考音频并输入文案");
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-    setClonedVoiceId(null);
-    setResultAudioUrl(null);
-
+  const handleClone = async () => {
+    if (!referenceAudio || !text) { setError("请上传参考音频并输入文案"); return; }
+    setError(""); setLoading(true); setResultAudioUrl(null);
     try {
       const res = await fetch(`${API_BASE}/api/avatar/voice/clone`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          reference_audio_url: referenceAudio,
-          text: text,
-          model: "qwen3-tts",
-        }),
+        body: JSON.stringify({ reference_audio_url: referenceAudio, text, model: "qwen3-tts" }),
       });
-
       const data = await res.json();
-
       if (data.voice_id) {
         setClonedVoiceId(data.voice_id);
         setResultAudioUrl(data.audio_url);
-      } else {
-        setError(data.detail || "克隆失败");
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "网络错误");
-    } finally {
-      setLoading(false);
-    }
+        saveGallery([{ url: data.audio_url, label: text.slice(0, 30), mode: "克隆", time: Date.now() }, ...gallery]);
+      } else { setError(data.detail || "克隆失败"); }
+    } catch (e: any) { setError(e.message || "网络错误"); }
+    finally { setLoading(false); }
   };
 
-  // 文本转语音
-  const handleTTS = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!text) {
-      setError("请输入文案");
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-    setResultAudioUrl(null);
-
+  const handleTTS = async () => {
+    if (!text) { setError("请输入文案"); return; }
+    setError(""); setLoading(true); setResultAudioUrl(null);
     try {
       const res = await fetch(`${API_BASE}/api/avatar/voice/tts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text: text,
-          voice_id: selectedVoice,
-          speed: 1.0,
-          pitch: 1.0,
-        }),
+        body: JSON.stringify({ text, voice_id: selectedVoice, speed: 1.0, pitch: 1.0 }),
       });
-
       const data = await res.json();
-
       if (data.audio_url) {
         setResultAudioUrl(data.audio_url);
-      } else {
-        setError(data.detail || "生成失败");
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "网络错误");
-    } finally {
-      setLoading(false);
-    }
+        saveGallery([{ url: data.audio_url, label: text.slice(0, 30), mode: "TTS", time: Date.now() }, ...gallery]);
+      } else { setError(data.detail || "生成失败"); }
+    } catch (e: any) { setError(e.message || "网络错误"); }
+    finally { setLoading(false); }
   };
 
   return (
-    <div className="max-w-3xl mx-auto py-12 px-6">
-      <h1 className="text-2xl font-bold mb-2">语音克隆引擎</h1>
-      <p className="text-zinc-400 mb-8 text-sm">
-        上传 5-10 秒参考音频，提取音色特征，生成专属配音
-      </p>
-
-      {/* 模式切换 */}
-      <div className="flex gap-3 mb-8">
-        <button
-          onClick={() => setMode("clone")}
-          className={`px-4 py-2 rounded-lg transition-colors ${
-            mode === "clone" ? "bg-amber-500 text-black" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
-          }`}
-        >
-          声音克隆
-        </button>
-        <button
-          onClick={() => setMode("tts")}
-          className={`px-4 py-2 rounded-lg transition-colors ${
-            mode === "tts" ? "bg-amber-500 text-black" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
-          }`}
-        >
-          文本转语音
-        </button>
-      </div>
-
-      {/* 声音克隆模式 */}
-      {mode === "clone" && (
-        <form onSubmit={handleCloneVoice} className="space-y-6">
-          {/* 参考音频上传 */}
+    <div style={{ display: "flex", minHeight: "100vh", background: "#edeae4", fontFamily: "-apple-system,BlinkMacSystemFont,sans-serif" }}>
+      <Sidebar />
+      <main style={{ flex: 1, padding: "2rem 2.5rem", overflowY: "auto" }}>
+        <div style={{ marginBottom: "1.5rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
-            <label className="block text-sm text-zinc-400 mb-2">
-              参考音频 *
-            </label>
-            <div className="space-y-3">
-              <label className="block w-full h-32 border-2 border-dashed border-zinc-700 rounded-lg hover:border-amber-500 transition-colors cursor-pointer flex items-center justify-center">
-                <input
-                  type="file"
-                  accept="audio/*"
-                  onChange={handleReferenceAudioUpload}
-                  className="hidden"
-                />
-                <div className="text-center text-zinc-500">
-                  <p className="text-2xl mb-2">🎙️</p>
-                  <p className="text-sm">点击上传参考音频</p>
-                  <p className="text-xs mt-1">5-10 秒，清晰的人声录音</p>
-                </div>
-              </label>
-              {referenceAudio && (
-                <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-700">
-                  <div className="flex items-center gap-3">
-                    <span className="text-2xl">🔊</span>
-                    <span className="text-sm text-zinc-400 flex-1">
-                      已上传参考音频
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setReferenceAudio(null)}
-                      className="w-6 h-6 bg-red-500 rounded-full text-white text-sm flex items-center justify-center hover:bg-red-600"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                  <audio src={referenceAudio} controls className="w-full mt-2" />
-                </div>
-              )}
+            <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>语音创作</div>
+            <h1 style={{ fontSize: "1.6rem", fontWeight: 400, color: "#0d0d0d", margin: 0, fontFamily: "Georgia,serif" }}>语音<span style={{ fontStyle: "italic" }}> 工作台</span></h1>
+          </div>
+          {gallery.length > 0 && <button onClick={() => { if (confirm("清空记录？")) saveGallery([]); }} style={{ background: "none", border: "1px solid #ddd", padding: "0.5rem 1rem", borderRadius: "999px", color: "#666", fontSize: "0.85rem", cursor: "pointer" }}>清空记录</button>}
+        </div>
+
+        <div style={{ background: "#fafaf7", backgroundImage: "linear-gradient(rgba(0,0,0,0.05) 1px,transparent 1px),linear-gradient(90deg,rgba(0,0,0,0.05) 1px,transparent 1px)", backgroundSize: "40px 40px", borderRadius: "24px", minHeight: "calc(100vh - 180px)", padding: "2rem", border: "2px dashed rgba(0,0,0,0.2)" }}>
+          {gallery.length === 0 && !loading && (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "500px" }}>
+              <div style={{ fontSize: "3.5rem", marginBottom: "1rem", color: "#ddd" }}>🎙️</div>
+              <div style={{ fontSize: "0.95rem", color: "#999" }}>还没有语音作品，开始你的第一次创作吧</div>
+              <div style={{ fontSize: "0.8rem", color: "#bbb", marginTop: "0.5rem" }}>在右侧输入文案，点击「开始生成」</div>
             </div>
-          </div>
-
-          {/* 文案输入 */}
-          <div>
-            <label className="block text-sm text-zinc-400 mb-2">
-              要转换的文案 *
-            </label>
-            <textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="输入要转换为语音的文案..."
-              className="w-full h-32 px-4 py-3 rounded-lg bg-zinc-900 border border-zinc-700 focus:border-amber-500 outline-none resize-none"
-              required
-            />
-          </div>
-
-          {/* 提交按钮 */}
-          <button
-            type="submit"
-            disabled={loading || !referenceAudio || !text}
-            className="w-full py-3 rounded-lg bg-amber-500 text-black font-medium hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {loading ? "处理中..." : "克隆声音并生成配音"}
-          </button>
-        </form>
-      )}
-
-      {/* 文本转语音模式 */}
-      {mode === "tts" && (
-        <form onSubmit={handleTTS} className="space-y-6">
-          {/* 音色选择 */}
-          <div>
-            <label className="block text-sm text-zinc-400 mb-2">
-              选择音色
-            </label>
-            <div className="grid grid-cols-2 gap-3">
-              {voicePresets.map((voice) => (
-                <button
-                  key={voice.id}
-                  type="button"
-                  onClick={() => setSelectedVoice(voice.id)}
-                  className={`p-4 rounded-lg border text-left transition-colors ${
-                    selectedVoice === voice.id
-                      ? "border-amber-500 bg-amber-500/10"
-                      : "border-zinc-700 bg-zinc-900 hover:border-zinc-500"
-                  }`}
-                >
-                  <div className="font-medium text-zinc-200">{voice.name}</div>
-                  <div className="text-xs text-zinc-500 mt-1">
-                    {voice.gender} · {voice.style}
+          )}
+          {loading && (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "500px" }}>
+              <div style={{ width: "40px", height: "40px", border: "3px solid #eee", borderTopColor: "#0d0d0d", borderRadius: "50%", animation: "spin 1s linear infinite" }}></div>
+              <div style={{ marginTop: "1rem", color: "#555", fontSize: "0.95rem", fontWeight: 500 }}>AI 正在生成语音...</div>
+              <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+            </div>
+          )}
+          {gallery.length > 0 && !loading && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+              {gallery.map((item, i) => (
+                <div key={i} style={{ borderRadius: "14px", overflow: "hidden", background: "#fff", padding: "1rem 1.25rem", boxShadow: "0 4px 12px rgba(0,0,0,0.04)" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
+                    <span style={{ fontSize: "0.8rem", color: "#999" }}>{item.mode} · {item.label}</span>
+                    <a href={item.url} download target="_blank" style={{ fontSize: "0.75rem", color: "#666", textDecoration: "none", border: "1px solid #ddd", padding: "0.25rem 0.6rem", borderRadius: "999px" }}>下载</a>
                   </div>
+                  <audio src={item.url} controls style={{ width: "100%" }} />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </main>
+
+      <aside style={{ width: "340px", background: "#fff", borderLeft: "1px solid rgba(0,0,0,0.06)", padding: "2rem 1.75rem", display: "flex", flexDirection: "column", gap: "1.25rem", height: "100vh", position: "sticky", top: 0, overflowY: "auto" }}>
+        <div>
+          <div style={{ fontSize: "0.72rem", color: "#999", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "0.6rem" }}>模式</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+            {MODES.map(m => (
+              <button key={m.key} onClick={() => setMode(m.key)} style={{ textAlign: "left", padding: "0.7rem 0.9rem", border: mode === m.key ? "2px solid #0d0d0d" : "1px solid #e5e5e5", background: mode === m.key ? "#f9f7f2" : "#fff", borderRadius: "10px", cursor: "pointer" }}>
+                <div style={{ fontSize: "0.88rem", fontWeight: 500, color: "#0d0d0d" }}>{m.label}</div>
+                <div style={{ fontSize: "0.72rem", color: "#888", marginTop: "0.15rem" }}>{m.desc}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {mode === "clone" && (
+          <div>
+            <div style={{ fontSize: "0.72rem", color: "#999", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "0.6rem" }}>参考音频</div>
+            <label style={{ display: "block", width: "100%", padding: "1.2rem 0.9rem", border: "2px dashed #ccc", background: "#fafaf7", borderRadius: "12px", cursor: "pointer", color: "#888", fontSize: "0.85rem", textAlign: "center" }}>
+              <input type="file" accept="audio/*" onChange={handleAudioUpload} style={{ display: "none" }} />
+              {referenceAudio ? "✅ 已上传参考音频（点击更换）" : "↑ 点击上传参考音频\n5-10秒，清晰人声"}
+            </label>
+            {referenceAudio && <audio src={referenceAudio} controls style={{ width: "100%", marginTop: "0.5rem" }} />}
+          </div>
+        )}
+
+        {mode === "tts" && voicePresets.length > 0 && (
+          <div>
+            <div style={{ fontSize: "0.72rem", color: "#999", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "0.6rem" }}>选择音色</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+              {voicePresets.map(v => (
+                <button key={v.id} onClick={() => setSelectedVoice(v.id)} style={{ textAlign: "left", padding: "0.6rem 0.9rem", border: selectedVoice === v.id ? "2px solid #0d0d0d" : "1px solid #e5e5e5", background: selectedVoice === v.id ? "#f9f7f2" : "#fff", borderRadius: "10px", cursor: "pointer" }}>
+                  <div style={{ fontSize: "0.85rem", fontWeight: 500, color: "#0d0d0d" }}>{v.name}</div>
+                  <div style={{ fontSize: "0.72rem", color: "#888" }}>{v.gender} · {v.style}</div>
                 </button>
               ))}
             </div>
           </div>
+        )}
 
-          {/* 文案输入 */}
-          <div>
-            <label className="block text-sm text-zinc-400 mb-2">
-              文案 *
-            </label>
-            <textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="输入要转换为语音的文案..."
-              className="w-full h-32 px-4 py-3 rounded-lg bg-zinc-900 border border-zinc-700 focus:border-amber-500 outline-none resize-none"
-              required
-            />
-          </div>
-
-          {/* 提交按钮 */}
-          <button
-            type="submit"
-            disabled={loading || !text}
-            className="w-full py-3 rounded-lg bg-amber-500 text-black font-medium hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {loading ? "生成中..." : "生成配音"}
-          </button>
-        </form>
-      )}
-
-      {/* 错误提示 */}
-      {error && (
-        <div className="mt-6 p-4 rounded-lg bg-red-900/20 border border-red-700">
-          <p className="text-red-400 text-sm">{error}</p>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+          <div style={{ fontSize: "0.72rem", color: "#999", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "0.6rem" }}>文案内容</div>
+          <textarea value={text} onChange={e => setText(e.target.value)} placeholder="输入要转换为语音的文案..." style={{ width: "100%", padding: "0.75rem 0.9rem", border: "1px solid #e5e5e5", borderRadius: "12px", fontSize: "0.88rem", minHeight: "120px", resize: "vertical", fontFamily: "inherit", background: "#fff", color: "#333", flex: 1 }} />
         </div>
-      )}
 
-      {/* 结果音频 */}
-      {resultAudioUrl && (
-        <div className="mt-6 p-6 rounded-lg bg-zinc-900 border border-zinc-700">
-          <p className="text-sm text-zinc-400 mb-3">生成的音频</p>
-          <audio src={resultAudioUrl} controls className="w-full" />
-          <div className="flex items-center justify-between mt-4">
-            <span className="text-sm text-zinc-400">
-              {clonedVoiceId ? `克隆音色：${clonedVoiceId}` : "TTS 生成"}
-            </span>
-            <a
-              href={resultAudioUrl}
-              download
-              target="_blank"
-              className="px-4 py-2 rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors text-sm"
-            >
-              下载音频
-            </a>
-          </div>
-        </div>
-      )}
+        {error && <div style={{ color: "#c00", background: "#ffeaea", padding: "0.7rem", borderRadius: "10px", fontSize: "0.8rem" }}>{error}</div>}
 
-      {/* 使用提示 */}
-      <div className="mt-12 p-6 rounded-lg bg-zinc-900/50 border border-zinc-800">
-        <h3 className="text-sm font-semibold text-zinc-300 mb-3">使用提示</h3>
-        <ul className="space-y-2 text-sm text-zinc-500">
-          <li>• 参考音频建议 5-10 秒，清晰的人声录音</li>
-          <li>• 避免背景音乐和环境噪音</li>
-          <li>• 克隆的声音可用于数字人驱动</li>
-          <li>• 支持中文、英文、日文、韩文等多种语言</li>
-        </ul>
-      </div>
+        <button onClick={mode === "clone" ? handleClone : handleTTS} disabled={loading} style={{ padding: "0.9rem", background: loading ? "#999" : "#0d0d0d", color: "#fff", border: "none", borderRadius: "12px", cursor: loading ? "wait" : "pointer", fontSize: "0.95rem", fontWeight: 500 }}>
+          {loading ? "生成中..." : mode === "clone" ? "克隆声音并生成" : "生成配音"}
+        </button>
+      </aside>
     </div>
   );
 }
