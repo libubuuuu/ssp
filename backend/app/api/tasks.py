@@ -1,5 +1,5 @@
 """
-任务 API - 接入 FAL 真实状态查询
+任务 API - 接入 FAL 真实状态查询，完成时保存历史记录
 """
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from typing import Dict, Set, Optional
@@ -11,9 +11,34 @@ active_connections: Dict[str, Set[WebSocket]] = {}
 
 
 @router.get("/status/{task_id}")
-async def get_task_status(task_id: str, endpoint: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+async def get_task_status(task_id: str, endpoint: Optional[str] = None, prompt: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     video_service = get_video_service()
     result = await video_service.get_task_status(task_id, endpoint_hint=endpoint)
+
+    if result.get("status") == "completed" and result.get("video_url"):
+        # 保存到历史记录
+        try:
+            from app.database import get_db
+            import uuid, json
+            with get_db() as conn:
+                cursor = conn.cursor()
+                # 检查是否已保存过（避免重复）
+                cursor.execute("SELECT id FROM generation_history WHERE id = ?", (task_id,))
+                if not cursor.fetchone():
+                    cursor.execute("""
+                        INSERT INTO generation_history (id, user_id, module, prompt, videos, cost)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (
+                        task_id,
+                        current_user["id"],
+                        "video/image-to-video",
+                        prompt or "图生视频",
+                        json.dumps([result["video_url"]]),
+                        10
+                    ))
+                    conn.commit()
+        except Exception as e:
+            print(f"保存历史记录失败: {e}")
 
     if result.get("status") == "failed":
         try:
@@ -37,6 +62,46 @@ async def get_task_status(task_id: str, endpoint: Optional[str] = None, current_
         "error": result.get("error"),
         "refunded": result.get("refunded"),
     }
+
+
+@router.get("/history")
+async def get_history(current_user: dict = Depends(get_current_user)):
+    """获取当前用户的生成历史"""
+    try:
+        from app.database import get_db
+        import json
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, module, prompt, images, videos, cost, created_at
+                FROM generation_history
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+                LIMIT 100
+            """, (current_user["id"],))
+            rows = cursor.fetchall()
+            history = []
+            for row in rows:
+                videos = []
+                images = []
+                try:
+                    if row[4]: videos = json.loads(row[4])
+                except: pass
+                try:
+                    if row[3]: images = json.loads(row[3])
+                except: pass
+                history.append({
+                    "id": row[0],
+                    "module": row[1],
+                    "prompt": row[2],
+                    "images": images,
+                    "videos": videos,
+                    "cost": row[5],
+                    "created_at": row[6],
+                })
+            return {"history": history}
+    except Exception as e:
+        return {"history": [], "error": str(e)}
 
 
 @router.websocket("/ws/{task_id}")
