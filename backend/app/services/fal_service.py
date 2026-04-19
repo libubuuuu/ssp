@@ -30,7 +30,7 @@ class FalImageService:
             if circuit_breaker.is_available(backup_model):
                 model_key = backup_model
             else:
-                return {"error": f"模型 {model_key} 已熔断，暂无可用备用模型"}
+                return {"error": f"模型 {model_key} 已熔断"}
         try:
             model_info = self.MODELS.get(model_key)
             if not model_info:
@@ -53,11 +53,7 @@ class FalImageService:
             width, height = map(int, image_size.split("x"))
             return {"image_url": img_url, "width": width, "height": height, "model": endpoint, "model_label": model_info["label"]}
         except Exception as e:
-            should_alert = await circuit_breaker.record_failure(model_key)
-            if should_alert:
-                alert_service = get_alert_service()
-                if alert_service:
-                    await alert_service.notify_model_failure(model_key, 3)
+            await circuit_breaker.record_failure(model_key)
             return {"error": str(e)}
 
 
@@ -94,34 +90,39 @@ class FalVideoService:
             handler = await fal_client.submit_async(endpoint, arguments=arguments)
             await circuit_breaker.record_success(model_key)
             endpoint_tag = "edit" if "edit" in endpoint else "i2v"
-            return {"task_id": handler.request_id, "endpoint_tag": endpoint_tag, "status": "pending", "message": "视频生成任务已提交，预计需要 2-5 分钟", "model": endpoint}
+            return {"task_id": handler.request_id, "endpoint_tag": endpoint_tag, "status": "pending", "message": "视频生成任务已提交，预计需要 1 分钟", "model": endpoint}
         except Exception as e:
             await circuit_breaker.record_failure(model_key)
             return {"error": str(e)}
 
     async def get_task_status(self, task_id: str, endpoint_hint: Optional[str] = None) -> dict:
-        """查询任务状态 - 使用正确的 FAL status_async + result_async"""
+        """查询任务状态 - 正确处理FAL返回的对象格式"""
         try:
             if endpoint_hint and "edit" in endpoint_hint:
                 endpoint = "fal-ai/kling-video/o3/standard/edit"
             else:
                 endpoint = "fal-ai/kling-video/o3/standard/image-to-video"
 
-            status = await fal_client.status_async(endpoint, task_id, with_logs=False)
-            raw_status = getattr(status, "status", None) or (status.get("status") if isinstance(status, dict) else None)
+            status_obj = await fal_client.status_async(endpoint, task_id, with_logs=False)
 
-            if raw_status == "COMPLETED":
+            # FAL 返回的是对象，用 type name 或 str 判断
+            status_type = type(status_obj).__name__
+            status_str = str(status_obj)
+
+            if "Completed" in status_type or "Completed" in status_str:
+                # 直接拉结果
                 result = await fal_client.result_async(endpoint, task_id)
                 video_url = None
                 if isinstance(result, dict):
                     video_obj = result.get("video") or {}
                     video_url = video_obj.get("url") if isinstance(video_obj, dict) else None
-                return {"status": "completed", "video_url": video_url, "thumbnail_url": (result.get("thumbnail") or {}).get("url") if isinstance(result, dict) else None}
+                return {"status": "completed", "video_url": video_url}
 
-            if raw_status == "FAILED":
+            if "Failed" in status_type or "Failed" in status_str:
                 return {"status": "failed", "error": "FAL 任务失败"}
 
             return {"status": "processing"}
+
         except Exception as e:
             return {"status": "processing", "error": str(e)}
 
@@ -141,15 +142,13 @@ class FalAvatarService:
             return {"error": f"模型 {model_key} 已熔断"}
         try:
             model_info = self.MODELS.get(model_key)
-            if not model_info:
-                return {"error": f"未知模型：{model_key}"}
             endpoint = model_info["endpoint"]
             result = await fal_client.run_async(endpoint, arguments={"character_image_url": character_image_url, "audio_url": audio_url})
             await circuit_breaker.record_success(model_key)
             video_url = result.get("video", {}).get("url")
             if not video_url:
                 return {"error": "No video generated"}
-            return {"task_id": "avatar_" + str(hash(character_image_url)), "status": "completed", "video_url": video_url, "model": endpoint, "model_label": model_info["label"]}
+            return {"task_id": "avatar_" + str(hash(character_image_url)), "status": "completed", "video_url": video_url, "model": endpoint}
         except Exception as e:
             await circuit_breaker.record_failure(model_key)
             return {"error": str(e)}
@@ -213,7 +212,6 @@ def init_fal_services(fal_key: str):
     _video_service = FalVideoService(fal_key)
     _avatar_service = FalAvatarService(fal_key)
     _voice_service = FalVoiceService(fal_key)
-
 
 def get_image_service() -> FalImageService:
     return _image_service
