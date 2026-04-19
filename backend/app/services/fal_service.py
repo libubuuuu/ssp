@@ -60,7 +60,8 @@ class FalImageService:
 class FalVideoService:
     MODELS = {
         "kling/image-to-video": {"endpoint": "fal-ai/kling-video/o3/standard/image-to-video", "label": "图生视频"},
-        "kling/edit": {"endpoint": "fal-ai/kling-video/o3/standard/edit", "label": "视频编辑"},
+        "kling/edit": {"endpoint": "fal-ai/kling-video/o1/video-to-video/edit", "label": "复刻"},
+        "kling/reference": {"endpoint": "fal-ai/kling-video/o1/video-to-video/reference", "label": "最强复刻"},
     }
 
     def __init__(self, fal_key: str):
@@ -69,14 +70,28 @@ class FalVideoService:
     async def generate_from_image(self, image_url: str, prompt: str = "") -> dict:
         return await self._generate_video("kling/image-to-video", {"image_url": image_url, "prompt": prompt})
 
-    async def replace_element(self, video_url: str, element_image_url: str, instruction: str) -> dict:
-        return await self._generate_video("kling/edit", {"video_url": video_url, "element_image_url": element_image_url, "instruction": instruction})
-
-    async def clone_video(self, reference_video_url: str, model_image_url: str, product_image_url: Optional[str] = None) -> dict:
-        arguments = {"reference_video_url": reference_video_url, "model_image_url": model_image_url}
+    async def replace_element(self, video_url: str, element_image_url: str, instruction: str, product_image_url: str = None) -> dict:
+        elements = [{"frontal_image_url": element_image_url}]
         if product_image_url:
-            arguments["product_image_url"] = product_image_url
-        return await self._generate_video("kling/edit", arguments)
+            elements.append({"frontal_image_url": product_image_url})
+        args = {
+            "video_url": video_url,
+            "prompt": instruction,
+            "elements": elements,
+            "keep_audio": True,
+        }
+        return await self._generate_video("kling/edit", args)
+
+    async def clone_video(self, reference_video_url: str, model_image_url: str, product_image_url: Optional[str] = None, instruction: str = None) -> dict:
+        elements = [{"frontal_image_url": model_image_url}]
+        if product_image_url:
+            elements.append({"frontal_image_url": product_image_url})
+        args = {
+            "reference_video_url": reference_video_url,
+            "prompt": instruction or "保持相同的运镜、节奏和动作，将人物替换为@Element1",
+            "elements": elements,
+        }
+        return await self._generate_video("kling/reference", args)
 
     async def _generate_video(self, model_key: str, arguments: Dict[str, Any]) -> dict:
         circuit_breaker = get_circuit_breaker()
@@ -98,8 +113,10 @@ class FalVideoService:
     async def get_task_status(self, task_id: str, endpoint_hint: Optional[str] = None) -> dict:
         """查询任务状态 - 正确处理FAL返回的对象格式"""
         try:
-            if endpoint_hint and "edit" in endpoint_hint:
-                endpoint = "fal-ai/kling-video/o3/standard/edit"
+            if endpoint_hint and "reference" in endpoint_hint:
+                endpoint = "fal-ai/kling-video/o1/video-to-video/reference"
+            elif endpoint_hint and "edit" in endpoint_hint:
+                endpoint = "fal-ai/kling-video/o1/video-to-video/edit"
             else:
                 endpoint = "fal-ai/kling-video/o3/standard/image-to-video"
 

@@ -69,23 +69,26 @@ class ImageToVideoWorkflowRequest(BaseModel):
 class ImageToVideoRequest(BaseModel):
     """图生视频 (单镜头)"""
     image_url: str
+    tail_image_url: Optional[str] = None
     prompt: Optional[str] = ""
 
 
 class VideoElementReplaceRequest(BaseModel):
-    """视频元素替换请求"""
+    """复刻 - 视频元素替换"""
     video_url: str  # 原视频 URL
-    element_image_url: str  # 新元素图片 URL
-    instruction: str  # 自然语言指令，如"把视频里的水杯替换成我的产品"
-    model: Optional[str] = "fal-ai/kling-video/o3/standard/edit"
+    element_image_url: str  # 产品/人物图片 URL
+    instruction: str  # 替换指令
+    product_image_url: Optional[str] = None  # 第二张参考图（可选）
+    model: Optional[str] = "fal-ai/kling-video/o1/video-to-video/edit"
 
 
 class VideoCloneRequest(BaseModel):
-    """视频翻拍复刻请求"""
-    reference_video_url: str  # 爆款视频链接
+    """最强复刻 - 保留运镜节奏生成新视频"""
+    reference_video_url: str  # 参考爆款视频
     model_image_url: str  # 我的模特图
     product_image_url: Optional[str] = None  # 我的产品图（可选）
-    model: Optional[str] = "fal-ai/kling-video/o3/standard/edit"
+    instruction: Optional[str] = "保持相同的运镜、节奏和动作，将人物替换为@Element1"
+    model: Optional[str] = "fal-ai/kling-video/o1/video-to-video/reference"
 
 
 # ============== 视频剪辑台 API ==============
@@ -170,7 +173,7 @@ async def image_to_video(req: ImageToVideoRequest, current_user: dict = Depends(
     """图生视频 (Kling)"""
     service = get_video_service()
 
-    result = await service.generate_from_image(req.image_url, req.prompt)
+    result = await service.generate_from_image(req.image_url, req.prompt, req.tail_image_url)
 
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
@@ -213,7 +216,8 @@ async def replace_video_element(req: VideoElementReplaceRequest, current_user: d
     result = await video_service.replace_element(
         video_url=req.video_url,
         element_image_url=req.element_image_url,
-        instruction=req.instruction
+        instruction=req.instruction,
+        product_image_url=getattr(req, 'product_image_url', None)
     )
 
     if "error" in result:
