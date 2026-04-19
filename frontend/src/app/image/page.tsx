@@ -1,148 +1,281 @@
 "use client";
 import { useState, useEffect } from "react";
-import Sidebar from "@/components/Sidebar";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://43.134.71.189:8000";
 
 const STYLES = [
-  { key:"advertising", label:"广告视觉" },
-  { key:"minimalist", label:"精致简约" },
-  { key:"custom", label:"仅提示词" },
+  { key: "advertising", label: "广告视觉" },
+  { key: "minimalist", label: "精致简约" },
+  { key: "custom", label: "仅提示词" },
 ];
 
 const MODELS = [
-  { key:"nano-banana-2", label:"经济模式", desc:"最低成本，速度较慢" },
-  { key:"flux/schnell", label:"快速模式", desc:"生成速度快，质量高" },
-  { key:"flux/dev", label:"专业模式", desc:"更高质量的生成效果" },
+  { key: "nano-banana-2", label: "经济模式", desc: "最低成本，速度较慢" },
+  { key: "flux/schnell", label: "快速模式", desc: "生成速度快，质量高" },
+  { key: "flux/dev", label: "专业模式", desc: "更高质量的生成效果" },
 ];
 
-export default function ImagePage(){
-  const [prompt,setPrompt]=useState("");
-  const [style,setStyle]=useState("advertising");
-  const [model,setModel]=useState("nano-banana-2");
-  const [size,setSize]=useState("1024x1024");
-  const [loading,setLoading]=useState(false);
-  const [error,setError]=useState("");
-  const [gallery,setGallery]=useState<any[]>([]);
+const SIZES = [
+  { key: "1024x1024", label: "正方形 1:1" },
+  { key: "768x1024", label: "竖版 3:4" },
+  { key: "1024x768", label: "横版 4:3" },
+];
 
-  useEffect(()=>{
-    const saved=localStorage.getItem("img_gallery");
-    if(saved){try{setGallery(JSON.parse(saved));}catch{}}
-  },[]);
+export default function ImagePage() {
+  const [activeTab, setActiveTab] = useState<"generate" | "gallery">("generate");
+  const [prompt, setPrompt] = useState("");
+  const [style, setStyle] = useState("advertising");
+  const [model, setModel] = useState("nano-banana-2");
+  const [size, setSize] = useState("1024x1024");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [gallery, setGallery] = useState<{ url: string; prompt: string; time: number }[]>([]);
+  const [latestImage, setLatestImage] = useState<string | null>(null);
 
-  const saveGallery=(g:any[])=>{
+  useEffect(() => {
+    const saved = localStorage.getItem("img_gallery");
+    if (saved) {
+      try {
+        setGallery(JSON.parse(saved));
+      } catch {}
+    }
+  }, []);
+
+  const saveGallery = (g: { url: string; prompt: string; time: number }[]) => {
     setGallery(g);
-    localStorage.setItem("img_gallery",JSON.stringify(g.slice(0,50)));
+    localStorage.setItem("img_gallery", JSON.stringify(g.slice(0, 50)));
   };
 
-  const generate=async()=>{
-    if(!prompt.trim()){setError("请输入提示词");return;}
-    setError("");setLoading(true);
-    try{
-      const token=localStorage.getItem("token")||"";
-      const res=await fetch(`${API_BASE}/api/image/style`,{
-        method:"POST",
-        headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
-        body:JSON.stringify({prompt,style,model,size}),
+  const generate = async () => {
+    if (!prompt.trim()) { setError("请输入提示词"); return; }
+    setError(""); setLoading(true); setLatestImage(null);
+    try {
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch(`${API_BASE}/api/image/style`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ prompt, style, model, size }),
       });
-      const data=await res.json();
-      if(!res.ok)throw new Error(data.detail||"生成失败");
-      const url=data.image_url||data.url||data.data?.image_url;
-      if(!url)throw new Error("未返回图片");
-      saveGallery([{url,prompt,time:Date.now()},...gallery]);
-    }catch(e:any){setError(e.message);}
-    finally{setLoading(false);}
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "生成失败");
+      const url = data.image_url || data.url || data.data?.image_url;
+      if (!url) throw new Error("未返回图片");
+      const newEntry = { url, prompt, time: Date.now() };
+      setLatestImage(url);
+      saveGallery([newEntry, ...gallery]);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "生成失败");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-    <div style={{display:"flex",minHeight:"100vh",background:"#edeae4",fontFamily:"-apple-system,BlinkMacSystemFont,sans-serif"}}>
-      <Sidebar/>
+    <div className="max-w-3xl mx-auto py-12 px-6">
+      <h1 className="text-2xl font-bold mb-2">图片创作引擏</h1>
+      <p className="text-zinc-400 mb-8 text-sm">
+        输入提示词，选择风格与模式，一键生成专属图片
+      </p>
 
-      <main style={{flex:1,padding:"2rem 2.5rem",overflowY:"auto"}}>
-        <div style={{marginBottom:"1.5rem",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+      <div className="flex gap-3 mb-8">
+        <button
+          onClick={() => setActiveTab("generate")}
+          className={`px-4 py-2 rounded-lg transition-colors ${
+            activeTab === "generate"
+              ? "bg-amber-500 text-black font-medium"
+              : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+          }`}
+        >
+          图片生成
+        </button>
+        <button
+          onClick={() => setActiveTab("gallery")}
+          className={`px-4 py-2 rounded-lg transition-colors ${
+            activeTab === "gallery"
+              ? "bg-amber-500 text-black font-medium"
+              : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+          }`}
+        >
+          我的画廊{gallery.length > 0 ? ` (${gallery.length})` : ""}
+        </button>
+      </div>
+
+      {/* 图片生成 */}
+      {activeTab === "generate" && (
+        <div className="space-y-6">
+          {/* 生成模式 */}
           <div>
-            <div style={{fontSize:"0.85rem",color:"#999",marginBottom:"0.3rem"}}>图片创作</div>
-            <h1 style={{fontSize:"1.6rem",fontWeight:400,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>我的<span style={{fontStyle:"italic"}}> 画布</span></h1>
-          </div>
-          {gallery.length>0 && <button onClick={()=>{if(confirm("清空画布？")){saveGallery([]);}}} style={{background:"none",border:"1px solid #ddd",padding:"0.5rem 1rem",borderRadius:"999px",color:"#666",fontSize:"0.85rem",cursor:"pointer"}}>清空画布</button>}
-        </div>
-
-        <div style={{background:"#fafaf7",backgroundImage:"linear-gradient(rgba(0,0,0,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.05) 1px, transparent 1px)",backgroundSize:"40px 40px",borderRadius:"24px",minHeight:"calc(100vh - 180px)",padding:"2rem",border:"2px dashed rgba(0,0,0,0.2)"}}>
-          {gallery.length===0 && !loading && (
-            <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"500px",color:"#bbb"}}>
-              <div style={{fontSize:"3.5rem",marginBottom:"1rem",color:"#ddd"}}>◧</div>
-              <div style={{fontSize:"0.95rem",color:"#999"}}>还没有作品，开始你的第一次创作吧</div>
-              <div style={{fontSize:"0.8rem",color:"#bbb",marginTop:"0.5rem"}}>在右侧输入提示词，点击「开始生成」</div>
-            </div>
-          )}
-          {loading && (
-            <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"500px"}}>
-              <div style={{width:"40px",height:"40px",border:"3px solid #eee",borderTopColor:"#0d0d0d",borderRadius:"50%",animation:"spin 1s linear infinite"}}></div>
-              <div style={{marginTop:"1rem",color:"#888",fontSize:"0.9rem"}}>AI 正在为您创作...</div>
-              <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-            </div>
-          )}
-          {gallery.length>0 && (
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:"1rem"}}>
-              {gallery.map((item,i)=>(
-                <div key={i} style={{borderRadius:"14px",overflow:"hidden",background:"#fff",position:"relative",aspectRatio:"1",boxShadow:"0 4px 12px rgba(0,0,0,0.04)"}}>
-                  <img src={item.url} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                  <div style={{position:"absolute",bottom:0,left:0,right:0,padding:"0.75rem",background:"linear-gradient(transparent,rgba(0,0,0,0.75))",color:"#fff",fontSize:"0.75rem"}}>{(item.prompt||"").slice(0,40)}{(item.prompt||"").length>40?"...":""}</div>
-                </div>
+            <label className="block text-sm text-zinc-400 mb-2">生成模式 *</label>
+            <div className="flex flex-col gap-2">
+              {MODELS.map((m) => (
+                <button
+                  key={m.key}
+                  onClick={() => setModel(m.key)}
+                  className={`text-left px-4 py-3 rounded-lg border transition-colors ${
+                    model === m.key
+                      ? "border-amber-500 bg-amber-500/10"
+                      : "border-zinc-700 bg-zinc-900 hover:border-zinc-500"
+                  }`}
+                >
+                  <div className="font-medium text-zinc-200 text-sm">{m.label}</div>
+                  <div className="text-xs text-zinc-500 mt-0.5">{m.desc}</div>
+                </button>
               ))}
             </div>
+          </div>
+
+          {/* 风格选择 */}
+          <div>
+            <label className="block text-sm text-zinc-400 mb-2">风格</label>
+            <div className="flex gap-2 flex-wrap">
+              {STYLES.map((s) => (
+                <button
+                  key={s.key}
+                  onClick={() => setStyle(s.key)}
+                  className={`px-4 py-2 rounded-full border text-sm transition-colors ${
+                    style === s.key
+                      ? "border-amber-500 bg-amber-500/10 text-amber-400"
+                      : "border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-zinc-500"
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 尺寸选择 */}
+          <div>
+            <label className="block text-sm text-zinc-400 mb-2">尺寸</label>
+            <div className="flex gap-2 flex-wrap">
+              {SIZES.map((s) => (
+                <button
+                  key={s.key}
+                  onClick={() => setSize(s.key)}
+                  className={`px-4 py-2 rounded-full border text-sm transition-colors ${
+                    size === s.key
+                      ? "border-amber-500 bg-amber-500/10 text-amber-400"
+                      : "border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-zinc-500"
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 提示词 */}
+          <div>
+            <label className="block text-sm text-zinc-400 mb-2">提示词 *</label>
+            <textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="描述你想要的图片，例如：一只在星空下奔跑的狐狸，吉卜力风格..."
+              className="w-full h-32 px-4 py-3 rounded-lg bg-zinc-900 border border-zinc-700 focus:border-amber-500 outline-none resize-none text-sm"
+            />
+          </div>
+
+          {/* 错误提示 */}
+          {error && (
+            <div className="p-4 rounded-lg bg-red-900/20 border border-red-700">
+              <p className="text-red-400 text-sm">{error}</p>
+            </div>
+          )}
+
+          {/* 生成按钮 */}
+          <button
+            onClick={generate}
+            disabled={loading || !prompt.trim()}
+            className="w-full py-3 rounded-lg bg-amber-500 text-black font-medium hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {loading ? "AI 正在创作..." : "生成图片"}
+          </button>
+
+          {/* 加载动画 */}
+          {loading && (
+            <div className="flex flex-col items-center py-6">
+              <div className="w-10 h-10 border-[3px] border-zinc-700 border-t-amber-500 rounded-full animate-spin" />
+              <p className="text-zinc-500 text-sm mt-3">正在为您创作，请稍候...</p>
+            </div>
+          )}
+
+          {/* 最新生成结果 */}
+          {latestImage && !loading && (
+            <div className="p-6 rounded-lg bg-zinc-900 border border-zinc-700">
+              <p className="text-sm text-zinc-400 mb-3">生成结果</p>
+              <img
+                src={latestImage}
+                alt="生成的图片"
+                className="w-full rounded-lg object-contain max-h-[500px]"
+              />
+              <div className="flex items-center justify-between mt-4">
+                <span className="text-sm text-zinc-500 truncate flex-1 mr-4">
+                  {prompt.slice(0, 60)}{prompt.length > 60 ? "..." : ""}
+                </span>
+                <a
+                  href={latestImage}
+                  download="generated.png"
+                  target="_blank"
+                  className="px-4 py-2 rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors text-sm whitespace-nowrap"
+                >
+                  下载图片
+                </a>
+              </div>
+            </div>
           )}
         </div>
-      </main>
+      )}
 
-      <aside style={{width:"340px",background:"#fff",borderLeft:"1px solid rgba(0,0,0,0.06)",padding:"2rem 1.75rem",display:"flex",flexDirection:"column",gap:"1.25rem",height:"100vh",position:"sticky",top:0,overflowY:"auto"}}>
-        <div>
-          <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>模式</div>
-          <div style={{display:"flex",flexDirection:"column",gap:"0.4rem"}}>
-            {MODELS.map(m=>(
-              <button key={m.key} onClick={()=>setModel(m.key)}
-                style={{textAlign:"left",padding:"0.7rem 0.9rem",border:model===m.key?"2px solid #0d0d0d":"1px solid #e5e5e5",background:model===m.key?"#f9f7f2":"#fff",borderRadius:"10px",cursor:"pointer"}}>
-                <div style={{fontSize:"0.88rem",fontWeight:500,color:"#0d0d0d"}}>{m.label}</div>
-                <div style={{fontSize:"0.72rem",color:"#888",marginTop:"0.15rem"}}>{m.desc}</div>
-              </button>
-            ))}
-          </div>
+      {/* 我的画廊 */}
+      {activeTab === "gallery" && (
+        <div className="space-y-4">
+          {gallery.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 text-zinc-500">
+              <div className="text-5xl mb-4">🖼️</div>
+              <p className="text-sm">还没有作品，去生成你的第一张图片吧</p>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm text-zinc-400">共 {gallery.length} 张作品</p>
+                <button
+                  onClick={() => { if (confirm("确定清空所有作品？")) saveGallery([]); }}
+                  className="text-sm text-zinc-500 hover:text-red-400 transition-colors"
+                >
+                  清空画廊
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {gallery.map((item, i) => (
+                  <div
+                    key={i}
+                    className="rounded-xl overflow-hidden bg-zinc-900 border border-zinc-800 cursor-pointer hover:border-zinc-600 transition-colors"
+                    onClick={() => { setLatestImage(item.url); setActiveTab("generate"); }}
+                  >
+                    <img src={item.url} alt="" className="w-full aspect-square object-cover" />
+                    <div className="px-3 py-2">
+                      <p className="text-xs text-zinc-500 truncate">{item.prompt}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
+      )}
 
-        <div>
-          <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>风格</div>
-          <div style={{display:"flex",gap:"0.4rem",flexWrap:"wrap"}}>
-            {STYLES.map(s=>(
-              <button key={s.key} onClick={()=>setStyle(s.key)}
-                style={{padding:"0.45rem 0.9rem",border:style===s.key?"2px solid #0d0d0d":"1px solid #e5e5e5",background:style===s.key?"#f9f7f2":"#fff",borderRadius:"999px",cursor:"pointer",fontSize:"0.8rem",color:"#333"}}>
-                {s.label}
-              </button>
-            ))}
-          </div>
+      {/* 使用提示 */}
+      {activeTab === "generate" && (
+        <div className="mt-12 p-6 rounded-lg bg-zinc-900/50 border border-zinc-800">
+          <h3 className="text-sm font-semibold text-zinc-300 mb-3">使用提示</h3>
+          <ul className="space-y-2 text-sm text-zinc-500">
+            <li>• 提示词越详细，生成效果越好</li>
+            <li>• 可以指定画面风格、色调、构图方式</li>
+            <li>• 经济模式速度较慢但更省积分</li>
+            <li>• 生成的图片将自动保存到「我的画廊」</li>
+          </ul>
         </div>
-
-        <div>
-          <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>尺寸</div>
-          <select value={size} onChange={e=>setSize(e.target.value)} style={{width:"100%",padding:"0.65rem 0.9rem",border:"1px solid #e5e5e5",borderRadius:"10px",fontSize:"0.85rem",background:"#fff !important",color:"#333 !important"}}>
-            <option value="1024x1024">正方形 1:1</option>
-            <option value="768x1024">竖版 3:4</option>
-            <option value="1024x768">横版 4:3</option>
-          </select>
-        </div>
-
-        <div style={{flex:1,display:"flex",flexDirection:"column"}}>
-          <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>提示词</div>
-          <textarea value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="描述你想要的图片..." 
-            style={{width:"100%",padding:"0.75rem 0.9rem",border:"1px solid #e5e5e5",borderRadius:"12px",fontSize:"0.88rem",minHeight:"120px",resize:"vertical",fontFamily:"inherit",background:"#fff !important",color:"#333 !important",flex:1}}/>
-        </div>
-
-        {error && <div style={{color:"#c00",background:"#ffeaea",padding:"0.7rem",borderRadius:"10px",fontSize:"0.8rem"}}>{error}</div>}
-
-        <button onClick={generate} disabled={loading}
-          style={{padding:"0.9rem",background:loading?"#999":"#0d0d0d",color:"#fff",border:"none",borderRadius:"12px",cursor:loading?"wait":"pointer",fontSize:"0.95rem",fontWeight:500}}>
-          {loading?"生成中...":"开始生成"}
-        </button>
-      </aside>
+      )}
     </div>
   );
 }
