@@ -33,18 +33,22 @@ export default function VideoClonePage() {
   }, []);
 
   // 处理图片上传
-  const handleImageUpload = (
+  const handleImageUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
     setImage: (url: string | null) => void
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      setImage(e.target?.result as string);
-    };
-    reader.readAsDataURL(file);
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch(`${API_BASE}/api/video/upload/image`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      body: formData,
+    });
+    const data = await res.json();
+    if (data.url) setImage(data.url);
+    else setError("图片上传失败");
   };
 
   // 提交翻拍任务

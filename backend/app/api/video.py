@@ -5,7 +5,7 @@
 - 图生视频工作流
 - 额度扣费：使用 @require_credits 装饰器自动处理
 """
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional, List
 from enum import Enum
@@ -358,3 +358,17 @@ async def translate_script(req: dict):
         "translated": translations.get(target_lang, text),
         "target_lang": target_lang,
     }
+
+@router.post("/upload/image")
+async def upload_image(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    import fal_client, tempfile, os
+    contents = await file.read()
+    suffix = os.path.splitext(file.filename)[1] or ".jpg"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(contents)
+        tmp_path = tmp.name
+    try:
+        url = await fal_client.upload_file_async(tmp_path)
+        return {"url": url}
+    finally:
+        os.unlink(tmp_path)
