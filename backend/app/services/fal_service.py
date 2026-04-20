@@ -103,7 +103,7 @@ class FalVideoService:
             if not model_info:
                 return {"error": f"未知模型：{model_key}"}
             endpoint = model_info["endpoint"]
-            import sys; print(f"FAL_SUBMIT endpoint={endpoint}", file=sys.stderr, flush=True)
+            import sys; print(f"FAL_SUBMIT endpoint={endpoint} args={arguments}", file=sys.stderr, flush=True)
             handler = await fal_client.submit_async(endpoint, arguments=arguments)
             await circuit_breaker.record_success(model_key)
             endpoint_tag = "edit" if "edit" in endpoint else "i2v"

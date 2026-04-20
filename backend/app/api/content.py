@@ -161,3 +161,21 @@ def _generate_tags(prompt: str, style: str) -> list[str]:
             tags.append(tag)
 
     return tags[:5]
+
+
+from fastapi import UploadFile, File, Depends
+from app.api.auth import get_current_user
+import fal_client, tempfile, os
+
+@router.post("/upload")
+async def upload_content(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    contents = await file.read()
+    suffix = os.path.splitext(file.filename)[1] or ".jpg"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(contents)
+        tmp_path = tmp.name
+    try:
+        url = await fal_client.upload_file_async(tmp_path)
+        return {"url": url, "image_url": url}
+    finally:
+        os.unlink(tmp_path)
