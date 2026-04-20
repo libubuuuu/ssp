@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://43.134.71.189:8000";
@@ -9,19 +9,15 @@ const MODES = [
   { key:"remake", label:"翻拍复刻", desc:"提取运镜节奏，换素材翻拍" },
 ];
 
-// 视频输入：支持链接 + 本地上传双模式
+
 function VideoInput({url,setUrl,file,setFile,label}:{url:string,setUrl:(v:string)=>void,file:File|null,setFile:(f:File|null)=>void,label:string}){
-  const vRef=useRef<HTMLInputElement>(null);
-  const [tab,setTab]=useState<"url"|"upload">("url");
+  const vRef=React.useRef<HTMLInputElement>(null);
+  const [tab,setTab]=React.useState<"url"|"upload">("url");
   return (
     <div>
       <div style={{display:"flex",gap:"0.3rem",marginBottom:"0.5rem"}}>
-        <button onClick={()=>setTab("url")} style={{flex:1,padding:"0.35rem",fontSize:"0.75rem",border:tab==="url"?"2px solid #0d0d0d":"1px solid #e5e5e5",background:tab==="url"?"#f9f7f2":"#fff",borderRadius:"8px",cursor:"pointer",fontWeight:tab==="url"?600:400}}>
-          🔗 链接
-        </button>
-        <button onClick={()=>setTab("upload")} style={{flex:1,padding:"0.35rem",fontSize:"0.75rem",border:tab==="upload"?"2px solid #0d0d0d":"1px solid #e5e5e5",background:tab==="upload"?"#f9f7f2":"#fff",borderRadius:"8px",cursor:"pointer",fontWeight:tab==="upload"?600:400}}>
-          📁 本地上传
-        </button>
+        <button onClick={()=>setTab("url")} style={{flex:1,padding:"0.35rem",fontSize:"0.75rem",border:tab==="url"?"2px solid #0d0d0d":"1px solid #e5e5e5",background:tab==="url"?"#f9f7f2":"#fff",borderRadius:"8px",cursor:"pointer",fontWeight:tab==="url"?600:400}}>链接</button>
+        <button onClick={()=>setTab("upload")} style={{flex:1,padding:"0.35rem",fontSize:"0.75rem",border:tab==="upload"?"2px solid #0d0d0d":"1px solid #e5e5e5",background:tab==="upload"?"#f9f7f2":"#fff",borderRadius:"8px",cursor:"pointer",fontWeight:tab==="upload"?600:400}}>本地上传</button>
       </div>
       {tab==="url"?(
         <input value={url} onChange={e=>setUrl(e.target.value)} placeholder="粘贴视频 URL..." style={{width:"100%",padding:"0.65rem 0.9rem",border:"1px solid #e5e5e5",borderRadius:"10px",fontSize:"0.85rem",background:"#fff",color:"#333",boxSizing:"border-box"}}/>
@@ -29,7 +25,7 @@ function VideoInput({url,setUrl,file,setFile,label}:{url:string,setUrl:(v:string
         <>
           <input ref={vRef} type="file" accept="video/*" onChange={e=>{const f=e.target.files?.[0];if(f)setFile(f);}} style={{display:"none"}}/>
           <button onClick={()=>vRef.current?.click()} style={{width:"100%",padding:"1rem 0.9rem",border:file?"2px solid #0d0d0d":"2px dashed #ccc",background:file?"#f9f7f2":"#fafaf7",borderRadius:"12px",cursor:"pointer",color:file?"#0d0d0d":"#888",fontSize:"0.85rem",display:"flex",flexDirection:"column",alignItems:"center",gap:"0.4rem"}}>
-            {file?(<><span style={{fontSize:"1.2rem"}}>✅</span><span style={{wordBreak:"break-all",textAlign:"center"}}>{file.name}</span><span style={{fontSize:"0.72rem",color:"#999"}}>点击更换</span></>):(<><span style={{fontSize:"1.4rem",color:"#bbb"}}>↑</span><span>{label}</span></>)}
+            {file?(<><span style={{fontSize:"1.2rem"}}>OK</span><span style={{wordBreak:"break-all",textAlign:"center"}}>{file.name}</span><span style={{fontSize:"0.72rem",color:"#999"}}>点击更换</span></>):(<><span style={{fontSize:"1.4rem",color:"#bbb"}}>^</span><span>{label}</span></>)}
           </button>
         </>
       )}
@@ -37,18 +33,6 @@ function VideoInput({url,setUrl,file,setFile,label}:{url:string,setUrl:(v:string
   );
 }
 
-function UploadBtn({preview,onClick,label}:{preview:string,onClick:()=>void,label:string}){
-  return preview?(
-    <div onClick={onClick} style={{position:"relative",cursor:"pointer",borderRadius:"12px",overflow:"hidden",background:"#fafaf7"}}>
-      <img src={preview} alt="" style={{width:"100%",objectFit:"cover"}}/>
-      <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:"0.85rem",opacity:0,transition:"opacity 0.2s"}} onMouseEnter={e=>e.currentTarget.style.opacity="1"} onMouseLeave={e=>e.currentTarget.style.opacity="0"}>点击更换</div>
-    </div>
-  ):(
-    <button onClick={onClick} style={{width:"100%",padding:"1.2rem 0.9rem",border:"2px dashed #ccc",background:"#fafaf7",borderRadius:"12px",cursor:"pointer",color:"#888",fontSize:"0.85rem",display:"flex",flexDirection:"column",alignItems:"center",gap:"0.4rem"}}>
-      <span style={{fontSize:"1.4rem",color:"#bbb"}}>↑</span>{label}
-    </button>
-  );
-}
 export default function VideoPage(){
   const [mode,setMode]=useState("image-to-video");
   // 图生视频
@@ -94,23 +78,26 @@ export default function VideoPage(){
     r.onload=e=>setImagePreview(e.target?.result as string);
     r.readAsDataURL(f);
   };
+
   const handleElemFile=(f:File)=>{
     setElemFile(f);
     const r=new FileReader();
     r.onload=e=>setElemPreview(e.target?.result as string);
     r.readAsDataURL(f);
   };
+
   const handleModelFile=(f:File)=>{
     setModelFile(f);
     const r=new FileReader();
     r.onload=e=>setModelPreview(e.target?.result as string);
     r.readAsDataURL(f);
   };
+
   const handleProductFile=(f:File)=>{
     setProductFile(f);
     const r=new FileReader();
     r.onload=e=>setProductPreview(e.target?.result as string);
-   r.readAsDataURL(f);
+    r.readAsDataURL(f);
   };
 
   const uploadFile=async(f:File)=>{
@@ -131,7 +118,8 @@ export default function VideoPage(){
       const data=await res.json();
       if(data.status==="completed"&&data.result_url){
         setStatusMsg("");setLoading(false);
-        saveGallery([{url:data.result_url,prompt:label,time:Date.now()},...currentGallery]);
+        const newGallery=[{url:data.result_url,prompt:label,time:Date.now()},...currentGallery];
+        saveGallery(newGallery);
         return;
       }
       if(data.status==="failed"){setError("生成失败，积分已返还");setLoading(false);return;}
@@ -166,24 +154,19 @@ export default function VideoPage(){
   };
 
   const generateReplace=async()=>{
-    if(!srcVideoUrl&&!srcVideoFile){setError("请输入原视频链接或上传视频文件");return;}
+    if(!srcVideoUrl&&!srcVideoFile){setError("请输入原视频链接或上传视频");return;}
     if(!elemFile){setError("请上传替换元素图片");return;}
     if(!instruction){setError("请输入替换指令");return;}
-    setError("");setLoading(true);setStatusMsg("正在上传文件...");
+    setError("");setLoading(true);setStatusMsg("正在上传图片...");
     try{
       const token=localStorage.getItem("token")||"";
-      let videoUrl=srcVideoUrl;
-      if(srcVideoFile){
-        setStatusMsg("正在上传视频...");
-        try{videoUrl=await uploadFile(srcVideoFile);}catch{setError("视频上传失败");setLoading(false);return;}
-      }
       let elemUrl="";
       try{elemUrl=await uploadFile(elemFile);}catch{elemUrl=elemPreview;}
       setStatusMsg("正在提交替换任务...");
       const res=await fetch(`${API_BASE}/api/video/replace/element`,{
         method:"POST",
         headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
-        body:JSON.stringify({video_url:videoUrl,element_image_url:elemUrl,instruction}),
+        body:JSON.stringify({video_url:srcVideoUrl,element_image_url:elemUrl,instruction}),
       });
       const data=await res.json();
       if(!res.ok)throw new Error(data.detail||"提交失败");
@@ -194,16 +177,11 @@ export default function VideoPage(){
   };
 
   const generateRemake=async()=>{
-    if(!refVideoUrl&&!refVideoFile){setError("请输入参考视频链接或上传视频文件");return;}
+    if(!refVideoUrl&&!refVideoFile){setError("请输入参考视频链接或上传视频");return;}
     if(!modelFile){setError("请上传模特图片");return;}
-    setError("");setLoading(true);setStatusMsg("正在上传文件...");
+    setError("");setLoading(true);setStatusMsg("正在上传图片...");
     try{
       const token=localStorage.getItem("token")||"";
-      let videoUrl=refVideoUrl;
-      if(refVideoFile){
-        setStatusMsg("正在上传视频...");
-        try{videoUrl=await uploadFile(refVideoFile);}catch{setError("视频上传失败");setLoading(false);return;}
-      }
       let modelUrl="";
       let productUrl="";
       try{modelUrl=await uploadFile(modelFile);}catch{modelUrl=modelPreview;}
@@ -214,7 +192,7 @@ export default function VideoPage(){
       const res=await fetch(`${API_BASE}/api/video/clone`,{
         method:"POST",
         headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
-        body:JSON.stringify({reference_video_url:videoUrl,model_image_url:modelUrl,product_image_url:productUrl||undefined}),
+        body:JSON.stringify({reference_video_url:refVideoUrl,model_image_url:modelUrl,product_image_url:productUrl||undefined}),
       });
       const data=await res.json();
       if(!res.ok)throw new Error(data.detail||"提交失败");
@@ -230,16 +208,29 @@ export default function VideoPage(){
     else if(mode==="remake")generateRemake();
   };
 
+  const UploadBtn=({preview,onClick,label}:{preview:string,onClick:()=>void,label:string})=>(
+    preview?(
+      <div onClick={onClick} style={{position:"relative",cursor:"pointer",borderRadius:"12px",overflow:"hidden",background:"#fafaf7"}}>
+        <img src={preview} alt="" style={{width:"100%",objectFit:"cover"}}/>
+        <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:"0.85rem",opacity:0,transition:"opacity 0.2s"}} onMouseEnter={e=>e.currentTarget.style.opacity="1"} onMouseLeave={e=>e.currentTarget.style.opacity="0"}>点击更换</div>
+      </div>
+    ):(
+      <button onClick={onClick} style={{width:"100%",padding:"1.2rem 0.9rem",border:"2px dashed #ccc",background:"#fafaf7",borderRadius:"12px",cursor:"pointer",color:"#888",fontSize:"0.85rem",display:"flex",flexDirection:"column",alignItems:"center",gap:"0.4rem"}}>
+        <span style={{fontSize:"1.4rem",color:"#bbb"}}>↑</span>{label}
+      </button>
+    )
+  );
+
   return (
-    <div style={{display:"flex",minHeight:"100vh",background:"#edeae4"*fontFamily:"-apple-system,BlinkMacSystemFont,sans-serif"}}>
+    <div style={{display:"flex",minHeight:"100vh",background:"#edeae4",fontFamily:"-apple-system,BlinkMacSystemFont,sans-serif"}}>
       <Sidebar/>
       <main style={{flex:1,padding:"2rem 2.5rem",overflowY:"auto"}}>
         <div style={{marginBottom:"1.5rem",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div>
             <div style={{fontSize:"0.85rem",color:"#999",marginBottom:"0.3rem"}}>视频创作</div>
-            <h1 style={{fontSize:"1.6rem",fontWeight:400,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>视频’<span style={{fontStyle:"italic"}}> 画布</span></h1>
+            <h1 style={{fontSize:"1.6rem",fontWeight:400,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>视频<span style={{fontStyle:"italic"}}> 画布</span></h1>
           </div>
-          {gallery.length>0&&<button onClick={()=>{if(confirm("清空画布？")){saveGallery([]);}}} style={{background:"none",border:"1px solid #ddd",padding:"0.5rem 1rem",borderRadius:"999px",color:"#666",-ontSize:"0.85rem",cursor:"pointer"}}>汅空画布</button>}
+          {gallery.length>0&&<button onClick={()=>{if(confirm("清空画布？")){saveGallery([]);}}} style={{background:"none",border:"1px solid #ddd",padding:"0.5rem 1rem",borderRadius:"999px",color:"#666",fontSize:"0.85rem",cursor:"pointer"}}>清空画布</button>}
         </div>
         <div style={{background:"#fafaf7",backgroundImage:"linear-gradient(rgba(0,0,0,0.05) 1px,transparent 1px),linear-gradient(90deg,rgba(0,0,0,0.05) 1px,transparent 1px)",backgroundSize:"40px 40px",borderRadius:"24px",minHeight:"calc(100vh - 180px)",padding:"2rem",border:"2px dashed rgba(0,0,0,0.2)"}}>
           {gallery.length===0&&!loading&&(
@@ -248,16 +239,16 @@ export default function VideoPage(){
               <div style={{fontSize:"0.95rem",color:"#999"}}>还没有视频作品，开始你的第一次创作吧</div>
               <div style={{fontSize:"0.8rem",color:"#bbb",marginTop:"0.5rem"}}>
                 {mode==="image-to-video"&&"在右侧上传首帧图片，点击「开始生成」"}
-                {mode==="element-replace"&&"在右侧输入当墝视频和替换元素，点击「开始替换」"}
-                {mode==="remake"&&"在右侧上传参考视频��模特，点击「开始翻拍」"}
+                {mode==="element-replace"&&"在右侧输入原视频链接和替换元素，点击「开始替换」"}
+                {mode==="remake"&&"在右侧上传参考视频链接和模特图，点击「开始翻拍」"}
               </div>
             </div>
           )}
           {loading&&(
             <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"500px"}}>
-              <div style={{width:"40px",height:"40px",morder:"3px solid #eee",borderTopColor:"#0d0d0d",borderRadius:"50%",animation:"spin 1s linear infinite"}}></div>
-              <div style={{marginTop:"1rem",color:"#555",fontSize:"0.95rem",fontWeight:500}}>{gtatusMsg||"AI 正盈生成视频..."}</div>
-              <div style={{marginTop:"0.5rem",color:"#bbb",fontSize:"0.78rem"}}>说不输入父闭權顯面，视频囟成需要 2-5 分钟</div>
+              <div style={{width:"40px",height:"40px",border:"3px solid #eee",borderTopColor:"#0d0d0d",borderRadius:"50%",animation:"spin 1s linear infinite"}}></div>
+              <div style={{marginTop:"1rem",color:"#555",fontSize:"0.95rem",fontWeight:500}}>{statusMsg||"AI 正在生成视频..."}</div>
+              <div style={{marginTop:"0.5rem",color:"#bbb",fontSize:"0.78rem"}}>请不要关闭此页面，视频生成需要 2-5 分钟</div>
               <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
             </div>
           )}
@@ -275,11 +266,11 @@ export default function VideoPage(){
       </main>
 
       <aside style={{width:"340px",background:"#fff",borderLeft:"1px solid rgba(0,0,0,0.06)",padding:"2rem 1.75rem",display:"flex",flexDirection:"column",gap:"1.25rem",height:"100vh",position:"sticky",top:0,overflowY:"auto"}}>
-        {/* /模式 */}
+        {/* 模式选择 */}
         <div>
           <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>模式</div>
           <div style={{display:"flex",flexDirection:"column",gap:"0.4rem"}}>
-            {MODES,map(m=>(
+            {MODES.map(m=>(
               <button key={m.key} onClick={()=>setMode(m.key)} style={{textAlign:"left",padding:"0.7rem 0.9rem",border:mode===m.key?"2px solid #0d0d0d":"1px solid #e5e5e5",background:mode===m.key?"#f9f7f2":"#fff",borderRadius:"10px",cursor:"pointer"}}>
                 <div style={{fontSize:"0.88rem",fontWeight:500,color:"#0d0d0d"}}>{m.label}</div>
                 <div style={{fontSize:"0.72rem",color:"#888",marginTop:"0.15rem"}}>{m.desc}</div>
@@ -288,10 +279,10 @@ export default function VideoPage(){
           </div>
         </div>
 
-        {/* /图礟视频 */}
+        {/* 图生视频 */}
         {mode==="image-to-video"&&(<>
           <div>
-            <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>首帧图片</div>
+            <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>首帧 / 尾帧</div>
             <input ref={fileRef} type="file" accept="image/*" onChange={e=>{const f=e.target.files?.[0];if(f)handleImageFile(f);}} style={{display:"none"}}/>
             <UploadBtn preview={imagePreview} onClick={()=>fileRef.current?.click()} label="点击上传首帧图片"/>
           </div>
@@ -308,7 +299,7 @@ export default function VideoPage(){
           </div>
         </>)}
 
-        {/* /元素替换
+        {/* 元素替换 */}
         {mode==="element-replace"&&(<>
           <div>
             <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>原视频</div>
@@ -325,28 +316,28 @@ export default function VideoPage(){
           </div>
         </>)}
 
-        {/* /翻拍复刻 */}
+        {/* 翻拍复刻 */}
         {mode==="remake"&&(<>
           <div>
             <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>参考视频</div>
             <VideoInput url={refVideoUrl} setUrl={setRefVideoUrl} file={refVideoFile} setFile={setRefVideoFile} label="点击上传参考视频"/>
-            <div style={{fontSize:"0.72rem",color:"#bbb",marginTop:"0.4rem"}}>系绗将提取该视频的运镜节奏用于翻拍</div>
+            <div style={{fontSize:"0.72rem",color:"#bbb",marginTop:"0.4rem"}}>系统将提取该视频的运镜节奏用于翻拍</div>
           </div>
           <div>
-            <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>我皅模特图 *</div>
+            <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>我的模特图 *</div>
             <input type="file" accept="image/*" id="modelInput" onChange={e=>{const f=e.target.files?.[0];if(f)handleModelFile(f);}} style={{display:"none"}}/>
             <UploadBtn preview={modelPreview} onClick={()=>document.getElementById("modelInput")?.click()} label="上传模特图片"/>
           </div>
           <div>
-            <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>我皅产品图（可选）</div>
+            <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>我的产品图（可选）</div>
             <input type="file" accept="image/*" id="productInput" onChange={e=>{const f=e.target.files?.[0];if(f)handleProductFile(f);}} style={{display:"none"}}/>
-            <UploadBtn preview={productPreview} onClick={()=>document.getElementById("productInput")?.click()} label="上传辏代图灇（可选�)"/>
+            <UploadBtn preview={productPreview} onClick={()=>document.getElementById("productInput")?.click()} label="上传产品图片（可选）"/>
           </div>
         </>)}
 
-        {error&&<div style={{color:"#c00",background:"#ffeaea",padding:"0.7rem",borderRadius:"10px",-ontSize:"0.8rem"}}>{error}</div>}
+        {error&&<div style={{color:"#c00",background:"#ffeaea",padding:"0.7rem",borderRadius:"10px",fontSize:"0.8rem"}}>{error}</div>}
         <button onClick={handleGenerate} disabled={loading} style={{padding:"0.9rem",background:loading?"#999":"#0d0d0d",color:"#fff",border:"none",borderRadius:"12px",cursor:loading?"wait":"pointer",fontSize:"0.95rem",fontWeight:500}}>
-          {loading?"生成中...":mode==="image-to-video"?"开始生成":mode==="element-replace"?"开始替捣":"开始翻拍"}
+          {loading?"生成中...":mode==="image-to-video"?"开始生成":mode==="element-replace"?"开始替换":"开始翻拍"}
         </button>
       </aside>
     </div>

@@ -5,7 +5,7 @@
 - 图生视频工作流
 - 额度扣费：使用 @require_credits 装饰器自动处理
 """
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional, List
 from enum import Enum
@@ -69,26 +69,23 @@ class ImageToVideoWorkflowRequest(BaseModel):
 class ImageToVideoRequest(BaseModel):
     """图生视频 (单镜头)"""
     image_url: str
-    tail_image_url: Optional[str] = None
     prompt: Optional[str] = ""
 
 
 class VideoElementReplaceRequest(BaseModel):
-    """复刻 - 视频元素替换"""
+    """视频元素替换请求"""
     video_url: str  # 原视频 URL
-    element_image_url: str  # 产品/人物图片 URL
-    instruction: str  # 替换指令
-    product_image_url: Optional[str] = None  # 第二张参考图（可选）
-    model: Optional[str] = "fal-ai/kling-video/o1/video-to-video/edit"
+    element_image_url: str  # 新元素图片 URL
+    instruction: str  # 自然语言指令，如"把视频里的水杯替换成我的产品"
+    model: Optional[str] = "fal-ai/kling-video/o3/standard/edit"
 
 
 class VideoCloneRequest(BaseModel):
-    """最强复刻 - 保留运镜节奏生成新视频"""
-    reference_video_url: str  # 参考爆款视频
+    """视频翻拍复刻请求"""
+    reference_video_url: str  # 爆款视频链接
     model_image_url: str  # 我的模特图
     product_image_url: Optional[str] = None  # 我的产品图（可选）
-    instruction: Optional[str] = "保持相同的运镜、节奏和动作，将人物替换为@Element1"
-    model: Optional[str] = "fal-ai/kling-video/o1/video-to-video/reference"
+    model: Optional[str] = "fal-ai/kling-video/o3/standard/edit"
 
 
 # ============== 视频剪辑台 API ==============
@@ -173,7 +170,7 @@ async def image_to_video(req: ImageToVideoRequest, current_user: dict = Depends(
     """图生视频 (Kling)"""
     service = get_video_service()
 
-    result = await service.generate_from_image(req.image_url, req.prompt, req.tail_image_url)
+    result = await service.generate_from_image(req.image_url, req.prompt)
 
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
@@ -186,11 +183,11 @@ async def image_to_video(req: ImageToVideoRequest, current_user: dict = Depends(
 
 
 @router.get("/status/{task_id}")
-async def get_task_status(task_id: str, endpoint: str = "i2v"):
+async def get_task_status(task_id: str):
     """查询视频生成任务状态"""
     service = get_video_service()
 
-    result = await service.get_task_status(task_id, endpoint_hint=endpoint)
+    result = await service.get_task_status(task_id)
     return result
 
 
@@ -216,8 +213,7 @@ async def replace_video_element(req: VideoElementReplaceRequest, current_user: d
     result = await video_service.replace_element(
         video_url=req.video_url,
         element_image_url=req.element_image_url,
-        instruction=req.instruction,
-        product_image_url=getattr(req, 'product_image_url', None)
+        instruction=req.instruction
     )
 
     if "error" in result:
@@ -358,31 +354,3 @@ async def translate_script(req: dict):
         "translated": translations.get(target_lang, text),
         "target_lang": target_lang,
     }
-
-@router.post("/upload/image")
-async def upload_image(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
-    import fal_client, tempfile, os
-    contents = await file.read()
-    suffix = os.path.splitext(file.filename)[1] or ".jpg"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(contents)
-        tmp_path = tmp.name
-    try:
-        url = await fal_client.upload_file_async(tmp_path)
-        return {"url": url}
-    finally:
-        os.unlink(tmp_path)
-
-@router.post("/upload/video")
-async def upload_video(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
-    import fal_client, tempfile, os
-    contents = await file.read()
-    suffix = os.path.splitext(file.filename)[1] or ".mp4"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(contents)
-        tmp_path = tmp.name
-    try:
-        url = await fal_client.upload_file_async(tmp_path)
-        return {"url": url}
-    finally:
-        os.unlink(tmp_path)
