@@ -186,11 +186,11 @@ async def image_to_video(req: ImageToVideoRequest, current_user: dict = Depends(
 
 
 @router.get("/status/{task_id}")
-async def get_task_status(task_id: str):
+async def get_task_status(task_id: str, endpoint: str = "i2v"):
     """查询视频生成任务状态"""
     service = get_video_service()
 
-    result = await service.get_task_status(task_id)
+    result = await service.get_task_status(task_id, endpoint_hint=endpoint)
     return result
 
 
