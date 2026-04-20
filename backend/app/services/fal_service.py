@@ -2,6 +2,7 @@
 AI 服务封装
 """
 import fal_client
+import os
 from typing import Optional, Dict, Any
 from .circuit_breaker import get_circuit_breaker
 from .alert import get_alert_service
@@ -87,8 +88,8 @@ class FalVideoService:
         if product_image_url:
             elements.append({"frontal_image_url": product_image_url})
         args = {
-            "reference_video_url": reference_video_url,
-            "prompt": instruction or "保持相同的运镜、节奏和动作，将人物替换为@Element1",
+            "video_url": reference_video_url,
+            "prompt": "Based on @Video1, replace the character with @Element1, maintaining the same movements and camera angles.",
             "elements": elements,
         }
         return await self._generate_video("kling/reference", args)
@@ -118,7 +119,7 @@ class FalVideoService:
             elif endpoint_hint and "edit" in endpoint_hint:
                 endpoint = "fal-ai/kling-video/o1/video-to-video/edit"
             else:
-                endpoint = "fal-ai/kling-video/o3/standard/image-to-video"
+                endpoint = "fal-ai/kling-video/o1/standard/video-to-video/edit"
 
             status_obj = await fal_client.status_async(endpoint, task_id, with_logs=False)
 
@@ -224,6 +225,7 @@ _voice_service: Optional[FalVoiceService] = None
 
 
 def init_fal_services(fal_key: str):
+    os.environ["FAL_KEY"] = fal_key
     global _image_service, _video_service, _avatar_service, _voice_service
     _image_service = FalImageService(fal_key)
     _video_service = FalVideoService(fal_key)
