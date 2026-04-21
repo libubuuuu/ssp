@@ -143,17 +143,49 @@ async def _execute_job(job_id: str):
         _save_jobs()
 
 
+def _module_from_type(job_type: str, params: dict) -> str:
+    if job_type == "image":
+        return "image/multi-reference" if params.get("reference_images") else "image/style"
+    if job_type == "video_i2v":
+        return "video/image-to-video"
+    if job_type == "video_edit":
+        return "video/replace/element"
+    if job_type == "video_clone":
+        return "video/clone"
+    return "image/style"
+
+
 @router.post("/submit")
 async def submit_job(req: SubmitJobRequest, current_user: dict = Depends(get_current_user)):
-    user_id = str(current_user.get("id") or current_user.get("email", "unknown"))
+    user_id = current_user.get("id") or current_user.get("email", "unknown")
+    user_id_str = str(user_id)
+    
+    module = _module_from_type(req.type, req.params)
+    cost = get_task_cost(module)
+    
+    # 扣费（用 UUID 字符串作为 user_id）
+    if cost > 0:
+        if not check_user_credits(user_id, cost):
+            raise HTTPException(status_code=402, detail=f"积分不足，需要 {cost} 积分")
+        if not deduct_credits(user_id, cost):
+            raise HTTPException(status_code=500, detail="扣费失败")
+    
     job_id = str(uuid.uuid4())[:8]
     JOBS[job_id] = {
-        "id": job_id, "user_id": user_id, "type": req.type, "title": req.title or req.type,
-        "params": req.params, "status": "pending", "created_at": time.time(),
+        "id": job_id,
+        "user_id": user_id_str,
+        "user_numeric_id": user_id,  # 实际是 UUID 字符串
+        "type": req.type,
+        "title": req.title or req.type,
+        "params": req.params,
+        "module": module,
+        "cost": cost,
+        "status": "pending",
+        "created_at": time.time(),
     }
     _save_jobs()
     asyncio.create_task(_execute_job(job_id))
-    return {"job_id": job_id, "status": "pending"}
+    return {"job_id": job_id, "status": "pending", "cost": cost}
 
 
 @router.get("/list")
