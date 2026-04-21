@@ -41,11 +41,12 @@ init_circuit_breaker()
 init_alert_service(settings.ALIYUN_ACCESS_KEY_ID, settings.ALIYUN_ACCESS_KEY_SECRET, "AI创意平台", settings.ALIYUN_SMS_TEMPLATE_CODE, [settings.DEVELOPER_PHONE] if settings.DEVELOPER_PHONE else [])
 init_task_queue()
 
-from app.api import image, video, digital_human, tasks, content, products, admin, avatar, auth, payment
+from app.api import image, video, digital_human, tasks, content, products, admin, avatar, auth, payment, video_studio
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(payment.router, prefix="/api/payment", tags=["支付"])
 app.include_router(image.router, prefix="/api/image", tags=["图片"])
 app.include_router(video.router, prefix="/api/video", tags=["视频"])
+app.include_router(video_studio.router, prefix="/api/studio", tags=["长视频工作台"])
 app.include_router(digital_human.router, prefix="/api/digital-human", tags=["数字人"])
 app.include_router(avatar.router, prefix="/api/avatar", tags=["Avatar"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["任务"])
