@@ -99,6 +99,7 @@ async def upload_video(
 
     STUDIO_TASKS[session_id] = {
         "session_id": session_id,
+        "user_id": str(current_user.get("id", "unknown")),
         "video_path": str(video_path),
         "duration": duration,
         "segments": [],
@@ -360,10 +361,13 @@ async def merge_segments(
 
 @router.get("/list")
 async def list_sessions(current_user: dict = Depends(get_current_user)):
-    """列出所有历史 session，按时间倒序"""
+    """列出当前用户的历史 session，按时间倒序"""
     import os
+    uid = str(current_user.get("id", "unknown"))
     items = []
     for sid, task in STUDIO_TASKS.items():
+        if task.get("user_id") and task["user_id"] != uid:
+            continue
         # 计算保留剩余天数（按7天算）
         try:
             session_dir = STUDIO_DIR / sid
@@ -403,7 +407,11 @@ async def get_session(session_id: str, current_user: dict = Depends(get_current_
     """获取单个 session 详情"""
     if session_id not in STUDIO_TASKS:
         raise HTTPException(404, "session not found")
-    return STUDIO_TASKS[session_id]
+    task = STUDIO_TASKS[session_id]
+    uid = str(current_user.get("id", "unknown"))
+    if task.get("user_id") and task["user_id"] != uid:
+        raise HTTPException(403, "无权限访问")
+    return task
 
 
 @router.delete("/session/{session_id}")
@@ -411,6 +419,10 @@ async def delete_session(session_id: str, current_user: dict = Depends(get_curre
     """删除一个 session"""
     if session_id not in STUDIO_TASKS:
         raise HTTPException(404, "session not found")
+    task = STUDIO_TASKS[session_id]
+    uid = str(current_user.get("id", "unknown"))
+    if task.get("user_id") and task["user_id"] != uid:
+        raise HTTPException(403, "无权限删除")
     import shutil
     session_dir = STUDIO_DIR / session_id
     if session_dir.exists():
