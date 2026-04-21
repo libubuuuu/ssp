@@ -9,7 +9,6 @@ const MODES = [
   { key:"remake", label:"翻拍复刻", desc:"提取运镜节奏，换素材翻拍" },
 ];
 
-
 function VideoInput({url,setUrl,file,setFile,label}:{url:string,setUrl:(v:string)=>void,file:File|null,setFile:(f:File|null)=>void,label:string}){
   const vRef=React.useRef<HTMLInputElement>(null);
   const [tab,setTab]=React.useState<"url"|"upload">("url");
@@ -35,25 +34,22 @@ function VideoInput({url,setUrl,file,setFile,label}:{url:string,setUrl:(v:string
 
 export default function VideoPage(){
   const [mode,setMode]=useState("image-to-video");
-  // 图生视频
+  const [voiceMode,setVoiceMode]=useState<"silent"|"voiced">("silent");
   const [imageFile,setImageFile]=useState<File|null>(null);
   const [imagePreview,setImagePreview]=useState("");
   const [prompt,setPrompt]=useState("");
   const [duration,setDuration]=useState(5);
-  // 元素替换
   const [srcVideoUrl,setSrcVideoUrl]=useState("");
   const [srcVideoFile,setSrcVideoFile]=useState<File|null>(null);
   const [elemFile,setElemFile]=useState<File|null>(null);
   const [elemPreview,setElemPreview]=useState("");
   const [instruction,setInstruction]=useState("");
-  // 翻拍复刻
   const [refVideoUrl,setRefVideoUrl]=useState("");
   const [refVideoFile,setRefVideoFile]=useState<File|null>(null);
   const [modelFile,setModelFile]=useState<File|null>(null);
   const [modelPreview,setModelPreview]=useState("");
   const [productFile,setProductFile]=useState<File|null>(null);
   const [productPreview,setProductPreview]=useState("");
-  // 通用
   const [loading,setLoading]=useState(false);
   const [statusMsg,setStatusMsg]=useState("");
   const [error,setError]=useState("");
@@ -61,165 +57,24 @@ export default function VideoPage(){
   const fileRef=useRef<HTMLInputElement>(null);
   const pollRef=useRef<ReturnType<typeof setTimeout>|null>(null);
 
-  useEffect(()=>{
-    const saved=localStorage.getItem("video_gallery");
-    if(saved){try{setGallery(JSON.parse(saved));}catch{}}
-    return ()=>{ if(pollRef.current) clearTimeout(pollRef.current); };
-  },[]);
-
-  const saveGallery=(g:any[])=>{
-    setGallery(g);
-    localStorage.setItem("video_gallery",JSON.stringify(g.slice(0,50)));
-  };
-
-  const handleImageFile=(f:File)=>{
-    setImageFile(f);
-    const r=new FileReader();
-    r.onload=e=>setImagePreview(e.target?.result as string);
-    r.readAsDataURL(f);
-  };
-
-  const handleElemFile=(f:File)=>{
-    setElemFile(f);
-    const r=new FileReader();
-    r.onload=e=>setElemPreview(e.target?.result as string);
-    r.readAsDataURL(f);
-  };
-
-  const handleModelFile=(f:File)=>{
-    setModelFile(f);
-    const r=new FileReader();
-    r.onload=e=>setModelPreview(e.target?.result as string);
-    r.readAsDataURL(f);
-  };
-
-  const handleProductFile=(f:File)=>{
-    setProductFile(f);
-    const r=new FileReader();
-    r.onload=e=>setProductPreview(e.target?.result as string);
-    r.readAsDataURL(f);
-  };
-
-  const uploadFile=async(f:File)=>{
-    const token=localStorage.getItem("token")||"";
-    const fd=new FormData();
-    fd.append("file",f);
-    const res=await fetch(`${API_BASE}/api/content/upload`,{method:"POST",headers:{"Authorization":`Bearer ${token}`},body:fd});
-    const data=await res.json();
-    if(!res.ok)throw new Error(data.detail||"上传失败");
-    return data.url||data.image_url;
-  };
-
-  const pollStatus=async(taskId:string,endpointTag:string,attempt=0,currentGallery:any[],label:string)=>{
-    if(attempt>72){setError("生成超时，请重试");setLoading(false);return;}
-    try{
-      const token=localStorage.getItem("token")||"";
-      const res=await fetch(`${API_BASE}/api/tasks/status/${taskId}?endpoint=${endpointTag}`,{headers:{"Authorization":`Bearer ${token}`}});
-      const data=await res.json();
-      if(data.status==="completed"&&data.result_url){
-        setStatusMsg("");setLoading(false);
-        const newGallery=[{url:data.result_url,prompt:label,time:Date.now()},...currentGallery];
-        saveGallery(newGallery);
-        return;
-      }
-      if(data.status==="failed"){setError("生成失败，积分已返还");setLoading(false);return;}
-      const mins=Math.floor(attempt*5/60);
-      const secs=(attempt*5)%60;
-      setStatusMsg(`AI 生成中，已等待 ${mins}分${secs}秒...`);
-      pollRef.current=setTimeout(()=>pollStatus(taskId,endpointTag,attempt+1,currentGallery,label),5000);
-    }catch{
-      pollRef.current=setTimeout(()=>pollStatus(taskId,endpointTag,attempt+1,currentGallery,label),5000);
-    }
-  };
-
-  const generateI2V=async()=>{
-    if(!imageFile){setError("请上传首帧图片");return;}
-    setError("");setLoading(true);setStatusMsg("正在上传图片...");
-    try{
-      const token=localStorage.getItem("token")||"";
-      let imgUrl="";
-      try{imgUrl=await uploadFile(imageFile);}catch{imgUrl=imagePreview;}
-      setStatusMsg("正在提交生成任务...");
-      const res=await fetch(`${API_BASE}/api/video/image-to-video`,{
-        method:"POST",
-        headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
-        body:JSON.stringify({image_url:imgUrl,prompt,duration_sec:duration}),
-      });
-      const data=await res.json();
-      if(!res.ok)throw new Error(data.detail||"提交失败");
-      if(!data.task_id)throw new Error("未获取到任务ID");
-      setStatusMsg("任务已提交，AI 生成中（约 2-5 分钟）...");
-      pollRef.current=setTimeout(()=>pollStatus(data.task_id,data.endpoint_tag||"i2v",0,gallery,prompt||"图生视频"),3000);
-    }catch(e:any){setError(e.message);setLoading(false);setStatusMsg("");}
-  };
-
-  const generateReplace=async()=>{
-    if(!srcVideoUrl&&!srcVideoFile){setError("请输入原视频链接或上传视频");return;}
-    if(!elemFile){setError("请上传替换元素图片");return;}
-    if(!instruction){setError("请输入替换指令");return;}
-    setError("");setLoading(true);setStatusMsg("正在上传图片...");
-    try{
-      const token=localStorage.getItem("token")||"";
-      let elemUrl="";
-      try{elemUrl=await uploadFile(elemFile);}catch{elemUrl=elemPreview;}
-      setStatusMsg("正在提交替换任务...");
-      const res=await fetch(`${API_BASE}/api/video/replace/element`,{
-        method:"POST",
-        headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
-        body:JSON.stringify({video_url:srcVideoUrl,element_image_url:elemUrl,instruction}),
-      });
-      const data=await res.json();
-      if(!res.ok)throw new Error(data.detail||"提交失败");
-      if(!data.task_id)throw new Error("未获取到任务ID");
-      setStatusMsg("任务已提交，AI 替换中（约 2-5 分钟）...");
-      pollRef.current=setTimeout(()=>pollStatus(data.task_id,data.endpoint_tag||"video_edit",0,gallery,instruction),3000);
-    }catch(e:any){setError(e.message);setLoading(false);setStatusMsg("");}
-  };
-
-  const generateRemake=async()=>{
-    if(!refVideoUrl&&!refVideoFile){setError("请输入参考视频链接或上传视频");return;}
-    if(!modelFile){setError("请上传模特图片");return;}
-    setError("");setLoading(true);setStatusMsg("正在上传图片...");
-    try{
-      const token=localStorage.getItem("token")||"";
-      let modelUrl="";
-      let productUrl="";
-      try{modelUrl=await uploadFile(modelFile);}catch{modelUrl=modelPreview;}
-      if(productFile){
-        try{productUrl=await uploadFile(productFile);}catch{productUrl=productPreview;}
-      }
-      setStatusMsg("正在提交翻拍任务...");
-      const res=await fetch(`${API_BASE}/api/video/clone`,{
-        method:"POST",
-        headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
-        body:JSON.stringify({reference_video_url:refVideoUrl,model_image_url:modelUrl,product_image_url:productUrl||undefined}),
-      });
-      const data=await res.json();
-      if(!res.ok)throw new Error(data.detail||"提交失败");
-      if(!data.task_id)throw new Error("未获取到任务ID");
-      setStatusMsg("任务已提交，AI 翻拍中（约 3-5 分钟）...");
-      pollRef.current=setTimeout(()=>pollStatus(data.task_id,data.endpoint_tag||"video_clone",0,gallery,"翻拍复刻"),3000);
-    }catch(e:any){setError(e.message);setLoading(false);setStatusMsg("");}
-  };
-
-  const handleGenerate=()=>{
-    if(mode==="image-to-video")generateI2V();
-    else if(mode==="element-replace")generateReplace();
-    else if(mode==="remake")generateRemake();
-  };
-
-  const UploadBtn=({preview,onClick,label}:{preview:string,onClick:()=>void,label:string})=>(
-    preview?(
-      <div onClick={onClick} style={{position:"relative",cursor:"pointer",borderRadius:"12px",overflow:"hidden",background:"#fafaf7"}}>
-        <img src={preview} alt="" style={{width:"100%",objectFit:"cover"}}/>
-        <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:"0.85rem",opacity:0,transition:"opacity 0.2s"}} onMouseEnter={e=>e.currentTarget.style.opacity="1"} onMouseLeave={e=>e.currentTarget.style.opacity="0"}>点击更换</div>
-      </div>
-    ):(
-      <button onClick={onClick} style={{width:"100%",padding:"1.2rem 0.9rem",border:"2px dashed #ccc",background:"#fafaf7",borderRadius:"12px",cursor:"pointer",color:"#888",fontSize:"0.85rem",display:"flex",flexDirection:"column",alignItems:"center",gap:"0.4rem"}}>
-        <span style={{fontSize:"1.4rem",color:"#bbb"}}>↑</span>{label}
-      </button>
-    )
-  );
+  useEffect(()=>{const saved=localStorage.getItem("video_gallery");if(saved){try{setGallery(JSON.parse(saved));}catch{}}return ()=>{ if(pollRef.current) clearTimeout(pollRef.current); };},[]); 
+  const saveGallery=(g:any[])=>{setGallery(g);localStorage.setItem("video_gallery",JSON.stringify(g.slice(0,50)));};
+  const handleImageFile=(f:File)=>{setImageFile(f);const r=new FileReader();r.onload=e=>setImagePreview(e.target?.result as string);r.readAsDataURL(f);};
+  const handleElemFile=(f:File)=>{setElemFile(f);const r=new FileReader();r.onload=e=>setElemPreview(e.target?.result as string);r.readAsDataURL(f);};
+  const handleModelFile=(f:File)=>{setModelFile(f);const r=new FileReader();r.onload=e=>setModelPreview(e.target?.result as string);r.readAsDataURL(f);};
+  const handleProductFile=(f:File)=>{setProductFile(f);const r=new FileReader();r.onload=e=>setProductPreview(e.target?.result as string);r.readAsDataURL(f);};
+  const uploadFile=async(f:File)=>{const token=localStorage.getItem("token")||"";const fd=new FormData();fd.append("file",f);const res=await fetch(`${API_BASE}/api/content/upload`,{method:"POST",headers:{"Authorization":`Bearer ${token}`},body:fd});const data=await res.json();if(!res.ok)throw new Error(data.detail||"上传失败");return data.url||data.image_url;};
+  const pollStatus=async(taskId:string,endpointTag:string,attempt=0,currentGallery:any[],label:string)=>{if(attempt>72){setError("生成超时，请重试");setLoading(false);return;}try{const token=localStorage.getItem("token")||"";const res=await fetch(`${API_BASE}/api/tasks/status/${taskId}?endpoint=${endpointTag}`,{headers:{"Authorization":`Bearer ${token}`}});const data=await res.json();if(data.status==="completed"&&data.result_url){setStatusMsg("");setLoading(false);const newGallery=[{url:data.result_url,prompt:label,time:Date.now()},...currentGallery];saveGallery(newGallery);return;}if(data.status==="failed"){setError("生成失败，积分已返还");setLoading(false);return;}const mins=Math.floor(attempt*5/60);const secs=(attempt*5)%60;setStatusMsg(`AI 生成中，已等待 ${mins}分${secs}秒...`);pollRef.current=setTimeout(()=>pollStatus(taskId,endpointTag,attempt+1,currentGallery,label),5000);}catch{pollRef.current=setTimeout(()=>pollStatus(taskId,endpointTag,attempt+1,currentGallery,label),5000);}};
+  
+  const generateI2V=async()=>{if(!imageFile){setError("请上传首帧图片");return;}setError("");setLoading(true);setStatusMsg("正在上传图片...");try{const token=localStorage.getItem("token")||"";let imgUrl="";try{imgUrl=await uploadFile(imageFile);}catch{imgUrl=imagePreview;}setStatusMsg("正在提交生成任务...");const endpoint=voiceMode==="silent"?"/api/video/image-to-video/silent":"/api/video/image-to-video/voiced";const res=await fetch(`${API_BASE}${endpoint}`,{method:"POST",headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},body:JSON.stringify({image_url:imgUrl,prompt,duration_sec:duration}),});const data=await res.json();if(!res.ok)throw new Error(data.detail||"提交失败");if(!data.task_id)throw new Error("未获取到任务ID");const label=voiceMode==="silent"?"图生视频(无声)":"图生视频(有声)";setStatusMsg("任务已提交，AI 生成中（约 2-5 分钟）...");pollRef.current=setTimeout(()=>pollStatus(data.task_id,data.endpoint_tag||"i2v",0,gallery,label),3000);}catch(e:any){setError(e.message);setLoading(false);setStatusMsg("");}};
+  
+  const generateReplace=async()=>{if(!srcVideoUrl&&!srcVideoFile){setError("请输入原视频链接或上传视频");return;}if(!elemFile){setError("请上传替换元素图片");return;}if(!instruction){setError("请输入替换指令");return;}setError("");setLoading(true);setStatusMsg("正在上传图片...");try{const token=localStorage.getItem("token")||"";let elemUrl="";try{elemUrl=await uploadFile(elemFile);}catch{elemUrl=elemPreview;}setStatusMsg("正在提交替换任务...");const res=await fetch(`${API_BASE}/api/video/replace/element`,{method:"POST",headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},body:JSON.stringify({video_url:srcVideoUrl,element_image_url:elemUrl,instruction}),});const data=await res.json();if(!res.ok)throw new Error(data.detail||"提交失败");if(!data.task_id)throw new Error("未获取到任务ID");setStatusMsg("任务已提交，AI 替换中（约 2-5 分钟）...");pollRef.current=setTimeout(()=>pollStatus(data.task_id,data.endpoint_tag||"video_edit",0,gallery,instruction),3000);}catch(e:any){setError(e.message);setLoading(false);setStatusMsg("");}};
+  
+  const generateRemake=async()=>{if(!refVideoUrl&&!refVideoFile){setError("请输入参考视频链接或上传视频");return;}if(!modelFile){setError("请上传模特图片");return;}setError("");setLoading(true);setStatusMsg("正在上传图片...");try{const token=localStorage.getItem("token")||"";let modelUrl="";let productUrl="";let videoUrl=refVideoUrl;try{modelUrl=await uploadFile(modelFile);}catch{modelUrl=modelPreview;}if(productFile){try{productUrl=await uploadFile(productFile);}catch{productUrl=productPreview;}}if(refVideoFile){setStatusMsg("正在上传参考视频...");const fd=new FormData();fd.append("file",refVideoFile);const upRes=await fetch(`${API_BASE}/api/video/upload/video`,{method:"POST",headers:{"Authorization":`Bearer ${token}`},body:fd});const upData=await upRes.json();if(!upRes.ok)throw new Error(upData.detail||"视频上传失败");videoUrl=upData.url||upData.video_url;}if(!videoUrl||!/^https?:/.test(videoUrl))throw new Error("参考视频必须是 HTTPS URL 或上传文件");setStatusMsg("正在提交翻拍任务...");const res=await fetch(`${API_BASE}/api/video/clone`,{method:"POST",headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},body:JSON.stringify({reference_video_url:videoUrl,model_image_url:modelUrl,product_image_url:productUrl||undefined}),});const data=await res.json();if(!res.ok)throw new Error(data.detail||"提交失败");if(!data.task_id)throw new Error("未获取到任务ID");setStatusMsg("任务已提交，AI 翻拍中（约 3-5 分钟）...");pollRef.current=setTimeout(()=>pollStatus(data.task_id,data.endpoint_tag||"video_clone",0,gallery,"翻拍复刻"),3000);}catch(e:any){setError(e.message);setLoading(false);setStatusMsg("");}};
+  
+  const handleGenerate=()=>{if(mode==="image-to-video")generateI2V();else if(mode==="element-replace")generateReplace();else if(mode==="remake")generateRemake();};
+  
+  const UploadBtn=({preview,onClick,label}:{preview:string,onClick:()=>void,label:string})=>(preview?<div onClick={onClick} style={{position:"relative",cursor:"pointer",borderRadius:"12px",overflow:"hidden",background:"#fafaf7"}}><img src={preview} alt="" style={{width:"100%",objectFit:"cover"}}/><div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:"0.85rem",opacity:0,transition:"opacity 0.2s"}} onMouseEnter={e=>e.currentTarget.style.opacity="1"} onMouseLeave={e=>e.currentTarget.style.opacity="0"}>点击更换</div></div>:<button onClick={onClick} style={{width:"100%",padding:"1.2rem 0.9rem",border:"2px dashed #ccc",background:"#fafaf7",borderRadius:"12px",cursor:"pointer",color:"#888",fontSize:"0.85rem",display:"flex",flexDirection:"column",alignItems:"center",gap:"0.4rem"}}><span style={{fontSize:"1.4rem",color:"#bbb"}}>↑</span>{label}</button>);
 
   return (
     <div style={{display:"flex",minHeight:"100vh",background:"#edeae4",fontFamily:"-apple-system,BlinkMacSystemFont,sans-serif"}}>
@@ -238,7 +93,7 @@ export default function VideoPage(){
               <div style={{fontSize:"3.5rem",marginBottom:"1rem",color:"#ddd"}}>▶</div>
               <div style={{fontSize:"0.95rem",color:"#999"}}>还没有视频作品，开始你的第一次创作吧</div>
               <div style={{fontSize:"0.8rem",color:"#bbb",marginTop:"0.5rem"}}>
-                {mode==="image-to-video"&&"在右侧上传首帧图片，点击「开始生成」"}
+                {mode==="image-to-video"&&`在右侧上传首帧图片${voiceMode==="voiced"?"(有声)":"(无声)"}，点击「开始生成」`}
                 {mode==="element-replace"&&"在右侧输入原视频链接和替换元素，点击「开始替换」"}
                 {mode==="remake"&&"在右侧上传参考视频链接和模特图，点击「开始翻拍」"}
               </div>
@@ -266,7 +121,6 @@ export default function VideoPage(){
       </main>
 
       <aside style={{width:"340px",background:"#fff",borderLeft:"1px solid rgba(0,0,0,0.06)",padding:"2rem 1.75rem",display:"flex",flexDirection:"column",gap:"1.25rem",height:"100vh",position:"sticky",top:0,overflowY:"auto"}}>
-        {/* 模式选择 */}
         <div>
           <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>模式</div>
           <div style={{display:"flex",flexDirection:"column",gap:"0.4rem"}}>
@@ -279,8 +133,21 @@ export default function VideoPage(){
           </div>
         </div>
 
-        {/* 图生视频 */}
         {mode==="image-to-video"&&(<>
+          <div>
+            <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>音声模式</div>
+            <div style={{display:"flex",gap:"0.5rem"}}>
+              <label style={{flex:1,display:"flex",alignItems:"center",gap:"0.4rem",padding:"0.6rem",border:voiceMode==="silent"?"2px solid #0d0d0d":"1px solid #e5e5e5",background:voiceMode==="silent"?"#f9f7f2":"#fff",borderRadius:"8px",cursor:"pointer",fontSize:"0.85rem"}}>
+                <input type="radio" checked={voiceMode==="silent"} onChange={()=>setVoiceMode("silent")} style={{cursor:"pointer"}}/>
+                无声
+              </label>
+              <label style={{flex:1,display:"flex",alignItems:"center",gap:"0.4rem",padding:"0.6rem",border:voiceMode==="voiced"?"2px solid #0d0d0d":"1px solid #e5e5e5",background:voiceMode==="voiced"?"#f9f7f2":"#fff",borderRadius:"8px",cursor:"pointer",fontSize:"0.85rem"}}>
+                <input type="radio" checked={voiceMode==="voiced"} onChange={()=>setVoiceMode("voiced")} style={{cursor:"pointer"}}/>
+                有声
+              </label>
+            </div>
+          </div>
+          
           <div>
             <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>首帧 / 尾帧</div>
             <input ref={fileRef} type="file" accept="image/*" onChange={e=>{const f=e.target.files?.[0];if(f)handleImageFile(f);}} style={{display:"none"}}/>
@@ -299,7 +166,6 @@ export default function VideoPage(){
           </div>
         </>)}
 
-        {/* 元素替换 */}
         {mode==="element-replace"&&(<>
           <div>
             <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>原视频</div>
@@ -316,7 +182,6 @@ export default function VideoPage(){
           </div>
         </>)}
 
-        {/* 翻拍复刻 */}
         {mode==="remake"&&(<>
           <div>
             <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>参考视频</div>
@@ -337,7 +202,7 @@ export default function VideoPage(){
 
         {error&&<div style={{color:"#c00",background:"#ffeaea",padding:"0.7rem",borderRadius:"10px",fontSize:"0.8rem"}}>{error}</div>}
         <button onClick={handleGenerate} disabled={loading} style={{padding:"0.9rem",background:loading?"#999":"#0d0d0d",color:"#fff",border:"none",borderRadius:"12px",cursor:loading?"wait":"pointer",fontSize:"0.95rem",fontWeight:500}}>
-          {loading?"生成中...":mode==="image-to-video"?"开始生成":mode==="element-replace"?"开始替换":"开始翻拍"}
+          {loading?"生成中...":mode==="image-to-video"?`开始生成${voiceMode==="voiced"?"(有声)":"(无声)"}`:mode==="element-replace"?"开始替换":"开始翻拍"}
         </button>
       </aside>
     </div>

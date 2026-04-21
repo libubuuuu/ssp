@@ -6,6 +6,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export default function VideoClonePage() {
   const [referenceVideoUrl, setReferenceVideoUrl] = useState("");
+  const [videoUploading, setVideoUploading] = useState(false);
   const [modelImage, setModelImage] = useState<string | null>(null);
   const [productImage, setProductImage] = useState<string | null>(null);
   const [taskId, setTaskId] = useState<string | null>(null);
@@ -51,6 +52,30 @@ export default function VideoClonePage() {
     else setError("图片上传失败");
   };
 
+  // 上传参考视频
+  const handleVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setVideoUploading(true);
+    setError(null);
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const res = await fetch(`${API_BASE}/api/video/upload/video`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+        body: formData,
+      });
+      const data = await res.json();
+      if (data.url) setReferenceVideoUrl(data.url);
+      else setError("视频上传失败: " + (data.detail || "未知错误"));
+    } catch (err) {
+      setError("视频上传失败");
+    } finally {
+      setVideoUploading(false);
+    }
+  };
+
   // 提交翻拍任务
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,7 +93,7 @@ export default function VideoClonePage() {
     try {
       const res = await fetch(`${API_BASE}/api/video/clone`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` },
         body: JSON.stringify({
           reference_video_url: referenceVideoUrl,
           model_image_url: modelImage,
@@ -144,19 +169,16 @@ export default function VideoClonePage() {
         {/* 参考视频链接 */}
         <div>
           <label className="block text-sm text-zinc-400 mb-2">
-            爆款视频链接 *
+            参考爆款视频 *
           </label>
-          <input
-            type="url"
-            value={referenceVideoUrl}
-            onChange={(e) => setReferenceVideoUrl(e.target.value)}
-            placeholder="https://example.com/video.mp4 或 https://v.douyin.com/..."
-            className="w-full px-4 py-3 rounded-lg bg-zinc-900 border border-zinc-700 focus:border-amber-500 outline-none"
-            required
-          />
-          <p className="text-xs text-zinc-500 mt-2">
-            支持抖音、快手、淘宝、京东等平台的视频链接
-          </p>
+          <label className="block w-full h-32 border-2 border-dashed border-zinc-700 rounded-lg hover:border-amber-500 transition-colors cursor-pointer flex items-center justify-center">
+            <input type="file" accept="video/*" onChange={handleVideoUpload} className="hidden" />
+            <div className="text-center text-zinc-500">
+              <p className="text-2xl mb-2">🎬</p>
+              <p className="text-sm">{videoUploading ? "上传中..." : referenceVideoUrl ? "✅ 视频已上传" : "点击上传参考视频"}</p>
+            </div>
+          </label>
+          <p className="text-xs text-zinc-500 mt-2">支持 mp4、mov 等格式，建议 100MB 以内</p>
         </div>
 
         {/* 模特图片上传 */}
