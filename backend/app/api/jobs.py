@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from app.services.fal_service import get_image_service, get_video_service
+from app.services.billing import get_task_cost, check_user_credits, deduct_credits, add_credits, create_consumption_record
 from app.api.auth import get_current_user
 
 router = APIRouter()
@@ -110,10 +111,30 @@ async def _execute_job(job_id: str):
             job["status"] = "completed"
             job["result"] = result
             job["finished_at"] = time.time()
+            # 写历史记录
+            try:
+                uid = job.get("user_numeric_id")
+                if uid and job.get("cost", 0) > 0:
+                    create_consumption_record(
+                        user_id=uid,
+                        task_id=job["id"],
+                        module=job.get("module", "image/style"),
+                        cost=job.get("cost", 0),
+                        description=job.get("title", ""),
+                    )
+            except Exception as hist_err:
+                print(f"history write failed: {hist_err}")
         except Exception as e:
             job["status"] = "failed"
             job["error"] = str(e)
             job["finished_at"] = time.time()
+            # 退还积分
+            try:
+                uid = job.get("user_numeric_id")
+                if uid and job.get("cost", 0) > 0:
+                    add_credits(uid, job.get("cost", 0))
+            except:
+                pass
         _save_jobs()
 
 
