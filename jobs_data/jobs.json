@@ -36,5 +36,33 @@
       "type": "video"
     },
     "finished_at": 1776776644.0192559
+  },
+  "a87467dc": {
+    "id": "a87467dc",
+    "user_id": "64402546-9ead-4263-b881-a26d8ba6d5b6",
+    "user_numeric_id": "64402546-9ead-4263-b881-a26d8ba6d5b6",
+    "type": "image",
+    "title": "生成一只猫",
+    "params": {
+      "prompt": "生成一只猫",
+      "reference_images": [],
+      "size": "1024x1024",
+      "model": "nano-banana-2",
+      "style": "advertising"
+    },
+    "module": "image/style",
+    "cost": 2,
+    "status": "completed",
+    "created_at": 1776780025.6363423,
+    "started_at": 1776780025.6372685,
+    "result": {
+      "image_url": "https://v3b.fal.media/files/b/0a9726b2/bcGmmIqpPjLIYjBxfXj6T_4m2fSnB1.png",
+      "width": 1024,
+      "height": 1024,
+      "model": "fal-ai/nano-banana-2",
+      "model_label": "经济模式",
+      "type": "image"
+    },
+    "finished_at": 1776780049.840454
   }
 }
