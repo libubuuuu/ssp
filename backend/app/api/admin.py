@@ -1,10 +1,11 @@
+import os
 """
 管理员 API
 - 模型健康状态
 - 任务队列状态
 - 平台统计数据
 """
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import UploadFile, File, APIRouter, HTTPException, Depends
 from typing import Optional
 from ..services.circuit_breaker import get_circuit_breaker
 from ..services.task_queue import get_task_queue
@@ -217,3 +218,28 @@ async def admin_adjust_credits(user_id: str, delta: int, current_user: dict = De
         cursor.execute("UPDATE users SET credits = ? WHERE id = ?", (new_credits, user_id))
         conn.commit()
     return {"success": True, "user_id": user_id, "new_credits": new_credits, "delta": delta}
+
+
+@router.post("/upload-qr")
+async def admin_upload_qr(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    """管理员上传收款码图片"""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="无权限")
+    
+    # 保存到 frontend/public/qr-payment.png
+    target = "/root/ssp/frontend/public/qr-payment.png"
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    
+    contents = await file.read()
+    # 简单校验：必须是图片
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="必须上传图片")
+    if len(contents) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="图片超过 5MB")
+    
+    with open(target, "wb") as f:
+        f.write(contents)
+    
+    # 加个时间戳避免浏览器缓存
+    import time
+    return {"success": True, "url": f"/qr-payment.png?v={int(time.time())}", "size": len(contents)}
