@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://43.134.71.189:8000";
 
 export default function VideoClonePage() {
   const [referenceVideoUrl, setReferenceVideoUrl] = useState("");
