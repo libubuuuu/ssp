@@ -61,7 +61,8 @@ class FalImageService:
 class FalVideoService:
     MODELS = {
         "kling/image-to-video": {"endpoint": "fal-ai/kling-video/o3/standard/image-to-video", "label": "图生视频"},
-        "kling/edit": {"endpoint": "fal-ai/kling-video/o1/video-to-video/edit", "label": "复刻"},
+        "kling/edit": {"endpoint": "fal-ai/kling-video/o1/video-to-video/edit", "label": "元素替换(快速)"},
+        "kling/edit-o3": {"endpoint": "fal-ai/kling-video/o3/pro/video-to-video/edit", "label": "翻拍复刻(高质量+中文口播)"},
         "kling/reference": {"endpoint": "fal-ai/kling-video/o1/video-to-video/reference", "label": "最强复刻"},
     }
 
@@ -98,7 +99,7 @@ class FalVideoService:
             "elements": elements,
             "keep_audio": True,
         }
-        return await self._generate_video("kling/edit", args)
+        return await self._generate_video("kling/edit-o3", args)
 
     async def _generate_video(self, model_key: str, arguments: Dict[str, Any]) -> dict:
         circuit_breaker = get_circuit_breaker()
@@ -113,7 +114,7 @@ class FalVideoService:
             print(f"FAL_SUBMIT endpoint={endpoint} args={arguments}", file=sys.stderr, flush=True)
             handler = await fal_client.submit_async(endpoint, arguments=arguments)
             await circuit_breaker.record_success(model_key)
-            endpoint_tag = "edit" if "edit" in endpoint else "reference" if "reference" in endpoint else "i2v"
+            endpoint_tag = "edit-o3" if "o3/pro/video-to-video" in endpoint else "edit" if "edit" in endpoint else "reference" if "reference" in endpoint else "i2v"
             return {"task_id": handler.request_id, "endpoint_tag": endpoint_tag, "status": "pending", "message": "视频生成任务已提交，预计需要 1 分钟", "model": endpoint}
         except Exception as e:
             await circuit_breaker.record_failure(model_key)
@@ -123,6 +124,8 @@ class FalVideoService:
         try:
             if endpoint_hint and "reference" in endpoint_hint:
                 endpoint = "fal-ai/kling-video/o1/video-to-video/reference"
+            elif endpoint_hint and "edit-o3" in endpoint_hint:
+                endpoint = "fal-ai/kling-video/o3/pro/video-to-video/edit"
             elif endpoint_hint and "edit" in endpoint_hint:
                 endpoint = "fal-ai/kling-video/o1/video-to-video/edit"
             else:
