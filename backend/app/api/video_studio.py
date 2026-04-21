@@ -21,8 +21,24 @@ router = APIRouter()
 STUDIO_DIR = Path("/root/ssp/studio_workspace")
 STUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
-# 内存存储任务状态（生产环境应该用 Redis/DB）
-STUDIO_TASKS = {}
+# 持久化存储
+SESSIONS_FILE = STUDIO_DIR / "sessions.json"
+
+def _load_tasks():
+    if SESSIONS_FILE.exists():
+        try:
+            return json.loads(SESSIONS_FILE.read_text())
+        except:
+            return {}
+    return {}
+
+def _save_tasks():
+    try:
+        SESSIONS_FILE.write_text(json.dumps(STUDIO_TASKS, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f"save tasks failed: {e}")
+
+STUDIO_TASKS = _load_tasks()
 
 
 class ElementConfig(BaseModel):
@@ -88,6 +104,7 @@ async def upload_video(
         "segments": [],
         "status": "uploaded",
     }
+    _save_tasks()
 
     return {
         "session_id": session_id,
@@ -145,6 +162,7 @@ async def split_video(
 
     task["segments"] = segments
     task["status"] = "split"
+    _save_tasks()
 
     return {
         "session_id": session_id,
@@ -210,6 +228,7 @@ async def batch_generate(
     task["batch_results"] = batch_results
     task["batch_model"] = model_key
     task["status"] = "generating"
+    _save_tasks()
 
     return {
         "session_id": req.session_id,
@@ -259,6 +278,7 @@ async def batch_status(
     total = len(task["batch_results"])
     if completed + failed == total:
         task["status"] = "done"
+    _save_tasks()
 
     return {
         "session_id": session_id,
@@ -318,6 +338,7 @@ async def merge_segments(
 
     task["final_url"] = final_url
     task["status"] = "finished"
+    _save_tasks()
 
     return {
         "session_id": session_id,
