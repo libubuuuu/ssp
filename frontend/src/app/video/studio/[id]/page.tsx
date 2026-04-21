@@ -295,6 +295,10 @@ export default function VideoStudioDetailPage() {
       <Sidebar />
       <main style={{ flex: 1, padding: "2rem 2.5rem", overflowY: "auto" }}>
         <div style={{ marginBottom: "1.5rem" }}>
+          <button onClick={() => router.push("/video/studio")} style={{
+            background: "none", border: "none", color: "#666", fontSize: "0.85rem", cursor: "pointer",
+            padding: 0, marginBottom: "0.5rem",
+          }}>← 返回项目列表</button>
           <div style={{ fontSize: "0.85rem", color: "#999" }}>视频创作</div>
           <h1 style={{ fontSize: "1.8rem", fontWeight: 400, margin: "0.3rem 0", fontFamily: "Georgia,serif" }}>长视频 <span style={{ fontStyle: "italic" }}>工作台</span></h1>
           <div style={{ fontSize: "0.85rem", color: "#999" }}>上传任意长度视频，自动拆分 → 逐段翻拍 → 拼接成新长视频</div>
