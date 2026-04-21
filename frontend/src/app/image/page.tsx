@@ -25,12 +25,18 @@ export default function ImagePage(){
   const [msg,setMsg]=useState("");
   const [gallery,setGallery]=useState<any[]>([]);
   useEffect(()=>{
-    const saved=localStorage.getItem("img_gallery");
+    const userData=localStorage.getItem("user")||"{}";
+    let userId="anonymous";
+    try{userId=JSON.parse(userData).id||"anonymous";}catch{}
+    const saved=localStorage.getItem(`img_gallery_${userId}`);
     if(saved){try{setGallery(JSON.parse(saved));}catch{}}
   },[]);
   const saveGallery=(g:any[])=>{
     setGallery(g);
-    localStorage.setItem("img_gallery",JSON.stringify(g.slice(0,50)));
+    const userData2=localStorage.getItem("user")||"{}";
+    let userId2="anonymous";
+    try{userId2=JSON.parse(userData2).id||"anonymous";}catch{}
+    localStorage.setItem(`img_gallery_${userId2}`,JSON.stringify(g.slice(0,50)));
   };
   const handleRefUpload=async(e:React.ChangeEvent<HTMLInputElement>)=>{
     const file=e.target.files?.[0];
@@ -100,7 +106,8 @@ export default function ImagePage(){
         });
         const j=await res.json();
         if(j.status==="completed"&&j.result?.image_url){
-          saveGallery([{url:j.result.image_url,prompt:jobPrompt,time:Date.now()},...JSON.parse(localStorage.getItem("img_gallery")||"[]")]);
+          const ud=localStorage.getItem("user")||"{}";let uid="anonymous";try{uid=JSON.parse(ud).id||"anonymous";}catch{}
+          saveGallery([{url:j.result.image_url,prompt:jobPrompt,time:Date.now()},...JSON.parse(localStorage.getItem(`img_gallery_${uid}`)||"[]")]);
           return;
         }
         if(j.status==="failed")return;
