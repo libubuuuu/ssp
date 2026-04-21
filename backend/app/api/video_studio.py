@@ -366,8 +366,8 @@ async def list_sessions(current_user: dict = Depends(get_current_user)):
     uid = str(current_user.get("id", "unknown"))
     items = []
     for sid, task in STUDIO_TASKS.items():
-        if task.get("user_id") and task["user_id"] != uid:
-            continue
+        if task.get("user_id") != uid:
+            continue  # 严格：没 user_id 的也跳过
         # 计算保留剩余天数（按7天算）
         try:
             session_dir = STUDIO_DIR / sid
@@ -409,7 +409,7 @@ async def get_session(session_id: str, current_user: dict = Depends(get_current_
         raise HTTPException(404, "session not found")
     task = STUDIO_TASKS[session_id]
     uid = str(current_user.get("id", "unknown"))
-    if task.get("user_id") and task["user_id"] != uid:
+    if task.get("user_id") != uid:
         raise HTTPException(403, "无权限访问")
     return task
 
@@ -421,7 +421,7 @@ async def delete_session(session_id: str, current_user: dict = Depends(get_curre
         raise HTTPException(404, "session not found")
     task = STUDIO_TASKS[session_id]
     uid = str(current_user.get("id", "unknown"))
-    if task.get("user_id") and task["user_id"] != uid:
+    if task.get("user_id") != uid:
         raise HTTPException(403, "无权限删除")
     import shutil
     session_dir = STUDIO_DIR / session_id
