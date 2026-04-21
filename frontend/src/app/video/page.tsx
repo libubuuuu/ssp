@@ -159,8 +159,8 @@ export default function VideoPage(){
             </select>
           </div>
           <div style={{flex:1,display:"flex",flexDirection:"column"}}>
-            <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>运动描述（可选）</div>
-            <textarea value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="描述视频中期望的运动效果..." style={{width:"100%",padding:"0.75rem 0.9rem",border:"1px solid #e5e5e5",borderRadius:"12px",fontSize:"0.88rem",minHeight:"80px",resize:"vertical",fontFamily:"inherit",background:"#fff",color:"#333",flex:1}}/>
+            <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>动作 / 台词（推荐写台词生成有声视频）</div>
+            <textarea value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder='例：模特微笑说「这款内衣非常舒适」，或只写动作如「缓慢转身」' style={{width:"100%",padding:"0.75rem 0.9rem",border:"1px solid #e5e5e5",borderRadius:"12px",fontSize:"0.88rem",minHeight:"80px",resize:"vertical",fontFamily:"inherit",background:"#fff",color:"#333",flex:1}}/>
           </div>
         </>)}
 

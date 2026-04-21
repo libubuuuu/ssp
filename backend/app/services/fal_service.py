@@ -70,7 +70,7 @@ class FalVideoService:
         self.fal_key = fal_key
 
     async def generate_from_image(self, image_url: str, prompt: str = "", tail_image_url=None) -> dict:
-        args = {"image_url": image_url, "prompt": prompt}
+        args = {"image_url": image_url, "prompt": prompt, "generate_audio": True}
         if tail_image_url:
             args["tail_image_url"] = tail_image_url
         return await self._generate_video("kling/image-to-video", args)
