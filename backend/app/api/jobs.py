@@ -200,13 +200,21 @@ async def list_jobs(current_user: dict = Depends(get_current_user)):
 async def get_job(job_id: str, current_user: dict = Depends(get_current_user)):
     if job_id not in JOBS:
         raise HTTPException(404, "job not found")
-    return JOBS[job_id]
+    job = JOBS[job_id]
+    uid = str(current_user.get("id") or current_user.get("email", "unknown"))
+    if job.get("user_id") != uid:
+        raise HTTPException(403, "无权限访问")
+    return job
 
 
 @router.delete("/{job_id}")
 async def delete_job(job_id: str, current_user: dict = Depends(get_current_user)):
     if job_id not in JOBS:
         raise HTTPException(404, "job not found")
+    job = JOBS[job_id]
+    uid = str(current_user.get("id") or current_user.get("email", "unknown"))
+    if job.get("user_id") != uid:
+        raise HTTPException(403, "无权限删除")
     del JOBS[job_id]
     _save_jobs()
     return {"deleted": job_id}

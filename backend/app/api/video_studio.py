@@ -125,6 +125,8 @@ async def split_video(
         raise HTTPException(404, "session not found")
 
     task = STUDIO_TASKS[session_id]
+    if task.get("user_id") != str(current_user.get("id", "unknown")):
+        raise HTTPException(403, "无权限访问")
     video_path = task["video_path"]
     duration = task["duration"]
     session_dir = STUDIO_DIR / session_id
@@ -182,6 +184,8 @@ async def batch_generate(
         raise HTTPException(404, "session not found")
 
     task = STUDIO_TASKS[req.session_id]
+    if task.get("user_id") != str(current_user.get("id", "unknown")):
+        raise HTTPException(403, "无权限访问")
     segments = task["segments"]
     if not segments:
         raise HTTPException(400, "no segments to generate")
@@ -248,6 +252,8 @@ async def batch_status(
         raise HTTPException(404, "session not found")
 
     task = STUDIO_TASKS[session_id]
+    if task.get("user_id") != str(current_user.get("id", "unknown")):
+        raise HTTPException(403, "无权限访问")
     if "batch_results" not in task:
         raise HTTPException(400, "no batch task")
 
@@ -301,6 +307,8 @@ async def merge_segments(
         raise HTTPException(404, "session not found")
 
     task = STUDIO_TASKS[session_id]
+    if task.get("user_id") != str(current_user.get("id", "unknown")):
+        raise HTTPException(403, "无权限访问")
     
     # 幂等：已经拼接过直接返回
     if task.get("status") == "finished" and task.get("final_url"):
