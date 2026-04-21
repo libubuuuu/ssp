@@ -34,11 +34,16 @@ export default function PricingPage() {
       try {
         const res = await fetch(`${API_BASE}/api/payment/orders/${orderId}`, { headers: { Authorization: `Bearer ${token}` } });
         const data = await res.json();
-        if (data.status === "paid") { setProcessingOrder(null); setSuccess(`支付成功！获得 ${expectedAmount} 积分`); setUserCredits(prev => prev + expectedAmount); return; }
+        if (data.status === "paid") {
+          setProcessingOrder(null);
+          setSuccess(`✅ 已确认入账！获得 ${expectedAmount} 积分`);
+          setUserCredits(prev => prev + expectedAmount);
+          return;
+        }
         attempts++;
-        if (attempts < 30) setTimeout(poll, 2000);
-        else { setProcessingOrder(null); setError("支付超时，请刷新页面重试"); }
-      } catch { attempts++; if (attempts < 30) setTimeout(poll, 2000); else { setProcessingOrder(null); setError("网络错误，请重试"); } }
+        // 长轮询 10 分钟（等管理员确认）
+        if (attempts < 300) setTimeout(poll, 2000);
+      } catch { attempts++; if (attempts < 300) setTimeout(poll, 2000); }
     };
     poll();
   };
@@ -147,6 +152,36 @@ export default function PricingPage() {
               取消支付
             </button>
             <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+          </div>
+        </div>
+      )}
+
+      {/* 收款码弹窗 */}
+      {processingOrder && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
+          <div style={{ background: "#fff", borderRadius: 20, maxWidth: 440, width: "100%", padding: "2rem", textAlign: "center" }}>
+            <h2 style={{ margin: "0 0 1rem", fontSize: "1.2rem", fontWeight: 500 }}>扫码支付</h2>
+            <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "1.5rem" }}>请用微信/支付宝扫码付款</div>
+            <div style={{ background: "#fafaf7", borderRadius: 12, padding: "2rem", marginBottom: "1rem" }}>
+              <img src="/qr-payment.png" alt="收款码" onError={(e: any) => { e.target.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Crect width='200' height='200' fill='%23ddd'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.35em' fill='%23666'%3E收款码占位%3C/text%3E%3C/svg%3E"; }}
+                style={{ width: 200, height: 200, display: "block", margin: "0 auto" }} />
+            </div>
+            <div style={{ background: "#fff8ea", border: "1px solid #f5d884", borderRadius: 10, padding: "0.8rem", marginBottom: "1rem", textAlign: "left", fontSize: "0.82rem", color: "#7a5400" }}>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>⚠ 支付流程</div>
+              <div>1. 扫上方二维码付款</div>
+              <div>2. 付款完成后把<b>订单号</b>发给客服微信</div>
+              <div>3. 客服确认后积分自动到账</div>
+            </div>
+            <div style={{ background: "#f5f5f0", padding: "0.75rem", borderRadius: 8, marginBottom: "1rem", fontFamily: "monospace", fontSize: "0.82rem" }}>
+              订单号: <span style={{ fontWeight: 600, userSelect: "all" }}>{processingOrder}</span>
+              <button onClick={() => { navigator.clipboard.writeText(processingOrder); setSuccess("订单号已复制"); setTimeout(() => setSuccess(null), 2000); }}
+                style={{ marginLeft: 8, background: "#0d0d0d", color: "#fff", border: "none", borderRadius: 6, padding: "0.2rem 0.6rem", fontSize: "0.75rem", cursor: "pointer" }}>复制</button>
+            </div>
+            <div style={{ fontSize: "0.8rem", color: "#999", marginBottom: "1rem" }}>⏳ 等待确认中... (最长 10 分钟)</div>
+            <button onClick={() => { setProcessingOrder(null); setLoading(false); }}
+              style={{ width: "100%", padding: "0.7rem", background: "#f5f5f0", border: "none", borderRadius: 10, cursor: "pointer", fontSize: "0.88rem", color: "#333" }}>
+              关闭（订单保留，可稍后确认）
+            </button>
           </div>
         </div>
       )}

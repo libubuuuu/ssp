@@ -178,42 +178,20 @@ async def list_orders(current_user: dict = Depends(get_current_user)):
         return {"orders": orders}
 
 
-@router.post("/orders/{order_id}/pay")
-async def pay_order(order_id: str, current_user: dict = Depends(get_current_user)):
-    """
-    支付订单（模拟）
-    实际部署时需要对接支付平台回调
-    """
+@router.post("/orders/{order_id}/confirm")
+async def admin_confirm_order(order_id: str, current_user: dict = Depends(get_current_user)):
+    """管理员确认订单入账（手动）"""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="无权限，仅管理员可确认订单")
     with get_db() as conn:
         cursor = conn.cursor()
-
-        # 查询订单
-        cursor.execute("""
-            SELECT user_id, amount, status FROM credit_orders WHERE id = ?
-        """, (order_id,))
+        cursor.execute("SELECT user_id, amount, status FROM credit_orders WHERE id = ?", (order_id,))
         row = cursor.fetchone()
-
         if not row:
             raise HTTPException(status_code=404, detail="订单不存在")
-
-        if row[0] != current_user["id"]:
-            raise HTTPException(status_code=403, detail="无权支付此订单")
-
         if row[2] == "paid":
-            raise HTTPException(status_code=400, detail="订单已支付")
-
-        # 更新订单状态
-        cursor.execute("""
-            UPDATE credit_orders
-            SET status = 'paid', paid_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        """, (order_id,))
-
-        # 增加用户额度
-        cursor.execute("""
-            UPDATE users SET credits = credits + ? WHERE id = ?
-        """, (row[1], row[0]))
-
+            raise HTTPException(status_code=400, detail="订单已确认过")
+        cursor.execute("UPDATE credit_orders SET status='paid', paid_at=CURRENT_TIMESTAMP WHERE id=?", (order_id,))
+        cursor.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (row[1], row[0]))
         conn.commit()
-
-    return {"message": "支付成功", "amount": row[1]}
+    return {"success": True, "order_id": order_id, "credits_added": row[1], "user_id": row[0]}

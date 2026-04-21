@@ -150,3 +150,70 @@ async def get_recent_tasks(limit: Optional[int] = 20, _admin: dict = Depends(req
             })
 
         return {"tasks": tasks}
+
+
+@router.get("/orders")
+async def admin_list_orders(status: str = "all", current_user: dict = Depends(get_current_user)):
+    """管理员：查所有订单（status=pending/paid/all）"""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="无权限")
+    
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if status == "all":
+            cursor.execute("""
+                SELECT o.id, o.user_id, u.email, o.amount, o.price, o.status, o.created_at, o.paid_at
+                FROM credit_orders o LEFT JOIN users u ON o.user_id = u.id
+                ORDER BY o.created_at DESC LIMIT 200
+            """)
+        else:
+            cursor.execute("""
+                SELECT o.id, o.user_id, u.email, o.amount, o.price, o.status, o.created_at, o.paid_at
+                FROM credit_orders o LEFT JOIN users u ON o.user_id = u.id
+                WHERE o.status = ?
+                ORDER BY o.created_at DESC LIMIT 200
+            """, (status,))
+        rows = cursor.fetchall()
+    
+    orders = [{
+        "id": r[0], "user_id": r[1], "user_email": r[2],
+        "credits": r[3], "price": r[4], "status": r[5],
+        "created_at": r[6], "paid_at": r[7],
+    } for r in rows]
+    return {"orders": orders, "total": len(orders)}
+
+
+@router.get("/users-list")
+async def admin_list_users(current_user: dict = Depends(get_current_user)):
+    """管理员：列出所有用户"""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="无权限")
+    
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, email, name, role, credits, created_at
+            FROM users ORDER BY created_at DESC
+        """)
+        rows = cursor.fetchall()
+    
+    users = [{"id": r[0], "email": r[1], "name": r[2], "role": r[3], "credits": r[4], "created_at": r[5]} for r in rows]
+    return {"users": users}
+
+
+@router.post("/users/{user_id}/adjust-credits")
+async def admin_adjust_credits(user_id: str, delta: int, current_user: dict = Depends(get_current_user)):
+    """管理员：手动加/减用户积分（delta 可正可负）"""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="无权限")
+    
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT credits FROM users WHERE id = ?", (user_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        new_credits = max(0, row[0] + delta)
+        cursor.execute("UPDATE users SET credits = ? WHERE id = ?", (new_credits, user_id))
+        conn.commit()
+    return {"success": True, "user_id": user_id, "new_credits": new_credits, "delta": delta}
