@@ -6,6 +6,7 @@ import Sidebar from "@/components/Sidebar";
 const FEATURES = [
   { key:"image", label:"图片生成", desc:"文生图 · 图生图 · 多参考图", icon:"◧", color:"#f0e8d5" },
   { key:"video", label:"视频生成", desc:"图生视频 · 元素替换 · 翻拍", icon:"▶", color:"#e5e0d0" },
+  { key:"video/studio", label:"长视频工作台", desc:"上传视频 · 自动拆分 · 批量翻拍 · 拼接", icon:"▦", color:"#ead8c0" },
   { key:"avatar", label:"数字人", desc:"口型同步 · 无多余动作", icon:"◉", color:"#ede5d3" },
   { key:"voice-clone", label:"语音克隆", desc:"5-10 秒提取音色", icon:"◐", color:"#e8e2d0" },
   { key:"tasks/history", label:"任务历史", desc:"查看所有生成记录", icon:"☰", color:"#f2ece0" },

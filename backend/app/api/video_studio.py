@@ -345,3 +345,65 @@ async def merge_segments(
         "final_url": final_url,
         "segments_merged": len(local_files),
     }
+
+
+@router.get("/list")
+async def list_sessions(current_user: dict = Depends(get_current_user)):
+    """列出所有历史 session，按时间倒序"""
+    import os
+    items = []
+    for sid, task in STUDIO_TASKS.items():
+        # 计算保留剩余天数（按7天算）
+        try:
+            session_dir = STUDIO_DIR / sid
+            if session_dir.exists():
+                mtime = session_dir.stat().st_mtime
+                import time
+                age_days = (time.time() - mtime) / 86400
+                remaining = max(0, 7 - int(age_days))
+            else:
+                remaining = 0
+                mtime = 0
+        except:
+            remaining = 0
+            mtime = 0
+        
+        # 统计
+        segments = task.get("segments", [])
+        batch_results = task.get("batch_results", [])
+        completed = sum(1 for r in batch_results if r.get("status") == "completed")
+        
+        items.append({
+            "session_id": sid,
+            "status": task.get("status", "unknown"),
+            "duration": task.get("duration", 0),
+            "total_segments": len(segments),
+            "completed_segments": completed,
+            "final_url": task.get("final_url"),
+            "created_at": mtime,
+            "remaining_days": remaining,
+        })
+    items.sort(key=lambda x: x["created_at"], reverse=True)
+    return {"total": len(items), "sessions": items}
+
+
+@router.get("/session/{session_id}")
+async def get_session(session_id: str, current_user: dict = Depends(get_current_user)):
+    """获取单个 session 详情"""
+    if session_id not in STUDIO_TASKS:
+        raise HTTPException(404, "session not found")
+    return STUDIO_TASKS[session_id]
+
+
+@router.delete("/session/{session_id}")
+async def delete_session(session_id: str, current_user: dict = Depends(get_current_user)):
+    """删除一个 session"""
+    if session_id not in STUDIO_TASKS:
+        raise HTTPException(404, "session not found")
+    import shutil
+    session_dir = STUDIO_DIR / session_id
+    if session_dir.exists():
+        shutil.rmtree(session_dir)
+    del STUDIO_TASKS[session_id]
+    _save_tasks()
+    return {"deleted": session_id}

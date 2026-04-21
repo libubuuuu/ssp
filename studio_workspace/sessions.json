@@ -1,0 +1,28 @@
+{
+  "e526e387": {
+    "session_id": "e526e387",
+    "video_path": "/root/ssp/studio_workspace/e526e387/source.mp4",
+    "duration": 8.0,
+    "segments": [
+      {
+        "index": 0,
+        "start": 0,
+        "duration": 8,
+        "local_path": "/root/ssp/studio_workspace/e526e387/segment_000.mp4",
+        "fal_url": "https://v3b.fal.media/files/b/0a97225a/rRyQeGVy5w9lRA_xHm5fg_segment_000.mp4"
+      }
+    ],
+    "status": "done",
+    "batch_results": [
+      {
+        "segment_index": 0,
+        "task_id": "019dafae-c117-7603-8411-83eacac82a0b",
+        "endpoint_tag": "edit-o3",
+        "status": "completed",
+        "error": null,
+        "video_url": "https://v3b.fal.media/files/b/0a972277/tnYEDWRfvzpdxQrqJupZP_output.mp4"
+      }
+    ],
+    "batch_model": "kling/edit-o3"
+  }
+}

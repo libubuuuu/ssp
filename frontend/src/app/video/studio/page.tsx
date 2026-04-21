@@ -277,7 +277,12 @@ export default function VideoStudioPage() {
           <div style={{ background: "#fff", padding: "2rem", borderRadius: 16, border: "1px solid #eee" }}>
             <h3 style={{ marginTop: 0 }}>第一步：上传长视频</h3>
             <input type="file" accept="video/*" onChange={e => setVideoFile(e.target.files?.[0] || null)} style={{ display: "block", margin: "1rem 0" }} />
-            {videoFile && <div style={{ fontSize: "0.85rem", color: "#666" }}>已选: {videoFile.name} ({(videoFile.size / 1024 / 1024).toFixed(1)}MB)</div>}
+            {videoFile && (
+              <div style={{ margin: "1rem 0" }}>
+                <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>已选: {videoFile.name} ({(videoFile.size / 1024 / 1024).toFixed(1)}MB)</div>
+                <video src={URL.createObjectURL(videoFile)} controls style={{ width: "100%", maxWidth: "500px", borderRadius: "12px", background: "#000" }} />
+              </div>
+            )}
             <button onClick={uploadVideo} disabled={loading || !videoFile} style={btnPrimary(loading || !videoFile)}>
               {loading ? "上传中..." : "上传并进入下一步"}
             </button>
