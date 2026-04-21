@@ -337,7 +337,10 @@ export default function VideoStudioDetailPage() {
         {/* Step 2: 拆分 */}
         {step === 2 && (
           <div style={{ background: "#fff", padding: "2rem", borderRadius: 16, border: "1px solid #eee" }}>
-            <h3 style={{ marginTop: 0 }}>第二步：选择拆分时长</h3>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3 style={{ marginTop: 0 }}>第二步：选择拆分时长</h3>
+              <button onClick={() => setStep(1)} style={{ background: "none", border: "1px solid #ddd", borderRadius: 8, padding: "0.3rem 0.8rem", fontSize: "0.8rem", cursor: "pointer", color: "#666" }}>← 重新上传</button>
+            </div>
             <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "1rem" }}>原视频时长 {duration}秒，将按下面的时长拆成多段</div>
             <div style={{ display: "flex", gap: "0.5rem", margin: "1rem 0" }}>
               {[5, 8, 10, 15].map(d => (
@@ -359,7 +362,10 @@ export default function VideoStudioDetailPage() {
         {/* Step 3: 配置元素 */}
         {step === 3 && (
           <div style={{ background: "#fff", padding: "2rem", borderRadius: 16, border: "1px solid #eee" }}>
-            <h3 style={{ marginTop: 0 }}>第三步：配置元素（模特/产品）</h3>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3 style={{ marginTop: 0 }}>第三步：配置元素（模特/产品）</h3>
+              <button onClick={() => setStep(2)} style={{ background: "none", border: "1px solid #ddd", borderRadius: 8, padding: "0.3rem 0.8rem", fontSize: "0.8rem", cursor: "pointer", color: "#666" }}>← 重新拆分</button>
+            </div>
             <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "1rem" }}>
               已拆分 {segments.length} 段。添加 1-4 个元素，所有段落共用这些元素。
             </div>
