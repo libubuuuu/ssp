@@ -123,29 +123,36 @@ async def generate_multi_reference_image(req: ImageMultiReferenceRequest, curren
     if not req.reference_images:
         raise HTTPException(status_code=400, detail="至少需要一张参考图")
 
-    # 构建权重提示词
+    # 构建提示词（只在必要时加风格前缀）
     full_prompt = req.prompt
-
-    # 根据参考图数量动态调整权重描述
-    if len(req.reference_images) > 1:
-        full_prompt += ", high quality, detailed, professional"
-
     style_prefixes = {
-        "advertising": "Professional advertising photography, commercial lighting, product shot,",
-        "minimalist": "Minimalist design, clean background, elegant composition,",
+        "advertising": "Professional advertising photography, commercial lighting, ",
+        "minimalist": "Minimalist design, clean background, ",
         "custom": "",
     }
+    if req.style in style_prefixes and style_prefixes[req.style]:
+        full_prompt = style_prefixes[req.style] + full_prompt
 
-    if req.style in style_prefixes:
-        full_prompt = style_prefixes[req.style] + " " + full_prompt
-
-    # 调用 FAL AI 生成（使用第一张参考图）
-    result = await service.generate_with_image(
-        req.reference_images[0],
-        full_prompt,
-        req.size,
-        req.model
-    )
+    import fal_client
+    try:
+        fal_result = await fal_client.run_async(
+            "fal-ai/nano-banana-2/edit",
+            arguments={
+                "prompt": full_prompt,
+                "image_urls": req.reference_images,
+            }
+        )
+        images = fal_result.get("images", [])
+        if not images:
+            raise HTTPException(status_code=500, detail="未生成图片")
+        img_url = images[0].get("url")
+        result = {
+            "image_url": img_url,
+            "model": "fal-ai/nano-banana-2/edit",
+            "model_label": "Nano Banana 2 Edit (多图融合)",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])

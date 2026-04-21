@@ -115,8 +115,20 @@ export default function ImagePage(){
           {gallery.length>0 && (
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:"1rem"}}>
               {gallery.map((item,i)=>(
-                <div key={i} style={{borderRadius:"14px",overflow:"hidden",background:"#fff",position:"relative",aspectRatio:"1",boxShadow:"0 4px 12px rgba(0,0,0,0.04)"}}>
+                <div key={i} style={{borderRadius:"14px",overflow:"hidden",background:"#fff",position:"relative",aspectRatio:"1",boxShadow:"0 4px 12px rgba(0,0,0,0.04)",cursor:"pointer"}}
+                  onClick={async()=>{
+                    try{
+                      const res=await fetch(item.url);
+                      const blob=await res.blob();
+                      const a=document.createElement("a");
+                      a.href=URL.createObjectURL(blob);
+                      a.download=`image_${item.time||Date.now()}.png`;
+                      a.click();
+                      URL.revokeObjectURL(a.href);
+                    }catch{window.open(item.url,"_blank");}
+                  }}>
                   <img src={item.url} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                  <div style={{position:"absolute",top:"0.5rem",right:"0.5rem",background:"rgba(0,0,0,0.6)",color:"#fff",padding:"0.3rem 0.6rem",borderRadius:"999px",fontSize:"0.7rem"}}>⬇ 下载</div>
                   <div style={{position:"absolute",bottom:0,left:0,right:0,padding:"0.75rem",background:"linear-gradient(transparent,rgba(0,0,0,0.75))",color:"#fff",fontSize:"0.75rem"}}>{(item.prompt||"").slice(0,40)}{(item.prompt||"").length>40?"...":""}</div>
                 </div>
               ))}
