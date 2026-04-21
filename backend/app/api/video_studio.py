@@ -300,6 +300,17 @@ async def merge_segments(
         raise HTTPException(404, "session not found")
 
     task = STUDIO_TASKS[session_id]
+    
+    # 幂等：已经拼接过直接返回
+    if task.get("status") == "finished" and task.get("final_url"):
+        completed = sum(1 for r in task.get("batch_results", []) if r.get("status") == "completed")
+        return {
+            "session_id": session_id,
+            "final_url": task["final_url"],
+            "segments_merged": completed,
+            "cached": True,
+        }
+    
     batch_results = task.get("batch_results", [])
     session_dir = STUDIO_DIR / session_id
 

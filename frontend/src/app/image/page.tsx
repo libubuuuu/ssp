@@ -22,6 +22,7 @@ export default function ImagePage(){
   const [uploading,setUploading]=useState(false);
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState("");
+  const [msg,setMsg]=useState("");
   const [gallery,setGallery]=useState<any[]>([]);
   useEffect(()=>{
     const saved=localStorage.getItem("img_gallery");
@@ -59,32 +60,52 @@ export default function ImagePage(){
   };
   const generate=async()=>{
     if(!prompt.trim()){setError("请输入提示词");return;}
-    setError("");setLoading(true);
+    setError("");
     try{
       const token=localStorage.getItem("token")||"";
-      let res;
-      if(refImages.length>0){
-        // 图生图
-        res=await fetch(`${API_BASE}/api/image/multi-reference`,{
-          method:"POST",
-          headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
-          body:JSON.stringify({prompt,reference_images:refImages,style,model,size}),
-        });
-      }else{
-        // 文生图
-        res=await fetch(`${API_BASE}/api/image/style`,{
-          method:"POST",
-          headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
-          body:JSON.stringify({prompt,style,model,size}),
-        });
-      }
+      // 投递到全局任务队列
+      const res=await fetch(`${API_BASE}/api/jobs/submit`,{
+        method:"POST",
+        headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
+        body:JSON.stringify({
+          type:"image",
+          title:prompt.slice(0,30),
+          params:{
+            prompt,
+            reference_images:refImages,
+            size,
+            model,
+            style,
+          },
+        }),
+      });
       const data=await res.json();
-      if(!res.ok)throw new Error(data.detail||"生成失败");
-      const url=data.image_url||data.url||data.data?.image_url;
-      if(!url)throw new Error("未返回图片");
-      saveGallery([{url,prompt,time:Date.now()},...gallery]);
+      if(!res.ok)throw new Error(data.detail||"提交失败");
+      // 立刻返回，不阻塞。任务完成后右下角浮窗会显示
+      setMsg(`任务已提交！查看右下角⚡ 我的任务`);
+      setTimeout(()=>setMsg(""),3000);
+      // 后台轮询这个任务，完成后加入 gallery
+      pollJob(data.job_id,prompt);
     }catch(e:any){setError(e.message);}
-    finally{setLoading(false);}
+  };
+
+  const pollJob=async(jobId:string,jobPrompt:string)=>{
+    const token=localStorage.getItem("token")||"";
+    const start=Date.now();
+    while(Date.now()-start<300000){ // 最多 5 分钟
+      await new Promise(r=>setTimeout(r,3000));
+      try{
+        const res=await fetch(`${API_BASE}/api/jobs/${jobId}`,{
+          headers:{"Authorization":`Bearer ${token}`},
+        });
+        const j=await res.json();
+        if(j.status==="completed"&&j.result?.image_url){
+          saveGallery([{url:j.result.image_url,prompt:jobPrompt,time:Date.now()},...JSON.parse(localStorage.getItem("img_gallery")||"[]")]);
+          return;
+        }
+        if(j.status==="failed")return;
+      }catch{}
+    }
   };
   return (
     <div style={{display:"flex",minHeight:"100vh",background:"#edeae4",fontFamily:"-apple-system,BlinkMacSystemFont,sans-serif"}}>
@@ -191,10 +212,11 @@ export default function ImagePage(){
           <textarea value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder={refImages.length>0?"描述你想要生成的新图片（AI会参考上面的图）...":"描述你想要的图片..."}
             style={{width:"100%",padding:"0.75rem 0.9rem",border:"1px solid #e5e5e5",borderRadius:"12px",fontSize:"0.88rem",minHeight:"120px",resize:"vertical",fontFamily:"inherit",background:"#fff",color:"#333",flex:1}}/>
         </div>
+        {msg && <div style={{color:"#0a0",background:"#eaf7ea",padding:"0.7rem",borderRadius:"10px",fontSize:"0.8rem"}}>{msg}</div>}
         {error && <div style={{color:"#c00",background:"#ffeaea",padding:"0.7rem",borderRadius:"10px",fontSize:"0.8rem"}}>{error}</div>}
-        <button onClick={generate} disabled={loading}
-          style={{padding:"0.9rem",background:loading?"#999":"#0d0d0d",color:"#fff",border:"none",borderRadius:"12px",cursor:loading?"wait":"pointer",fontSize:"0.95rem",fontWeight:500}}>
-          {loading?"生成中...":refImages.length>0?"开始图生图":"开始生成"}
+        <button onClick={generate}
+          style={{padding:"0.9rem",background:"#0d0d0d",color:"#fff",border:"none",borderRadius:"12px",cursor:loading?"wait":"pointer",fontSize:"0.95rem",fontWeight:500}}>
+          {refImages.length>0?"开始图生图":"开始生成"}
         </button>
       </aside>
     </div>
