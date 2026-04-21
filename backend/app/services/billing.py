@@ -81,19 +81,25 @@ def create_consumption_record(
     task_id: str,
     module: str,
     cost: int,
-    description: str
+    description: str,
+    images: list = None,
+    videos: list = None,
 ) -> bool:
-    """创建消费记录"""
+    """创建消费记录（支持图片/视频URL）"""
     try:
+        import json
         with get_db() as conn:
             cursor = conn.cursor()
             import uuid
             record_id = str(uuid.uuid4())
             cursor.execute("""
                 INSERT INTO generation_history
-                (id, user_id, module, prompt, cost)
-                VALUES (?, ?, ?, ?, ?)
-            """, (record_id, user_id, module, description, cost))
+                (id, user_id, module, prompt, images, videos, cost)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (record_id, user_id, module, description,
+                  json.dumps(images or []),
+                  json.dumps(videos or []),
+                  cost))
             conn.commit()
             return True
     except Exception as e:

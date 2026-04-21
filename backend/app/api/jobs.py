@@ -115,12 +115,17 @@ async def _execute_job(job_id: str):
             try:
                 uid = job.get("user_numeric_id")
                 if uid and job.get("cost", 0) > 0:
+                    result_data = job.get("result", {})
+                    imgs = [result_data["image_url"]] if result_data.get("image_url") else []
+                    vids = [result_data["video_url"]] if result_data.get("video_url") else []
                     create_consumption_record(
                         user_id=uid,
                         task_id=job["id"],
                         module=job.get("module", "image/style"),
                         cost=job.get("cost", 0),
                         description=job.get("title", ""),
+                        images=imgs,
+                        videos=vids,
                     )
             except Exception as hist_err:
                 print(f"history write failed: {hist_err}")
