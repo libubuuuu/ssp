@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://43.134.71.189:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://ailixiao.com";
 
 interface Job {
   id: string;

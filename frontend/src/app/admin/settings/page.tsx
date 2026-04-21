@@ -2,7 +2,7 @@
 import { useState, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://43.134.71.189:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://ailixiao.com";
 
 export default function AdminSettingsPage() {
   const [uploading, setUploading] = useState(false);
