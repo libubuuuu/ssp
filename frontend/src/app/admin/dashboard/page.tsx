@@ -1,4 +1,5 @@
 "use client";
+import { useLang } from "@/lib/i18n/LanguageContext";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -29,6 +30,7 @@ interface StatsOverview {
 }
 
 export default function AdminDashboard() {
+  const { t } = useLang();
   const router = useRouter();
   const [models, setModels] = useState<ModelStatus[]>([]);
   const [queue, setQueue] = useState<QueueStatus | null>(null);
@@ -81,7 +83,7 @@ export default function AdminDashboard() {
     return (
       <div className="min-h-screen bg-zinc-950 p-12">
         <div className="max-w-7xl mx-auto">
-          <h1 className="text-2xl font-bold text-zinc-400">加载中...</h1>
+          <h1 className="text-2xl font-bold text-zinc-400">{t("studio.loading")}</h1>
         </div>
       </div>
     );
@@ -92,14 +94,14 @@ export default function AdminDashboard() {
       <div className="max-w-7xl mx-auto">
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-3xl font-bold text-white">开发者后台</h1>
-            <p className="text-zinc-400 mt-1">AI 创意平台监控系统</p>
+            <h1 className="text-3xl font-bold text-white">{t("admin.devBackend")}</h1>
+            <p className="text-zinc-400 mt-1">{t("admin.platformMonitor")}</p>
           </div>
           <button
             onClick={() => router.push("/")}
             className="px-4 py-2 text-zinc-400 hover:text-white transition-colors"
           >
-            返回前台
+            {t("admin.backFrontend")}
           </button>
         </div>
 
@@ -107,19 +109,19 @@ export default function AdminDashboard() {
         {stats && (
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
             <div className="p-6 rounded-xl bg-zinc-900 border border-zinc-800">
-              <p className="text-zinc-500 text-sm">总用户数</p>
+              <p className="text-zinc-500 text-sm">{t("admin.totalUsers")}</p>
               <p className="text-3xl font-bold text-white mt-2">{stats.total_users}</p>
             </div>
             <div className="p-6 rounded-xl bg-zinc-900 border border-zinc-800">
-              <p className="text-zinc-500 text-sm">总任务数</p>
+              <p className="text-zinc-500 text-sm">{t("admin.totalTasks")}</p>
               <p className="text-3xl font-bold text-white mt-2">{stats.total_tasks}</p>
             </div>
             <div className="p-6 rounded-xl bg-zinc-900 border border-zinc-800">
-              <p className="text-zinc-500 text-sm">今日任务</p>
+              <p className="text-zinc-500 text-sm">{t("admin.todayTasks")}</p>
               <p className="text-3xl font-bold text-amber-400 mt-2">{stats.today_tasks}</p>
             </div>
             <div className="p-6 rounded-xl bg-zinc-900 border border-zinc-800">
-              <p className="text-zinc-500 text-sm">今日收入</p>
+              <p className="text-zinc-500 text-sm">{t("admin.todayRevenue")}</p>
               <p className="text-3xl font-bold text-green-400 mt-2">¥{stats.today_revenue}</p>
             </div>
           </div>
@@ -127,16 +129,16 @@ export default function AdminDashboard() {
 
         {/* 模型健康状态 */}
         <div className="mb-8">
-          <h2 className="text-xl font-bold text-white mb-4">模型健康状态</h2>
+          <h2 className="text-xl font-bold text-white mb-4">{t("admin.modelHealth")}</h2>
           <div className="rounded-xl bg-zinc-900 border border-zinc-800 overflow-hidden">
             <table className="w-full">
               <thead className="bg-zinc-900/50 border-b border-zinc-800">
                 <tr>
-                  <th className="text-left p-4 text-zinc-400 font-medium">模型名称</th>
-                  <th className="text-left p-4 text-zinc-400 font-medium">状态</th>
-                  <th className="text-left p-4 text-zinc-400 font-medium">成功</th>
-                  <th className="text-left p-4 text-zinc-400 font-medium">失败</th>
-                  <th className="text-left p-4 text-zinc-400 font-medium">操作</th>
+                  <th className="text-left p-4 text-zinc-400 font-medium">{t("admin.modelName")}</th>
+                  <th className="text-left p-4 text-zinc-400 font-medium">{t("admin.status")}</th>
+                  <th className="text-left p-4 text-zinc-400 font-medium">{t("admin.success")}</th>
+                  <th className="text-left p-4 text-zinc-400 font-medium">{t("admin.failedCount")}</th>
+                  <th className="text-left p-4 text-zinc-400 font-medium">{t("admin.action")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -164,7 +166,7 @@ export default function AdminDashboard() {
                           onClick={() => handleResetModel(model.model_name)}
                           className="px-3 py-1 text-xs bg-amber-500 text-black rounded hover:bg-amber-400 transition-colors"
                         >
-                          重置
+                          {t("admin.reset")}
                         </button>
                       )}
                     </td>
@@ -173,7 +175,7 @@ export default function AdminDashboard() {
                 {models.length === 0 && (
                   <tr>
                     <td colSpan={5} className="p-8 text-center text-zinc-500">
-                      暂无模型数据
+                      {t("admin.noModels")}
                     </td>
                   </tr>
                 )}
@@ -185,14 +187,14 @@ export default function AdminDashboard() {
         {/* 任务队列状态 */}
         {queue && (
           <div>
-            <h2 className="text-xl font-bold text-white mb-4">任务队列状态</h2>
+            <h2 className="text-xl font-bold text-white mb-4">{t("admin.taskQueue")}</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="p-6 rounded-xl bg-zinc-900 border border-zinc-800">
-                <p className="text-zinc-500 text-sm">运行中任务</p>
+                <p className="text-zinc-500 text-sm">{t("admin.runningTasks")}</p>
                 <p className="text-3xl font-bold text-amber-400 mt-2">{queue.total_running}</p>
               </div>
               <div className="p-6 rounded-xl bg-zinc-900 border border-zinc-800">
-                <p className="text-zinc-500 text-sm">排队中任务</p>
+                <p className="text-zinc-500 text-sm">{t("admin.pendingTasks")}</p>
                 <p className="text-3xl font-bold text-zinc-400 mt-2">{queue.total_queued}</p>
               </div>
             </div>
@@ -202,9 +204,9 @@ export default function AdminDashboard() {
                 <table className="w-full">
                   <thead className="bg-zinc-900/50 border-b border-zinc-800">
                     <tr>
-                      <th className="text-left p-4 text-zinc-400 font-medium">用户 ID</th>
-                      <th className="text-left p-4 text-zinc-400 font-medium">运行中</th>
-                      <th className="text-left p-4 text-zinc-400 font-medium">排队中</th>
+                      <th className="text-left p-4 text-zinc-400 font-medium">{t("admin.userId")}</th>
+                      <th className="text-left p-4 text-zinc-400 font-medium">{t("admin.running")}</th>
+                      <th className="text-left p-4 text-zinc-400 font-medium">{t("admin.pending")}</th>
                     </tr>
                   </thead>
                   <tbody>
