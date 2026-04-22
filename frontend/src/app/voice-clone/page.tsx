@@ -1,17 +1,19 @@
 "use client";
+import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const MODES = [
-  { key: "clone", label: "声音克隆", desc: "上传参考音频，克隆专属音色" },
-  { key: "tts", label: "文本转语音", desc: "选择预设音色，文字转语音" },
+  { key: "clone", labelKey: "modeClone", descKey: "modeCloneDesc" },
+  { key: "tts", labelKey: "modeTts", descKey: "modeTtsDesc" },
 ];
 
 interface VoicePreset { id: string; name: string; gender: string; style: string; }
 
 export default function VoiceClonePage() {
+  const { t } = useLang();
   const [mode, setMode] = useState("clone");
   const [referenceAudio, setReferenceAudio] = useState<string | null>(null);
   const [text, setText] = useState("");
@@ -85,8 +87,8 @@ export default function VoiceClonePage() {
       <main style={{ flex: 1, padding: "2rem 2.5rem", overflowY: "auto" }}>
         <div style={{ marginBottom: "1.5rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
-            <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>语音创作</div>
-            <h1 style={{ fontSize: "1.6rem", fontWeight: 400, color: "#0d0d0d", margin: 0, fontFamily: "Georgia,serif" }}>语音<span style={{ fontStyle: "italic" }}> 工作台</span></h1>
+            <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>{t("voice.title")}</div>
+            <h1 style={{ fontSize: "1.6rem", fontWeight: 400, color: "#0d0d0d", margin: 0, fontFamily: "Georgia,serif" }}>{t("voice.titleMain")}<span style={{ fontStyle: "italic" }}> {t("voice.titleAccent")}</span></h1>
           </div>
           {gallery.length > 0 && <button onClick={() => { if (confirm("清空记录？")) saveGallery([]); }} style={{ background: "none", border: "1px solid #ddd", padding: "0.5rem 1rem", borderRadius: "999px", color: "#666", fontSize: "0.85rem", cursor: "pointer" }}>清空记录</button>}
         </div>
@@ -95,14 +97,14 @@ export default function VoiceClonePage() {
           {gallery.length === 0 && !loading && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "500px" }}>
               <div style={{ fontSize: "3.5rem", marginBottom: "1rem", color: "#ddd" }}>🎙️</div>
-              <div style={{ fontSize: "0.95rem", color: "#999" }}>还没有语音作品，开始你的第一次创作吧</div>
-              <div style={{ fontSize: "0.8rem", color: "#bbb", marginTop: "0.5rem" }}>在右侧输入文案，点击「开始生成」</div>
+              <div style={{ fontSize: "0.95rem", color: "#999" }}>{t("voice.emptyWorks")}</div>
+              <div style={{ fontSize: "0.8rem", color: "#bbb", marginTop: "0.5rem" }}>{t("voice.emptyTip")}</div>
             </div>
           )}
           {loading && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "500px" }}>
               <div style={{ width: "40px", height: "40px", border: "3px solid #eee", borderTopColor: "#0d0d0d", borderRadius: "50%", animation: "spin 1s linear infinite" }}></div>
-              <div style={{ marginTop: "1rem", color: "#555", fontSize: "0.95rem", fontWeight: 500 }}>AI 正在生成语音...</div>
+              <div style={{ marginTop: "1rem", color: "#555", fontSize: "0.95rem", fontWeight: 500 }}>{t("voice.generating")}</div>
               <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
             </div>
           )}
@@ -112,7 +114,7 @@ export default function VoiceClonePage() {
                 <div key={i} style={{ borderRadius: "14px", overflow: "hidden", background: "#fff", padding: "1rem 1.25rem", boxShadow: "0 4px 12px rgba(0,0,0,0.04)" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
                     <span style={{ fontSize: "0.8rem", color: "#999" }}>{item.mode} · {item.label}</span>
-                    <a href={item.url} download target="_blank" style={{ fontSize: "0.75rem", color: "#666", textDecoration: "none", border: "1px solid #ddd", padding: "0.25rem 0.6rem", borderRadius: "999px" }}>下载</a>
+                    <a href={item.url} download target="_blank" style={{ fontSize: "0.75rem", color: "#666", textDecoration: "none", border: "1px solid #ddd", padding: "0.25rem 0.6rem", borderRadius: "999px" }}>{t("common.download")}</a>
                   </div>
                   <audio src={item.url} controls style={{ width: "100%" }} />
                 </div>
@@ -124,12 +126,12 @@ export default function VoiceClonePage() {
 
       <aside style={{ width: "340px", background: "#fff", borderLeft: "1px solid rgba(0,0,0,0.06)", padding: "2rem 1.75rem", display: "flex", flexDirection: "column", gap: "1.25rem", height: "100vh", position: "sticky", top: 0, overflowY: "auto" }}>
         <div>
-          <div style={{ fontSize: "0.72rem", color: "#999", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "0.6rem" }}>模式</div>
+          <div style={{ fontSize: "0.72rem", color: "#999", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "0.6rem" }}>{t("voice.secMode")}</div>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
             {MODES.map(m => (
               <button key={m.key} onClick={() => setMode(m.key)} style={{ textAlign: "left", padding: "0.7rem 0.9rem", border: mode === m.key ? "2px solid #0d0d0d" : "1px solid #e5e5e5", background: mode === m.key ? "#f9f7f2" : "#fff", borderRadius: "10px", cursor: "pointer" }}>
-                <div style={{ fontSize: "0.88rem", fontWeight: 500, color: "#0d0d0d" }}>{m.label}</div>
-                <div style={{ fontSize: "0.72rem", color: "#888", marginTop: "0.15rem" }}>{m.desc}</div>
+                <div style={{ fontSize: "0.88rem", fontWeight: 500, color: "#0d0d0d" }}>{t(`voice.${m.labelKey}`)}</div>
+                <div style={{ fontSize: "0.72rem", color: "#888", marginTop: "0.15rem" }}>{t(`voice.${m.descKey}`)}</div>
               </button>
             ))}
           </div>
@@ -137,10 +139,10 @@ export default function VoiceClonePage() {
 
         {mode === "clone" && (
           <div>
-            <div style={{ fontSize: "0.72rem", color: "#999", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "0.6rem" }}>参考音频</div>
+            <div style={{ fontSize: "0.72rem", color: "#999", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "0.6rem" }}>{t("voice.secReference")}</div>
             <label style={{ display: "block", width: "100%", padding: "1.2rem 0.9rem", border: "2px dashed #ccc", background: "#fafaf7", borderRadius: "12px", cursor: "pointer", color: "#888", fontSize: "0.85rem", textAlign: "center" }}>
               <input type="file" accept="audio/*" onChange={handleAudioUpload} style={{ display: "none" }} />
-              {referenceAudio ? "✅ 已上传参考音频（点击更换）" : "↑ 点击上传参考音频\n5-10秒，清晰人声"}
+              {referenceAudio ? t("voice.uploadedRef") : t("voice.clickUploadRef")}
             </label>
             {referenceAudio && <audio src={referenceAudio} controls style={{ width: "100%", marginTop: "0.5rem" }} />}
           </div>
@@ -148,7 +150,7 @@ export default function VoiceClonePage() {
 
         {mode === "tts" && voicePresets.length > 0 && (
           <div>
-            <div style={{ fontSize: "0.72rem", color: "#999", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "0.6rem" }}>选择音色</div>
+            <div style={{ fontSize: "0.72rem", color: "#999", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "0.6rem" }}>{t("voice.secVoice")}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
               {voicePresets.map(v => (
                 <button key={v.id} onClick={() => setSelectedVoice(v.id)} style={{ textAlign: "left", padding: "0.6rem 0.9rem", border: selectedVoice === v.id ? "2px solid #0d0d0d" : "1px solid #e5e5e5", background: selectedVoice === v.id ? "#f9f7f2" : "#fff", borderRadius: "10px", cursor: "pointer" }}>
@@ -161,14 +163,14 @@ export default function VoiceClonePage() {
         )}
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-          <div style={{ fontSize: "0.72rem", color: "#999", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "0.6rem" }}>文案内容</div>
-          <textarea value={text} onChange={e => setText(e.target.value)} placeholder="输入要转换为语音的文案..." style={{ width: "100%", padding: "0.75rem 0.9rem", border: "1px solid #e5e5e5", borderRadius: "12px", fontSize: "0.88rem", minHeight: "120px", resize: "vertical", fontFamily: "inherit", background: "#fff", color: "#333", flex: 1 }} />
+          <div style={{ fontSize: "0.72rem", color: "#999", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "0.6rem" }}>{t("voice.secText")}</div>
+          <textarea value={text} onChange={e => setText(e.target.value)} placeholder={t("voice.textPlaceholder")} style={{ width: "100%", padding: "0.75rem 0.9rem", border: "1px solid #e5e5e5", borderRadius: "12px", fontSize: "0.88rem", minHeight: "120px", resize: "vertical", fontFamily: "inherit", background: "#fff", color: "#333", flex: 1 }} />
         </div>
 
         {error && <div style={{ color: "#c00", background: "#ffeaea", padding: "0.7rem", borderRadius: "10px", fontSize: "0.8rem" }}>{error}</div>}
 
         <button onClick={mode === "clone" ? handleClone : handleTTS} disabled={loading} style={{ padding: "0.9rem", background: loading ? "#999" : "#0d0d0d", color: "#fff", border: "none", borderRadius: "12px", cursor: loading ? "wait" : "pointer", fontSize: "0.95rem", fontWeight: 500 }}>
-          {loading ? "生成中..." : mode === "clone" ? "克隆声音并生成" : "生成配音"}
+          {loading ? t("voice.generatingBtn") : mode === "clone" ? t("voice.cloneAndGen") : t("voice.genTts")}
         </button>
       </aside>
     </div>
