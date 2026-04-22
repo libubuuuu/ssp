@@ -1,10 +1,12 @@
 "use client";
+import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://ailixiao.com";
 
 export default function HistoryPage() {
+  const { t } = useLang();
   const [history, setHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<any>(null);
@@ -20,15 +22,15 @@ export default function HistoryPage() {
   }, []);
 
   const moduleLabel: Record<string, string> = {
-    "video/image-to-video": "图生视频",
-    "video/replace/element": "元素替换",
-    "video/clone": "翻拍复刻",
-    "image/style": "风格化图片",
-    "image/realistic": "写实图片",
-    "image/multi-reference": "多参考图",
-    "avatar/generate": "数字人",
-    "voice/clone": "声音克隆",
-    "voice/tts": "语音合成",
+    "video/image-to-video": t("tasks.mod_i2v"),
+    "video/replace/element": t("tasks.mod_replace"),
+    "video/clone": t("tasks.mod_clone"),
+    "image/style": t("tasks.mod_style"),
+    "image/realistic": t("tasks.mod_realistic"),
+    "image/multi-reference": t("tasks.mod_multi_ref"),
+    "avatar/generate": t("tasks.mod_avatar"),
+    "voice/clone": t("tasks.mod_voice_clone"),
+    "voice/tts": t("tasks.mod_tts"),
   };
 
   return (
@@ -36,13 +38,13 @@ export default function HistoryPage() {
       <Sidebar />
       <main style={{ flex: 1, padding: "2rem 2.5rem", overflowY: "auto" }}>
         <div style={{ marginBottom: "1.5rem" }}>
-          <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>生成记录</div>
-          <h1 style={{ fontSize: "1.6rem", fontWeight: 400, color: "#0d0d0d", margin: 0, fontFamily: "Georgia,serif" }}>历史<span style={{ fontStyle: "italic" }}> 记录</span></h1>
+          <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>{t("tasks.genRecord")}</div>
+          <h1 style={{ fontSize: "1.6rem", fontWeight: 400, color: "#0d0d0d", margin: 0, fontFamily: "Georgia,serif" }}>{t("tasks.titleMain")}<span style={{ fontStyle: "italic" }}> {t("tasks.titleAccent")}</span></h1>
         </div>
 
-        {loading && <div style={{ color: "#999", textAlign: "center", marginTop: "4rem" }}>加载中...</div>}
+        {loading && <div style={{ color: "#999", textAlign: "center", marginTop: "4rem" }}>{t("tasks.loading")}</div>}
         {!loading && history.length === 0 && (
-          <div style={{ color: "#999", textAlign: "center", marginTop: "4rem" }}>暂无生成记录</div>
+          <div style={{ color: "#999", textAlign: "center", marginTop: "4rem" }}>{t("tasks.empty")}</div>
         )}
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "1rem" }}>
@@ -67,7 +69,7 @@ export default function HistoryPage() {
                 <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: "0.4rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.prompt}</div>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "#999" }}>
                   <span>{item.created_at?.slice(0, 16)}</span>
-                  <span>{item.cost} 积分</span>
+                  <span>{item.cost} {t("tasks.cost")}</span>
                 </div>
               </div>
             </div>
@@ -94,29 +96,23 @@ export default function HistoryPage() {
             )}
 
             <div style={{ fontSize: "0.88rem", color: "#555", marginBottom: "1rem", lineHeight: 1.6 }}>
-              <strong>提示词：</strong>{selected.prompt}
+              <strong>{t("tasks.promptLabel")}</strong>{selected.prompt}
             </div>
             <div style={{ fontSize: "0.82rem", color: "#999", marginBottom: "1.5rem" }}>
-              {selected.created_at?.slice(0, 19)} · 消耗 {selected.cost} 积分
+              {selected.created_at?.slice(0, 19)} · {t("tasks.consume")} {selected.cost} {t("tasks.cost")}
             </div>
 
             <div style={{ display: "flex", gap: "0.75rem" }}>
               {selected.videos?.[0] && (
                 <a href={selected.videos[0]} download target="_blank" rel="noreferrer"
-                  style={{ flex: 1, padding: "0.75rem", background: "#0d0d0d", color: "#fff", textAlign: "center", borderRadius: "10px", textDecoration: "none", fontSize: "0.88rem" }}>
-                  下载视频
-                </a>
+                  style={{ flex: 1, padding: "0.75rem", background: "#0d0d0d", color: "#fff", textAlign: "center", borderRadius: "10px", textDecoration: "none", fontSize: "0.88rem" }}>{t("tasks.downloadVideo")}</a>
               )}
               {selected.images?.[0] && (
                 <a href={selected.images[0]} download target="_blank" rel="noreferrer"
-                  style={{ flex: 1, padding: "0.75rem", background: "#0d0d0d", color: "#fff", textAlign: "center", borderRadius: "10px", textDecoration: "none", fontSize: "0.88rem" }}>
-                  下载图片
-                </a>
+                  style={{ flex: 1, padding: "0.75rem", background: "#0d0d0d", color: "#fff", textAlign: "center", borderRadius: "10px", textDecoration: "none", fontSize: "0.88rem" }}>{t("tasks.downloadImage")}</a>
               )}
               <button onClick={() => setSelected(null)}
-                style={{ flex: 1, padding: "0.75rem", background: "#f5f5f0", border: "none", borderRadius: "10px", cursor: "pointer", fontSize: "0.88rem", color: "#333" }}>
-                关闭
-              </button>
+                style={{ flex: 1, padding: "0.75rem", background: "#f5f5f0", border: "none", borderRadius: "10px", cursor: "pointer", fontSize: "0.88rem", color: "#333" }}>{t("tasks.close")}</button>
             </div>
           </div>
         </div>

@@ -27,8 +27,10 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
-        <LanguageProvider>{children}</LanguageProvider>
-        <JobPanel />
+        <LanguageProvider>
+          {children}
+          <JobPanel />
+        </LanguageProvider>
       </body>
     </html>
   );

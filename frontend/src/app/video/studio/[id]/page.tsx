@@ -1,4 +1,5 @@
 "use client";
+import { useLang } from "@/lib/i18n/LanguageContext";
 import React, { useState, useRef, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
@@ -30,6 +31,7 @@ interface BatchTask {
 }
 
 export default function VideoStudioDetailPage() {
+  const { t } = useLang();
   const params = useParams();
   const router = useRouter();
   const urlSessionId = (params?.id as string) || "";
@@ -298,19 +300,19 @@ export default function VideoStudioDetailPage() {
           <button onClick={() => router.push("/video/studio")} style={{
             background: "none", border: "none", color: "#666", fontSize: "0.85rem", cursor: "pointer",
             padding: 0, marginBottom: "0.5rem",
-          }}>← 返回项目列表</button>
-          <div style={{ fontSize: "0.85rem", color: "#999" }}>视频创作</div>
-          <h1 style={{ fontSize: "1.8rem", fontWeight: 400, margin: "0.3rem 0", fontFamily: "Georgia,serif" }}>长视频 <span style={{ fontStyle: "italic" }}>工作台</span></h1>
-          <div style={{ fontSize: "0.85rem", color: "#999" }}>上传任意长度视频，自动拆分 → 逐段翻拍 → 拼接成新长视频</div>
+          }}>{t("studio.detailBackToList")}</button>
+          <div style={{ fontSize: "0.85rem", color: "#999" }}>{t("studio.studioVideo")}</div>
+          <h1 style={{ fontSize: "1.8rem", fontWeight: 400, margin: "0.3rem 0", fontFamily: "Georgia,serif" }}>{t("studio.studioLongMain")} <span style={{ fontStyle: "italic" }}>工作台</span></h1>
+          <div style={{ fontSize: "0.85rem", color: "#999" }}>{t("studio.detailSubtitle")}</div>
         </div>
 
         {/* 步骤条 */}
         <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", margin: "1.5rem 0", fontSize: "0.85rem" }}>
-          {badge(1)} <span style={s(1)}>上传视频</span> <span style={{ color: "#ccc" }}>→</span>
-          {badge(2)} <span style={s(2)}>拆分</span> <span style={{ color: "#ccc" }}>→</span>
-          {badge(3)} <span style={s(3)}>配置元素</span> <span style={{ color: "#ccc" }}>→</span>
-          {badge(4)} <span style={s(4)}>批量生成</span> <span style={{ color: "#ccc" }}>→</span>
-          {badge(5)} <span style={s(5)}>完成</span>
+          {badge(1)} <span style={s(1)}>{t("studio.stepBadge1")}</span> <span style={{ color: "#ccc" }}>→</span>
+          {badge(2)} <span style={s(2)}>{t("studio.stepBadge2")}</span> <span style={{ color: "#ccc" }}>→</span>
+          {badge(3)} <span style={s(3)}>{t("studio.stepBadge3")}</span> <span style={{ color: "#ccc" }}>→</span>
+          {badge(4)} <span style={s(4)}>{t("studio.stepBadge4")}</span> <span style={{ color: "#ccc" }}>→</span>
+          {badge(5)} <span style={s(5)}>{t("studio.stepBadge5")}</span>
         </div>
 
         {/* 消息/错误 */}
@@ -320,16 +322,16 @@ export default function VideoStudioDetailPage() {
         {/* Step 1: 上传 */}
         {step === 1 && (
           <div style={{ background: "#fff", padding: "2rem", borderRadius: 16, border: "1px solid #eee" }}>
-            <h3 style={{ marginTop: 0 }}>第一步：上传长视频</h3>
+            <h3 style={{ marginTop: 0 }}>{t("studio.step1Title")}</h3>
             <input type="file" accept="video/*" onChange={e => setVideoFile(e.target.files?.[0] || null)} style={{ display: "block", margin: "1rem 0" }} />
             {videoFile && (
               <div style={{ margin: "1rem 0" }}>
-                <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>已选: {videoFile.name} ({(videoFile.size / 1024 / 1024).toFixed(1)}MB)</div>
+                <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>{t("studio.chosen")}: {videoFile.name} ({(videoFile.size / 1024 / 1024).toFixed(1)}MB)</div>
                 <video src={URL.createObjectURL(videoFile)} controls style={{ width: "100%", maxWidth: "500px", borderRadius: "12px", background: "#000" }} />
               </div>
             )}
             <button onClick={uploadVideo} disabled={loading || !videoFile} style={btnPrimary(loading || !videoFile)}>
-              {loading ? "上传中..." : "上传并进入下一步"}
+              {loading ? t("studio.uploading") : t("studio.step1Btn")}
             </button>
           </div>
         )}
@@ -338,23 +340,23 @@ export default function VideoStudioDetailPage() {
         {step === 2 && (
           <div style={{ background: "#fff", padding: "2rem", borderRadius: 16, border: "1px solid #eee" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <h3 style={{ marginTop: 0 }}>第二步：选择拆分时长</h3>
-              <button onClick={() => setStep(1)} style={{ background: "none", border: "1px solid #ddd", borderRadius: 8, padding: "0.3rem 0.8rem", fontSize: "0.8rem", cursor: "pointer", color: "#666" }}>← 重新上传</button>
+              <h3 style={{ marginTop: 0 }}>{t("studio.step2Title")}</h3>
+              <button onClick={() => setStep(1)} style={{ background: "none", border: "1px solid #ddd", borderRadius: 8, padding: "0.3rem 0.8rem", fontSize: "0.8rem", cursor: "pointer", color: "#666" }}>{t("studio.reUpload")}</button>
             </div>
-            <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "1rem" }}>原视频时长 {duration}秒，将按下面的时长拆成多段</div>
+            <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "1rem" }}>{t("studio.srcDurationIs")} {duration}{t("studio.splitByDuration")}</div>
             <div style={{ display: "flex", gap: "0.5rem", margin: "1rem 0" }}>
               {[5, 8, 10, 15].map(d => (
                 <button key={d} onClick={() => setSegmentDuration(d)} style={{
                   padding: "0.7rem 1.2rem", border: segmentDuration === d ? "2px solid #0d0d0d" : "1px solid #ddd",
                   background: segmentDuration === d ? "#f9f7f2" : "#fff", borderRadius: 10, cursor: "pointer",
-                }}>{d}秒/段</button>
+                }}>{d}{t("studio.secPerSeg")}</button>
               ))}
             </div>
             <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "1rem" }}>
-              预计拆分为 <b>{Math.ceil(duration / segmentDuration)}</b> 段
+              {t("studio.estimatedSplit")} <b>{Math.ceil(duration / segmentDuration)}</b> {t("studio.segsUnit2")}
             </div>
             <button onClick={splitVideo} disabled={loading} style={btnPrimary(loading)}>
-              {loading ? "拆分中..." : "开始拆分"}
+              {loading ? t("studio.splitting") : t("studio.startSplit")}
             </button>
           </div>
         )}
@@ -363,30 +365,30 @@ export default function VideoStudioDetailPage() {
         {step === 3 && (
           <div style={{ background: "#fff", padding: "2rem", borderRadius: 16, border: "1px solid #eee" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <h3 style={{ marginTop: 0 }}>第三步：配置元素（模特/产品）</h3>
-              <button onClick={() => setStep(2)} style={{ background: "none", border: "1px solid #ddd", borderRadius: 8, padding: "0.3rem 0.8rem", fontSize: "0.8rem", cursor: "pointer", color: "#666" }}>← 重新拆分</button>
+              <h3 style={{ marginTop: 0 }}>{t("studio.step3Title")}</h3>
+              <button onClick={() => setStep(2)} style={{ background: "none", border: "1px solid #ddd", borderRadius: 8, padding: "0.3rem 0.8rem", fontSize: "0.8rem", cursor: "pointer", color: "#666" }}>{t("studio.reSplit")}</button>
             </div>
             <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "1rem" }}>
-              已拆分 {segments.length} 段。添加 1-4 个元素，所有段落共用这些元素。
+              {t("studio.step3Desc1")} {segments.length} {t("studio.step3Desc2")}
             </div>
 
             {/* 模式选择 */}
             <div style={{ marginBottom: "1.5rem" }}>
-              <div style={{ fontSize: "0.8rem", color: "#999", marginBottom: "0.5rem" }}>生成模式</div>
+              <div style={{ fontSize: "0.8rem", color: "#999", marginBottom: "0.5rem" }}>{t("studio.genMode")}</div>
               <div style={{ display: "flex", gap: "0.5rem" }}>
                 <button onClick={() => setMode("o1")} style={{
                   padding: "0.8rem 1.2rem", border: mode === "o1" ? "2px solid #0d0d0d" : "1px solid #ddd",
                   background: mode === "o1" ? "#f9f7f2" : "#fff", borderRadius: 10, cursor: "pointer", textAlign: "left", flex: 1,
                 }}>
-                  <div style={{ fontWeight: 600 }}>快速模式 (O1)</div>
-                  <div style={{ fontSize: "0.75rem", color: "#888" }}>$0.06/秒 · 速度快 · 无口播</div>
+                  <div style={{ fontWeight: 600 }}>{t("studio.fastMode")}</div>
+                  <div style={{ fontSize: "0.75rem", color: "#888" }}>{t("studio.fastDesc")}</div>
                 </button>
                 <button onClick={() => setMode("o3")} style={{
                   padding: "0.8rem 1.2rem", border: mode === "o3" ? "2px solid #0d0d0d" : "1px solid #ddd",
                   background: mode === "o3" ? "#f9f7f2" : "#fff", borderRadius: 10, cursor: "pointer", textAlign: "left", flex: 1,
                 }}>
-                  <div style={{ fontWeight: 600 }}>高质量 (O3 Pro)</div>
-                  <div style={{ fontSize: "0.75rem", color: "#888" }}>$0.168/秒 · 含中文口播 · 画质好</div>
+                  <div style={{ fontWeight: 600 }}>{t("studio.highMode")}</div>
+                  <div style={{ fontSize: "0.75rem", color: "#888" }}>{t("studio.highDesc")}</div>
                 </button>
               </div>
             </div>
@@ -398,14 +400,14 @@ export default function VideoStudioDetailPage() {
                     style={{ padding: "0.4rem 0.7rem", border: "1px solid #ddd", borderRadius: 8, fontSize: "0.9rem", flex: 1 }}
                   />
                   {elements.length > 1 && (
-                    <button onClick={() => removeElement(idx)} style={{ background: "none", border: "none", color: "#c00", cursor: "pointer" }}>✕ 删除</button>
+                    <button onClick={() => removeElement(idx)} style={{ background: "none", border: "none", color: "#c00", cursor: "pointer" }}>{t("studio.deleteEl")}</button>
                   )}
                 </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: "1rem" }}>
                   {/* 主图 */}
                   <div>
-                    <div style={{ fontSize: "0.75rem", color: "#999", marginBottom: "0.3rem" }}>主图 * </div>
+                    <div style={{ fontSize: "0.75rem", color: "#999", marginBottom: "0.3rem" }}>{t("studio.mainImg")}</div>
                     <label style={{ display: "block", width: 120, height: 120, border: "2px dashed #ccc", borderRadius: 10, cursor: "pointer", overflow: "hidden", background: "#fafaf7" }}>
                       <input type="file" accept="image/*" style={{ display: "none" }}
                         onChange={e => { const f = e.target.files?.[0]; if (f) handleMainImage(idx, f); }} />
@@ -417,7 +419,7 @@ export default function VideoStudioDetailPage() {
 
                   {/* 参考图 */}
                   <div>
-                    <div style={{ fontSize: "0.75rem", color: "#999", marginBottom: "0.3rem" }}>参考图 (0-3张，可选)</div>
+                    <div style={{ fontSize: "0.75rem", color: "#999", marginBottom: "0.3rem" }}>{t("studio.refImg")}</div>
                     <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                       {elem.reference_previews.map((p, i) => (
                         <div key={i} style={{ position: "relative", width: 80, height: 80 }}>
@@ -439,11 +441,11 @@ export default function VideoStudioDetailPage() {
             ))}
 
             {elements.length < 4 && (
-              <button onClick={addElement} style={{ padding: "0.7rem 1.5rem", border: "1px dashed #999", borderRadius: 10, background: "#fff", cursor: "pointer", marginBottom: "1rem" }}>+ 添加元素（还可加 {4 - elements.length} 个）</button>
+              <button onClick={addElement} style={{ padding: "0.7rem 1.5rem", border: "1px dashed #999", borderRadius: 10, background: "#fff", cursor: "pointer", marginBottom: "1rem" }}>{t("studio.addElement")}（还可加 {4 - elements.length} 个）</button>
             )}
 
             <button onClick={startBatch} disabled={loading} style={btnPrimary(loading)}>
-              {loading ? "提交中..." : `开始批量生成 ${segments.length} 段`}
+              {loading ? t("studio.submitting") : `${t("studio.startBatch")} ${segments.length}${t("studio.segsUnit2")}`}
             </button>
           </div>
         )}
@@ -451,24 +453,24 @@ export default function VideoStudioDetailPage() {
         {/* Step 4: 生成中 */}
         {step === 4 && (
           <div style={{ background: "#fff", padding: "2rem", borderRadius: 16, border: "1px solid #eee" }}>
-            <h3 style={{ marginTop: 0 }}>第四步：批量生成中</h3>
+            <h3 style={{ marginTop: 0 }}>{t("studio.step4Title")}</h3>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))", gap: "1rem", margin: "1rem 0" }}>
-              {batchTasks.map(t => (
-                <div key={t.segment_index} style={{ padding: "1rem", border: "1px solid #eee", borderRadius: 10 }}>
-                  <div style={{ fontSize: "0.8rem", color: "#666" }}>片段 #{t.segment_index + 1}</div>
+              {batchTasks.map(task => (
+                <div key={task.segment_index} style={{ padding: "1rem", border: "1px solid #eee", borderRadius: 10 }}>
+                  <div style={{ fontSize: "0.8rem", color: "#666" }}>{t("studio.segment")} #{task.segment_index + 1}</div>
                   <div style={{ fontSize: "0.85rem", margin: "0.5rem 0", fontWeight: 500,
-                    color: t.status === "completed" ? "#0a0" : t.status === "failed" ? "#c00" : "#f80" }}>
-                    {t.status === "completed" ? "✅ 完成" : t.status === "failed" ? "❌ 失败" : "⏳ 生成中..."}
+                    color: task.status === "completed" ? "#0a0" : task.status === "failed" ? "#c00" : "#f80" }}>
+                    {task.status === "completed" ? t("studio.completed") : task.status === "failed" ? t("studio.failed") : t("studio.generating2")}
                   </div>
-                  {t.video_url && <video src={t.video_url} controls style={{ width: "100%", borderRadius: 8 }} />}
-                  {t.error && <div style={{ fontSize: "0.75rem", color: "#c00" }}>{t.error}</div>}
+                  {task.video_url && <video src={task.video_url} controls style={{ width: "100%", borderRadius: 8 }} />}
+                  {task.error && <div style={{ fontSize: "0.75rem", color: "#c00" }}>{task.error}</div>}
                 </div>
               ))}
             </div>
-            {batchTasks.filter(t => t.status === "completed").length > 0 &&
-             batchTasks.every(t => t.status === "completed" || t.status === "failed") && (
+            {batchTasks.filter(it => it.status === "completed").length > 0 &&
+             batchTasks.every(it => it.status === "completed" || it.status === "failed") && (
               <button onClick={mergeVideo} disabled={loading} style={btnPrimary(loading)}>
-                {loading ? "拼接中..." : "拼接成最终视频"}
+                {loading ? t("studio.merging") : t("studio.mergeFinal")}
               </button>
             )}
           </div>
@@ -477,7 +479,7 @@ export default function VideoStudioDetailPage() {
         {/* Step 5: 完成 */}
         {step === 5 && finalUrl && (
           <div style={{ background: "#fff", padding: "2rem", borderRadius: 16, border: "1px solid #eee" }}>
-            <h3 style={{ marginTop: 0 }}>🎉 最终成品</h3>
+            <h3 style={{ marginTop: 0 }}>{t("studio.step5Title")}</h3>
             <video src={finalUrl} controls style={{ width: "100%", maxWidth: 600, borderRadius: 12, margin: "1rem 0" }} />
             <div>
               <a href={finalUrl} download target="_blank" style={{ padding: "0.7rem 1.5rem", background: "#0d0d0d", color: "#fff", borderRadius: 10, textDecoration: "none", display: "inline-block" }}>下载视频</a>
