@@ -346,6 +346,8 @@ export const en = {
     logoutSection: "Log Out",
     logoutTip: "You'll need to log in again to use the service",
     logoutBtn: "Log Out",
+    twoFA: "Two-Factor Authentication (2FA)",
+    twoFADesc: "Add an extra layer of security",
   },
   admin: {
     adminRole: "Administrator",

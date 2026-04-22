@@ -346,6 +346,8 @@ export const zh = {
     logoutSection: "退出登录",
     logoutTip: "退出后需要重新登录才能使用服务",
     logoutBtn: "退出登录",
+    twoFA: "双因素认证 (2FA)",
+    twoFADesc: "增加一层防护，防止账号被盗",
   },
   admin: {
     adminRole: "管理员",

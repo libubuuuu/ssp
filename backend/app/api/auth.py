@@ -118,6 +118,15 @@ async def login(req: LoginRequest):
         row = cursor.fetchone()
         if not row or not verify_password(req.password, row[0]):
             raise HTTPException(status_code=401, detail="邮箱或密码错误")
+        cursor.execute("SELECT totp_secret, totp_enabled FROM users WHERE id = ?", (user["id"],))
+        totp_row = cursor.fetchone()
+        if totp_row and totp_row[1]:
+            if not req.totp_code:
+                raise HTTPException(status_code=401, detail={"need_2fa": True, "message": "请输入 2FA 验证码"})
+            import pyotp
+            totp = pyotp.TOTP(totp_row[0])
+            if not totp.verify(req.totp_code, valid_window=1):
+                raise HTTPException(status_code=401, detail="2FA 验证码错误")
 
     # 生成 Token
     token = create_jwt_token(user["id"], user["email"], user["role"])
@@ -201,3 +210,97 @@ async def forgot_password(req: dict):
     email = req.get("email", "")
     # TODO: 实际部署时发送重置邮件
     return {"message": "重置链接已发送到邮箱", "email": email}
+
+
+# ===== 2FA 双因素认证 =====
+import pyotp
+import qrcode
+import io
+import base64
+from pydantic import BaseModel
+
+class TotpVerifyReq(BaseModel):
+    code: str
+
+class TotpEnableReq(BaseModel):
+    secret: str
+    code: str
+
+
+@router.post("/2fa/setup")
+async def totp_setup(current_user: dict = Depends(get_current_user)):
+    """生成 2FA 密钥和二维码（绑定前调用）"""
+    secret = pyotp.random_base32()
+    issuer = "AI Lixiao"
+    label = current_user.get("email", "user")
+    
+    totp = pyotp.TOTP(secret)
+    uri = totp.provisioning_uri(name=label, issuer_name=issuer)
+    
+    # 生成二维码图片（base64）
+    qr = qrcode.QRCode(box_size=6, border=2)
+    qr.add_data(uri)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    qr_b64 = base64.b64encode(buf.getvalue()).decode()
+    
+    return {
+        "secret": secret,
+        "qr_code": f"data:image/png;base64,{qr_b64}",
+        "manual_entry": secret,
+    }
+
+
+@router.post("/2fa/enable")
+async def totp_enable(req: TotpEnableReq, current_user: dict = Depends(get_current_user)):
+    """验证用户输入的 6 位码后启用 2FA"""
+    totp = pyotp.TOTP(req.secret)
+    if not totp.verify(req.code, valid_window=1):
+        raise HTTPException(status_code=400, detail="验证码错误，请使用 App 当前显示的 6 位")
+    
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE users SET totp_secret = ?, totp_enabled = 1 WHERE id = ?",
+            (req.secret, current_user["id"])
+        )
+        conn.commit()
+    
+    return {"success": True, "message": "2FA 已启用"}
+
+
+@router.post("/2fa/disable")
+async def totp_disable(req: TotpVerifyReq, current_user: dict = Depends(get_current_user)):
+    """禁用 2FA（需先验证当前 6 位码）"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT totp_secret FROM users WHERE id = ?", (current_user["id"],))
+        row = cursor.fetchone()
+        if not row or not row[0]:
+            raise HTTPException(status_code=400, detail="未启用 2FA")
+        
+        totp = pyotp.TOTP(row[0])
+        if not totp.verify(req.code, valid_window=1):
+            raise HTTPException(status_code=400, detail="验证码错误")
+        
+        cursor.execute(
+            "UPDATE users SET totp_secret = NULL, totp_enabled = 0 WHERE id = ?",
+            (current_user["id"],)
+        )
+        conn.commit()
+    
+    return {"success": True, "message": "2FA 已禁用"}
+
+
+@router.get("/2fa/status")
+async def totp_status(current_user: dict = Depends(get_current_user)):
+    """查询当前用户的 2FA 启用状态"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT totp_enabled FROM users WHERE id = ?", (current_user["id"],))
+        row = cursor.fetchone()
+        enabled = bool(row[0]) if row else False
+    return {"enabled": enabled}

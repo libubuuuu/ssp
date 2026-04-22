@@ -12,6 +12,8 @@ export default function AuthPage() {
   const router = useRouter();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [form, setForm] = useState({ email: "", password: "", name: "" });
+  const [totpCode, setTotpCode] = useState("");
+  const [need2FA, setNeed2FA] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -19,15 +21,26 @@ export default function AuthPage() {
     setError(""); setLoading(true);
     try {
       const url = mode === "login" ? `${API_BASE}/api/auth/login` : `${API_BASE}/api/auth/register`;
+      const body = mode === "login" ? { ...form, totp_code: totpCode } : form;
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "请求失败");
+      if (!res.ok) {
+        // 检查是否需要 2FA
+        if (typeof data.detail === "object" && data.detail?.need_2fa) {
+          setNeed2FA(true);
+          setError("");
+          return;
+        }
+        throw new Error(typeof data.detail === "string" ? data.detail : "请求失败");
+      }
       localStorage.setItem("token", data.token);
       localStorage.setItem("user", JSON.stringify(data.user));
+      setNeed2FA(false);
+      setTotpCode("");
       router.push("/");
     } catch (e: any) {
       setError(e.message);
@@ -54,6 +67,17 @@ export default function AuthPage() {
         <input type="password" placeholder={lang==="en"?"Password":"密码"} value={form.password}
           onChange={e => setForm({...form, password: e.target.value})}
           style={{width:"100%",padding:"0.75rem",marginBottom:"1rem",background:"#2a2a2a",border:"1px solid #333",borderRadius:"8px",color:"#fff",boxSizing:"border-box"}}/>
+        {need2FA && (
+          <div style={{marginBottom:"1rem",padding:"0.75rem",background:"#1a2a1a",border:"1px solid #0a7",borderRadius:"8px"}}>
+            <div style={{color:"#0a7",fontSize:"0.85rem",marginBottom:"0.5rem"}}>
+              🔐 {lang==="en"?"Enter the 6-digit code from your Authenticator app":"请输入 Authenticator App 的 6 位验证码"}
+            </div>
+            <input value={totpCode}
+              onChange={e => setTotpCode(e.target.value.replace(/\D/g,"").slice(0,6))}
+              placeholder="000000" maxLength={6}
+              style={{width:"100%",padding:"0.75rem",background:"#2a2a2a",border:"1px solid #333",borderRadius:"8px",color:"#fff",fontSize:"1.2rem",textAlign:"center",letterSpacing:"0.3rem",fontFamily:"monospace",boxSizing:"border-box"}}/>
+          </div>
+        )}
         {error && <div style={{color:"#ff4444",background:"#2a1a1a",padding:"0.75rem",borderRadius:"8px",marginBottom:"1rem",border:"1px solid #ff4444"}}>{error}</div>}
         <button onClick={handleSubmit} disabled={loading}
           style={{width:"100%",padding:"0.75rem",background:"#f59e0b",border:"none",borderRadius:"8px",color:"#000",fontWeight:"bold",cursor:"pointer",fontSize:"1rem"}}>
