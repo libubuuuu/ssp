@@ -1,8 +1,11 @@
 "use client";
+import { useLang } from "@/lib/i18n/LanguageContext";
+import LanguageSwitcher from "@/lib/i18n/LanguageSwitcher";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function Home() {
+  const { t } = useLang();
   const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -232,7 +235,8 @@ export default function Home() {
         <span style={{fontSize:"0.9rem",color:"#333",letterSpacing:"0.15em",fontFamily:"Georgia,serif",fontStyle:"italic"}}>xiaoLi ai.</span>
         {isLoggedIn ? (
           <div style={{display:"flex",gap:"1rem",alignItems:"center",position:"relative"}}>
-            <button onClick={()=>router.push("/dashboard")} style={{background:"#0d0d0d",border:"none",color:"#fff",cursor:"pointer",fontSize:"0.85rem",padding:"0.55rem 1.6rem",borderRadius:"999px"}}>进入工作台</button>
+      <div style={{position:"fixed",top:"1rem",right:"1rem",zIndex:1000}}><LanguageSwitcher /></div>
+            <button onClick={()=>router.push("/dashboard")} style={{background:"#0d0d0d",border:"none",color:"#fff",cursor:"pointer",fontSize:"0.85rem",padding:"0.55rem 1.6rem",borderRadius:"999px"}}>{t("landing.enterApp")}</button>
             <button onClick={()=>setShowMenu(!showMenu)} style={{background:"rgba(255,255,255,0.6)",border:"1px solid rgba(0,0,0,0.1)",color:"#333",cursor:"pointer",fontSize:"0.85rem",padding:"0.5rem 1rem",borderRadius:"999px",display:"flex",alignItems:"center",gap:"0.5rem"}}>
               <span style={{width:"24px",height:"24px",borderRadius:"50%",background:"#0d0d0d",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"0.7rem"}}>{userName.charAt(0).toUpperCase()}</span>
               {userName}
@@ -241,19 +245,19 @@ export default function Home() {
               <div style={{position:"absolute",top:"110%",right:0,background:"#fff",borderRadius:"12px",boxShadow:"0 10px 30px rgba(0,0,0,0.12)",padding:"0.5rem",minWidth:"200px",zIndex:20}}>
                 <div style={{padding:"0.75rem 1rem",borderBottom:"1px solid #eee"}}>
                   <div style={{fontSize:"0.85rem",color:"#333",fontWeight:500}}>{userName}</div>
-                  <div style={{fontSize:"0.75rem",color:"#888",marginTop:"0.25rem"}}>{credits} 积分</div>
+                  <div style={{fontSize:"0.75rem",color:"#888",marginTop:"0.25rem"}}>{credits} {t("landing.creditsLabel")}</div>
                 </div>
-                <button onClick={()=>{setShowMenu(false);router.push("/profile")}} style={{display:"block",width:"100%",textAlign:"left",padding:"0.6rem 1rem",background:"none",border:"none",color:"#333",cursor:"pointer",fontSize:"0.85rem",borderRadius:"8px"}}>个人中心</button>
-                <button onClick={()=>{setShowMenu(false);router.push("/pricing")}} style={{display:"block",width:"100%",textAlign:"left",padding:"0.6rem 1rem",background:"none",border:"none",color:"#333",cursor:"pointer",fontSize:"0.85rem",borderRadius:"8px"}}>充值中心</button>
-                <button onClick={logout} style={{display:"block",width:"100%",textAlign:"left",padding:"0.6rem 1rem",background:"none",border:"none",color:"#d00",cursor:"pointer",fontSize:"0.85rem",borderRadius:"8px",borderTop:"1px solid #eee",marginTop:"0.25rem"}}>退出登录</button>
+                <button onClick={()=>{setShowMenu(false);router.push("/profile")}} style={{display:"block",width:"100%",textAlign:"left",padding:"0.6rem 1rem",background:"none",border:"none",color:"#333",cursor:"pointer",fontSize:"0.85rem",borderRadius:"8px"}}>{t("landing.profile")}</button>
+                <button onClick={()=>{setShowMenu(false);router.push("/pricing")}} style={{display:"block",width:"100%",textAlign:"left",padding:"0.6rem 1rem",background:"none",border:"none",color:"#333",cursor:"pointer",fontSize:"0.85rem",borderRadius:"8px"}}>{t("landing.topup")}</button>
+                <button onClick={logout} style={{display:"block",width:"100%",textAlign:"left",padding:"0.6rem 1rem",background:"none",border:"none",color:"#d00",cursor:"pointer",fontSize:"0.85rem",borderRadius:"8px",borderTop:"1px solid #eee",marginTop:"0.25rem"}}>{t("landing.logout")}</button>
               </div>
             )}
           </div>
         ) : (
-          <button onClick={()=>router.push("/auth")} style={{background:"#0d0d0d",border:"none",color:"#fff",cursor:"pointer",fontSize:"0.85rem",padding:"0.55rem 1.6rem",borderRadius:"999px"}}>登录</button>
+          <button onClick={()=>router.push("/auth")} style={{background:"#0d0d0d",border:"none",color:"#fff",cursor:"pointer",fontSize:"0.85rem",padding:"0.55rem 1.6rem",borderRadius:"999px"}}>{t("landing.login")}</button>
         )}
       </nav>
-      <div style={{position:"absolute",bottom:"2rem",left:0,right:0,textAlign:"center",color:"#666",fontSize:"0.8rem",letterSpacing:"0.1em",fontFamily:"sans-serif",pointerEvents:"none"}}>图片生成 · 视频生成 · 数字人 · 语音克隆</div>
+      <div style={{position:"absolute",bottom:"2rem",left:0,right:0,textAlign:"center",color:"#666",fontSize:"0.8rem",letterSpacing:"0.1em",fontFamily:"sans-serif",pointerEvents:"none"}}>{t("landing.footer")}</div>
     </div>
   );
 }

@@ -38,7 +38,7 @@ export default function Dashboard() {
       <Sidebar/>
       <main style={{flex:1,padding:"3rem 4rem",overflowY:"auto"}}>
         <div style={{marginBottom:"3rem"}}>
-          <div style={{fontSize:"0.9rem",color:"#888",marginBottom:"0.5rem"}}>欢迎回来</div>
+          <div style={{fontSize:"0.9rem",color:"#888",marginBottom:"0.5rem"}}>{t("dashboard.welcomeBack")}</div>
           <h1 style={{fontSize:"2.4rem",fontWeight:300,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>{user.name||user.email.split("@")[0]},</h1>
           <h1 style={{fontSize:"2.4rem",fontWeight:300,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif",fontStyle:"italic"}}>{t("dashboard.todayCreate")}</h1>
         </div>

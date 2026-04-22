@@ -51,10 +51,10 @@ export default function JobPanel() {
   const completed = jobs.filter(j => j.status === "completed").length;
 
   const statusLabel = (s: string) => ({
-    pending: "排队中",
-    running: "生成中",
-    completed: "已完成",
-    failed: "失败",
+    pending: t("jobs.statusPending"),
+    running: t("jobs.statusRunning"),
+    completed: t("jobs.statusCompleted"),
+    failed: t("jobs.statusFailed"),
   } as any)[s] || s;
 
   const statusColor = (s: string) => ({
@@ -65,10 +65,10 @@ export default function JobPanel() {
   } as any)[s] || "#888";
 
   const typeLabel = (t: string) => ({
-    image: "图片",
-    video_i2v: "图生视频",
-    video_edit: "元素替换",
-    video_clone: "翻拍复刻",
+    image: t("jobs.typeImage"),
+    video_i2v: t("jobs.typeI2V"),
+    video_edit: t("jobs.typeEdit"),
+    video_clone: t("jobs.typeClone"),
   } as any)[t] || t;
 
   const deleteJob = async (id: string) => {

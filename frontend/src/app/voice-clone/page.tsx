@@ -154,8 +154,8 @@ export default function VoiceClonePage() {
             <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
               {voicePresets.map(v => (
                 <button key={v.id} onClick={() => setSelectedVoice(v.id)} style={{ textAlign: "left", padding: "0.6rem 0.9rem", border: selectedVoice === v.id ? "2px solid #0d0d0d" : "1px solid #e5e5e5", background: selectedVoice === v.id ? "#f9f7f2" : "#fff", borderRadius: "10px", cursor: "pointer" }}>
-                  <div style={{ fontSize: "0.85rem", fontWeight: 500, color: "#0d0d0d" }}>{v.name}</div>
-                  <div style={{ fontSize: "0.72rem", color: "#888" }}>{v.gender} · {v.style}</div>
+                  <div style={{ fontSize: "0.85rem", fontWeight: 500, color: "#0d0d0d" }}>{t(`voice.voice_${v.id}`) === `voice.voice_${v.id}` ? v.name : t(`voice.voice_${v.id}`)}</div>
+                  <div style={{ fontSize: "0.72rem", color: "#888" }}>{v.gender === "female" ? t("voice.genderFemale") : t("voice.genderMale")} · {t(`voice.voice_${v.id}_style`) === `voice.voice_${v.id}_style` ? v.style : t(`voice.voice_${v.id}_style`)}</div>
                 </button>
               ))}
             </div>
