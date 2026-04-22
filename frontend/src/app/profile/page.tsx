@@ -1,4 +1,5 @@
 "use client";
+import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
@@ -6,6 +7,7 @@ import Sidebar from "@/components/Sidebar";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://ailixiao.com";
 
 export default function ProfilePage(){
+  const { t } = useLang();
   const router=useRouter();
   const [user,setUser]=useState<any>(null);
   const [name,setName]=useState("");
@@ -77,8 +79,8 @@ export default function ProfilePage(){
       <Sidebar/>
       <main style={{flex:1,padding:"3rem 4rem",overflowY:"auto",maxWidth:"800px"}}>
         <div style={{marginBottom:"2.5rem"}}>
-          <div style={{fontSize:"0.85rem",color:"#999",marginBottom:"0.3rem"}}>账户设置</div>
-          <h1 style={{fontSize:"2rem",fontWeight:300,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>个人 <span style={{fontStyle:"italic"}}>中心</span></h1>
+          <div style={{fontSize:"0.85rem",color:"#999",marginBottom:"0.3rem"}}>{t("profile.accountSettings")}</div>
+          <h1 style={{fontSize:"2rem",fontWeight:300,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>{t("profile.titleMain")} <span style={{fontStyle:"italic"}}>{t("profile.titleAccent")}</span></h1>
         </div>
 
         <div style={{background:"#fff",borderRadius:"20px",padding:"2rem",marginBottom:"1.25rem",border:"1px solid rgba(0,0,0,0.04)"}}>
@@ -87,57 +89,57 @@ export default function ProfilePage(){
               {(user.name||user.email||"?").charAt(0).toUpperCase()}
             </div>
             <div style={{flex:1}}>
-              <div style={{fontSize:"1.2rem",fontWeight:500,color:"#0d0d0d",marginBottom:"0.25rem"}}>{user.name||"未设置昵称"}</div>
+              <div style={{fontSize:"1.2rem",fontWeight:500,color:"#0d0d0d",marginBottom:"0.25rem"}}>{user.name||t("profile.noName")}</div>
               <div style={{fontSize:"0.85rem",color:"#888"}}>{user.email}</div>
             </div>
           </div>
           <div style={{display:"flex",gap:"2rem",paddingTop:"1.25rem",borderTop:"1px solid #f0ede8"}}>
             <div>
               <div style={{fontSize:"1.6rem",fontWeight:300,color:"#0d0d0d"}}>{user.credits||0}</div>
-              <div style={{fontSize:"0.75rem",color:"#888"}}>可用积分</div>
+              <div style={{fontSize:"0.75rem",color:"#888"}}>{t("profile.availableCredits")}</div>
             </div>
             <div>
-              <div style={{fontSize:"1.6rem",fontWeight:300,color:"#0d0d0d"}}>{user.role==="admin"?"管理员":"普通用户"}</div>
-              <div style={{fontSize:"0.75rem",color:"#888"}}>账户类型</div>
+              <div style={{fontSize:"1.6rem",fontWeight:300,color:"#0d0d0d"}}>{user.role==="admin"?t("profile.roleAdmin"):t("profile.roleUser")}</div>
+              <div style={{fontSize:"0.75rem",color:"#888"}}>{t("profile.accountType")}</div>
             </div>
-            <button onClick={()=>router.push("/pricing")} style={{marginLeft:"auto",alignSelf:"center",background:"#0d0d0d",color:"#fff",border:"none",padding:"0.65rem 1.4rem",borderRadius:"999px",cursor:"pointer",fontSize:"0.85rem"}}>充值积分 →</button>
+            <button onClick={()=>router.push("/pricing")} style={{marginLeft:"auto",alignSelf:"center",background:"#0d0d0d",color:"#fff",border:"none",padding:"0.65rem 1.4rem",borderRadius:"999px",cursor:"pointer",fontSize:"0.85rem"}}>{t("profile.topupCredits")}</button>
           </div>
         </div>
 
         <div style={{background:"#fff",borderRadius:"20px",padding:"2rem",marginBottom:"1.25rem",border:"1px solid rgba(0,0,0,0.04)"}}>
-          <div style={{fontSize:"1rem",fontWeight:500,color:"#0d0d0d",marginBottom:"1.25rem"}}>修改昵称</div>
+          <div style={{fontSize:"1rem",fontWeight:500,color:"#0d0d0d",marginBottom:"1.25rem"}}>{t("profile.editName")}</div>
           <div style={{marginBottom:"0.75rem"}}>
-            <input value={name} onChange={e=>setName(e.target.value)} placeholder="昵称"
+            <input value={name} onChange={e=>setName(e.target.value)} placeholder={t("profile.namePlaceholder")}
               style={{width:"100%",padding:"0.75rem 1rem",border:"1px solid #e5e5e5",borderRadius:"10px",fontSize:"0.9rem",background:"#fafaf7 !important",color:"#333 !important",boxSizing:"border-box"}}/>
           </div>
           {nameErr && <div style={{color:"#c00",fontSize:"0.8rem",marginBottom:"0.75rem"}}>{nameErr}</div>}
           {nameMsg && <div style={{color:"#0a7",fontSize:"0.8rem",marginBottom:"0.75rem"}}>{nameMsg}</div>}
-          <button onClick={saveName} style={{padding:"0.65rem 1.5rem",background:"#0d0d0d",color:"#fff",border:"none",borderRadius:"10px",cursor:"pointer",fontSize:"0.85rem"}}>保存修改</button>
+          <button onClick={saveName} style={{padding:"0.65rem 1.5rem",background:"#0d0d0d",color:"#fff",border:"none",borderRadius:"10px",cursor:"pointer",fontSize:"0.85rem"}}>{t("profile.saveChanges")}</button>
         </div>
 
         <div style={{background:"#fff",borderRadius:"20px",padding:"2rem",marginBottom:"1.25rem",border:"1px solid rgba(0,0,0,0.04)"}}>
-          <div style={{fontSize:"1rem",fontWeight:500,color:"#0d0d0d",marginBottom:"1.25rem"}}>修改密码</div>
+          <div style={{fontSize:"1rem",fontWeight:500,color:"#0d0d0d",marginBottom:"1.25rem"}}>{t("profile.editPassword")}</div>
           <div style={{display:"flex",flexDirection:"column",gap:"0.75rem",marginBottom:"1rem"}}>
             <div>
-              <label style={{display:"block",fontSize:"0.75rem",color:"#999",marginBottom:"0.35rem"}}>当前密码</label>
-              <input type="password" value={curPwd} onChange={e=>setCurPwd(e.target.value)} placeholder="输入当前密码"
+              <label style={{display:"block",fontSize:"0.75rem",color:"#999",marginBottom:"0.35rem"}}>{t("profile.currentPassword")}</label>
+              <input type="password" value={curPwd} onChange={e=>setCurPwd(e.target.value)} placeholder={t("profile.currentPasswordPH")}
                 style={{width:"100%",padding:"0.75rem 1rem",border:"1px solid #e5e5e5",borderRadius:"10px",fontSize:"0.9rem",background:"#fafaf7 !important",color:"#333 !important",boxSizing:"border-box"}}/>
             </div>
             <div>
-              <label style={{display:"block",fontSize:"0.75rem",color:"#999",marginBottom:"0.35rem"}}>新密码</label>
-              <input type="password" value={newPwd} onChange={e=>setNewPwd(e.target.value)} placeholder="至少 6 位"
+              <label style={{display:"block",fontSize:"0.75rem",color:"#999",marginBottom:"0.35rem"}}>{t("profile.newPassword")}</label>
+              <input type="password" value={newPwd} onChange={e=>setNewPwd(e.target.value)} placeholder={t("profile.newPasswordPH")}
                 style={{width:"100%",padding:"0.75rem 1rem",border:"1px solid #e5e5e5",borderRadius:"10px",fontSize:"0.9rem",background:"#fafaf7 !important",color:"#333 !important",boxSizing:"border-box"}}/>
             </div>
           </div>
           {pwdErr && <div style={{color:"#c00",fontSize:"0.8rem",marginBottom:"0.75rem"}}>{pwdErr}</div>}
           {pwdMsg && <div style={{color:"#0a7",fontSize:"0.8rem",marginBottom:"0.75rem"}}>{pwdMsg}</div>}
-          <button onClick={changePwd} style={{padding:"0.65rem 1.5rem",background:"#0d0d0d",color:"#fff",border:"none",borderRadius:"10px",cursor:"pointer",fontSize:"0.85rem"}}>确认修改</button>
+          <button onClick={changePwd} style={{padding:"0.65rem 1.5rem",background:"#0d0d0d",color:"#fff",border:"none",borderRadius:"10px",cursor:"pointer",fontSize:"0.85rem"}}>{t("profile.confirmChange")}</button>
         </div>
 
         <div style={{background:"#fff",borderRadius:"20px",padding:"2rem",border:"1px solid rgba(0,0,0,0.04)"}}>
-          <div style={{fontSize:"1rem",fontWeight:500,color:"#0d0d0d",marginBottom:"0.5rem"}}>退出登录</div>
-          <div style={{fontSize:"0.85rem",color:"#888",marginBottom:"1rem"}}>退出后需要重新登录才能使用服务</div>
-          <button onClick={logout} style={{padding:"0.65rem 1.5rem",background:"none",color:"#c00",border:"1px solid #c00",borderRadius:"10px",cursor:"pointer",fontSize:"0.85rem"}}>退出登录</button>
+          <div style={{fontSize:"1rem",fontWeight:500,color:"#0d0d0d",marginBottom:"0.5rem"}}>{t("profile.logoutSection")}</div>
+          <div style={{fontSize:"0.85rem",color:"#888",marginBottom:"1rem"}}>{t("profile.logoutTip")}</div>
+          <button onClick={logout} style={{padding:"0.65rem 1.5rem",background:"none",color:"#c00",border:"1px solid #c00",borderRadius:"10px",cursor:"pointer",fontSize:"0.85rem"}}>{t("profile.logoutBtn")}</button>
         </div>
       </main>
     </div>
