@@ -15,7 +15,7 @@ except ValueError as e:
     log_error(f"配置验证失败：{e}")
     raise
 
-app = FastAPI(title="AI 创意平台", version="1.0.0", docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(title="AI 创意平台", version="1.0.0")
 
 ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "")
 origins_list = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]

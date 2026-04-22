@@ -195,3 +195,46 @@ async def admin_confirm_order(order_id: str, current_user: dict = Depends(get_cu
         cursor.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (row[1], row[0]))
         conn.commit()
     return {"success": True, "order_id": order_id, "credits_added": row[1], "user_id": row[0]}
+
+
+@router.get("/admin/orders")
+async def admin_list_all_orders(
+    status: str = "pending",
+    current_user: dict = Depends(get_current_user),
+):
+    """管理员：列出所有订单（支持过滤）"""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="无权限")
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if status == "all":
+            cursor.execute("""
+                SELECT o.id, o.user_id, o.amount, o.price, o.status, o.created_at, o.paid_at,
+                       u.email, u.name
+                FROM credit_orders o
+                LEFT JOIN users u ON o.user_id = u.id
+                ORDER BY o.created_at DESC LIMIT 200
+            """)
+        else:
+            cursor.execute("""
+                SELECT o.id, o.user_id, o.amount, o.price, o.status, o.created_at, o.paid_at,
+                       u.email, u.name
+                FROM credit_orders o
+                LEFT JOIN users u ON o.user_id = u.id
+                WHERE o.status = ?
+                ORDER BY o.created_at DESC LIMIT 200
+            """, (status,))
+        orders = []
+        for row in cursor.fetchall():
+            orders.append({
+                "id": row[0],
+                "user_id": row[1],
+                "amount": row[2],
+                "price": row[3],
+                "status": row[4],
+                "created_at": row[5],
+                "paid_at": row[6],
+                "user_email": row[7],
+                "user_name": row[8],
+            })
+        return {"orders": orders}
