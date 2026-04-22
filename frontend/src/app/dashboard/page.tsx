@@ -2,20 +2,27 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
+import { useLang } from "@/lib/i18n/LanguageContext";
 
-const FEATURES = [
-  { key:"image", label:"图片生成", desc:"文生图 · 图生图 · 多参考图", icon:"◧", color:"#f0e8d5" },
-  { key:"video", label:"视频生成", desc:"图生视频 · 元素替换 · 翻拍", icon:"▶", color:"#e5e0d0" },
-  { key:"video/studio", label:"长视频工作台", desc:"上传视频 · 自动拆分 · 批量翻拍 · 拼接", icon:"▦", color:"#ead8c0" },
-  { key:"avatar", label:"数字人", desc:"口型同步 · 无多余动作", icon:"◉", color:"#ede5d3" },
-  { key:"voice-clone", label:"语音克隆", desc:"5-10 秒提取音色", icon:"◐", color:"#e8e2d0" },
-  { key:"tasks/history", label:"任务历史", desc:"查看所有生成记录", icon:"☰", color:"#f2ece0" },
-  { key:"pricing", label:"充值中心", desc:"积分套餐与充值", icon:"✦", color:"#ebe5d5" },
+const FEATURE_KEYS = [
+  { key:"image", i18nKey:"image", icon:"◧", color:"#f0e8d5" },
+  { key:"video", i18nKey:"video", icon:"▶", color:"#e5e0d0" },
+  { key:"video/studio", i18nKey:"studio", icon:"▦", color:"#ead8c0" },
+  { key:"avatar", i18nKey:"avatar", icon:"◉", color:"#ede5d3" },
+  { key:"voice-clone", i18nKey:"voiceClone", icon:"◐", color:"#e8e2d0" },
+  { key:"tasks/history", i18nKey:"history", icon:"☰", color:"#f2ece0" },
+  { key:"pricing", i18nKey:"pricing", icon:"✦", color:"#ebe5d5" },
 ];
 
 export default function Dashboard() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
+  const { t, lang } = useLang();
+  const FEATURES = FEATURE_KEYS.map(f => ({
+    ...f,
+    label: t(`dashboard.features.${f.i18nKey}.label`),
+    desc: t(`dashboard.features.${f.i18nKey}.desc`),
+  }));
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -33,7 +40,7 @@ export default function Dashboard() {
         <div style={{marginBottom:"3rem"}}>
           <div style={{fontSize:"0.9rem",color:"#888",marginBottom:"0.5rem"}}>欢迎回来</div>
           <h1 style={{fontSize:"2.4rem",fontWeight:300,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>{user.name||user.email.split("@")[0]},</h1>
-          <h1 style={{fontSize:"2.4rem",fontWeight:300,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif",fontStyle:"italic"}}>今天想创作什么？</h1>
+          <h1 style={{fontSize:"2.4rem",fontWeight:300,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif",fontStyle:"italic"}}>{t("dashboard.todayCreate")}</h1>
         </div>
 
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:"1.25rem"}}>

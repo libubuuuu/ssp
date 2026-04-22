@@ -1,4 +1,5 @@
 "use client";
+import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useRef, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 
@@ -18,6 +19,7 @@ interface Card {
 }
 
 export default function VideoPage() {
+  const { t } = useLang();
   const [cards, setCards] = useState<Card[]>([newCard()]);
   const pollRefs = useRef<Record<string, ReturnType<typeof setInterval>>>({});
 
@@ -123,21 +125,21 @@ export default function VideoPage() {
       <main style={{ flex: 1, padding: "2rem 2.5rem", overflowY: "auto" }}>
         <div style={{ marginBottom: "1.5rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
-            <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>视频创作</div>
-            <h1 style={{ fontSize: "1.6rem", fontWeight: 400, margin: 0, fontFamily: "Georgia,serif" }}>图生<span style={{ fontStyle: "italic" }}> 视频</span></h1>
-            <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>上传首帧图，AI 生成动态视频（支持多窗口并行）</div>
+            <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>{t("video.title")}</div>
+            <h1 style={{ fontSize: "1.6rem", fontWeight: 400, margin: 0, fontFamily: "Georgia,serif" }}>{t("video.titleMain")}<span style={{ fontStyle: "italic" }}> {t("video.titleAccent")}</span></h1>
+            <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>{t("video.uploadFirstFrame")}</div>
           </div>
           <button onClick={addCard} style={{
             padding: "0.7rem 1.3rem", background: "#0d0d0d", color: "#fff",
             border: "none", borderRadius: 10, cursor: "pointer", fontSize: "0.9rem", fontWeight: 500,
-          }}>+ 新建窗口</button>
+          }}>{t("video.newWindow")}</button>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(340px,1fr))", gap: "1.2rem" }}>
           {cards.map((c, idx) => (
             <div key={c.id} style={{ background: "#fff", borderRadius: 16, padding: "1.2rem", border: "1px solid #eee", position: "relative" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-                <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "#333" }}>窗口 #{idx + 1}</div>
+                <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "#333" }}>{t("video.window")} #{idx + 1}</div>
                 <button onClick={() => removeCard(c.id)} style={{ background: "none", border: "none", color: "#999", cursor: "pointer", fontSize: "0.85rem" }}>✕ 关闭</button>
               </div>
 
@@ -151,25 +153,25 @@ export default function VideoPage() {
                     }} />
                   {c.imagePreview
                     ? <img src={c.imagePreview} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#999", fontSize: "0.85rem" }}>点击上传首帧图</div>}
+                    : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#999", fontSize: "0.85rem" }}>{t("video.clickUpload")}</div>}
                 </label>
               </div>
 
               {/* 时长 */}
               <div style={{ marginBottom: "0.8rem" }}>
-                <div style={{ fontSize: "0.75rem", color: "#999", marginBottom: "0.3rem" }}>时长</div>
+                <div style={{ fontSize: "0.75rem", color: "#999", marginBottom: "0.3rem" }}>{t("video.duration")}</div>
                 <select value={c.duration} onChange={e => updateCard(c.id, { duration: Number(e.target.value) })}
                   style={{ width: "100%", padding: "0.5rem", border: "1px solid #ddd", borderRadius: 8, fontSize: "0.85rem", background: "#fff" }}>
-                  <option value={5}>5秒</option>
-                  <option value={10}>10秒</option>
+                  <option value={5}>5 {t("video.seconds")}</option>
+                  <option value={10}>10 {t("video.seconds")}</option>
                 </select>
               </div>
 
               {/* 台词/动作 */}
               <div style={{ marginBottom: "0.8rem" }}>
-                <div style={{ fontSize: "0.75rem", color: "#999", marginBottom: "0.3rem" }}>动作 / 台词（写台词可生成人声）</div>
+                <div style={{ fontSize: "0.75rem", color: "#999", marginBottom: "0.3rem" }}>{t("video.dialogue")}</div>
                 <textarea value={c.prompt} onChange={e => updateCard(c.id, { prompt: e.target.value })}
-                  placeholder="例：模特说「这款内衣很舒适」"
+                  placeholder={t("video.dialogueTip")}
                   style={{ width: "100%", padding: "0.5rem", border: "1px solid #ddd", borderRadius: 8, fontSize: "0.85rem", minHeight: 60, resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }} />
               </div>
 
@@ -178,7 +180,7 @@ export default function VideoPage() {
               {c.error && <div style={{ fontSize: "0.8rem", color: "#c00", background: "#ffeaea", padding: "0.5rem", borderRadius: 6, marginBottom: "0.5rem" }}>{c.error}</div>}
               {c.resultUrl && (
                 <div style={{ marginBottom: "0.5rem" }}>
-                  <div style={{ fontSize: "0.8rem", color: "#0a0", marginBottom: 4 }}>✅ 完成</div>
+                  <div style={{ fontSize: "0.8rem", color: "#0a0", marginBottom: 4 }}>✅ {t("jobs.completed")}</div>
                   <video src={c.resultUrl} controls style={{ width: "100%", borderRadius: 8 }} />
                   <a href={c.resultUrl} download target="_blank" style={{ display: "inline-block", marginTop: 6, fontSize: "0.75rem", color: "#0d0d0d" }}>⬇ 下载视频</a>
                 </div>
@@ -191,7 +193,7 @@ export default function VideoPage() {
                   width: "100%", padding: "0.7rem", background: (c.status === "uploading" || c.status === "pending" || c.status === "running") ? "#999" : "#0d0d0d",
                   color: "#fff", border: "none", borderRadius: 10, cursor: "pointer", fontSize: "0.88rem", fontWeight: 500,
                 }}>
-                {c.status === "completed" ? "重新生成" : (c.status === "pending" || c.status === "running" || c.status === "uploading") ? "生成中..." : "开始生成"}
+                {c.status === "completed" ? t("video.regenerate") : (c.status === "pending" || c.status === "running" || c.status === "uploading") ? t("video.generating") : t("video.generate")}
               </button>
             </div>
           ))}

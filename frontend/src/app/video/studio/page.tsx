@@ -1,4 +1,5 @@
 "use client";
+import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
@@ -17,6 +18,7 @@ interface Session {
 }
 
 export default function StudioListPage() {
+  const { t } = useLang();
   const router = useRouter();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,8 +70,8 @@ export default function StudioListPage() {
   };
 
   const statusLabel = (s: string) => ({
-    uploaded: "已上传", split: "已拆分", generating: "生成中",
-    done: "生成完成", finished: "已拼接",
+    uploaded: t("studio.statusUploaded"), split: t("studio.statusSplit"), generating: t("studio.statusGenerating"),
+    done: t("studio.statusDone"), finished: t("studio.statusFinished"),
   } as any)[s] || s;
 
   const statusColor = (s: string) => ({
@@ -83,24 +85,24 @@ export default function StudioListPage() {
       <main style={{ flex: 1, padding: "2rem 2.5rem", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.5rem" }}>
           <div>
-            <div style={{ fontSize: "0.85rem", color: "#999" }}>视频创作</div>
-            <h1 style={{ fontSize: "1.8rem", fontWeight: 400, margin: "0.3rem 0", fontFamily: "Georgia,serif" }}>长视频 <span style={{ fontStyle: "italic" }}>工作台</span></h1>
-            <div style={{ fontSize: "0.85rem", color: "#999" }}>所有项目独立保存（7天）· 支持多项目并行</div>
+            <div style={{ fontSize: "0.85rem", color: "#999" }}>{t("studio.studioVideo")}</div>
+            <h1 style={{ fontSize: "1.8rem", fontWeight: 400, margin: "0.3rem 0", fontFamily: "Georgia,serif" }}>{t("studio.studioLongMain")} <span style={{ fontStyle: "italic" }}>{t("studio.studioLongAccent")}</span></h1>
+            <div style={{ fontSize: "0.85rem", color: "#999" }}>{t("studio.studioSubtitle")}</div>
           </div>
           <label style={{ padding: "0.8rem 1.5rem", background: "#0d0d0d", color: "#fff", borderRadius: 10, cursor: "pointer", fontSize: "0.9rem", fontWeight: 500 }}>
             <input type="file" accept="video/*" style={{ display: "none" }} onChange={e => {
               const f = e.target.files?.[0]; if (f) createNew(f);
             }} disabled={creating} />
-            {creating ? "上传中..." : "+ 新建项目"}
+            {creating ? t("studio.uploading") : t("studio.newProject")}
           </label>
         </div>
 
         {error && <div style={{ padding: "0.7rem 1rem", background: "#ffeaea", color: "#c00", borderRadius: 10, marginBottom: "1rem", fontSize: "0.88rem" }}>{error}</div>}
 
-        {loading && <div style={{ color: "#999", textAlign: "center", padding: "3rem" }}>加载中...</div>}
+        {loading && <div style={{ color: "#999", textAlign: "center", padding: "3rem" }}>{t("studio.loading")}</div>}
         {!loading && sessions.length === 0 && (
           <div style={{ color: "#999", textAlign: "center", padding: "3rem", fontSize: "0.9rem" }}>
-            还没有项目，点右上角「+ 新建项目」开始
+            {t("studio.emptyProjects")}
           </div>
         )}
 
@@ -116,12 +118,12 @@ export default function StudioListPage() {
                 <video src={s.final_url} style={{ width: "100%", borderRadius: 8, marginBottom: "0.6rem" }} />
               ) : (
                 <div style={{ background: "#fafaf7", borderRadius: 8, padding: "1.5rem 0.5rem", textAlign: "center", marginBottom: "0.6rem", color: "#bbb", fontSize: "0.8rem" }}>
-                  {s.status === "finished" ? "成品视频" : `${s.total_segments || 0} 段 · ${s.completed_segments}/${s.total_segments} 完成`}
+                  {s.status === "finished" ? t("studio.finalVideo") : `${s.total_segments || 0} ${t("studio.segsUnit")} · ${s.completed_segments}/${s.total_segments} ${t("studio.segsFinished")}`}
                 </div>
               )}
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", color: "#888" }}>
-                <span>{s.duration}秒 · {s.total_segments}段</span>
-                <span>剩余 {s.remaining_days}天</span>
+                <span>{s.duration}{t("studio.durationSec")} · {s.total_segments}{t("studio.segsUnit")}</span>
+                <span>{t("studio.remainingDaysLabel")} {s.remaining_days}{t("studio.daysUnit")}</span>
               </div>
               <button onClick={(e) => { e.stopPropagation(); deleteSession(s.session_id); }}
                 style={{ position: "absolute", top: 8, right: 8, background: "rgba(255,255,255,0.9)", border: "1px solid #eee", borderRadius: 6, padding: "0.2rem 0.4rem", fontSize: "0.7rem", cursor: "pointer", color: "#c00" }}>

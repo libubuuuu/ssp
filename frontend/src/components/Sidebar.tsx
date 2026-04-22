@@ -1,10 +1,13 @@
 "use client";
+import LanguageSwitcher from "@/lib/i18n/LanguageSwitcher";
+import { useLang } from "@/lib/i18n/LanguageContext";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function Sidebar() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
+  const { t } = useLang();
 
   useEffect(() => {
     const u = localStorage.getItem("user");
@@ -19,14 +22,14 @@ export default function Sidebar() {
         xL
       </div>
 
-      <button onClick={()=>router.push("/dashboard")} title="工作台"
+      <button onClick={()=>router.push("/dashboard")} title={t("sidebar.dashboard")}
         style={{width:"48px",height:"48px",borderRadius:"12px",border:"none",background:"#f5f3ed",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.2rem",color:"#333",transition:"all 0.15s"}}
         onMouseEnter={e=>{e.currentTarget.style.background="#e8e4d9";}}
         onMouseLeave={e=>{e.currentTarget.style.background="#f5f3ed";}}>
         ⌂
       </button>
 
-      <button onClick={()=>router.push("/pricing")} title="充值中心"
+      <button onClick={()=>router.push("/pricing")} title={t("sidebar.pricing")}
         style={{width:"48px",height:"48px",borderRadius:"12px",border:"none",background:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.1rem",color:"#666",transition:"all 0.15s"}}
         onMouseEnter={e=>{e.currentTarget.style.background="#f9f7f2";}}
         onMouseLeave={e=>{e.currentTarget.style.background="none";}}>
@@ -34,6 +37,7 @@ export default function Sidebar() {
       </button>
 
       <div style={{marginTop:"auto",display:"flex",flexDirection:"column",alignItems:"center",gap:"0.5rem"}}>
+        <LanguageSwitcher />
         <div style={{fontSize:"0.7rem",color:"#888",textAlign:"center"}}>{user.credits||0}</div>
         <button onClick={()=>router.push("/profile")} title={user.name||user.email}
           style={{width:"40px",height:"40px",borderRadius:"50%",background:"#0d0d0d",color:"#fff",border:"none",cursor:"pointer",fontSize:"0.9rem",fontWeight:500}}>

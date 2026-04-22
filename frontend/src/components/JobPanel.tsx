@@ -1,4 +1,5 @@
 "use client";
+import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://ailixiao.com";
@@ -14,6 +15,7 @@ interface Job {
 }
 
 export default function JobPanel() {
+  const { t } = useLang();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [open, setOpen] = useState(false);
   const [loggedIn, setLoggedIn] = useState(false);
@@ -88,7 +90,7 @@ export default function JobPanel() {
           display: "flex", alignItems: "center", gap: "0.5rem",
         }}>
           <span style={{ fontSize: "1.1rem" }}>⚡</span>
-          <span>我的任务</span>
+          <span>{t("jobs.myTasks")}</span>
           {running > 0 && (
             <span style={{ background: "#ff5252", color: "#fff", borderRadius: 999, padding: "0.1rem 0.5rem", fontSize: "0.75rem", fontWeight: 600 }}>
               {running}
@@ -103,9 +105,9 @@ export default function JobPanel() {
         }}>
           <div style={{ padding: "1rem 1.2rem", borderBottom: "1px solid #eee", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
-              <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>我的任务</div>
+              <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>{t("jobs.myTasks")}</div>
               <div style={{ fontSize: "0.75rem", color: "#888", marginTop: 2 }}>
-                {running} 进行中 · {completed} 完成
+                {running} · {completed}
               </div>
             </div>
             <button onClick={() => setOpen(false)} style={{ background: "none", border: "none", fontSize: "1.2rem", cursor: "pointer", color: "#666" }}>×</button>
@@ -113,7 +115,7 @@ export default function JobPanel() {
           <div style={{ flex: 1, overflowY: "auto", padding: "0.5rem" }}>
             {jobs.length === 0 && (
               <div style={{ padding: "2rem", textAlign: "center", color: "#999", fontSize: "0.85rem" }}>
-                还没有任务，去各页面点击生成试试
+                {t("jobs.noTasks")}
               </div>
             )}
             {jobs.map(j => (
