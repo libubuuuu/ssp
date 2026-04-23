@@ -45,7 +45,10 @@ export const en = {
     dashboard: "Workspace",
     pricing: "Top Up",
     language: "Language",
-  },
+  
+    adminOrders: "Orders",
+    adminDashboard: "Monitor",
+    adminSettings: "Admin",},
   dashboard: {
     todayCreate: "What do you want to create today?",
     welcomeBack: "Welcome back",

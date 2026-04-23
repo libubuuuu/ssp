@@ -45,7 +45,10 @@ export const zh = {
     dashboard: "工作台",
     pricing: "充值中心",
     language: "语言",
-  },
+  
+    adminOrders: "订单管理",
+    adminDashboard: "系统监控",
+    adminSettings: "管理员设置",},
   dashboard: {
     todayCreate: "今天想创作什么？",
     welcomeBack: "欢迎回来",
