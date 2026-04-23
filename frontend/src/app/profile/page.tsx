@@ -136,15 +136,17 @@ export default function ProfilePage(){
           <button onClick={changePwd} style={{padding:"0.65rem 1.5rem",background:"#0d0d0d",color:"#fff",border:"none",borderRadius:"10px",cursor:"pointer",fontSize:"0.85rem"}}>{t("profile.confirmChange")}</button>
         </div>
 
-        <div onClick={()=>router.push("/profile/2fa")} style={{background:"#fff",borderRadius:"20px",padding:"2rem",marginBottom:"1.25rem",border:"1px solid rgba(0,0,0,0.04)",cursor:"pointer"}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-            <div>
-              <div style={{fontSize:"1rem",fontWeight:500,color:"#0d0d0d",marginBottom:"0.3rem"}}>🔐 {t("profile.twoFA")}</div>
-              <div style={{fontSize:"0.85rem",color:"#888"}}>{t("profile.twoFADesc")}</div>
+        {user.role === "admin" && (
+          <div onClick={()=>router.push("/profile/2fa")} style={{background:"#fff",borderRadius:"20px",padding:"2rem",marginBottom:"1.25rem",border:"1px solid rgba(0,0,0,0.04)",cursor:"pointer"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <div>
+                <div style={{fontSize:"1rem",fontWeight:500,color:"#0d0d0d",marginBottom:"0.3rem"}}>🔐 {t("profile.twoFA")}</div>
+                <div style={{fontSize:"0.85rem",color:"#888"}}>{t("profile.twoFADesc")}</div>
+              </div>
+              <div style={{color:"#999",fontSize:"1.2rem"}}>→</div>
             </div>
-            <div style={{color:"#999",fontSize:"1.2rem"}}>→</div>
           </div>
-        </div>
+        )}
         <div style={{background:"#fff",borderRadius:"20px",padding:"2rem",border:"1px solid rgba(0,0,0,0.04)"}}>
           <div style={{fontSize:"1rem",fontWeight:500,color:"#0d0d0d",marginBottom:"0.5rem"}}>{t("profile.logoutSection")}</div>
           <div style={{fontSize:"0.85rem",color:"#888",marginBottom:"1rem"}}>{t("profile.logoutTip")}</div>

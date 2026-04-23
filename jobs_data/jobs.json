@@ -64,5 +64,26 @@
       "type": "image"
     },
     "finished_at": 1776780049.840454
+  },
+  "bd628772": {
+    "id": "bd628772",
+    "user_id": "64402546-9ead-4263-b881-a26d8ba6d5b6",
+    "user_numeric_id": "64402546-9ead-4263-b881-a26d8ba6d5b6",
+    "type": "image",
+    "title": "老鼠",
+    "params": {
+      "prompt": "老鼠",
+      "reference_images": [],
+      "size": "1024x1024",
+      "model": "nano-banana-2",
+      "style": "custom"
+    },
+    "module": "image/style",
+    "cost": 2,
+    "status": "failed",
+    "created_at": 1776949556.1430762,
+    "started_at": 1776949556.1439772,
+    "error": "[{'type': 'string_too_short', 'loc': ['body', 'prompt'], 'msg': 'String should have at least 3 characters', 'input': '老鼠', 'ctx': {'min_length': 3}}]",
+    "finished_at": 1776949557.1208346
   }
 }
