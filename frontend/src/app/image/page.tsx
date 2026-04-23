@@ -2,7 +2,7 @@
 import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://ailixiao.com";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 const STYLES = [
   { key:"advertising", labelKey:"advertising" },
   { key:"minimalist", labelKey:"minimalist" },

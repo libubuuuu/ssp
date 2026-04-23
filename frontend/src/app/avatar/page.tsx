@@ -3,7 +3,7 @@ import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://ailixiao.com";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export default function AvatarPage(){
   const { t } = useLang();

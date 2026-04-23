@@ -32,6 +32,7 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+    totp_code: str = ""
 
 
 class UpdateNameRequest(BaseModel):

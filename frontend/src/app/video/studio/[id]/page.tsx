@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://ailixiao.com";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 interface Element {
   name: string;

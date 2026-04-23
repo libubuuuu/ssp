@@ -3,7 +3,7 @@ import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://ailixiao.com";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 interface Order {
   id: string;

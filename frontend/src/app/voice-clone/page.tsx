@@ -3,7 +3,7 @@ import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 const MODES = [
   { key: "clone", labelKey: "modeClone", descKey: "modeCloneDesc" },

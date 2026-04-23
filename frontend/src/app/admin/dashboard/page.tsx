@@ -4,7 +4,7 @@ import { useLang } from "@/lib/i18n/LanguageContext";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 interface ModelStatus {
   model_name: string;

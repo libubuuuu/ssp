@@ -5,7 +5,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export default function AuthPage() {
   const { lang } = useLang();
@@ -41,7 +41,19 @@ export default function AuthPage() {
       localStorage.setItem("user", JSON.stringify(data.user));
       setNeed2FA(false);
       setTotpCode("");
-      router.push("/");
+      if (typeof window !== "undefined" && window.location.hostname.startsWith("admin.")) {
+        router.push("/admin/orders");
+      } else {
+        if (typeof window !== "undefined" && window.location.hostname.startsWith("admin.")) {
+        router.push("/admin/orders");
+      } else {
+        if (typeof window !== "undefined" && window.location.hostname.startsWith("admin.")) {
+        router.push("/admin/orders");
+      } else {
+        router.push("/");
+      }
+      }
+      }
     } catch (e: any) {
       setError(e.message);
     } finally {
