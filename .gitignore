@@ -66,3 +66,10 @@ backups/
 # Shell-redirect mishaps that have shown up at repo root
 /next
 /frontend@*
+
+# Tarball backups + master key (master key 泄漏 = 加密 env 报废)
+*.tar.gz
+.ssp_master_key
+
+# Timestamped local backups (e.g. PROGRESS.md.bak.20260425-212957)
+*.bak.*
