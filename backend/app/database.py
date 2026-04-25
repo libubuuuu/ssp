@@ -2,13 +2,15 @@
 数据库模块
 直接使用 sqlite3，跳过 Prisma Python
 """
+import os
 import sqlite3
 from contextlib import contextmanager
 from typing import Optional
 import json
 from datetime import datetime
 
-DATABASE_PATH = "./dev.db"
+# 路径默认 ./dev.db,测试或多环境通过 DATABASE_PATH 覆盖
+DATABASE_PATH = os.environ.get("DATABASE_PATH", "./dev.db")
 
 
 @contextmanager
@@ -22,12 +24,29 @@ def get_db():
         conn.close()
 
 
+def _patch_users_columns(cursor):
+    """幂等地补齐 users 表的后加列。
+    Phase 2 迁 PostgreSQL + Alembic 后由真正的迁移系统接管。
+    """
+    patches = [
+        ("totp_secret", "ALTER TABLE users ADD COLUMN totp_secret TEXT DEFAULT NULL"),
+        ("totp_enabled", "ALTER TABLE users ADD COLUMN totp_enabled INTEGER DEFAULT 0"),
+    ]
+    for col_name, sql in patches:
+        try:
+            cursor.execute(sql)
+        except sqlite3.OperationalError as e:
+            # SQLite 已有该列时报 "duplicate column name: xxx",此情况是幂等成功
+            if "duplicate column" not in str(e).lower():
+                raise
+
+
 def init_db():
     """初始化数据库表"""
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # 用户表（新增 credits 字段）
+        # 用户表（含 2FA 列;迁移管理见下方 _patch_users_columns）
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY,
@@ -39,9 +58,12 @@ def init_db():
             credits INTEGER DEFAULT 100,
             phone TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            totp_secret TEXT DEFAULT NULL,
+            totp_enabled INTEGER DEFAULT 0
         )
         """)
+        _patch_users_columns(cursor)
 
         # 身材数据表
         cursor.execute("""
