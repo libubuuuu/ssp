@@ -25,6 +25,11 @@ _TEST_DB_FD, _TEST_DB_PATH = tempfile.mkstemp(suffix=".db", prefix="ssp_test_")
 os.close(_TEST_DB_FD)
 os.environ["DATABASE_PATH"] = _TEST_DB_PATH
 
+# jobs 队列文件:测试用 tmp 路径,绝不碰 /root/ssp/jobs_data/
+_TEST_JOBS_FD, _TEST_JOBS_PATH = tempfile.mkstemp(suffix=".json", prefix="ssp_test_jobs_")
+os.close(_TEST_JOBS_FD)
+os.environ["JOBS_FILE"] = _TEST_JOBS_PATH
+
 # 把 backend/ 加到 sys.path,这样 `import app.xxx` 能解析
 _BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _BACKEND_DIR not in sys.path:
@@ -40,9 +45,18 @@ def app():
 
     from fastapi import FastAPI
     from app.api import auth as auth_module
+    from app.api import jobs as jobs_module
+    from app.api import admin as admin_module
+
+    # 把真实 _execute_job 替成 no-op,避免测试触发 FAL API
+    async def _noop_execute_job(job_id):  # pragma: no cover - test helper
+        return None
+    jobs_module._execute_job = _noop_execute_job
 
     test_app = FastAPI()
     test_app.include_router(auth_module.router, prefix="/api/auth")
+    test_app.include_router(jobs_module.router, prefix="/api/jobs")
+    test_app.include_router(admin_module.router, prefix="/api/admin")
     return test_app
 
 
@@ -63,6 +77,15 @@ def reset_email_codes():
 
 
 @pytest.fixture(autouse=True)
+def reset_jobs():
+    """每个 test 前后清空 jobs 内存 dict,防止跨用例污染"""
+    from app.api import jobs as jobs_module
+    jobs_module.JOBS.clear()
+    yield
+    jobs_module.JOBS.clear()
+
+
+@pytest.fixture(autouse=True)
 def reset_database():
     """每个 test 前 truncate 主要表,保证用例独立"""
     from app.database import get_db
@@ -77,8 +100,65 @@ def reset_database():
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """session 结束时清理 tmp 库"""
-    try:
-        os.unlink(_TEST_DB_PATH)
-    except OSError:
-        pass
+    """session 结束时清理 tmp 文件"""
+    for path in (_TEST_DB_PATH, _TEST_JOBS_PATH):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+# === 公用辅助 ===
+
+def _register(client, email: str, password: str = "secret123", name: str | None = None):
+    """注册,返回 (token, user_dict)"""
+    payload = {"email": email, "password": password}
+    if name:
+        payload["name"] = name
+    r = client.post("/api/auth/register", json=payload)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    return data["token"], data["user"]
+
+
+def _auth(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _set_role(user_id: str, role: str) -> None:
+    """直接改 DB 把 role 设为 admin(没有 API,只能这样)"""
+    from app.database import get_db
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+        conn.commit()
+
+
+def _set_credits(user_id: str, credits: int) -> None:
+    """直接改 DB 设额度"""
+    from app.database import get_db
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute("UPDATE users SET credits = ? WHERE id = ?", (credits, user_id))
+        conn.commit()
+
+
+# 暴露给测试文件
+@pytest.fixture()
+def register():
+    return _register
+
+
+@pytest.fixture()
+def auth_header():
+    return _auth
+
+
+@pytest.fixture()
+def set_role():
+    return _set_role
+
+
+@pytest.fixture()
+def set_credits():
+    return _set_credits
