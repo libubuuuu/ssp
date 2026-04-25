@@ -87,11 +87,12 @@
 
 ### Phase 1 — 工程根基(没有这一步别谈"企业级")
 
-- [x] **pytest 后端测试基础设施**(2026-04-25 落地,18 例 auth/邮箱码测试,DB 隔离)
+- [x] **pytest 后端测试基础设施**(2026-04-25 落地,DB + jobs 文件双隔离)
   - 跑测试:`cd backend && venv/bin/pytest -v`
   - 第一轮就抓到 users 表 schema 漂移 bug(见 commit `da34c57`)
 - [x] **GitHub Actions CI**(backend pytest + frontend lint,push/PR 触发)
-- [ ] 加更多后端测试:billing(扣费/退还/不足额度)、jobs 队列、admin 鉴权、用户隔离严格模式
+- [x] **后端测试覆盖到位**:auth(18) + billing(7) + jobs(7) + admin(5) = **38 例**
+  - 关键安全断言:用户严格隔离(A 看不到 B 的 jobs)、普通用户不能 adjust-credits
 - [ ] 加前端 e2e(Playwright)覆盖关键金路径
 - [ ] Dependabot / pip-audit / npm audit 自动化
 - [ ] 服务降权:`ssp-app` 用户 + `NoNewPrivileges` 等 sandbox 选项
@@ -143,8 +144,8 @@
   (`.git/config` 里有明文 PAT,且 `/root/ssp.bak.*` 三份历史快照里也有,需要先轮换)
 - `auth.py` 邮箱验证码代码上次会话曾被复制粘贴成两份,本次已修
 - 服务运行中,但脱离 systemd 控制(:8000 / :3000 上是手动起的进程),需要后续会话理清
-- Phase 1 已完成:测试基础设施 + GitHub Actions CI + 修复 schema 漂移 bug
-- Phase 1 进行中:更多后端测试(billing/jobs/admin/用户隔离)、服务降权、异地备份
+- Phase 1 后端测试线已闭环(38 例,auth/billing/jobs/admin/用户隔离)+ CI 配好
+- Phase 1 待办:服务降权、异地备份、Dependabot、Playwright e2e、runbook
 
 ## 怎么跑测试
 
