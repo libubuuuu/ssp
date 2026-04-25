@@ -64,12 +64,12 @@ export default function JobPanel() {
     failed: "#c00",
   } as any)[s] || "#888";
 
-  const typeLabel = (t: string) => ({
+  const typeLabel = (typ: string) => ({
     image: t("jobs.typeImage"),
     video_i2v: t("jobs.typeI2V"),
     video_edit: t("jobs.typeEdit"),
     video_clone: t("jobs.typeClone"),
-  } as any)[t] || t;
+  } as any)[typ] || typ;
 
   const deleteJob = async (id: string) => {
     const token = localStorage.getItem("token") || "";

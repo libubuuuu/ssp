@@ -14,7 +14,7 @@ export default function DigitalHumanPage() {
     e.preventDefault();
     const imageFile = imageRef.current?.files?.[0];
     if (!imageFile) {
-      alert("请上传人物图片");
+      alert(t("errors.uploadCharacter"));
       return;
     }
     setLoading(true);

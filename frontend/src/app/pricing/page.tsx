@@ -67,8 +67,8 @@ export default function PricingPage() {
       });
       const data = await res.json();
       if (data.order_id) { setProcessingOrder(data.order_id); setTimeout(() => pollOrderStatus(data.order_id, token, data.amount), 1000); }
-      else { setError(data.detail || "创建订单失败"); setLoading(false); }
-    } catch (err) { setLoading(false); setError(err instanceof Error ? err.message : "网络错误"); }
+      else { setError(data.detail || t("errors.createOrderFailed")); setLoading(false); }
+    } catch (err) { setLoading(false); setError(err instanceof Error ? err.message : t("errors.networkError")); }
   };
 
   const btn = (disabled: boolean) => ({ width: "100%", padding: "0.75rem", background: disabled ? "#ccc" : "#0d0d0d", color: "#fff", border: "none", borderRadius: "10px", cursor: disabled ? "not-allowed" as const : "pointer" as const, fontSize: "0.9rem", fontWeight: 500 });
@@ -154,7 +154,7 @@ export default function PricingPage() {
             <div style={{ width: "48px", height: "48px", border: "3px solid #eee", borderTopColor: "#0d0d0d", borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto 1rem" }}></div>
             <h3 style={{ fontSize: "1.1rem", fontWeight: 600, color: "#0d0d0d", margin: "0 0 0.5rem" }}>{t("pricing.waitPay")}</h3>
             <p style={{ fontSize: "0.8rem", color: "#999", margin: "0 0 1.5rem" }}>{t("pricing.orderInfo")}{processingOrder.slice(0, 8)}{t("pricing.autoConfirm")}</p>
-            <button onClick={() => { setProcessingOrder(null); setLoading(false); setError("已取消支付"); }}
+            <button onClick={() => { setProcessingOrder(null); setLoading(false); setError(t("errors.paymentCancelled")); }}
               style={{ width: "100%", padding: "0.75rem", background: "#f5f5f5", color: "#666", border: "none", borderRadius: "10px", cursor: "pointer", fontSize: "0.9rem" }}>
               {t("pricing.cancelPay")}
             </button>

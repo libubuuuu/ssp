@@ -60,7 +60,7 @@ export default function NewProductPage() {
     console.log("提交产品:", formData);
 
     setTimeout(() => {
-      alert("产品提交成功！");
+      alert(t("alerts.productSubmitted"));
       router.push("/merchant/products");
     }, 1000);
   };

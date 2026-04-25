@@ -48,7 +48,7 @@ export default function VideoEditorPage() {
         setError(data.detail || "解析失败");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "网络错误");
+      setError(err instanceof Error ? err.message : t("errors.networkError"));
     } finally {
       setLoading(false);
     }
@@ -121,7 +121,7 @@ export default function VideoEditorPage() {
         alert("重新生成任务已提交，请稍后查看结果");
       }
     } catch (err) {
-      alert(err instanceof Error ? err.message : "生成失败");
+      alert(err instanceof Error ? err.message : t("errors.generationFailed"));
     } finally {
       setLoading(false);
     }

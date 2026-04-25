@@ -55,7 +55,7 @@ export default function StudioListPage() {
         body: fd,
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "上传失败");
+      if (!res.ok) throw new Error(data.detail || t("errors.uploadFailed"));
       router.push(`/video/studio/${data.session_id}`);
     } catch (e: any) { setError(e.message); setCreating(false); }
   };

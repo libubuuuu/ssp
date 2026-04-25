@@ -84,7 +84,7 @@ export default function VideoPage() {
         }),
       });
       const d = await res.json();
-      if (!res.ok) throw new Error(d.detail || "提交失败");
+      if (!res.ok) throw new Error(d.detail || t("errors.submitFailed"));
       updateCard(card.id, { jobId: d.job_id, status: "pending", progress: "排队中..." });
       startPolling(card.id, d.job_id);
     } catch (e: any) {

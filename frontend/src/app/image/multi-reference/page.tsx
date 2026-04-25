@@ -85,7 +85,7 @@ export default function MultiReferencePage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!prompt.trim() || referenceImages.length === 0) {
-      setError("请输入提示词并上传至少一张参考图");
+      setError(t("errors.noPromptOrRef"));
       return;
     }
 
@@ -123,10 +123,10 @@ export default function MultiReferencePage() {
         const encoded = encodeURIComponent(JSON.stringify(detailData));
         router.push(`/detail?data=${encoded}`);
       } else {
-        setError(data.detail || data.error || "生成失败");
+        setError(data.detail || data.error || t("errors.generationFailed"));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "网络错误");
+      setError(err instanceof Error ? err.message : t("errors.networkError"));
     } finally {
       setLoading(false);
     }

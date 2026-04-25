@@ -72,7 +72,7 @@ export default function AdminDashboard() {
       await fetch(`${API_BASE}/api/admin/models/${modelName}/reset`, {
         method: "POST",
       });
-      alert("模型已重置");
+      alert(t("alerts.modelReset"));
       loadData();
     } catch (err) {
       alert("重置失败");

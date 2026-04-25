@@ -59,7 +59,7 @@ export default function VoiceClonePage() {
         setResultAudioUrl(data.audio_url);
         saveGallery([{ url: data.audio_url, label: text.slice(0, 30), mode: "克隆", time: Date.now() }, ...gallery]);
       } else { setError(data.detail || "克隆失败"); }
-    } catch (e: any) { setError(e.message || "网络错误"); }
+    } catch (e: any) { setError(e.message || t("errors.networkError")); }
     finally { setLoading(false); }
   };
 
@@ -76,8 +76,8 @@ export default function VoiceClonePage() {
       if (data.audio_url) {
         setResultAudioUrl(data.audio_url);
         saveGallery([{ url: data.audio_url, label: text.slice(0, 30), mode: "TTS", time: Date.now() }, ...gallery]);
-      } else { setError(data.detail || "生成失败"); }
-    } catch (e: any) { setError(e.message || "网络错误"); }
+      } else { setError(data.detail || t("errors.generationFailed")); }
+    } catch (e: any) { setError(e.message || t("errors.networkError")); }
     finally { setLoading(false); }
   };
 

@@ -25,7 +25,7 @@ export default function AdminSettingsPage() {
         body: fd,
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "上传失败");
+      if (!res.ok) throw new Error(data.detail || t("errors.uploadFailed"));
       setMsg(`✅ 上传成功！大小 ${(data.size/1024).toFixed(1)}KB`);
       setQrUrl(`/qr-payment.png?v=${Date.now()}`);
     } catch (e: any) { setError(e.message); }

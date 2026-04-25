@@ -110,7 +110,7 @@ export default function VideoStudioDetailPage() {
         body: fd,
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "上传失败");
+      if (!res.ok) throw new Error(data.detail || t("errors.uploadFailed"));
       setSessionId(data.session_id);
       setDuration(data.duration);
       setMsg(`视频 ${data.duration}秒 / ${data.size_mb}MB 上传成功`);
@@ -241,7 +241,7 @@ export default function VideoStudioDetailPage() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "提交失败");
+      if (!res.ok) throw new Error(data.detail || t("errors.submitFailed"));
       setBatchTasks(data.tasks);
       setStep(4);
       setMsg(`已提交 ${data.total} 个任务，等待生成...`);

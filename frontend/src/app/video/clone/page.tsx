@@ -108,10 +108,10 @@ export default function VideoClonePage() {
         setTaskStatus("pending");
         pollTaskStatus(data.task_id);
       } else {
-        setError(data.detail || "提交失败");
+        setError(data.detail || t("errors.submitFailed"));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "网络错误");
+      setError(err instanceof Error ? err.message : t("errors.networkError"));
     } finally {
       setLoading(false);
     }

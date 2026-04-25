@@ -41,7 +41,7 @@ export default function AvatarPage(){
         body:fd,
       });
       const data=await res.json();
-      if(!res.ok)throw new Error(data.detail||"生成失败");
+      if(!res.ok)throw new Error(data.detail||t("errors.generationFailed"));
       if(!data.video_url)throw new Error("未返回视频");
       saveGallery([{url:data.video_url,prompt:`${model} · 数字人`,time:Date.now()},...gallery]);
     }catch(e:any){setError(e.message);}
@@ -58,7 +58,7 @@ export default function AvatarPage(){
             <div style={{fontSize:"0.85rem",color:"#999",marginBottom:"0.3rem"}}>{t("avatar.title")}</div>
             <h1 style={{fontSize:"1.6rem",fontWeight:400,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>{t("avatar.title")}<span style={{fontStyle:"italic"}}> 画布</span></h1>
           </div>
-          {gallery.length>0 && <button onClick={()=>{if(confirm("清空画布？")){saveGallery([]);}}} style={{background:"none",border:"1px solid #ddd",padding:"0.5rem 1rem",borderRadius:"999px",color:"#666",fontSize:"0.85rem",cursor:"pointer"}}>清空画布</button>}
+          {gallery.length>0 && <button onClick={()=>{if(confirm(t("confirms.clearCanvas"))){saveGallery([]);}}} style={{background:"none",border:"1px solid #ddd",padding:"0.5rem 1rem",borderRadius:"999px",color:"#666",fontSize:"0.85rem",cursor:"pointer"}}>清空画布</button>}
         </div>
 
         <div style={{background:"#fafaf7",backgroundImage:"linear-gradient(rgba(0,0,0,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.05) 1px, transparent 1px)",backgroundSize:"40px 40px",borderRadius:"24px",minHeight:"calc(100vh - 180px)",padding:"2rem",border:"2px dashed rgba(0,0,0,0.2)"}}>

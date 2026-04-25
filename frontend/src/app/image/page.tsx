@@ -43,7 +43,7 @@ export default function ImagePage(){
   const handleRefUpload=async(e:React.ChangeEvent<HTMLInputElement>)=>{
     const file=e.target.files?.[0];
     if(!file)return;
-    if(refImages.length>=5){setError("最多上传 5 张参考图");return;}
+    if(refImages.length>=5){setError(t("errors.maxRefImages"));return;}
     setError("");setUploading(true);
     try{
       const token=localStorage.getItem("token")||"";
@@ -55,7 +55,7 @@ export default function ImagePage(){
         body:fd,
       });
       const data=await res.json();
-      if(!res.ok)throw new Error(data.detail||"上传失败");
+      if(!res.ok)throw new Error(data.detail||t("errors.uploadFailed"));
       const preview=URL.createObjectURL(file);
       setRefImages([...refImages,data.url]);
       setRefPreviews([...refPreviews,preview]);
@@ -67,7 +67,7 @@ export default function ImagePage(){
     setRefPreviews(refPreviews.filter((_,idx)=>idx!==i));
   };
   const generate=async()=>{
-    if(!prompt.trim()){setError("请输入提示词");return;}
+    if(!prompt.trim()){setError(t("errors.inputPrompt"));return;}
     setError("");
     try{
       const token=localStorage.getItem("token")||"";
@@ -88,7 +88,7 @@ export default function ImagePage(){
         }),
       });
       const data=await res.json();
-      if(!res.ok)throw new Error(data.detail||"提交失败");
+      if(!res.ok)throw new Error(data.detail||t("errors.submitFailed"));
       // 立刻返回，不阻塞。任务完成后右下角浮窗会显示
       setMsg(`任务已提交！查看右下角⚡ 我的任务`);
       setTimeout(()=>setMsg(""),3000);
@@ -125,7 +125,7 @@ export default function ImagePage(){
             <div style={{fontSize:"0.85rem",color:"#999",marginBottom:"0.3rem"}}>{t("image.title")}</div>
             <h1 style={{fontSize:"1.6rem",fontWeight:400,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>{t("image.myCanvas")}<span style={{fontStyle:"italic"}}> {t("image.canvas")}</span></h1>
           </div>
-          {gallery.length>0 && <button onClick={()=>{if(confirm("清空画布？")){saveGallery([]);}}} style={{background:"none",border:"1px solid #ddd",padding:"0.5rem 1rem",borderRadius:"999px",color:"#666",fontSize:"0.85rem",cursor:"pointer"}}>清空画布</button>}
+          {gallery.length>0 && <button onClick={()=>{if(confirm(t("confirms.clearCanvas"))){saveGallery([]);}}} style={{background:"none",border:"1px solid #ddd",padding:"0.5rem 1rem",borderRadius:"999px",color:"#666",fontSize:"0.85rem",cursor:"pointer"}}>清空画布</button>}
         </div>
         <div style={{background:"#fafaf7",backgroundImage:"linear-gradient(rgba(0,0,0,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.05) 1px, transparent 1px)",backgroundSize:"40px 40px",borderRadius:"24px",minHeight:"calc(100vh - 180px)",padding:"2rem",border:"2px dashed rgba(0,0,0,0.2)"}}>
           {gallery.length===0 && !loading && (

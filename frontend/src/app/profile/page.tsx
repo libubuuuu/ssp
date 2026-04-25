@@ -39,7 +39,7 @@ export default function ProfilePage(){
         body:JSON.stringify({name}),
       });
       const data=await res.json();
-      if(!res.ok)throw new Error(data.detail||"保存失败");
+      if(!res.ok)throw new Error(data.detail||t("errors.saveFailed"));
       const newUser={...user,name};
       setUser(newUser);
       localStorage.setItem("user",JSON.stringify(newUser));
@@ -59,7 +59,7 @@ export default function ProfilePage(){
         body:JSON.stringify({current_password:curPwd,new_password:newPwd}),
       });
       const data=await res.json();
-      if(!res.ok)throw new Error(data.detail||"修改失败");
+      if(!res.ok)throw new Error(data.detail||t("errors.modifyFailed"));
       setPwdMsg("✓ 密码已修改");
       setCurPwd("");setNewPwd("");
       setTimeout(()=>setPwdMsg(""),2000);

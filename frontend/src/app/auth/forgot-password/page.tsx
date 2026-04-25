@@ -21,7 +21,7 @@ export default function ForgotPasswordPage() {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       setStep("success");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "网络错误");
+      setError(err instanceof Error ? err.message : t("errors.networkError"));
     } finally {
       setLoading(false);
     }

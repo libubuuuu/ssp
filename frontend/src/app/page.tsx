@@ -232,7 +232,7 @@ export default function Home() {
     <div ref={wrapRef} style={{width:"100vw",height:"100vh",background:"#edeae4",position:"relative",overflow:"hidden",cursor:"none"}}>
       <canvas ref={canvasRef} style={{display:"block",width:"100%",height:"100%"}}/>
       <nav style={{position:"absolute",top:0,left:0,right:0,display:"flex",justifyContent:"space-between",alignItems:"center",padding:"1.5rem 3rem",zIndex:10}}>
-        <span style={{fontSize:"0.9rem",color:"#333",letterSpacing:"0.15em",fontFamily:"Georgia,serif",fontStyle:"italic"}}>xiaoLi ai.</span>
+        <span style={{fontSize:"0.9rem",color:"#333",letterSpacing:"0.15em",fontFamily:"Georgia,serif",fontStyle:"italic"}}>xiaoLi ai. v2</span>
         {isLoggedIn ? (
           <div style={{display:"flex",gap:"1rem",alignItems:"center",position:"relative"}}>
       <div style={{position:"fixed",top:"1rem",right:"1rem",zIndex:1000}}><LanguageSwitcher /></div>
