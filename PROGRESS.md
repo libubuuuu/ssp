@@ -18,14 +18,15 @@
 | `b07e3ff feat(auth)` | 加邮箱验证码登录 tab(密码/验证码/注册三选一),接 `/api/auth/send-code` + `/api/auth/login-by-code`,60s 倒计时,i18n 字典补 8 个新 key(zh/en),ESLint+tsc 对修改文件全绿 |
 | `ff1c71f chore(deploy)` | `/root/{deploy,rollback}.sh` 游离仓库外 → 迁进 `ssp/scripts/` + `/root/` 下 symlink 兼容(cron/文档零影响)|
 | `6c2b674 fix(deploy)` | rollback.sh 蓝绿回滚原本只切 backend 端口,会让前后端版本错位 → 补 frontend 端口 sed 替换,与 deploy.sh 对齐 |
+| `e0ac929 feat(auth)` | forgot-password 从 stub(setTimeout 假装成功)改为真实接 `/api/auth/send-code`(purpose=reset)+ `/api/auth/reset-password-by-code`,三步流程 request→verify→success,60s 倒计时,18 个新 i18n key(`auth.forgot.*`,zh/en 对齐),修掉旧文件 line 24 用未导入 `t()` 的 tsc 错误。tsc/eslint 对修改文件全绿。未浏览器实测(生产禁 dev + frontend 仍 death-loop) |
 
-⏳ **未推:** 4 commit 留在本地。push 阻塞两件事:
+⏳ **未推:** 5 commit 留在本地。push 阻塞两件事:
 1. `.git/config` 明文 PAT 未轮换(CLAUDE.md 已记)
 2. `main` 上还压着 18 个旧 commit 同样未推
 
 ### 已知 TODO(下次会话挑)
 
-- [ ] **forgot-password 是 stub** — `src/app/auth/forgot-password/page.tsx` 第 20 行 `// TODO`,handleSubmit 用 `setTimeout(1000)` 假装,完全硬编码中文。后端 `/api/auth/reset-password-by-code` 已实装但前端没接。下次:`feat(auth): forgot-password 接 reset-by-code + i18n 化`
+- [x] **forgot-password 是 stub** — 已闭环(commit `e0ac929`):接 `/api/auth/send-code`(purpose=reset)+ `/api/auth/reset-password-by-code`,三步流程 + i18n 化。tsc/eslint 对修改文件全绿。**未浏览器实测**(生产禁 dev + :3000 仍 death-loop)
 - [ ] **auth/page.tsx 旧文案** — 部分仍走旧的 `lang==="en"?X:Y` inline ternary,新加的全走 `t()`。等做专项 i18n 重构统一收口
 - [ ] **tsc 既有错误未清** — `npx tsc --noEmit` 报 14+ 个既有错误:forgot-password / digital-human / multi-reference / merchant/products/new / video/clone / video/editor / video/replace 等多个 page 使用 `t` 但未 import;`i18n/{zh,en}.ts` 第 337 行起 profile 块的 `topupCredits` / `saveChanges` / `confirmChange` 重复 3 次。CI 估计没跑 tsc 或没失败门禁。下次:`fix: i18n 重复键 + 前端组件 t 导入修齐`
 - [ ] **ESLint 全仓库扫描** — 本次只扫了 auth + i18n 三个文件。全仓库 sweep 待办
