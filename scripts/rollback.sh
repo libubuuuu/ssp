@@ -16,11 +16,13 @@ if [ "$CURRENT" = "8000" ]; then
     OLD="green"
     OLD_BACKEND=8001
     OLD_FRONTEND=3002
+    CURRENT_FRONTEND=3000
 else
     ACTIVE="green"
     OLD="blue"
     OLD_BACKEND=8000
     OLD_FRONTEND=3000
+    CURRENT_FRONTEND=3002
 fi
 
 echo "当前激活：$ACTIVE，要回滚到：$OLD" | tee -a $LOG
@@ -42,8 +44,9 @@ if [ "$BACKEND" != "200" ] || [ "$FRONTEND" != "200" ]; then
     exit 1
 fi
 
-# 5. nginx 切换
+# 5. nginx 切换 - backend + frontend 都要切（否则前后端版本错位）
 sed -i "s|proxy_pass http://127.0.0.1:$CURRENT|proxy_pass http://127.0.0.1:$OLD_BACKEND|g" /etc/nginx/sites-enabled/default
+sed -i "s|proxy_pass http://127.0.0.1:$CURRENT_FRONTEND|proxy_pass http://127.0.0.1:$OLD_FRONTEND|g" /etc/nginx/sites-enabled/default
 nginx -t && nginx -s reload
 echo "✅ 流量已回滚到 $OLD" | tee -a $LOG
 
