@@ -44,15 +44,7 @@ export default function AuthPage() {
       if (typeof window !== "undefined" && window.location.hostname.startsWith("admin.")) {
         router.push("/admin/orders");
       } else {
-        if (typeof window !== "undefined" && window.location.hostname.startsWith("admin.")) {
-        router.push("/admin/orders");
-      } else {
-        if (typeof window !== "undefined" && window.location.hostname.startsWith("admin.")) {
-        router.push("/admin/orders");
-      } else {
         router.push("/");
-      }
-      }
       }
     } catch (e: any) {
       setError(e.message);
