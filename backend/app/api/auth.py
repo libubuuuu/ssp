@@ -305,3 +305,171 @@ async def totp_status(current_user: dict = Depends(get_current_user)):
         row = cursor.fetchone()
         enabled = bool(row[0]) if row else False
     return {"enabled": enabled}
+
+
+# ==================== 邮箱验证码系统 ====================
+import os
+import random
+import time as _time
+from datetime import datetime
+
+# 验证码缓存（内存，5 分钟过期）
+_EMAIL_CODES: dict = {}  # {email: {code, expires_at, purpose}}
+
+
+def _send_email_code(email: str, code: str, purpose: str = "verify") -> bool:
+    """用 Resend 发送验证码邮件"""
+    api_key = os.environ.get("RESEND_API_KEY", "")
+    from_email = os.environ.get("FROM_EMAIL", "onboarding@resend.dev")
+    if not api_key:
+        print(f"[WARN] 未配置 RESEND_API_KEY，验证码打印到控制台: {email} → {code}")
+        return True  # 开发模式
+    
+    try:
+        import resend
+        resend.api_key = api_key
+        
+        subject_map = {
+            "register": "【AI Lixiao】注册验证码",
+            "login": "【AI Lixiao】登录验证码",
+            "reset": "【AI Lixiao】密码重置验证码",
+            "verify": "【AI Lixiao】邮箱验证码",
+        }
+        
+        html = f"""
+<div style="font-family:sans-serif;max-width:500px;margin:40px auto;padding:40px;background:#fff;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.08);">
+  <h2 style="color:#0d0d0d;margin:0 0 20px 0;font-weight:500;">AI Lixiao</h2>
+  <p style="color:#666;line-height:1.6;">你的验证码是：</p>
+  <div style="font-size:2.5rem;font-weight:700;color:#0d0d0d;letter-spacing:0.5rem;padding:20px;background:#f5f3ed;border-radius:12px;text-align:center;margin:20px 0;">{code}</div>
+  <p style="color:#888;font-size:0.9rem;">验证码 5 分钟内有效，请勿泄露。</p>
+  <p style="color:#aaa;font-size:0.8rem;margin-top:30px;">如非本人操作，请忽略此邮件。</p>
+</div>
+"""
+        
+        params = {
+            "from": f"AI Lixiao <{from_email}>",
+            "to": [email],
+            "subject": subject_map.get(purpose, "验证码"),
+            "html": html,
+        }
+        
+        resend.Emails.send(params)
+        print(f"[OK] 邮件已发送: {email} / {purpose}")
+        return True
+    except Exception as e:
+        print(f"[ERR] 邮件发送失败: {e}")
+        return False
+
+
+class SendCodeRequest(BaseModel):
+    email: str
+    purpose: str = "verify"  # register / login / reset
+
+
+@router.post("/send-code")
+async def send_email_code(req: SendCodeRequest):
+    """发送邮箱验证码"""
+    # 基础校验
+    if not req.email or "@" not in req.email:
+        raise HTTPException(status_code=400, detail="邮箱格式错误")
+    
+    # 频率限制：同一邮箱 60 秒内只能发 1 次
+    cache = _EMAIL_CODES.get(req.email)
+    if cache and cache.get("sent_at", 0) + 60 > _time.time():
+        wait = int(cache["sent_at"] + 60 - _time.time())
+        raise HTTPException(status_code=429, detail=f"请 {wait} 秒后再试")
+    
+    # 生成 6 位数字码
+    code = str(random.randint(100000, 999999))
+    _EMAIL_CODES[req.email] = {
+        "code": code,
+        "expires_at": _time.time() + 300,  # 5 分钟
+        "sent_at": _time.time(),
+        "purpose": req.purpose,
+    }
+    
+    # 发送
+    if not _send_email_code(req.email, code, req.purpose):
+        raise HTTPException(status_code=500, detail="邮件发送失败，请稍后重试")
+    
+    return {"success": True, "message": "验证码已发送"}
+
+
+class VerifyCodeLoginRequest(BaseModel):
+    email: str
+    code: str
+
+
+@router.post("/login-by-code")
+async def login_by_code(req: VerifyCodeLoginRequest):
+    """邮箱验证码登录（无密码）。首次登录自动注册。"""
+    cache = _EMAIL_CODES.get(req.email)
+    if not cache:
+        raise HTTPException(status_code=400, detail="请先发送验证码")
+    if cache["expires_at"] < _time.time():
+        _EMAIL_CODES.pop(req.email, None)
+        raise HTTPException(status_code=400, detail="验证码已过期")
+    if cache["code"] != req.code:
+        raise HTTPException(status_code=400, detail="验证码错误")
+    
+    # 验证成功，作废验证码
+    _EMAIL_CODES.pop(req.email, None)
+    
+    # 查找或创建用户
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, email, name, role, credits FROM users WHERE email = ?", (req.email,))
+        row = cursor.fetchone()
+        
+        if not row:
+            # 自动注册
+            import uuid as _uuid
+            user_id = str(_uuid.uuid4())
+            default_name = req.email.split("@")[0]
+            cursor.execute(
+                "INSERT INTO users (id, email, name, role, credits, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (user_id, req.email, default_name, "user", 10, "", datetime.utcnow().isoformat())
+            )
+            conn.commit()
+            user_data = {"id": user_id, "email": req.email, "name": default_name, "role": "user", "credits": 10}
+        else:
+            user_data = {"id": row[0], "email": row[1], "name": row[2], "role": row[3], "credits": row[4]}
+    
+    # 生成 token
+    token = create_jwt_token(user_data["id"], user_data["email"], user_data["role"])
+    return {"token": token, "user": user_data}
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    code: str
+    new_password: str
+
+
+@router.post("/reset-password-by-code")
+async def reset_password_by_code(req: ResetPasswordRequest):
+    """凭验证码重置密码"""
+    cache = _EMAIL_CODES.get(req.email)
+    if not cache:
+        raise HTTPException(status_code=400, detail="请先发送验证码")
+    if cache["expires_at"] < _time.time():
+        _EMAIL_CODES.pop(req.email, None)
+        raise HTTPException(status_code=400, detail="验证码已过期")
+    if cache["code"] != req.code:
+        raise HTTPException(status_code=400, detail="验证码错误")
+    if len(req.new_password) < 6:
+        raise HTTPException(status_code=400, detail="密码至少 6 位")
+    
+    _EMAIL_CODES.pop(req.email, None)
+    
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM users WHERE email = ?", (req.email,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="邮箱未注册")
+        cursor.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(req.new_password), row[0]))
+        conn.commit()
+    
+    return {"success": True, "message": "密码已重置"}
+
