@@ -87,13 +87,16 @@
 
 ### Phase 1 — 工程根基(没有这一步别谈"企业级")
 
-- [ ] 加 pytest + 后端核心路径集成测试(注册→登录→2FA→扣费→生成)
+- [x] **pytest 后端测试基础设施**(2026-04-25 落地,18 例 auth/邮箱码测试,DB 隔离)
+  - 跑测试:`cd backend && venv/bin/pytest -v`
+  - 第一轮就抓到 users 表 schema 漂移 bug(见 commit `da34c57`)
+- [x] **GitHub Actions CI**(backend pytest + frontend lint,push/PR 触发)
+- [ ] 加更多后端测试:billing(扣费/退还/不足额度)、jobs 队列、admin 鉴权、用户隔离严格模式
 - [ ] 加前端 e2e(Playwright)覆盖关键金路径
-- [ ] GitHub Actions:lint / typecheck / test / build
 - [ ] Dependabot / pip-audit / npm audit 自动化
 - [ ] 服务降权:`ssp-app` 用户 + `NoNewPrivileges` 等 sandbox 选项
 - [ ] 备份异地化:rclone 推到对象存储 + 加密 + 月度恢复演练
-- [ ] CLAUDE.md / runbook / 故障 SOP 文档化
+- [ ] runbook / 故障 SOP 文档化
 
 ### Phase 2 — 数据/状态正规化
 
@@ -136,7 +139,20 @@
 
 ## 当前状态(2026-04-25)
 
-- 3 个新本地 commit(cleanup / i18n / 邮箱验证码)未推 origin
+- **18 个本地 commit 未推 origin** —— 等用户撤销 GitHub PAT 并改用 SSH 后再 push
+  (`.git/config` 里有明文 PAT,且 `/root/ssp.bak.*` 三份历史快照里也有,需要先轮换)
 - `auth.py` 邮箱验证码代码上次会话曾被复制粘贴成两份,本次已修
-- 服务运行中,但脱离 systemd,需要后续会话处理
-- Phase 1 待启动,优先级:**测试 + CI + 服务降权**(三件低风险高价值)
+- 服务运行中,但脱离 systemd 控制(:8000 / :3000 上是手动起的进程),需要后续会话理清
+- Phase 1 已完成:测试基础设施 + GitHub Actions CI + 修复 schema 漂移 bug
+- Phase 1 进行中:更多后端测试(billing/jobs/admin/用户隔离)、服务降权、异地备份
+
+## 怎么跑测试
+
+```bash
+cd /root/ssp/backend
+venv/bin/pytest -v               # 全跑
+venv/bin/pytest tests/test_auth.py -v   # 单个文件
+venv/bin/pytest -k email_code -v        # 按关键字
+```
+
+测试用 `/tmp/ssp_test_*.db` 临时库,**不会碰 `backend/dev.db`**。
