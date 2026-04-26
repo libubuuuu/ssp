@@ -48,6 +48,13 @@ export default function StudioListPage() {
 
   const createNew = (file: File) => {
     setError("");
+    // 上传前预检文件大小:> 500MB 直接拒,避免发请求后被 nginx 切断显示成 ERR_CONNECTION_RESET
+    const MAX_MB = 500;
+    const sizeMB = file.size / 1024 / 1024;
+    if (sizeMB > MAX_MB) {
+      setError(`视频文件 ${sizeMB.toFixed(1)} MB,超过上限 ${MAX_MB} MB。请压缩后再上传(推荐用 HandBrake / 剪映导出 720p/1080p)`);
+      return;
+    }
     setCreating(true);
     setUploadProgress(0);
     setUploadSpeed("");
