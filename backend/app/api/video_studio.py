@@ -88,13 +88,18 @@ async def upload_video(
     session_dir = STUDIO_DIR / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
 
-    # 保存原视频
+    # 保存原视频(流式 1MB 块写入,不一次性读全到内存)
     ext = os.path.splitext(file.filename)[1] or ".mp4"
     video_path = session_dir / f"source{ext}"
-    contents = await file.read()
+    chunk_size = 1024 * 1024  # 1 MB
     with open(video_path, "wb") as f:
-        f.write(contents)
+        while True:
+            chunk = await file.read(chunk_size)
+            if not chunk:
+                break
+            f.write(chunk)
 
+    size_bytes = video_path.stat().st_size
     duration = _get_video_duration(str(video_path))
 
     STUDIO_TASKS[session_id] = {
@@ -110,7 +115,7 @@ async def upload_video(
     return {
         "session_id": session_id,
         "duration": round(duration, 2),
-        "size_mb": round(len(contents) / 1024 / 1024, 2),
+        "size_mb": round(size_bytes / 1024 / 1024, 2),
     }
 
 

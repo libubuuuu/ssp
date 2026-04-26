@@ -23,6 +23,8 @@ export default function StudioListPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0); // 0-100
+  const [uploadSpeed, setUploadSpeed] = useState("");
   const [error, setError] = useState("");
 
   const token = () => localStorage.getItem("token") || "";
@@ -44,20 +46,60 @@ export default function StudioListPage() {
     return () => clearInterval(t);
   }, []);
 
-  const createNew = async (file: File) => {
-    setError(""); setCreating(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch(`${API_BASE}/api/studio/upload`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token()}` },
-        body: fd,
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || t("errors.uploadFailed"));
-      router.push(`/video/studio/${data.session_id}`);
-    } catch (e: any) { setError(e.message); setCreating(false); }
+  const createNew = (file: File) => {
+    setError("");
+    setCreating(true);
+    setUploadProgress(0);
+    setUploadSpeed("");
+
+    const fd = new FormData();
+    fd.append("file", file);
+
+    // 用 XMLHttpRequest 才能拿到 upload progress(fetch 不支持)
+    const xhr = new XMLHttpRequest();
+    const startTime = Date.now();
+
+    xhr.upload.onprogress = (e) => {
+      if (!e.lengthComputable) return;
+      const pct = (e.loaded / e.total) * 100;
+      setUploadProgress(pct);
+      // 实时速度估算
+      const elapsed = (Date.now() - startTime) / 1000;
+      if (elapsed > 0.5) {
+        const mbps = (e.loaded / 1024 / 1024) / elapsed;
+        const remainSec = (e.total - e.loaded) / (e.loaded / elapsed);
+        setUploadSpeed(`${mbps.toFixed(1)} MB/s · 剩余约 ${Math.max(1, Math.ceil(remainSec))} 秒`);
+      }
+    };
+
+    xhr.onload = () => {
+      try {
+        const data = JSON.parse(xhr.responseText || "{}");
+        if (xhr.status >= 200 && xhr.status < 300) {
+          setUploadProgress(100);
+          setUploadSpeed("处理中...");
+          router.push(`/video/studio/${data.session_id}`);
+        } else {
+          setError(data.detail || `上传失败 (HTTP ${xhr.status})`);
+          setCreating(false);
+        }
+      } catch {
+        setError(`上传失败 (HTTP ${xhr.status})`);
+        setCreating(false);
+      }
+    };
+    xhr.onerror = () => {
+      setError("网络错误,请检查网络后重试");
+      setCreating(false);
+    };
+    xhr.onabort = () => {
+      setError("上传已取消");
+      setCreating(false);
+    };
+
+    xhr.open("POST", `${API_BASE}/api/studio/upload`);
+    xhr.setRequestHeader("Authorization", `Bearer ${token()}`);
+    xhr.send(fd);
   };
 
   const deleteSession = async (sid: string) => {
@@ -98,6 +140,25 @@ export default function StudioListPage() {
         </div>
 
         {error && <div style={{ padding: "0.7rem 1rem", background: "#ffeaea", color: "#c00", borderRadius: 10, marginBottom: "1rem", fontSize: "0.88rem" }}>{error}</div>}
+
+        {creating && (
+          <div style={{ padding: "1rem 1.25rem", background: "#fff", border: "1px solid #e5e2dc", borderRadius: 12, marginBottom: "1rem" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem", fontSize: "0.88rem" }}>
+              <span style={{ color: "#0d0d0d", fontWeight: 500 }}>
+                {uploadProgress < 100 ? `上传中 ${uploadProgress.toFixed(1)}%` : "服务器处理中..."}
+              </span>
+              <span style={{ color: "#999", fontSize: "0.78rem" }}>{uploadSpeed}</span>
+            </div>
+            <div style={{ height: 8, background: "#e5e2dc", borderRadius: 4, overflow: "hidden" }}>
+              <div style={{
+                width: `${uploadProgress}%`,
+                height: "100%",
+                background: uploadProgress >= 100 ? "#0a7" : "#0d0d0d",
+                transition: "width 0.2s ease-out",
+              }} />
+            </div>
+          </div>
+        )}
 
         {loading && <div style={{ color: "#999", textAlign: "center", padding: "3rem" }}>{t("studio.loading")}</div>}
         {!loading && sessions.length === 0 && (
