@@ -1,5 +1,36 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 六续(降权遗留扫尾 + 2FA 测试黑洞)
+
+### ✅ 2FA / TOTP 测试黑洞补完(commit `a667b2f`)
+- 之前 0 测试覆盖 4 个 2FA 端点 + login 路径 2FA 校验
+- 加 `tests/test_2fa.py` 10 个测试,真跑 pyotp.TOTP 不 mock
+- **测试 90 → 100 里程碑**(38 起算翻 2.5 倍)
+
+### ✅ supervisor 配置加 stopasgroup/killasgroup(本 commit)
+切换时撞到的"`fuser -k` 跨用户杀不掉 root zombie"问题真修。
+- 4 个 program 全加 `stopasgroup=true / killasgroup=true / stopwaitsecs=15`
+- 前端去掉 fuser hack(在 ssp-app 模式下没意义,supervisor 自己管 group)
+- supervisor 自己 SIGTERM 整 process group → 等 15s → SIGKILL,zombie 不可能残留
+
+### 🔧 下次 deploy 前需手动应用一次(0 自动化,接受 30s 停机)
+deploy.sh 默认不动 supervisor 配置。要让新配置生效:
+
+```bash
+diff /root/ssp/deploy/supervisor.conf /etc/supervisor/conf.d/ssp.conf  # 看变化
+cp /root/ssp/deploy/supervisor.conf /etc/supervisor/conf.d/ssp.conf
+supervisorctl reread     # 应该显示 4 个 program changed
+supervisorctl update     # 重启所有 changed program — 30s 停机
+```
+
+或者**等下次蓝绿切换时一并做**:deploy.sh 跑前手动 cp + reread + update,然后正常 deploy 流程接管。
+
+### 决策记录
+- supervisor 配置改动**不立即应用**:active=green 切换 30 分钟还在监控
+  期,叠加配置 reload 风险高;等下次正式 deploy 一并做
+- **保留 bash -c 包装**而非直接 npm start:supervisor 的 PATH 不一定包含
+  npm,bash 提供 PATH 兜底;exec 让 npm 替换 bash 进程,简化 process tree
+
 ## 2026-04-27 五续(服务降权阶段 2 完成 — 生产已切到 ssp-app)
 
 ### ✅ 切换执行(实测停机 ~30 秒)
