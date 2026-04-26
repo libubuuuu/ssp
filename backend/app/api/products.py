@@ -5,7 +5,7 @@ import uuid
 import json
 from datetime import datetime
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from fastapi import APIRouter, HTTPException, Query
 from app.database import get_db
 
@@ -13,7 +13,13 @@ router = APIRouter()
 
 
 # 请求/响应模型
+# 这些 model 有 model_3d_url 字段,跟 pydantic v2 的 model_ 受保护命名空间冲突。
+# 用 protected_namespaces=() 关掉保护(我们没用 model_validate 之类的方法)。
+_PRODUCT_MODEL_CONFIG = ConfigDict(protected_namespaces=())
+
+
 class ProductCreate(BaseModel):
+    model_config = _PRODUCT_MODEL_CONFIG
     merchant_id: str
     name: str
     description: Optional[str] = None
@@ -28,6 +34,7 @@ class ProductCreate(BaseModel):
 
 
 class ProductUpdate(BaseModel):
+    model_config = _PRODUCT_MODEL_CONFIG
     name: Optional[str] = None
     description: Optional[str] = None
     category: Optional[str] = None
@@ -42,6 +49,8 @@ class ProductUpdate(BaseModel):
 
 
 class ProductResponse(BaseModel):
+    # v2 风格:合并 protected_namespaces 关掉 + from_attributes 替代 v1 的 class Config
+    model_config = ConfigDict(protected_namespaces=(), from_attributes=True)
     id: str
     merchant_id: str
     name: str
@@ -57,9 +66,6 @@ class ProductResponse(BaseModel):
     is_published: bool
     created_at: str
     updated_at: str
-
-    class Config:
-        from_attributes = True
 
 
 # 辅助函数

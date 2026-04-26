@@ -6,7 +6,7 @@
 - 额度扣费：使用 @require_credits 装饰器自动处理
 """
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional, List
 from enum import Enum
 from app.services.fal_service import get_video_service
@@ -82,6 +82,8 @@ class VideoElementReplaceRequest(BaseModel):
 
 class VideoCloneRequest(BaseModel):
     """视频翻拍复刻请求"""
+    # model_image_url 字段跟 pydantic v2 的 model_ 受保护命名空间冲突,关保护
+    model_config = ConfigDict(protected_namespaces=())
     reference_video_url: str  # 爆款视频链接
     model_image_url: str  # 我的模特图
     product_image_url: Optional[str] = None  # 我的产品图（可选）
