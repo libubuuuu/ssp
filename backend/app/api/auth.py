@@ -14,7 +14,10 @@ from ..services.auth import (
     get_user_by_email,
     verify_password,
     create_jwt_token,
+    create_access_token,
+    create_refresh_token,
     decode_jwt_token,
+    decode_refresh_token,
     get_user_by_id,
     hash_password,
     invalidate_user_tokens,
@@ -88,11 +91,14 @@ async def register(req: RegisterRequest):
     if not user:
         raise HTTPException(status_code=500, detail="注册失败")
 
-    # 生成 Token
-    token = create_jwt_token(user["id"], user["email"], user["role"])
+    # 同时签发 access + refresh
+    access = create_access_token(user["id"], user["email"], user["role"])
+    refresh = create_refresh_token(user["id"], user["email"], user["role"])
 
     return {
-        "token": token,
+        "token": access,           # 向后兼容字段
+        "access_token": access,
+        "refresh_token": refresh,
         "user": {
             "id": user["id"],
             "email": user["email"],
@@ -130,11 +136,14 @@ async def login(req: LoginRequest):
             if not totp.verify(req.totp_code, valid_window=1):
                 raise HTTPException(status_code=401, detail="2FA 验证码错误")
 
-    # 生成 Token
-    token = create_jwt_token(user["id"], user["email"], user["role"])
+    # 同时签发 access + refresh
+    access = create_access_token(user["id"], user["email"], user["role"])
+    refresh = create_refresh_token(user["id"], user["email"], user["role"])
 
     return {
-        "token": token,
+        "token": access,           # 向后兼容字段
+        "access_token": access,
+        "refresh_token": refresh,
         "user": {
             "id": user["id"],
             "email": user["email"],
@@ -151,26 +160,33 @@ async def get_current_user_info(current_user: dict = Depends(get_current_user)):
     return current_user
 
 
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
 @router.post("/refresh")
-async def refresh_token(authorization: Optional[str] = Header(None)):
-    """刷新 Token"""
-    if not authorization:
-        raise HTTPException(status_code=401, detail="未登录")
+async def refresh_access_token(req: RefreshRequest):
+    """用 refresh token 换新 access token。
 
-    parts = authorization.split()
-    if len(parts) != 2 or parts[0] != "Bearer":
-        raise HTTPException(status_code=401, detail="Token 格式错误")
-
-    token = parts[1]
-    payload = decode_jwt_token(token)
-
+    设计:
+    - 只接受 refresh token(type=refresh),access 不能用于刷新
+    - 用户级吊销同样适用(改密码 / 强制下线后,refresh 也失效)
+    - 此次实现不轮换 refresh(refresh 仍是原来那个,用到过期为止)
+    """
+    payload = decode_refresh_token(req.refresh_token)
     if not payload:
-        raise HTTPException(status_code=401, detail="Token 无效或已过期")
+        raise HTTPException(status_code=401, detail="refresh_token 无效或已过期")
 
-    # 生成新 Token
-    new_token = create_jwt_token(payload["user_id"], payload["email"], payload["role"])
+    # 取最新用户信息(防止角色 / email 已变更)
+    user = get_user_by_id(payload["user_id"])
+    if not user:
+        raise HTTPException(status_code=401, detail="用户不存在")
 
-    return {"token": new_token}
+    new_access = create_access_token(user["id"], user["email"], user["role"])
+    return {
+        "token": new_access,           # 向后兼容
+        "access_token": new_access,
+    }
 
 
 @router.put("/me")
@@ -446,9 +462,15 @@ async def login_by_code(req: VerifyCodeLoginRequest):
         else:
             user_data = {"id": row[0], "email": row[1], "name": row[2], "role": row[3], "credits": row[4]}
     
-    # 生成 token
-    token = create_jwt_token(user_data["id"], user_data["email"], user_data["role"])
-    return {"token": token, "user": user_data}
+    # 同时签发 access + refresh
+    access = create_access_token(user_data["id"], user_data["email"], user_data["role"])
+    refresh = create_refresh_token(user_data["id"], user_data["email"], user_data["role"])
+    return {
+        "token": access,           # 向后兼容
+        "access_token": access,
+        "refresh_token": refresh,
+        "user": user_data,
+    }
 
 
 class ResetPasswordRequest(BaseModel):

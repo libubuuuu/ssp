@@ -19,7 +19,10 @@ if not settings.JWT_SECRET:
     raise ValueError("JWT_SECRET 环境变量未设置，服务无法启动")
 JWT_SECRET = settings.JWT_SECRET
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRATION_HOURS = 24 * 7  # 7 天
+# access token:平时用,过期短,泄漏窗口小
+# refresh token:只用于 /refresh 换 access,过期长,平时不传
+JWT_ACCESS_EXPIRATION_HOURS = 24 * 7  # 7 天(暂保持兼容,前端切 refresh 流程后可缩到 1 小时)
+JWT_REFRESH_EXPIRATION_DAYS = 30      # refresh token 30 天
 
 
 def hash_password(password: str) -> str:
@@ -32,31 +35,56 @@ def verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
 
-def create_jwt_token(user_id: str, email: str, role: str) -> str:
-    """生成 JWT Token"""
-    expire = datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS)
+def create_access_token(user_id: str, email: str, role: str) -> str:
+    """签发 access token(平时调业务接口用)"""
+    expire = datetime.utcnow() + timedelta(hours=JWT_ACCESS_EXPIRATION_HOURS)
     payload = {
         "user_id": user_id,
         "email": email,
         "role": role,
+        "type": "access",
         "exp": expire,
         "iat": datetime.utcnow(),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
+def create_refresh_token(user_id: str, email: str, role: str) -> str:
+    """签发 refresh token(仅用于 /refresh 换新 access,平时不传)"""
+    expire = datetime.utcnow() + timedelta(days=JWT_REFRESH_EXPIRATION_DAYS)
+    payload = {
+        "user_id": user_id,
+        "email": email,
+        "role": role,
+        "type": "refresh",
+        "exp": expire,
+        "iat": datetime.utcnow(),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def create_jwt_token(user_id: str, email: str, role: str) -> str:
+    """向后兼容别名 = create_access_token"""
+    return create_access_token(user_id, email, role)
+
+
 def decode_jwt_token(token: str) -> Optional[Dict]:
-    """解析 JWT Token,并校验未被用户级吊销。
+    """解析 access token,验证未被用户级吊销。
 
     流程:
     1. 验证签名 + 过期时间
-    2. 查用户 tokens_invalid_before:若 > token.iat,说明用户已主动/被动撤销所有 token
+    2. **拒绝 refresh token**(只允许 access 调业务接口,refresh 单独走 decode_refresh_token)
+    3. 查用户 tokens_invalid_before:若 > token.iat,说明用户已主动/被动撤销所有 token
     """
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
         return None
     except jwt.InvalidTokenError:
+        return None
+
+    # 拒绝 refresh token 调业务接口(没有 type 字段视为 access,向后兼容旧 token)
+    if payload.get("type") == "refresh":
         return None
 
     # 用户级吊销检查
@@ -72,6 +100,36 @@ def decode_jwt_token(token: str) -> Optional[Dict]:
             row = cursor.fetchone()
             if row and row[0] and row[0] > iat:
                 return None  # 该用户所有 token 已撤销
+
+    return payload
+
+
+def decode_refresh_token(token: str) -> Optional[Dict]:
+    """解析 refresh token(必须 type=refresh,且未被用户级吊销)"""
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
+
+    # 必须是 refresh 类型,排除 access / 旧无 type 的 token
+    if payload.get("type") != "refresh":
+        return None
+
+    # 用户级吊销同样适用于 refresh
+    user_id = payload.get("user_id")
+    iat = payload.get("iat")
+    if user_id and iat is not None:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT tokens_invalid_before FROM users WHERE id = ?",
+                (user_id,),
+            )
+            row = cursor.fetchone()
+            if row and row[0] and row[0] > iat:
+                return None
 
     return payload
 
