@@ -50,13 +50,20 @@
 - **真 bug 修复:5 个**(扣费竞态/Token UX/上传体系/nginx 限流/middleware streaming bug)
 - **AIOps 闭环建成:** watchdog → 微信推送 → admin/diagnose → 一键复制 → claude.ai/我修
 
+### ✅ WS 鉴权(明天清单提前做)
+- /api/tasks/ws/{task_id} 加 ?token=<access> query 鉴权(WS 不支持 Authorization header)
+- decode_jwt_token 校验签名 + 过期 + 用户级吊销 + 拒绝 refresh
+- 失败 close code 4401(应用级约定)
+- 测试 +5(79 → 84):无 token / 无效 token / 有效 / 拒 refresh / 拒 revoked
+
 ### ⏸ 真留给下次(已重复多次,这次写死)
 - **服务降权**(/root → /opt 大迁移,半天专项)
 - **微信支付正式接入**(用户备好商户号 + ICP 备案)
 - **Postgres + Alembic 迁移**(SQLite 撑不到几百用户)
-- **WebSocket 鉴权**(任务进度推送,中型安全工程)
+- ~~WebSocket 鉴权~~ ✅ 已落地(2026-04-26 深夜)
 - **Sentry / 全自动 Agent**(都需 API 钱,用户不愿,搁置)
 - **合规打底**(ICP / 内容审核 / AIGC 水印,用户主导跑流程)
+- **WS task 归属验证**(v2,确保只有 task 拥有者能看)
 
 ## 2026-04-26 凌晨之后(用户体验 + AIOps 起步)
 
