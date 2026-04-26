@@ -27,11 +27,19 @@ alert() { echo "[$TS] $1" | tee -a "$ALERTS" >> "$LOG"; }
 warn_count=0
 crit_count=0
 
-# === 1. /health ===
+# === 1. /health(失败时重试 1 次,防 deploy 蓝绿切换窗口期误报) ===
 HEALTH=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$PROD_HOST/health" 2>/dev/null || echo "TIMEOUT")
 if [[ "$HEALTH" != "200" ]]; then
-    alert "[CRIT] /health 返回 $HEALTH(预期 200)"
-    crit_count=$((crit_count + 1))
+    sleep 8  # 给 deploy 切换时间
+    HEALTH_RETRY=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$PROD_HOST/health" 2>/dev/null || echo "TIMEOUT")
+    if [[ "$HEALTH_RETRY" != "200" ]]; then
+        alert "[CRIT] /health 第一次返回 $HEALTH,重试仍 $HEALTH_RETRY(已确认非瞬时)"
+        crit_count=$((crit_count + 1))
+        HEALTH="$HEALTH_RETRY"
+    else
+        log "[INFO] health 第一次 $HEALTH 但重试 200,判定为瞬时(可能 deploy 切换),不告警"
+        HEALTH="200"
+    fi
 fi
 
 # === 2. supervisor 状态 ===
@@ -115,6 +123,15 @@ if [[ "$crit_count" -gt 0 || "$warn_count" -gt 0 ]]; then
     LEVEL=$([[ "$crit_count" -gt 0 ]] && echo "CRIT" || echo "WARN")
     SNAP_FILE="$SNAPSHOT_DIR/$(date +%Y%m%d-%H%M%S)-${LEVEL}.json"
 
+    # 先把 disk / memory 计算好,避免 shell 引号嵌套问题
+    DISK_PCT=$(df -h /root | tail -1 | awk '{print $5}')
+    DISK_USED=$(df -h /root | tail -1 | awk '{print $3}')
+    DISK_TOTAL=$(df -h /root | tail -1 | awk '{print $2}')
+    DISK_STR="${DISK_PCT} used (${DISK_USED}/${DISK_TOTAL})"
+    MEM_USED=$(free -h | awk '/^Mem:/{print $3}')
+    MEM_TOTAL=$(free -h | awk '/^Mem:/{print $2}')
+    MEM_STR="${MEM_USED}/${MEM_TOTAL} used"
+
     # 收集快照(纯 shell + 现有日志,无需调认证 API)
     {
         echo "{"
@@ -130,8 +147,8 @@ if [[ "$crit_count" -gt 0 || "$warn_count" -gt 0 ]]; then
         echo "  \"backend_blue_err_tail\": $(tail -n 20 /var/log/ssp-backend-blue.err.log 2>/dev/null | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'),"
         echo "  \"backend_green_err_tail\": $(tail -n 20 /var/log/ssp-backend-green.err.log 2>/dev/null | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'),"
         echo "  \"watchdog_alerts_tail\": $(tail -n 10 \"$ALERTS\" 2>/dev/null | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'),"
-        echo "  \"disk\": $(df -h /root | tail -1 | awk '{print $5\" used (\"$3\"/\"$2\")\"}' | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read().strip()))'),"
-        echo "  \"memory\": $(free -h | grep Mem | awk '{print $3\"/\"$2\" used\"}' | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read().strip()))')"
+        echo "  \"disk\": $(printf '%s' "$DISK_STR" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'),"
+        echo "  \"memory\": $(printf '%s' "$MEM_STR" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')"
         echo "}"
     } > "$SNAP_FILE" 2>/dev/null
 
