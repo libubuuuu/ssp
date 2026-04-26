@@ -87,16 +87,17 @@ fi
 
 # === 4. 后端 err 日志最近 ERROR 行数 ===
 RECENT_ERR=0
-for f in /var/log/ssp-backend-blue.err.log /var/log/ssp-backend-green.err.log; do
+# 只查最近 10 分钟有更新的 err.log(跳过 STOPPED 进程残留的旧错误)
+# grep pattern 收紧:只匹配真 ERROR 模式,不误抓 INFO/uvicorn 里的 "Exception" 字眼
+for f in $(find /var/log -maxdepth 1 -name "ssp-backend-*.err.log" -mmin -10 2>/dev/null); do
     if [[ -r "$f" ]]; then
-        # 只看最近 200 行,统计 ERROR 出现次数(grep -c 命中 0 时返 1,但仍输出 0,用 || true 容错)
-        n=$(tail -n 200 "$f" 2>/dev/null | grep -cE "(ERROR|Traceback|Exception)" 2>/dev/null || true)
+        n=$(tail -n 200 "$f" 2>/dev/null | grep -cE "^(ERROR:|Traceback \(most recent|[A-Z][a-zA-Z]+Error:)" 2>/dev/null || true)
         n=${n:-0}
         RECENT_ERR=$((RECENT_ERR + n))
     fi
 done
 if [[ "$RECENT_ERR" -gt 5 ]]; then
-    alert "[WARN] 后端最近 200 行 err 日志含 ERROR/Traceback/Exception 共 $RECENT_ERR 行"
+    alert "[WARN] 后端 active 进程最近 200 行 err 日志含真 ERROR/Traceback 共 $RECENT_ERR 行"
     warn_count=$((warn_count + 1))
 fi
 
