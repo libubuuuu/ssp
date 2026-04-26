@@ -51,6 +51,10 @@ studio_workspace/
 jobs_data/
 backups/
 
+# 任务队列持久化文件(各级)
+jobs.json
+**/jobs.json
+
 # Editor / dev backups
 *.bak
 *.swp
