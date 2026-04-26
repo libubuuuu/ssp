@@ -7,7 +7,7 @@ import Sidebar from "@/components/Sidebar";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export default function ProfilePage(){
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const router=useRouter();
   const [user,setUser]=useState<any>(null);
   const [name,setName]=useState("");
@@ -72,6 +72,25 @@ export default function ProfilePage(){
     router.push("/");
   };
 
+  const logoutAllDevices = async () => {
+    const ok = confirm(lang === "en"
+      ? "Log out from ALL devices? Your current session will end too — you'll need to log in again."
+      : "登出所有设备?当前这个浏览器也会被踢,需要重新登录。");
+    if (!ok) return;
+    try {
+      const token = localStorage.getItem("token") || "";
+      await fetch(`${API_BASE}/api/auth/logout-all-devices`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` },
+      });
+    } catch {}
+    // 无论成功失败都清本地 + 跳登录(后端 token 已被吊销,继续待在页面也无意义)
+    localStorage.removeItem("token");
+    localStorage.removeItem("refresh_token");
+    localStorage.removeItem("user");
+    router.push("/auth?expired=1");
+  };
+
   if(!user)return <div style={{minHeight:"100vh",background:"#edeae4"}}/>;
 
   return (
@@ -134,6 +153,21 @@ export default function ProfilePage(){
           {pwdErr && <div style={{color:"#c00",fontSize:"0.8rem",marginBottom:"0.75rem"}}>{pwdErr}</div>}
           {pwdMsg && <div style={{color:"#0a7",fontSize:"0.8rem",marginBottom:"0.75rem"}}>{pwdMsg}</div>}
           <button onClick={changePwd} style={{padding:"0.65rem 1.5rem",background:"#0d0d0d",color:"#fff",border:"none",borderRadius:"10px",cursor:"pointer",fontSize:"0.85rem"}}>{t("profile.confirmChange")}</button>
+        </div>
+
+        {/* 安全选项:登出所有设备 */}
+        <div style={{background:"#fff",borderRadius:"20px",padding:"2rem",marginBottom:"1.25rem",border:"1px solid rgba(0,0,0,0.04)"}}>
+          <div style={{fontSize:"1rem",fontWeight:500,color:"#0d0d0d",marginBottom:"0.5rem"}}>
+            🛡️ {lang === "en" ? "Security" : "安全选项"}
+          </div>
+          <div style={{fontSize:"0.85rem",color:"#888",marginBottom:"1.25rem",lineHeight:1.6}}>
+            {lang === "en"
+              ? "If you suspect your account is accessed elsewhere, log out from all devices. Your current session will also end."
+              : "如果怀疑账号在别处被登录,可一键登出所有设备。当前这个浏览器也会被踢,需要重新登录。"}
+          </div>
+          <button onClick={logoutAllDevices} style={{padding:"0.65rem 1.5rem",background:"#fff",color:"#c33",border:"1px solid #c33",borderRadius:"10px",cursor:"pointer",fontSize:"0.85rem",fontWeight:500}}>
+            {lang === "en" ? "Log out all devices" : "登出所有设备"}
+          </button>
         </div>
 
         {user.role === "admin" && (
