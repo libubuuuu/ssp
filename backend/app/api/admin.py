@@ -245,6 +245,73 @@ async def admin_adjust_credits(user_id: str, delta: int, request: Request, curre
     return {"success": True, "user_id": user_id, "new_credits": new_credits, "delta": delta}
 
 
+@router.get("/watchdog")
+async def admin_get_watchdog_status(current_user: dict = Depends(get_current_user)):
+    """读 watchdog 最近报告 + 告警列表(供 admin dashboard 卡片用)"""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="无权限")
+
+    import os
+    LOG_PATH = "/var/log/ssp-watchdog.log"
+    ALERTS_PATH = "/var/log/ssp-watchdog-alerts.log"
+
+    def tail_lines(path: str, n: int) -> list:
+        if not os.path.exists(path):
+            return []
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+            return [ln.rstrip() for ln in lines[-n:]]
+        except Exception:
+            return []
+
+    log_recent = tail_lines(LOG_PATH, 30)
+    alerts_recent = tail_lines(ALERTS_PATH, 50)
+
+    # 最近 1 小时告警数(粗略统计 — 看时间戳)
+    import re
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    one_hour_ago = now - timedelta(hours=1)
+    recent_alerts_count = 0
+    for ln in alerts_recent:
+        m = re.match(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]", ln)
+        if not m:
+            continue
+        try:
+            ts = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
+            if ts >= one_hour_ago:
+                recent_alerts_count += 1
+        except ValueError:
+            continue
+
+    # 最近一次 watchdog 跑的时间戳(从 log 末行抓)
+    last_run = None
+    if log_recent:
+        m = re.match(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]", log_recent[-1])
+        if m:
+            last_run = m.group(1)
+
+    # 整体状态判断
+    last_log = log_recent[-1] if log_recent else ""
+    if "[CRIT]" in last_log or "CRIT=" in last_log:
+        overall = "critical"
+    elif "WARN=" in last_log and "WARN=0" not in last_log:
+        overall = "warn"
+    elif last_log.startswith("") and "OK:" in last_log:
+        overall = "ok"
+    else:
+        overall = "unknown"
+
+    return {
+        "overall": overall,
+        "last_run": last_run,
+        "recent_alerts_1h": recent_alerts_count,
+        "log_tail": log_recent,
+        "alerts_tail": alerts_recent,
+    }
+
+
 @router.get("/audit-log")
 async def admin_list_audit_log(
     action: Optional[str] = None,

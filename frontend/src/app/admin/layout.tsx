@@ -1,5 +1,6 @@
 "use client";
 import AdminSidebar from "@/components/AdminSidebar";
+import SystemHealthBanner from "@/components/SystemHealthBanner";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -43,6 +44,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     <div style={{ display: "flex", minHeight: "100vh", background: "#f5f3ed" }}>
       <AdminSidebar />
       <main style={{ flex: 1, overflow: "auto" }}>
+        <SystemHealthBanner />
         {children}
       </main>
     </div>
