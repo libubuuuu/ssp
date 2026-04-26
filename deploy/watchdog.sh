@@ -188,19 +188,58 @@ if [[ "$crit_count" -gt 0 || "$warn_count" -gt 0 ]]; then
     ls -t "$SNAPSHOT_DIR"/*.json 2>/dev/null | tail -n +101 | xargs -r rm -f
 fi
 
-# === 推送告警到外部通道(微信/企业微信/飞书,看用户配置) ===
+# === 推送告警到外部通道(信息丰富,手机一眼判断严重度) ===
 if [[ "$crit_count" -gt 0 || "$warn_count" -gt 0 ]]; then
-    PUSH_TITLE="🚨 SSP 告警 $LEVEL"
+    # 严重度判断
+    if [[ "$crit_count" -gt 0 ]]; then
+        SEVERITY_ICON="🚨🚨"
+        SEVERITY_TEXT="生产严重异常"
+        ACTION_HINT="⚠️ 立刻处理"
+    else
+        SEVERITY_ICON="⚠️"
+        SEVERITY_TEXT="生产告警"
+        ACTION_HINT="可以慢慢看(用户可能未受影响)"
+    fi
+
+    # 健康状态用 emoji
+    if [[ "$HEALTH" == "200" ]]; then
+        HEALTH_EMOJI="✓"
+    else
+        HEALTH_EMOJI="✗"
+    fi
+
+    # 后端进程
+    if [[ "$backend_alive" == "1" ]]; then
+        BE_EMOJI="✓"
+    else
+        BE_EMOJI="✗"
+    fi
+    if [[ "$frontend_alive" == "1" ]]; then
+        FE_EMOJI="✓"
+    else
+        FE_EMOJI="✗"
+    fi
+
+    # 拿 disk / memory(同诊断快照)
+    PUSH_DISK_PCT=$(df -h /root | tail -1 | awk '{print $5}')
+    PUSH_MEM=$(free -h | awk '/^Mem:/{print $3"/"$2}')
+
+    PUSH_TITLE="${SEVERITY_ICON} SSP ${SEVERITY_TEXT}"
     PUSH_BODY="时间: $TS
-等级: $LEVEL (CRIT=$crit_count WARN=$warn_count)
-健康: $HEALTH
-后端进程: $backend_alive 个
-前端进程: $frontend_alive 个
 
-最近告警:
-$(tail -n 5 "$ALERTS" 2>/dev/null)
+📊 状态总览:
+ ${HEALTH_EMOJI} health: $HEALTH
+ ${BE_EMOJI} 后端进程: $backend_alive 个
+ ${FE_EMOJI} 前端进程: $frontend_alive 个
+ 💾 磁盘: ${PUSH_DISK_PCT} used
+ 🧠 内存: ${PUSH_MEM}
 
-完整诊断:管理后台 → 诊断历史 看快照 $SNAP_FILE"
+📋 触发原因(CRIT=$crit_count WARN=$warn_count):
+$(tail -n 5 "$ALERTS" 2>/dev/null | sed 's/^/ - /')
+
+${ACTION_HINT}
+
+📁 完整诊断:打开 admin.ailixiao.com/admin/diagnose → 找 ${TS:11:5} 这份快照"
 
     bash "$(dirname "$0")/push-alert.sh" "$PUSH_TITLE" "$PUSH_BODY" >> "$LOG" 2>&1 || true
 fi
