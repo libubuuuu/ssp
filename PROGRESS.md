@@ -1,5 +1,51 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-26 凌晨之后(用户体验 + AIOps 起步)
+
+### 🎯 用户报的问题 → 真因 → 修复
+| 用户报 | 我的初次猜测 | 真因(从日志) | 修复 |
+|---|---|---|---|
+| "Token 无效或已过期" 弹窗 | 老 token 残留 | **大量 fetch 直接 .json() 没 res.ok 检查** | 全局 fetch 拦截器 + 401 自动 refresh |
+| 用着用着被踢登录页 | 拦截器太激进 | access 7 天到期那一刻没刷 | 主动续期(剩余 < 10 分钟提前刷)|
+| 上传视频 ERR_CONNECTION_RESET | nginx 限流 | **视频 > 100MB 撞 client_max_body_size** | client_max_body_size 100m → 500m |
+| 上传太慢 | 服务器慢 | **后端 await file.read() 一次性读到内存 + 前端无进度条** | 流式 1MB 块写 + XHR 进度条 |
+| 视频压不下来怎么办 | (用户痛点) | UX 不该让用户压缩 | **分片上传**(5MB 块,任意大小) |
+| 429 风暴 | 拦截器死循环 | 4 tab 同时 polling 累积超 burst | nginx burst 60→200 + JobPanel visibilitychange |
+| nginx 错误页让前端 .json() 炸 | (副作用)| 默认 nginx 错误页是 HTML | error_page 429/502/503/504 全 JSON 化 |
+
+### ✅ 工程修复完整链
+1. **前端 401 拦截 + 主动续期**(双层保险,users 永不撞过期那一刻)
+2. **profile 加"登出所有设备"**(用户安全自救)
+3. **JobPanel visibilitychange + 401 累计停**(后台 tab 不 polling,防 429 风暴)
+4. **nginx 限流大幅放宽**(api_limit rate 30→60r/s,burst 60→200)
+5. **nginx error_page JSON 化**(关键 — 前端 fetch.json() 永不炸)
+6. **nginx client_max_body_size 100→500m + proxy_timeout 加大**
+7. **视频上传流式 + 分片**(任意大小直传,5MB 块 + 失败重试 3 次)
+8. **watchdog cron 5 分钟一次自动巡检**(/health / supervisor / 5xx-429 / 后端 ERROR / 备份新鲜度)
+9. **admin 系统健康 Banner**(顶部自动显示 — 健康绿/告警黄/危险红)
+10. **🩺 一键诊断按钮**(GET /api/admin/diagnose 收集完整快照,粘贴给 Claude 精准定位)
+
+### 🤖 AIOps 路线图(用户诉求:出问题自动诊断 + 修复)
+**当前阶段(✅ 已落地)**:
+- watchdog 5 分钟自动巡检(本地告警)
+- admin Banner 实时显示生产健康
+- 一键诊断生成完整快照(用户复制粘贴给 Claude 即可)
+
+**下一阶段(待用户提供凭证)**:
+- 飞书 webhook 推送告警(用户配机器人 → 我接到 alert 服务)
+- Sentry 接入(用户提供 DSN → 前后端错误自动上报)
+
+**目标终态(大工程,需 Claude Agent SDK)**:
+- watchdog 触发告警 → webhook 调用 Claude Agent → 自动诊断 + 起草修复方案 → 飞书发用户 → 用户审批 → 自动 git push + deploy
+- 这是真正的 "AIOps 闭环",几天-几周工程量,等用户决定再做
+
+### 决策记录(本轮新增)
+- 2026-04-26:**修复要从 access log 事实出发,不要凭直觉猜**。多次"修了"都不对,直到 access log 看到 `400 body=0` 才看出 client_max_body_size 才是真因。教训:**先看日志再动代码**。
+- 2026-04-26:分片上传选 5MB 块 + 失败重试 3 次 + 16 字符 hex upload_id 防路径穿越;不做断点续传(简单优先,后续按需加)
+- 2026-04-26:nginx error_page JSON 化是**根本性提升** — 此后任何 5xx/429 前端都能优雅处理,不再"Unexpected token '<'"
+- 2026-04-26:watchdog 选 cron 5 分钟而非 systemd timer — 项目用 supervisor 不是 systemd 主导,cron 更轻量
+- 2026-04-26:一键诊断按钮放 admin Banner 而非独立页 — 出问题时用户已经在 admin 看 Banner,顺手点最快
+
 ## 2026-04-26 下午(企业级安全增强)
 
 ### ✅ 后端安全 4 大件

@@ -245,6 +245,112 @@ async def admin_adjust_credits(user_id: str, delta: int, request: Request, curre
     return {"success": True, "user_id": user_id, "new_credits": new_credits, "delta": delta}
 
 
+@router.get("/diagnose")
+async def admin_diagnose(current_user: dict = Depends(get_current_user)):
+    """一键诊断快照 — 出问题时点一下就有完整报告,发给我精准定位。
+
+    包含:
+    - 时间戳 + 服务器健康
+    - supervisor 4 服务状态
+    - nginx 最近错误 + 最近请求统计(429/5xx/4xx 数)
+    - 后端 ERROR 日志最近 30 行
+    - watchdog 最近 10 条告警
+    - 当前蓝绿状态
+    - 数据库基础统计
+    """
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="无权限")
+
+    import subprocess
+    import os
+    from datetime import datetime, timedelta
+
+    def run(cmd: str, timeout: int = 5) -> str:
+        try:
+            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+            return (r.stdout + r.stderr).strip()[:8000]  # 截 8KB 防爆
+        except Exception as e:
+            return f"(err: {e})"
+
+    def tail(path: str, n: int = 30) -> list:
+        if not os.path.exists(path):
+            return [f"(file not found: {path})"]
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                return [ln.rstrip() for ln in f.readlines()[-n:]]
+        except Exception as e:
+            return [f"(read err: {e})"]
+
+    # supervisor 状态
+    sup = run("supervisorctl status")
+
+    # nginx error 最近(过滤无关内容)
+    nginx_err = tail("/var/log/nginx/error.log", 30)
+
+    # 后端 ERROR 日志(blue + green)
+    be_blue_err = tail("/var/log/ssp-backend-blue.err.log", 20)
+    be_green_err = tail("/var/log/ssp-backend-green.err.log", 20)
+
+    # nginx access 最近 5 分钟统计
+    five_min_ago = (datetime.now() - timedelta(minutes=5)).strftime("%d/%b/%Y:%H:%M")
+    access_stats = run(
+        f"awk -v since='{five_min_ago}' "
+        "'{ match($0, /\\[[^]]+\\]/); ts=substr($0, RSTART+1, 17); "
+        "if (ts >= since && match($0, /\" ([0-9]{3}) /, m)) c[m[1]]++ } "
+        "END { for (s in c) print s, c[s] }' "
+        "/var/log/nginx/access.log 2>/dev/null | sort -rn -k 2"
+    )
+
+    # 当前 active 蓝绿(看 nginx proxy_pass 端口)
+    active_port = run("grep -oP 'proxy_pass http://127.0.0.1:\\K[0-9]+' /etc/nginx/sites-enabled/default | head -1")
+    active = "blue" if active_port == "8000" else "green" if active_port == "8001" else "unknown"
+
+    # health
+    health_code = run("curl -s -o /dev/null -w '%{http_code}' --max-time 5 https://ailixiao.com/health")
+
+    # watchdog 最近告警
+    watchdog_alerts = tail("/var/log/ssp-watchdog-alerts.log", 10)
+    watchdog_log = tail("/var/log/ssp-watchdog.log", 5)
+
+    # 数据库基础统计
+    db_stats = {}
+    try:
+        with get_db() as conn:
+            c = conn.cursor()
+            for table in ("users", "tasks", "credit_orders", "audit_log"):
+                try:
+                    c.execute(f"SELECT COUNT(*) FROM {table}")
+                    db_stats[table] = c.fetchone()[0]
+                except Exception:
+                    db_stats[table] = "?"
+    except Exception as e:
+        db_stats = {"error": str(e)}
+
+    # 磁盘 + 内存
+    disk_usage = run("df -h /root | tail -1 | awk '{print $5\" used (\"$3\"/\"$2\")\"}'")
+    mem_usage = run("free -h | grep Mem | awk '{print $3\"/\"$2\" used\"}'")
+
+    return {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "summary": {
+            "health": health_code,
+            "active_bluegreen": active,
+            "active_port": active_port,
+            "disk": disk_usage,
+            "memory": mem_usage,
+        },
+        "supervisor": sup,
+        "nginx_error_tail": nginx_err,
+        "nginx_access_5min_stats": access_stats,
+        "backend_blue_err_tail": be_blue_err,
+        "backend_green_err_tail": be_green_err,
+        "watchdog_alerts_tail": watchdog_alerts,
+        "watchdog_recent_runs": watchdog_log,
+        "db_stats": db_stats,
+        "_usage_hint": "出问题时把这份 JSON 全部复制粘贴给 Claude,30 秒精准定位",
+    }
+
+
 @router.get("/watchdog")
 async def admin_get_watchdog_status(current_user: dict = Depends(get_current_user)):
     """读 watchdog 最近报告 + 告警列表(供 admin dashboard 卡片用)"""
