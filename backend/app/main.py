@@ -1,5 +1,6 @@
 import os
 import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
@@ -15,7 +16,18 @@ except ValueError as e:
     log_error(f"配置验证失败：{e}")
     raise
 
-app = FastAPI(title="AI 创意平台", version="1.0.0", docs_url=None, redoc_url=None, openapi_url=None)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期:取代 deprecated @app.on_event('startup'/'shutdown')"""
+    # 启动
+    log_info("AI 创意平台 启动成功")
+    yield
+    # 关闭
+    log_info("AI 创意平台 正在关闭...")
+
+
+app = FastAPI(title="AI 创意平台", version="1.0.0", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
 ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "")
 origins_list = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
@@ -68,10 +80,4 @@ async def health():
     checker = get_health_checker()
     return await checker.get_full_health()
 
-@app.on_event("startup")
-async def startup_event():
-    log_info("AI 创意平台 启动成功")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    log_info("AI 创意平台 正在关闭...")
+# startup / shutdown 已由顶部 @asynccontextmanager 管理(取代 deprecated @app.on_event)

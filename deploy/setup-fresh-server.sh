@@ -137,6 +137,10 @@ backup_if_exists /etc/fail2ban/jail.local
 cp "$REPO_ROOT/deploy/fail2ban.local" /etc/fail2ban/jail.local
 echo "$LOG fail2ban 配置已部署"
 
+# logrotate(防 /var/log/ssp-* 日志撑爆磁盘)
+cp "$REPO_ROOT/deploy/logrotate.conf" /etc/logrotate.d/ssp
+echo "$LOG logrotate 配置已部署(每天轮转,保留 14 天压缩)"
+
 # limit_req_zone 必须在 http {} 块。检查是否需要补
 if ! grep -rq 'limit_req_zone' /etc/nginx/ 2>/dev/null; then
     echo "$LOG [警告] /etc/nginx 内未发现 limit_req_zone 定义,nginx -t 会失败"
