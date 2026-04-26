@@ -32,8 +32,9 @@ function TaskStatusInner() {
 
     fetchStatus();
 
-    // WebSocket 多窗口同步
-    const ws = new WebSocket(`${WS_BASE}/api/tasks/ws/${taskId}`);
+    // WebSocket 多窗口同步(带 token,后端鉴权:WS 不支持 Authorization header 只能 query)
+    const wsToken = (typeof window !== "undefined" && localStorage.getItem("token")) || "";
+    const ws = new WebSocket(`${WS_BASE}/api/tasks/ws/${taskId}?token=${encodeURIComponent(wsToken)}`);
     ws.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);

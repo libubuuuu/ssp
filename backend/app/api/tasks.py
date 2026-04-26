@@ -106,13 +106,34 @@ async def get_history(current_user: dict = Depends(get_current_user)):
 
 @router.websocket("/ws/{task_id}")
 async def websocket_task_updates(websocket: WebSocket, task_id: str):
+    """任务进度推送 WebSocket。
+
+    鉴权:
+    - 必须带 ?token=<access_token> query 参数(WebSocket 不支持 Authorization header,只能用 query)
+    - 验签 + 用户级吊销(共用 decode_jwt_token,跟 HTTP API 同样规则)
+    - 失败时 close code 4401(自定义,通用约定 4xxx 是应用级)
+
+    未来可加(v2):验证 task_id 属于该 user_id(防偷看别人的进度)
+    需要 tasks 表加 user_id 字段查询,留下次。
+    """
+    from app.services.auth import decode_jwt_token
+
+    token = websocket.query_params.get("token", "")
+    if not token:
+        await websocket.close(code=4401, reason="token required")
+        return
+    payload = decode_jwt_token(token)
+    if not payload:
+        await websocket.close(code=4401, reason="invalid or expired token")
+        return
+
     await websocket.accept()
     if task_id not in active_connections:
         active_connections[task_id] = set()
     active_connections[task_id].add(websocket)
     try:
         while True:
-            data = await websocket.receive_text()
+            await websocket.receive_text()
     except WebSocketDisconnect:
         active_connections[task_id].discard(websocket)
         if not active_connections[task_id]:
