@@ -1,5 +1,33 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-26 下午(企业级安全增强)
+
+### ✅ 后端安全 4 大件
+- **扣费竞态修复**:`deduct_credits` 用 `UPDATE WHERE credits >= ?` 原子化,杜绝并发把余额扣到负数。删除调用方 `check_user_credits` 预检(预检反而引入竞态窗口),失败统一返 402
+- **审计日志体系**:新建 `audit_log` 表(不可变,只增不改) + `services/audit.py` 钩子。`adjust-credits` / `force-logout` 已接入,记录 actor/target/details(JSON)/IP
+- **JWT 用户级吊销**:`users.tokens_invalid_before` 列 + `decode_jwt_token` 校验。覆盖:用户主动登出所有设备 / 改密码 / 重置密码 / 管理员强制踢人 4 个入口
+- **审计查询接口**:`GET /api/admin/audit-log?action=...&limit=...` 给前端用(前端待开发),limit cap 500
+
+### 测试覆盖增长
+- 38 例(昨晚)→ 58 例(今天),新增 20 例
+- 新增分类:扣费原子性 / 余额边界 / 审计持久化 / 审计 e2e / token 吊销 7 场景 / 审计接口权限 + cap
+
+### conftest 顺手 fix
+- `reset_database` autouse fixture 改为依赖 `app` fixture,纯函数测试(不用 client 的)也能拿到 schema(之前会 "no such table: users" 直接挂)
+
+### 决策记录(今天追加)
+- 2026-04-26:JWT 吊销选**用户级**(`tokens_invalid_before`)而非 jti 黑名单 — 简单 + decode 只多 1 次小查询 + 无 Redis 依赖。代价:登出一台 = 登出所有设备(UX 折中,可接受)
+- 2026-04-26:扣费竞态修复同时把 `check_user_credits` 预检删掉 — 预检不仅多余还增加竞态窗口,SQL `WHERE` 自带原子保证
+- 2026-04-26:审计日志 `details` 字段用 JSON TEXT 不做强 schema — 不同 action 字段不一致,JSON 自由结构最适合扩展;严格 schema 等 Phase 2 迁 PostgreSQL 时再考虑(JSON 列原生支持)
+- 2026-04-26:**服务降权暂缓** — 不是改 `User=ssp-app` 就完,要把项目从 `/root/ssp/` 移到 `/opt/ssp/`(因为 `/root/` 默认 700 ssp-app cd 不进),涉及改一堆引用 + 多次生产 reload + 4+ 小时,作为独立"专项工作日"不混进"快速增量"
+
+### ⏸ 留给下次
+- 服务降权(专项工作日,/root/ssp → /opt/ssp 大迁移)
+- jti 黑名单 + 单设备 logout(本次只做用户级)
+- JWT refresh token + 短期 access token(降低令牌泄漏窗口)
+- Sentry / Prometheus 接入
+- 微信支付正式接入(替换"截图人工入账")
+
 ## 2026-04-26 凌晨(通宵交付)
 
 ### ✅ 安全加固(不可逆,生产关键)

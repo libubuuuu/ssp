@@ -234,6 +234,25 @@ async def admin_adjust_credits(user_id: str, delta: int, request: Request, curre
     return {"success": True, "user_id": user_id, "new_credits": new_credits, "delta": delta}
 
 
+@router.get("/audit-log")
+async def admin_list_audit_log(
+    action: Optional[str] = None,
+    actor_user_id: Optional[str] = None,
+    limit: int = 100,
+    current_user: dict = Depends(get_current_user),
+):
+    """管理员查询审计日志。
+    支持按 action / actor_user_id 过滤,按 created_at DESC,默认 100 条上限 500。
+    """
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="无权限")
+    if limit > 500:
+        limit = 500
+    from app.services.audit import list_audit_log
+    rows = list_audit_log(limit=limit, actor_user_id=actor_user_id, action=action)
+    return {"total": len(rows), "logs": rows}
+
+
 @router.post("/users/{user_id}/force-logout")
 async def admin_force_logout(user_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     """管理员强制踢人:把目标用户在所有设备的 token 一次性失效"""

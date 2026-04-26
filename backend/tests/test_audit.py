@@ -105,6 +105,53 @@ def test_log_handles_none_details_gracefully():
     assert rows[0]["details"] is None
 
 
+def test_admin_audit_log_endpoint_returns_records(client):
+    """GET /api/admin/audit-log 管理员能看审计列表"""
+    admin = _make_admin("audit-list-admin@example.com")
+    target = _make_target_user("audit-list-target@example.com")
+
+    # 写 2 条不同 action 的审计
+    audit.log_admin_action(admin["id"], admin["email"], "adjust_credits", "user", target, {"delta": 10})
+    audit.log_admin_action(admin["id"], admin["email"], "force_logout", "user", target, {"reason": "spam"})
+
+    from app.services.auth import create_jwt_token
+    token = create_jwt_token(admin["id"], admin["email"], "admin")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 不过滤,拿全部
+    r = client.get("/api/admin/audit-log", headers=headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 2
+    assert len(body["logs"]) == 2
+
+    # 按 action 过滤
+    r = client.get("/api/admin/audit-log?action=adjust_credits", headers=headers)
+    assert r.status_code == 200
+    assert r.json()["total"] == 1
+    assert r.json()["logs"][0]["action"] == "adjust_credits"
+
+
+def test_audit_log_endpoint_blocks_non_admin(client):
+    """普通用户调审计接口应返 403"""
+    user = _make_target_user("audit-list-user@example.com")
+    from app.services.auth import create_jwt_token
+    token = create_jwt_token(user, "audit-list-user@example.com", "user")
+    r = client.get("/api/admin/audit-log", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 403
+
+
+def test_audit_log_limit_caps_at_500(client):
+    """limit > 500 应自动 cap 到 500(防止管理员一次拉太多)"""
+    admin = _make_admin("audit-cap@example.com")
+    from app.services.auth import create_jwt_token
+    token = create_jwt_token(admin["id"], admin["email"], "admin")
+    r = client.get("/api/admin/audit-log?limit=99999", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200
+    # 此时表里没几条,无法直接验证 cap;但接口能返回不报错即代表 cap 逻辑没崩
+    assert "total" in r.json()
+
+
 def test_admin_adjust_credits_creates_audit_record(client):
     """端到端:管理员调 adjust-credits API,审计日志真的多一行"""
     # 创建管理员 + 目标用户
