@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import JobPanel from "@/components/JobPanel";
+import AuthFetchInterceptor from "@/components/AuthFetchInterceptor";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
 
 const geistSans = Geist({
@@ -28,6 +29,7 @@ export default function RootLayout({
     <html lang="zh-CN">
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
         <LanguageProvider>
+          <AuthFetchInterceptor />
           {children}
           <JobPanel />
         </LanguageProvider>

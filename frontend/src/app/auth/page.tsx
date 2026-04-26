@@ -21,6 +21,7 @@ export default function AuthPage() {
   const [countdown, setCountdown] = useState(0);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
 
   useEffect(() => {
     if (countdown <= 0) return;
@@ -28,9 +29,32 @@ export default function AuthPage() {
     return () => clearInterval(timer);
   }, [countdown]);
 
-  const goAfterLogin = (data: { token: string; user: unknown }) => {
-    localStorage.setItem("token", data.token);
+  // 看 ?expired=1 显示"会话已过期"提示(由 AuthFetchInterceptor 401 重定向触发)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("expired") === "1") {
+      setSessionExpired(true);
+      // 清掉 query,刷新后不再显示
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, "", cleanUrl);
+    }
+  }, []);
+
+  const goAfterLogin = (data: { token: string; access_token?: string; refresh_token?: string; user: unknown }) => {
+    // 后端同时返 access_token + refresh_token + 兼容字段 token;优先用 access_token
+    localStorage.setItem("token", data.access_token ?? data.token);
+    if (data.refresh_token) {
+      localStorage.setItem("refresh_token", data.refresh_token);
+    }
     localStorage.setItem("user", JSON.stringify(data.user));
+    // 登录后清掉过期回跳标记 + 优先去之前被中断的页面
+    const redirect = typeof window !== "undefined" ? sessionStorage.getItem("post_login_redirect") : null;
+    if (redirect) {
+      sessionStorage.removeItem("post_login_redirect");
+      router.push(redirect);
+      return;
+    }
     if (typeof window !== "undefined" && window.location.hostname.startsWith("admin.")) {
       router.push("/admin/orders");
     } else {
@@ -141,6 +165,12 @@ export default function AuthPage() {
               ? t("auth.codeLoginTip")
               : (lang==="en"?"Welcome back":"欢迎回来")}
         </p>
+
+        {sessionExpired && (
+          <div style={{padding:"0.75rem 1rem",marginBottom:"1rem",background:"#3a2a1a",border:"1px solid #8a5a2a",borderRadius:"8px",color:"#fbbf24",fontSize:"0.85rem",textAlign:"center"}}>
+            {lang==="en" ? "Session expired, please log in again" : "会话已过期,请重新登录"}
+          </div>
+        )}
 
         <div style={{display:"flex",borderBottom:"1px solid #2a2a2a",marginBottom:"1.5rem"}}>
           {tabBtn("login", t("auth.passwordLogin"))}
