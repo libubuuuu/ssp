@@ -100,6 +100,37 @@ if [[ "$RECENT_ERR" -gt 5 ]]; then
     warn_count=$((warn_count + 1))
 fi
 
+# === 6. 合成监控:模拟用户访问关键路径(bug 在用户撞到之前先抓到) ===
+# 跟 #1 health 重试一样的容忍度:失败重试一次,瞬时抖动不报警
+
+synth_check() {
+    local name="$1"
+    local url="$2"
+    local expected_pattern="$3"  # regex,支持 "200" 或 "200|308"
+    local code
+    code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$url" 2>/dev/null || echo "0")
+    if ! [[ "$code" =~ ^(${expected_pattern})$ ]]; then
+        sleep 5
+        code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$url" 2>/dev/null || echo "0")
+        if ! [[ "$code" =~ ^(${expected_pattern})$ ]]; then
+            alert "[WARN] 合成监控:$name 返回 $code,预期 $expected_pattern"
+            warn_count=$((warn_count + 1))
+        fi
+    fi
+}
+
+# 公开端点:列出充值套餐(用户首页常调,挂了 = 用户登录后无法看价格)
+synth_check "/api/payment/packages" "$PROD_HOST/api/payment/packages" "200"
+
+# 主页可达(也接受 308 redirect)
+synth_check "主页 /" "$PROD_HOST/" "200|308"
+
+# 鉴权生效(无 token 调 /api/jobs/list 应当 401,如果 200 = 鉴权挂了)
+synth_check "/api/jobs/list 鉴权" "$PROD_HOST/api/jobs/list" "401|403"
+
+# admin 子域 nginx 工作(308 是 admin 子域的重定向行为,正常)
+synth_check "admin 子域" "https://admin.ailixiao.com/admin/" "200|301|302|307|308"
+
 # === 5. ssp-backup 远端备份新鲜度 ===
 if [[ -d /root/ssp-backup-repo/.git ]]; then
     cd /root/ssp-backup-repo 2>/dev/null && git fetch --quiet origin main 2>/dev/null || true
@@ -156,13 +187,30 @@ if [[ "$crit_count" -gt 0 || "$warn_count" -gt 0 ]]; then
     ls -t "$SNAPSHOT_DIR"/*.json 2>/dev/null | tail -n +101 | xargs -r rm -f
 fi
 
+# === 推送告警到外部通道(微信/企业微信/飞书,看用户配置) ===
+if [[ "$crit_count" -gt 0 || "$warn_count" -gt 0 ]]; then
+    PUSH_TITLE="🚨 SSP 告警 $LEVEL"
+    PUSH_BODY="时间: $TS
+等级: $LEVEL (CRIT=$crit_count WARN=$warn_count)
+健康: $HEALTH
+后端进程: $backend_alive 个
+前端进程: $frontend_alive 个
+
+最近告警:
+$(tail -n 5 "$ALERTS" 2>/dev/null)
+
+完整诊断:管理后台 → 诊断历史 看快照 $SNAP_FILE"
+
+    bash "$(dirname "$0")/push-alert.sh" "$PUSH_TITLE" "$PUSH_BODY" >> "$LOG" 2>&1 || true
+fi
+
 # === 总结 ===
 if [[ "$crit_count" -gt 0 ]]; then
     log "SUMMARY: CRIT=$crit_count WARN=$warn_count(已写 $ALERTS,快照 $SNAPSHOT_DIR/)"
 elif [[ "$warn_count" -gt 0 ]]; then
     log "SUMMARY: WARN=$warn_count(已写 $ALERTS,快照 $SNAPSHOT_DIR/)"
 else
-    log "OK: health=$HEALTH backend=alive frontend=alive recent_5xx_429<=20 errors<=5 backup_fresh"
+    log "OK: health=$HEALTH backend=alive frontend=alive recent_5xx_429<=20 errors<=5 backup_fresh synthetic_ok"
 fi
 
 exit 0
