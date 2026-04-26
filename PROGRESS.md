@@ -1,5 +1,59 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 五续(服务降权阶段 2 完成 — 生产已切到 ssp-app)
+
+### ✅ 切换执行(实测停机 ~30 秒)
+1. supervisorctl stop 4 program → 同步数据到 /opt/ssp →
+   mv 新配置 → reread/update/start green
+2. 切换后 supervisor 全部由 ssp-app 跑(`ps -eo user,pid,cmd`
+   验证 uvicorn 和 next-server 都是 ssp-app)
+3. https://ailixiao.com → 200,api 200,watchdog 03:47:47 全绿
+
+### 意外抓到的小坑
+- :3000 残留 root 跑的 next-server orphan(PPID=1)
+- supervisor 配置里 `fuser -k` 在跨用户 zombie 场景不可靠
+  (ssp-app 杀不掉 root 进程)
+- 解决:手动 kill,以后切换前要先清干净端口
+
+### 改动汇总(commit `eb85799`)
+- /etc/supervisor/conf.d/ssp.conf:user=ssp-app + /opt 路径 +
+  /etc/ssp/master.key
+- deploy/supervisor.conf:同步生产
+- deploy/deploy.sh:cd /opt/ssp/frontend
+- deploy/backup.sh:SSP_ROOT/MASTER_KEY 用环境变量默认 /opt + /etc/ssp
+- /root/backup_daily.sh:SSP_ROOT 默认 /opt/ssp(非 git 文件)
+- crontab:/root/ssp/deploy/* → /opt/ssp/deploy/* 三条 cron
+- /etc/ssp/master.key:主密钥 stage 副本(640 + chgrp ssp-app)
+- /etc/supervisor/conf.d/ssp.conf.preopt-backup:旧配置留回滚
+
+### 当前状态
+- 生产 active=green,RUNNING by ssp-app
+- /root/ssp 仍存在(hard rollback 用,留 24 小时)
+- /root/.ssp_master_key 仍存在(/root 下老脚本兜底,稳定后删)
+- /opt/ssp 是真 working tree,但 git ops 仍在 /root/ssp 做后
+  rsync 同步(避免 ssp-app 跑 git 引入新配置)
+
+### 回滚(若 24h 内发现问题)
+mv /etc/supervisor/conf.d/ssp.conf.preopt-backup
+   /etc/supervisor/conf.d/ssp.conf
+supervisorctl reread + update + start ssp-{backend,frontend}-green
+/root/ssp 还在,/root/.ssp_master_key 也在,30 秒回到 root 旧配置。
+
+### 24h 后清理(下一次会话做)
+- rm -rf /root/ssp(确认 24h 无问题)
+- rm /root/.ssp_master_key
+- rm /etc/supervisor/conf.d/ssp.conf.{bak,preopt-backup}
+- 把 git working tree 迁到 /opt/ssp(或保留双仓库做 rsync 桥接)
+
+### 决策记录(降权阶段 2)
+- **数据切换瞬间 cp 而非 sync** — 停服后数据不再写,cp 一次即对齐
+- **保留 /root/.ssp_master_key 24h** — 哪怕新生产用 /etc/ssp/,
+  老脚本兜底也能跑;稳定后再 shred
+- **git ops 暂留 /root/ssp** — ssp-app 没设 git config(name/email/
+  ssh key),改 git 工作流不在本次范围
+- **fuser -k 跨用户失败问题不修** — 这是 supervisor 启动命令的
+  设计弱点,生产稳定后改命令(用 supervisor 自带的 stopwaitsecs)
+
 ## 2026-04-27 四续(服务降权阶段 1 准备完成,等阶段 2 切换窗口)
 
 ### ✅ 阶段 1 — 0 停机准备(本次完成)
