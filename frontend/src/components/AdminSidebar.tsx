@@ -24,6 +24,7 @@ export default function AdminSidebar() {
   const menuItems = [
     { path: "/admin/orders", icon: "💰", zh: "订单管理", en: "Orders" },
     { path: "/admin/dashboard", icon: "📊", zh: "系统监控", en: "Monitor" },
+    { path: "/admin/audit", icon: "📜", zh: "审计日志", en: "Audit Log" },
     { path: "/admin/settings", icon: "⚙", zh: "管理员设置", en: "Settings" },
   ];
 
