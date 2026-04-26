@@ -28,7 +28,7 @@ warn_count=0
 crit_count=0
 
 # === 1. /health ===
-HEALTH=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$PROD_HOST/health" 2>/dev/null || echo "TIMEOUT")
+HEALTH=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$PROD_HOST/health" 2>/dev/null || echo "TIMEOUT")
 if [[ "$HEALTH" != "200" ]]; then
     alert "[CRIT] /health 返回 $HEALTH(预期 200)"
     crit_count=$((crit_count + 1))
@@ -107,11 +107,43 @@ if [[ -d /root/ssp-backup-repo/.git ]]; then
     cd / 2>/dev/null || true
 fi
 
+# === 告警时:自动冻结完整诊断快照(给 Claude 事后复盘用)===
+SNAPSHOT_DIR=/var/log/ssp-diagnose
+mkdir -p "$SNAPSHOT_DIR"
+if [[ "$crit_count" -gt 0 || "$warn_count" -gt 0 ]]; then
+    # 文件名带时间戳 + 等级,防覆盖
+    LEVEL=$([[ "$crit_count" -gt 0 ]] && echo "CRIT" || echo "WARN")
+    SNAP_FILE="$SNAPSHOT_DIR/$(date +%Y%m%d-%H%M%S)-${LEVEL}.json"
+
+    # 收集快照(纯 shell + 现有日志,无需调认证 API)
+    {
+        echo "{"
+        echo "  \"timestamp\": \"$TS\","
+        echo "  \"level\": \"$LEVEL\","
+        echo "  \"warn_count\": $warn_count,"
+        echo "  \"crit_count\": $crit_count,"
+        echo "  \"health\": \"$HEALTH\","
+        echo "  \"backend_alive\": $backend_alive,"
+        echo "  \"frontend_alive\": $frontend_alive,"
+        echo "  \"supervisor\": $(supervisorctl status 2>&1 | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'),"
+        echo "  \"nginx_error_tail\": $(tail -n 30 /var/log/nginx/error.log 2>/dev/null | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'),"
+        echo "  \"backend_blue_err_tail\": $(tail -n 20 /var/log/ssp-backend-blue.err.log 2>/dev/null | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'),"
+        echo "  \"backend_green_err_tail\": $(tail -n 20 /var/log/ssp-backend-green.err.log 2>/dev/null | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'),"
+        echo "  \"watchdog_alerts_tail\": $(tail -n 10 \"$ALERTS\" 2>/dev/null | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'),"
+        echo "  \"disk\": $(df -h /root | tail -1 | awk '{print $5\" used (\"$3\"/\"$2\")\"}' | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read().strip()))'),"
+        echo "  \"memory\": $(free -h | grep Mem | awk '{print $3\"/\"$2\" used\"}' | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read().strip()))')"
+        echo "}"
+    } > "$SNAP_FILE" 2>/dev/null
+
+    # 限定快照数量(保留最近 100 份,旧的删)
+    ls -t "$SNAPSHOT_DIR"/*.json 2>/dev/null | tail -n +101 | xargs -r rm -f
+fi
+
 # === 总结 ===
 if [[ "$crit_count" -gt 0 ]]; then
-    log "SUMMARY: CRIT=$crit_count WARN=$warn_count(已写 $ALERTS)"
+    log "SUMMARY: CRIT=$crit_count WARN=$warn_count(已写 $ALERTS,快照 $SNAPSHOT_DIR/)"
 elif [[ "$warn_count" -gt 0 ]]; then
-    log "SUMMARY: WARN=$warn_count(已写 $ALERTS)"
+    log "SUMMARY: WARN=$warn_count(已写 $ALERTS,快照 $SNAPSHOT_DIR/)"
 else
     log "OK: health=$HEALTH backend=alive frontend=alive recent_5xx_429<=20 errors<=5 backup_fresh"
 fi

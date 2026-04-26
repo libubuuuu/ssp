@@ -245,6 +245,62 @@ async def admin_adjust_credits(user_id: str, delta: int, request: Request, curre
     return {"success": True, "user_id": user_id, "new_credits": new_credits, "delta": delta}
 
 
+@router.get("/diagnose-history")
+async def admin_diagnose_history(current_user: dict = Depends(get_current_user)):
+    """列出 watchdog 告警时自动冻结的诊断快照(最近 100 份)"""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="无权限")
+    import os
+    SNAPSHOT_DIR = "/var/log/ssp-diagnose"
+    if not os.path.isdir(SNAPSHOT_DIR):
+        return {"snapshots": []}
+    files = []
+    try:
+        for fn in sorted(os.listdir(SNAPSHOT_DIR), reverse=True):
+            if not fn.endswith(".json"):
+                continue
+            full = os.path.join(SNAPSHOT_DIR, fn)
+            stat = os.stat(full)
+            # 文件名格式: 20260426-210501-CRIT.json
+            level = "WARN"
+            if "-CRIT" in fn:
+                level = "CRIT"
+            files.append({
+                "filename": fn,
+                "level": level,
+                "size_bytes": stat.st_size,
+                "mtime": stat.st_mtime,
+            })
+    except Exception as e:
+        return {"snapshots": [], "error": str(e)}
+    return {"snapshots": files[:100]}
+
+
+@router.get("/diagnose-snapshot/{filename}")
+async def admin_diagnose_snapshot(filename: str, current_user: dict = Depends(get_current_user)):
+    """读取单份快照内容"""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="无权限")
+    import os, re, json
+    # 严格校验 filename 格式,防路径穿越
+    if not re.fullmatch(r"\d{8}-\d{6}-(CRIT|WARN)\.json", filename):
+        raise HTTPException(400, "invalid filename")
+    full = os.path.join("/var/log/ssp-diagnose", filename)
+    if not os.path.isfile(full):
+        raise HTTPException(404, "snapshot not found")
+    try:
+        with open(full, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        # 尝试解析 JSON 给前端友好渲染;失败返原文
+        try:
+            data = json.loads(content)
+            return {"filename": filename, "data": data}
+        except Exception:
+            return {"filename": filename, "raw": content}
+    except Exception as e:
+        raise HTTPException(500, f"read failed: {e}")
+
+
 @router.get("/diagnose")
 async def admin_diagnose(current_user: dict = Depends(get_current_user)):
     """一键诊断快照 — 出问题时点一下就有完整报告,发给我精准定位。
