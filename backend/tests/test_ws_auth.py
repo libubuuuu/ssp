@@ -45,8 +45,9 @@ def test_ws_without_token_closes_4401(ws_client):
     with pytest.raises(Exception) as exc_info:
         with ws_client.websocket_connect("/api/tasks/ws/test-task-id"):
             pass
-    # TestClient 在 server close 时抛 WebSocketDisconnect
-    assert "4401" in str(exc_info.value) or "1006" in str(exc_info.value) or "401" in str(exc_info.value).lower() or "close" in str(exc_info.value).lower()
+    # WebSocketDisconnect 暴露 .code,直接读;也兼容 starlette 老版用 str(exc) 带 code
+    code = getattr(exc_info.value, "code", None)
+    assert code == 4401 or "4401" in str(exc_info.value)
 
 
 def test_ws_with_invalid_token_closes_4401(ws_client):
@@ -95,9 +96,9 @@ def test_ws_rejects_unregistered_task(ws_client):
     with pytest.raises(Exception) as exc_info:
         with ws_client.websocket_connect(f"/api/tasks/ws/never-registered-task?token={token}"):
             pass
-    # 4403 体现归属层失败,跟 4401 鉴权层失败区分(也接受 1006/close 防 TestClient 差异)
-    s = str(exc_info.value)
-    assert "4403" in s or "1006" in s or "close" in s.lower()
+    # 4403 体现归属层失败,跟 4401 鉴权层区分
+    code = getattr(exc_info.value, "code", None)
+    assert code == 4403 or "4403" in str(exc_info.value)
 
 
 def test_ws_rejects_other_users_task(ws_client):

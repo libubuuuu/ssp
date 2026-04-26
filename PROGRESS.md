@@ -1,5 +1,38 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 三续(后端 CVE 清零 + audit CI 强制阻塞)
+
+### ✅ FastAPI + starlette 联动升级,清掉最后所有 CVE
+- fastapi 0.109.2 → **0.122.1**(跨 13 小版本)
+- starlette 0.36.3 → **0.50.0**(连带升)
+- 选 0.122.1 是因为它放宽 starlette 约束到 `<0.51.0`,能用 0.50.0
+  修 CVE-2025-62727(fastapi 0.116.x 卡 `<0.49.0` 用不了)
+- 跨度大但 0 breaking change:lifespan / RequestIdMiddleware /
+  WebSocket / multipart / pydantic 全部兼容
+- 唯一动测试的:starlette 新版 `WebSocketDisconnect` 的 `str(exc)`
+  改成空字符串,改用 `.code` 字段直接读(标准接口,更稳)
+
+### 测试 90/90 全过零回归
+- 顺带消掉 `import multipart` PendingDeprecation 警告(0.50.0 已迁
+  到 `python_multipart` 直接 import)
+
+### ✅ pip-audit:**No known vulnerabilities found**
+- 整个会话累计:8 → 4 → 2 → 0,清光后端依赖 CVE
+- 路径:python-multipart / pyjwt / dotenv / pillow / starlette+fastapi
+
+### ✅ CI pip-audit 改强制阻塞
+- ci.yml 去掉 `|| true`,新增依赖带 CVE 直接 fail-build
+- npm audit 仍 || true(前端 8 个漏洞嵌套在 next 间接依赖,要主版本
+  升级才能解,留专项)
+
+### 决策记录
+- **跳到 0.122.1 而非 0.116.2**:0.116.x starlette 约束 `<0.49.0` 用
+  不了 0.49.1+,白升一次相当于半步,不如一步到 0.122.1 一次清干净
+- **starlette 1.0.0 不上**:刚发的主版本,刚 GA 没生产口碑,我们用
+  0.50.0(0.51 之前最高)既清完所有已知 CVE 又留缓冲
+- **CI audit 强制阻塞**:这是 Phase 1 的标志性里程碑 — 以后任何
+  PR 引入带 CVE 依赖会被立刻拦下,不再积累
+
 ## 2026-04-27 再续(WS 推送管道接通 — 半成品转半实物)
 
 ### 背景
