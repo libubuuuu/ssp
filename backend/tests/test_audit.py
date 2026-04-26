@@ -152,6 +152,60 @@ def test_audit_log_limit_caps_at_500(client):
     assert "total" in r.json()
 
 
+def test_change_password_creates_audit_record(client):
+    """用户改密码必须写审计(自己改自己)"""
+    user = _make_target_user("audit-pwd@example.com", credits=100)
+    from app.services.auth import create_jwt_token
+    token = create_jwt_token(user, "audit-pwd@example.com", "user")
+    r = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "secret123", "new_password": "newpwd-456"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200, r.text
+
+    rows = audit.list_audit_log(actor_user_id=user, action="change_password")
+    assert len(rows) == 1
+    assert rows[0]["target_id"] == user
+    assert rows[0]["actor_email"] == "audit-pwd@example.com"
+
+
+def test_logout_all_devices_creates_audit_record(client):
+    """用户登出所有设备必须写审计"""
+    user = _make_target_user("audit-logoutall@example.com")
+    from app.services.auth import create_jwt_token
+    token = create_jwt_token(user, "audit-logoutall@example.com", "user")
+    r = client.post(
+        "/api/auth/logout-all-devices",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+
+    rows = audit.list_audit_log(actor_user_id=user, action="logout_all_devices")
+    assert len(rows) == 1
+    assert rows[0]["target_id"] == user
+
+
+def test_reset_password_by_code_creates_audit_record(client):
+    """凭验证码重置密码必须写审计(via=email_code 标识手段)"""
+    user = _make_target_user("audit-reset@example.com")
+    from app.api import auth as auth_module
+    auth_module._EMAIL_CODES["audit-reset@example.com"] = {
+        "code": "654321",
+        "expires_at": __import__("time").time() + 600,
+    }
+    r = client.post(
+        "/api/auth/reset-password-by-code",
+        json={"email": "audit-reset@example.com", "code": "654321", "new_password": "fresh-pwd"},
+    )
+    assert r.status_code == 200, r.text
+
+    rows = audit.list_audit_log(actor_user_id=user, action="reset_password")
+    assert len(rows) == 1
+    assert rows[0]["details"]["via"] == "email_code"
+    assert rows[0]["actor_email"] == "audit-reset@example.com"
+
+
 def test_admin_confirm_order_creates_audit_record(client):
     """管理员手动入账(payment.confirm_order)必须写审计 — 合规重点"""
     admin = _make_admin("audit-confirm-admin@example.com")

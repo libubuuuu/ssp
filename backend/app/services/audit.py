@@ -20,6 +20,10 @@ ACTION_DELETE_USER = "delete_user"
 ACTION_FORCE_LOGOUT = "force_logout"
 ACTION_CONFIRM_ORDER = "confirm_order"
 ACTION_RESET_MODEL = "reset_model"
+# 用户自己触发的安全动作(actor = user 本人)
+ACTION_CHANGE_PASSWORD = "change_password"
+ACTION_RESET_PASSWORD = "reset_password"
+ACTION_LOGOUT_ALL_DEVICES = "logout_all_devices"
 
 
 def log_admin_action(

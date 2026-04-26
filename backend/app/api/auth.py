@@ -5,7 +5,7 @@
 - 获取当前用户信息
 - 刷新 Token
 """
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends, Header, Request
 from pydantic import BaseModel, Field
 from typing import Optional
 import re
@@ -202,7 +202,7 @@ async def update_user_name(req: UpdateNameRequest, current_user: dict = Depends(
 
 
 @router.post("/change-password")
-async def change_password(req: ChangePasswordRequest, current_user: dict = Depends(get_current_user)):
+async def change_password(req: ChangePasswordRequest, request: Request, current_user: dict = Depends(get_current_user)):
     """修改密码"""
     # 验证当前密码
     with get_db() as conn:
@@ -222,13 +222,36 @@ async def change_password(req: ChangePasswordRequest, current_user: dict = Depen
     # 改密后吊销该用户所有现有 token(防泄漏密码后旧 token 仍可用)
     invalidate_user_tokens(current_user["id"])
 
+    # 审计:改密码是合规重点(自己改自己,actor = target = user)
+    from app.services.audit import log_admin_action, ACTION_CHANGE_PASSWORD
+    log_admin_action(
+        actor_user_id=current_user["id"],
+        actor_email=current_user.get("email"),
+        action=ACTION_CHANGE_PASSWORD,
+        target_type="user",
+        target_id=current_user["id"],
+        ip=request.client.host if request.client else None,
+    )
+
     return {"message": "密码已修改,所有设备已自动登出,请重新登录"}
 
 
 @router.post("/logout-all-devices")
-async def logout_all_devices(current_user: dict = Depends(get_current_user)):
+async def logout_all_devices(request: Request, current_user: dict = Depends(get_current_user)):
     """用户主动登出所有设备:把当前账号在所有设备的 token 一次性失效"""
     invalidate_user_tokens(current_user["id"])
+
+    # 审计
+    from app.services.audit import log_admin_action, ACTION_LOGOUT_ALL_DEVICES
+    log_admin_action(
+        actor_user_id=current_user["id"],
+        actor_email=current_user.get("email"),
+        action=ACTION_LOGOUT_ALL_DEVICES,
+        target_type="user",
+        target_id=current_user["id"],
+        ip=request.client.host if request.client else None,
+    )
+
     return {"message": "已登出所有设备"}
 
 
@@ -480,7 +503,7 @@ class ResetPasswordRequest(BaseModel):
 
 
 @router.post("/reset-password-by-code")
-async def reset_password_by_code(req: ResetPasswordRequest):
+async def reset_password_by_code(req: ResetPasswordRequest, request: Request):
     """凭验证码重置密码"""
     cache = _EMAIL_CODES.get(req.email)
     if not cache:
@@ -506,6 +529,18 @@ async def reset_password_by_code(req: ResetPasswordRequest):
 
     # 重置密码后吊销该用户所有现有 token
     invalidate_user_tokens(row[0])
+
+    # 审计:邮箱验证码重置密码 — 安全关键事件(actor = target = user 自己,但通过 email 凭证)
+    from app.services.audit import log_admin_action, ACTION_RESET_PASSWORD
+    log_admin_action(
+        actor_user_id=row[0],
+        actor_email=req.email,
+        action=ACTION_RESET_PASSWORD,
+        target_type="user",
+        target_id=row[0],
+        details={"via": "email_code"},
+        ip=request.client.host if request.client else None,
+    )
 
     return {"success": True, "message": "密码已重置,请重新登录"}
 
