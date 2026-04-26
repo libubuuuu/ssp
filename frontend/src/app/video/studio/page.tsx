@@ -46,67 +46,80 @@ export default function StudioListPage() {
     return () => clearInterval(t);
   }, []);
 
-  const createNew = (file: File) => {
+  const createNew = async (file: File) => {
     setError("");
-    // 上传前预检文件大小:> 500MB 直接拒,避免发请求后被 nginx 切断显示成 ERR_CONNECTION_RESET
-    const MAX_MB = 500;
-    const sizeMB = file.size / 1024 / 1024;
-    if (sizeMB > MAX_MB) {
-      setError(`视频文件 ${sizeMB.toFixed(1)} MB,超过上限 ${MAX_MB} MB。请压缩后再上传(推荐用 HandBrake / 剪映导出 720p/1080p)`);
-      return;
-    }
     setCreating(true);
     setUploadProgress(0);
     setUploadSpeed("");
 
-    const fd = new FormData();
-    fd.append("file", file);
-
-    // 用 XMLHttpRequest 才能拿到 upload progress(fetch 不支持)
-    const xhr = new XMLHttpRequest();
+    // 分片上传:任意大小都能传(YouTube/OSS 标配模式)
+    // 单片 5MB 远小于 nginx client_max_body_size,绕过任何 size 限制
+    const CHUNK_SIZE = 5 * 1024 * 1024;
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    // 16 字符 hex upload_id(后端 regex 校验)
+    const uploadId = Array.from(crypto.getRandomValues(new Uint8Array(8)))
+      .map(b => b.toString(16).padStart(2, "0")).join("");
     const startTime = Date.now();
 
-    xhr.upload.onprogress = (e) => {
-      if (!e.lengthComputable) return;
-      const pct = (e.loaded / e.total) * 100;
-      setUploadProgress(pct);
-      // 实时速度估算
-      const elapsed = (Date.now() - startTime) / 1000;
-      if (elapsed > 0.5) {
-        const mbps = (e.loaded / 1024 / 1024) / elapsed;
-        const remainSec = (e.total - e.loaded) / (e.loaded / elapsed);
-        setUploadSpeed(`${mbps.toFixed(1)} MB/s · 剩余约 ${Math.max(1, Math.ceil(remainSec))} 秒`);
-      }
-    };
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, file.size);
+      const chunkBlob = file.slice(start, end);
 
-    xhr.onload = () => {
-      try {
-        const data = JSON.parse(xhr.responseText || "{}");
-        if (xhr.status >= 200 && xhr.status < 300) {
-          setUploadProgress(100);
-          setUploadSpeed("处理中...");
-          router.push(`/video/studio/${data.session_id}`);
-        } else {
-          setError(data.detail || `上传失败 (HTTP ${xhr.status})`);
-          setCreating(false);
+      const fd = new FormData();
+      fd.append("chunk", chunkBlob, "chunk");
+      fd.append("upload_id", uploadId);
+      fd.append("chunk_idx", String(i));
+      fd.append("total_chunks", String(totalChunks));
+      fd.append("filename", file.name);
+
+      let attempt = 0;
+      let succeeded = false;
+      while (attempt < 3 && !succeeded) {
+        try {
+          const res = await fetch(`${API_BASE}/api/studio/upload-chunk`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token()}` },
+            body: fd,
+          });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.detail ?? `分片 ${i + 1}/${totalChunks} 失败 (HTTP ${res.status})`);
+          }
+          const data = await res.json();
+          succeeded = true;
+
+          // 进度按已发送字节(不是分片数,更准)
+          const sentBytes = end;
+          const pct = (sentBytes / file.size) * 100;
+          setUploadProgress(pct);
+          const elapsed = (Date.now() - startTime) / 1000;
+          if (elapsed > 0.5) {
+            const mbps = (sentBytes / 1024 / 1024) / elapsed;
+            const remainSec = (file.size - sentBytes) / Math.max(1, (sentBytes / elapsed));
+            setUploadSpeed(`${mbps.toFixed(1)} MB/s · 剩余约 ${Math.max(1, Math.ceil(remainSec))} 秒`);
+          }
+
+          // 最后一片完成 → 后端已合并 + 创建 session
+          if (data.status === "completed") {
+            setUploadProgress(100);
+            setUploadSpeed("处理完成");
+            router.push(`/video/studio/${data.session_id}`);
+            return;
+          }
+        } catch (e) {
+          attempt += 1;
+          if (attempt >= 3) {
+            const msg = e instanceof Error ? e.message : "网络错误";
+            setError(`上传中断:${msg}(已重试 3 次)`);
+            setCreating(false);
+            return;
+          }
+          // 重试前等 1 秒
+          await new Promise(r => setTimeout(r, 1000));
         }
-      } catch {
-        setError(`上传失败 (HTTP ${xhr.status})`);
-        setCreating(false);
       }
-    };
-    xhr.onerror = () => {
-      setError("网络错误,请检查网络后重试");
-      setCreating(false);
-    };
-    xhr.onabort = () => {
-      setError("上传已取消");
-      setCreating(false);
-    };
-
-    xhr.open("POST", `${API_BASE}/api/studio/upload`);
-    xhr.setRequestHeader("Authorization", `Bearer ${token()}`);
-    xhr.send(fd);
+    }
   };
 
   const deleteSession = async (sid: string) => {

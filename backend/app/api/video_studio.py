@@ -4,6 +4,8 @@
 """
 import os
 import json
+import re
+import shutil
 import uuid
 import tempfile
 import subprocess
@@ -20,6 +22,10 @@ router = APIRouter()
 # 工作区目录
 STUDIO_DIR = Path("/root/ssp/studio_workspace")
 STUDIO_DIR.mkdir(parents=True, exist_ok=True)
+
+# 分片上传临时目录(完成后立刻清理)
+UPLOAD_TMP_DIR = STUDIO_DIR / "_uploading"
+UPLOAD_TMP_DIR.mkdir(parents=True, exist_ok=True)
 
 # 持久化存储
 SESSIONS_FILE = STUDIO_DIR / "sessions.json"
@@ -113,6 +119,91 @@ async def upload_video(
     _save_tasks()
 
     return {
+        "session_id": session_id,
+        "duration": round(duration, 2),
+        "size_mb": round(size_bytes / 1024 / 1024, 2),
+    }
+
+
+@router.post("/upload-chunk")
+async def upload_chunk(
+    chunk: UploadFile = File(...),
+    upload_id: str = Form(...),
+    chunk_idx: int = Form(...),
+    total_chunks: int = Form(...),
+    filename: str = Form(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """分片上传(YouTube/OSS 标配模式):
+    - 前端把视频切 5MB 块,顺序调本端点
+    - 单 chunk 远小于 nginx client_max_body_size,任意大小视频都能传
+    - 最后一片到达时合并 + 创建 session,返回 session_id
+    """
+    # 验证 upload_id(只允许 hex 字符,长度 16,防路径穿越)
+    if not re.fullmatch(r"[a-f0-9]{16}", upload_id):
+        raise HTTPException(400, "invalid upload_id")
+    if chunk_idx < 0 or total_chunks < 1 or chunk_idx >= total_chunks:
+        raise HTTPException(400, "invalid chunk_idx/total_chunks")
+    if total_chunks > 10000:  # 50GB 上限(每片 5MB × 10000)
+        raise HTTPException(400, "too many chunks")
+
+    user_id = str(current_user.get("id", "unknown"))
+    upload_dir = UPLOAD_TMP_DIR / f"{user_id}_{upload_id}"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    # 流式写入这一片(1MB sub-chunk 节内存)
+    chunk_path = upload_dir / f"{chunk_idx:06d}"
+    with open(chunk_path, "wb") as f:
+        while True:
+            data = await chunk.read(1024 * 1024)
+            if not data:
+                break
+            f.write(data)
+
+    # 不是最后一片:回执
+    if chunk_idx + 1 < total_chunks:
+        return {"status": "chunk_received", "chunk_idx": chunk_idx, "received_bytes": chunk_path.stat().st_size}
+
+    # 最后一片到达:校验所有 chunks 都在,合并 + 创建 session
+    missing = [i for i in range(total_chunks) if not (upload_dir / f"{i:06d}").exists()]
+    if missing:
+        # 缺片(可能某片上传失败前端没补传)— 报错让前端补传
+        raise HTTPException(400, f"missing chunks: {missing[:5]}{'...' if len(missing) > 5 else ''}")
+
+    session_id = str(uuid.uuid4())[:8]
+    session_dir = STUDIO_DIR / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    # 安全的 ext(只取最后一个字符到末尾,防注入)
+    raw_ext = os.path.splitext(filename)[1] or ".mp4"
+    ext = re.sub(r"[^a-zA-Z0-9.]", "", raw_ext)[:8] or ".mp4"
+    video_path = session_dir / f"source{ext}"
+
+    # 顺序合并所有 chunks
+    with open(video_path, "wb") as out:
+        for i in range(total_chunks):
+            cp = upload_dir / f"{i:06d}"
+            with open(cp, "rb") as f:
+                shutil.copyfileobj(f, out, 1024 * 1024)
+
+    # 清理临时分片目录
+    shutil.rmtree(upload_dir, ignore_errors=True)
+
+    size_bytes = video_path.stat().st_size
+    duration = _get_video_duration(str(video_path))
+
+    STUDIO_TASKS[session_id] = {
+        "session_id": session_id,
+        "user_id": user_id,
+        "video_path": str(video_path),
+        "duration": duration,
+        "segments": [],
+        "status": "uploaded",
+    }
+    _save_tasks()
+
+    return {
+        "status": "completed",
         "session_id": session_id,
         "duration": round(duration, 2),
         "size_mb": round(size_bytes / 1024 / 1024, 2),
