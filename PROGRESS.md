@@ -1,5 +1,45 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 再续(WS 推送管道接通 — 半成品转半实物)
+
+### 背景
+上轮把 WS 鉴权 + 归属验证落地了,但代码层面 `active_connections`
+塞了连接**全后端没人调 `send_*`**,前端 `ws.onmessage` 永远不触发,
+靠主动 fetch 兜底。等于花架子。这轮真正接通管道。
+
+### ✅ tasks.py 加 polling + broadcast
+- **`_broadcast(task_id, payload)`**:推给所有订阅者,失败连接顺手摘掉
+- **`_poll_fal_task(task_id, endpoint_hint)`**:后台 asyncio task 循环
+  3 秒查一次 FAL,broadcast 状态;终态(completed/failed)推完 final
+  关所有连接 + 清理归属注册;12 分钟超时兜底
+- **共享 polling**:同 task 多客户端复用一次 polling(测试覆盖)
+- **endpoint hint 透传**:WS connect 接收 `?endpoint=`(对应提交时返
+  回的 endpoint_tag),不传时后端默认 i2v
+- 没订阅者时 polling 自然在下次循环开头退出,资源不泄漏
+
+### ✅ 前端 /tasks 页透传 endpoint
+- searchParams 取可选 `endpoint`,拼到 WS URL
+- 行为兼容:不传 endpoint 时跟之前一样,默认 i2v 端点
+
+### 测试 +3(87 → 90)
+- `ws_pushes_progress_then_closes_on_completion`:processing→processing→completed
+  三连推 + 服务端关连接 + 归属同步清理 + endpoint_hint 真传到 FAL
+- `ws_pushes_failed_status`:failed 也走 final + close
+- `ws_polling_shared_across_clients`:两 ws 共用一次 polling,FAL 只调一次
+
+`fast_polling` fixture 把 INTERVAL 压到 0.02s,测试 4 秒跑完。
+
+### 决策记录(2026-04-27 推送管道)
+- **共享 polling 不是每客户端一份** — 一个 task 不管多少 tab 看,后端只一次
+  FAL 查询。多 tab 同步本来就是设计意图(tasks/page.tsx 注释里写过)
+- **多 worker 边界先不处理** — 当前 uvicorn 单 worker,active_connections
+  和 _polling_tasks 进程内即可。要做多 worker 时需要 Redis pub/sub,等
+  Phase 2 一起做(同 RateLimiter / EmailCodes)
+- **轮询而非 push** — FAL 没回调机制,只能我们主动 poll。3s 间隔是平衡:
+  用户感知 vs API 压力 vs 任务实际时长(30s-3min);若 FAL 加回调可改 push
+- **超时 12 分钟硬关** — 跟 jobs.py 的 _run_video_job 一致(120 轮 × 5s = 10 分),
+  超过这个时长基本是 FAL 卡死,直接报 timeout 让用户重试比悬挂强
+
 ## 2026-04-27 续(JWT access 缩短 + 依赖 CVE 清理 + audit 入 CI)
 
 ### ✅ JWT access:7 天 → 1 小时(泄漏窗口缩 168 倍)

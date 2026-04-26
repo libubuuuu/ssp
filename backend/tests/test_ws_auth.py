@@ -119,3 +119,116 @@ def test_ownership_register_and_verify():
     assert task_ownership.verify("nonexistent", "user-a") is False
     task_ownership.unregister("t1")
     assert task_ownership.verify("t1", "user-a") is False
+
+
+# === 推送管道(polling + broadcast)===
+
+class _FakeVideoService:
+    """按预设序列返回 status,模拟 FAL 任务由 processing 转 completed/failed"""
+    def __init__(self, sequence):
+        self._iter = iter(sequence)
+        self._last = sequence[-1] if sequence else {"status": "processing"}
+        self.calls = []
+
+    async def get_task_status(self, task_id, endpoint_hint=None):
+        self.calls.append((task_id, endpoint_hint))
+        try:
+            return next(self._iter)
+        except StopIteration:
+            return self._last
+
+
+@pytest.fixture()
+def fast_polling(monkeypatch):
+    """把 polling 间隔压到很小,避免测试慢"""
+    monkeypatch.setattr(tasks_module, "POLL_INTERVAL_SEC", 0.02)
+    monkeypatch.setattr(tasks_module, "POLL_MAX_ITERATIONS", 50)
+    yield
+    # 测后清空 polling task 字典(任何遗留的 task 都已结束或被取消)
+    tasks_module._polling_tasks.clear()
+    tasks_module.active_connections.clear()
+
+
+def _install_fake_video_service(monkeypatch, fake):
+    """替换全局单例,让 get_video_service() 返回 fake"""
+    from app.services import fal_service
+    monkeypatch.setattr(fal_service, "_video_service", fake)
+
+
+def test_ws_pushes_progress_then_closes_on_completion(ws_client, monkeypatch, fast_polling):
+    """polling 链路:processing → processing → completed,客户端依次收到三条,最后被服务端关闭"""
+    fake = _FakeVideoService([
+        {"status": "processing"},
+        {"status": "processing"},
+        {"status": "completed", "video_url": "https://fake.test/v.mp4"},
+    ])
+    _install_fake_video_service(monkeypatch, fake)
+
+    user = _make_user("ws-progress@example.com")
+    token = create_access_token(user["id"], user["email"], "user")
+    task_ownership.register("polled-task-1", user["id"])
+
+    with ws_client.websocket_connect(f"/api/tasks/ws/polled-task-1?token={token}&endpoint=i2v") as ws:
+        m1 = ws.receive_json()
+        assert m1["status"] == "processing"
+        assert m1["task_id"] == "polled-task-1"
+
+        m2 = ws.receive_json()
+        assert m2["status"] == "processing"
+
+        m3 = ws.receive_json()
+        assert m3["status"] == "completed"
+        assert m3["result_url"] == "https://fake.test/v.mp4"
+
+        # 服务端在 completed 后关闭连接
+        with pytest.raises(Exception):
+            ws.receive_json()
+
+    # 完成态应同步清掉归属注册
+    assert task_ownership.verify("polled-task-1", user["id"]) is False
+    # endpoint_hint 应该被透传给 FAL 查询
+    assert fake.calls and fake.calls[0][1] == "i2v"
+
+
+def test_ws_pushes_failed_status(ws_client, monkeypatch, fast_polling):
+    """failed 也走 final + close 通路"""
+    fake = _FakeVideoService([
+        {"status": "failed", "error": "FAL 任务失败"},
+    ])
+    _install_fake_video_service(monkeypatch, fake)
+
+    user = _make_user("ws-failed@example.com")
+    token = create_access_token(user["id"], user["email"], "user")
+    task_ownership.register("polled-task-fail", user["id"])
+
+    with ws_client.websocket_connect(f"/api/tasks/ws/polled-task-fail?token={token}") as ws:
+        m = ws.receive_json()
+        assert m["status"] == "failed"
+        assert m["error"] == "FAL 任务失败"
+        with pytest.raises(Exception):
+            ws.receive_json()
+
+    assert task_ownership.verify("polled-task-fail", user["id"]) is False
+
+
+def test_ws_polling_shared_across_clients(ws_client, monkeypatch, fast_polling):
+    """同 task 的多个 owner 客户端共享一次 polling — 只调一次 FAL 就 broadcast 给两边"""
+    fake = _FakeVideoService([
+        {"status": "completed", "video_url": "https://fake.test/shared.mp4"},
+    ])
+    _install_fake_video_service(monkeypatch, fake)
+
+    user = _make_user("ws-shared@example.com")
+    token = create_access_token(user["id"], user["email"], "user")
+    task_ownership.register("shared-task", user["id"])
+
+    with ws_client.websocket_connect(f"/api/tasks/ws/shared-task?token={token}") as ws_a:
+        with ws_client.websocket_connect(f"/api/tasks/ws/shared-task?token={token}") as ws_b:
+            ma = ws_a.receive_json()
+            mb = ws_b.receive_json()
+            assert ma["status"] == "completed"
+            assert mb["status"] == "completed"
+            assert ma["result_url"] == mb["result_url"] == "https://fake.test/shared.mp4"
+
+    # 两个客户端共用一次 polling,FAL 只被调一次
+    assert len(fake.calls) == 1

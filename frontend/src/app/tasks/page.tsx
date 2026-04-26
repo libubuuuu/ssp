@@ -10,6 +10,9 @@ function TaskStatusInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const taskId = searchParams.get("id");
+  // endpoint hint:对应提交任务时返回的 endpoint_tag(edit / edit-o3 / reference / i2v)
+  // 透传给后端,让 polling 走对的 FAL 端点;不传则后端默认 i2v
+  const endpointHint = searchParams.get("endpoint");
   const [status, setStatus] = useState<{
     status: string;
     progress: number;
@@ -32,9 +35,10 @@ function TaskStatusInner() {
 
     fetchStatus();
 
-    // WebSocket 多窗口同步(带 token,后端鉴权:WS 不支持 Authorization header 只能 query)
+    // WebSocket 进度推送 + 多窗口同步(带 token,后端鉴权 + 归属验证)
     const wsToken = (typeof window !== "undefined" && localStorage.getItem("token")) || "";
-    const ws = new WebSocket(`${WS_BASE}/api/tasks/ws/${taskId}?token=${encodeURIComponent(wsToken)}`);
+    const epQuery = endpointHint ? `&endpoint=${encodeURIComponent(endpointHint)}` : "";
+    const ws = new WebSocket(`${WS_BASE}/api/tasks/ws/${taskId}?token=${encodeURIComponent(wsToken)}${epQuery}`);
     ws.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);
@@ -42,7 +46,7 @@ function TaskStatusInner() {
       } catch {}
     };
     return () => ws.close();
-  }, [taskId]);
+  }, [taskId, endpointHint]);
 
   if (!taskId) {
     return (
