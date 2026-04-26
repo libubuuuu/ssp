@@ -29,20 +29,48 @@ export default function JobPanel() {
 
   useEffect(() => {
     if (!loggedIn) return;
+    if (typeof document === "undefined") return;
+
+    let consecutiveAuthFailures = 0;
+
     const poll = async () => {
+      // tab 隐藏时不 poll(避免多 tab 累积请求触发 nginx 限流)
+      if (document.hidden) return;
       try {
-        const token = localStorage.getItem("token") || "";
+        const token = localStorage.getItem("token") ?? "";
+        if (!token) return;  // 没 token 不发请求,等 setLoggedIn(false) 触发清理
         const res = await fetch(`${API_BASE}/api/jobs/list`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (!res.ok) return;
+        // 401 累计 3 次 → 拦截器没救活,停 polling(让 setLoggedIn(false) 兜底)
+        if (res.status === 401) {
+          consecutiveAuthFailures += 1;
+          if (consecutiveAuthFailures >= 3) {
+            setLoggedIn(false);
+          }
+          return;
+        }
+        consecutiveAuthFailures = 0;
+        if (!res.ok) return;  // 429 / 5xx 等暂时性错误,跳过这一轮,下次再试
         const data = await res.json();
-        setJobs(data.jobs || []);
+        setJobs(data.jobs ?? []);
       } catch {}
     };
+
     poll();
-    const timer = setInterval(poll, 3000);
-    return () => clearInterval(timer);
+    // 5 秒一次(从 3 秒放宽,降低多 tab 时的请求密度)
+    const timer = setInterval(poll, 5000);
+
+    // tab 切回前台立刻 poll 一次,UX 跟"实时"等价
+    const onVisibility = () => {
+      if (!document.hidden) poll();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [loggedIn]);
 
   if (!loggedIn) return null;
