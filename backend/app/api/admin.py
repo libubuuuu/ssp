@@ -532,8 +532,10 @@ async def admin_upload_qr(file: UploadFile = File(...), current_user: dict = Dep
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="无权限")
     
-    # 保存到 frontend/public/qr-payment.png
-    target = "/root/ssp/frontend/public/qr-payment.png"
+    # 保存到 frontend/public/qr-payment.png(项目根的相对路径,与部署位置解耦)
+    from pathlib import Path
+    _project_root = Path(__file__).resolve().parents[3]
+    target = str(_project_root / "frontend" / "public" / "qr-payment.png")
     os.makedirs(os.path.dirname(target), exist_ok=True)
     
     contents = await file.read()

@@ -19,8 +19,10 @@ from app.api.auth import get_current_user
 
 router = APIRouter()
 
-# 工作区目录
-STUDIO_DIR = Path("/root/ssp/studio_workspace")
+# 工作区目录:默认项目根/studio_workspace,环境变量 SSP_STUDIO_DIR 可覆盖
+# 路径策略:从本文件 (app/api/video_studio.py) 上溯 4 级 = backend/app/api → backend/app → backend → 项目根
+_DEFAULT_STUDIO = Path(__file__).resolve().parents[3] / "studio_workspace"
+STUDIO_DIR = Path(os.environ.get("SSP_STUDIO_DIR", str(_DEFAULT_STUDIO)))
 STUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
 # 分片上传临时目录(完成后立刻清理)

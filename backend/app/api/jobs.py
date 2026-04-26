@@ -14,8 +14,9 @@ from app.api.auth import get_current_user
 
 router = APIRouter()
 
-# 路径默认 /root/ssp/jobs_data,测试或多环境通过 JOBS_FILE 覆盖
-JOBS_FILE = Path(os.environ.get("JOBS_FILE", "/root/ssp/jobs_data/jobs.json"))
+# 路径默认项目根/jobs_data/jobs.json,测试或多环境通过 JOBS_FILE 覆盖
+_DEFAULT_JOBS_FILE = Path(__file__).resolve().parents[3] / "jobs_data" / "jobs.json"
+JOBS_FILE = Path(os.environ.get("JOBS_FILE", str(_DEFAULT_JOBS_FILE)))
 JOBS_FILE.parent.mkdir(parents=True, exist_ok=True)
 JOBS_DIR = JOBS_FILE.parent
 
