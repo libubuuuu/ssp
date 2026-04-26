@@ -138,14 +138,23 @@
 - **memory:** `/root/.claude/projects/-root-ssp/memory/` 已存项目目标、偏好、运营路径,新会话务必读。
 - **服务进程当前在 systemd 之外:** ssp-backend systemd 是 inactive 但 :8000 上有 uvicorn 在跑,ssp-frontend 同理。是上一会话遗留状态。**重启服务前先理清,别盲目 systemctl restart。**
 
-## 当前状态(2026-04-25)
+## 当前状态(2026-04-26)
 
-- **18 个本地 commit 未推 origin** —— 等用户撤销 GitHub PAT 并改用 SSH 后再 push
-  (`.git/config` 里有明文 PAT,且 `/root/ssp.bak.*` 三份历史快照里也有,需要先轮换)
-- `auth.py` 邮箱验证码代码上次会话曾被复制粘贴成两份,本次已修
-- 服务运行中,但脱离 systemd 控制(:8000 / :3000 上是手动起的进程),需要后续会话理清
-- Phase 1 后端测试线已闭环(38 例,auth/billing/jobs/admin/用户隔离)+ CI 配好
-- Phase 1 待办:服务降权、异地备份、Dependabot、Playwright e2e、runbook
+**生产环境**:ailixiao.com 跑在腾讯云轻量服务器(43.134.71.189),Blue-Green 部署,Blue 当前激活。
+
+**Git 状态**:本地 + origin/main + origin/feat/auth-email-code-ui 三方对齐于 b16ce0e。SSH 协议(git@github.com:libubuuuu/ssp.git)+ /root/.ssh/id_ed25519_github。GitHub 账号 2FA 已开,旧 PAT 已清。
+
+**安全状态**:RESEND_API_KEY、FAL_KEY、JWT_SECRET 均已轮换(2026-04-25 夜)。所有历史 token 已失效。.env.enc + 主密码分离,主密码在 /root/.ssp_master_key(权限 400)。
+
+**记忆体系**:
+- /root/start-claude.txt - 启动咒语
+- /root/ssp/CLAUDE.md - 项目长期记忆(本文件)
+- /root/ssp/PROGRESS.md - 进度日志 + 决策记录 + 待办
+
+**部署体系**:
+- /root/ssp/deploy/ - 系统配置 + 脚本(已入 git)
+- /root/{deploy,rollback}.sh - symlink → deploy/ 下真实文件
+- supervisor 4 个服务:ssp-{backend,frontend}-{blue,green}
 
 ## 怎么跑测试
 
