@@ -27,6 +27,9 @@ app.add_middleware(CORSMiddleware, allow_origins=origins_list, allow_credentials
 from app.services.rate_limiter import RateLimitMiddleware
 app.add_middleware(RateLimitMiddleware)
 
+from app.middleware.request_id import RequestIdMiddleware
+app.add_middleware(RequestIdMiddleware)
+
 from app.database import init_db
 from app.services.fal_service import init_fal_services
 from app.services.circuit_breaker import init_circuit_breaker
