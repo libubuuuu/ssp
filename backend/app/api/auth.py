@@ -17,6 +17,7 @@ from ..services.auth import (
     decode_jwt_token,
     get_user_by_id,
     hash_password,
+    invalidate_user_tokens,
 )
 from ..database import get_db
 
@@ -202,7 +203,17 @@ async def change_password(req: ChangePasswordRequest, current_user: dict = Depen
         """, (new_hash, current_user["id"]))
         conn.commit()
 
-    return {"message": "密码已修改"}
+    # 改密后吊销该用户所有现有 token(防泄漏密码后旧 token 仍可用)
+    invalidate_user_tokens(current_user["id"])
+
+    return {"message": "密码已修改,所有设备已自动登出,请重新登录"}
+
+
+@router.post("/logout-all-devices")
+async def logout_all_devices(current_user: dict = Depends(get_current_user)):
+    """用户主动登出所有设备:把当前账号在所有设备的 token 一次性失效"""
+    invalidate_user_tokens(current_user["id"])
+    return {"message": "已登出所有设备"}
 
 
 @router.post("/forgot-password")
@@ -470,6 +481,9 @@ async def reset_password_by_code(req: ResetPasswordRequest):
             raise HTTPException(status_code=404, detail="邮箱未注册")
         cursor.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(req.new_password), row[0]))
         conn.commit()
-    
-    return {"success": True, "message": "密码已重置"}
+
+    # 重置密码后吊销该用户所有现有 token
+    invalidate_user_tokens(row[0])
+
+    return {"success": True, "message": "密码已重置,请重新登录"}
 

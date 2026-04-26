@@ -234,6 +234,39 @@ async def admin_adjust_credits(user_id: str, delta: int, request: Request, curre
     return {"success": True, "user_id": user_id, "new_credits": new_credits, "delta": delta}
 
 
+@router.post("/users/{user_id}/force-logout")
+async def admin_force_logout(user_id: str, request: Request, current_user: dict = Depends(get_current_user)):
+    """管理员强制踢人:把目标用户在所有设备的 token 一次性失效"""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="无权限")
+
+    # 验证目标用户存在
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT email FROM users WHERE id = ?", (user_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        target_email = row[0]
+
+    from app.services.auth import invalidate_user_tokens
+    ok = invalidate_user_tokens(user_id)
+
+    # 写审计
+    from app.services.audit import log_admin_action
+    log_admin_action(
+        actor_user_id=current_user["id"],
+        actor_email=current_user.get("email"),
+        action="force_logout",
+        target_type="user",
+        target_id=user_id,
+        details={"target_email": target_email},
+        ip=request.client.host if request.client else None,
+    )
+
+    return {"success": ok, "user_id": user_id, "message": "该用户所有 token 已失效"}
+
+
 @router.post("/upload-qr")
 async def admin_upload_qr(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     """管理员上传收款码图片"""

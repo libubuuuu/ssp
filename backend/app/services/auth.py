@@ -46,14 +46,53 @@ def create_jwt_token(user_id: str, email: str, role: str) -> str:
 
 
 def decode_jwt_token(token: str) -> Optional[Dict]:
-    """解析 JWT Token"""
+    """解析 JWT Token,并校验未被用户级吊销。
+
+    流程:
+    1. 验证签名 + 过期时间
+    2. 查用户 tokens_invalid_before:若 > token.iat,说明用户已主动/被动撤销所有 token
+    """
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        return payload
     except jwt.ExpiredSignatureError:
         return None
     except jwt.InvalidTokenError:
         return None
+
+    # 用户级吊销检查
+    user_id = payload.get("user_id")
+    iat = payload.get("iat")
+    if user_id and iat is not None:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT tokens_invalid_before FROM users WHERE id = ?",
+                (user_id,),
+            )
+            row = cursor.fetchone()
+            if row and row[0] and row[0] > iat:
+                return None  # 该用户所有 token 已撤销
+
+    return payload
+
+
+def invalidate_user_tokens(user_id: str) -> bool:
+    """把用户的 tokens_invalid_before 设为当前 unix 时间戳。
+    效果:用户当前所有有效 token 立即失效,需重新登录。
+    用于:
+      - 用户主动"登出所有设备"
+      - 管理员强制踢人
+      - 改密码(防止泄漏密码后旧 token 仍可用)
+    """
+    import time
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE users SET tokens_invalid_before = ? WHERE id = ?",
+            (int(time.time()), user_id),
+        )
+        conn.commit()
+        return cursor.rowcount == 1
 
 
 def get_user_by_email(email: str) -> Optional[Dict]:

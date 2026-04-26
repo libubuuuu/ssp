@@ -31,6 +31,9 @@ def _patch_users_columns(cursor):
     patches = [
         ("totp_secret", "ALTER TABLE users ADD COLUMN totp_secret TEXT DEFAULT NULL"),
         ("totp_enabled", "ALTER TABLE users ADD COLUMN totp_enabled INTEGER DEFAULT 0"),
+        # tokens_invalid_before:Unix 时间戳。token.iat 早于此值则该 token 失效。
+        # 改密码 / 主动登出所有设备 / 管理员强制踢人时,把当前时间戳写进来。
+        ("tokens_invalid_before", "ALTER TABLE users ADD COLUMN tokens_invalid_before INTEGER DEFAULT 0"),
     ]
     for col_name, sql in patches:
         try:
@@ -60,7 +63,8 @@ def init_db():
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
             totp_secret TEXT DEFAULT NULL,
-            totp_enabled INTEGER DEFAULT 0
+            totp_enabled INTEGER DEFAULT 0,
+            tokens_invalid_before INTEGER DEFAULT 0
         )
         """)
         _patch_users_columns(cursor)
