@@ -168,12 +168,16 @@ async def text_to_video(req: TextToVideoRequest):
 @require_credits("video/image-to-video")
 async def image_to_video(req: ImageToVideoRequest, current_user: dict = Depends(get_current_user)):
     """图生视频 (Kling)"""
+    from app.services import task_ownership
+
     service = get_video_service()
 
     result = await service.generate_from_image(req.image_url, req.prompt)
 
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
+
+    task_ownership.register(result.get("task_id", ""), current_user["id"])
 
     return {
         "success": True,
@@ -209,6 +213,8 @@ async def replace_video_element(req: VideoElementReplaceRequest, current_user: d
     使用 Kling O1 Edit 模型，根据自然语言指令替换视频中的元素
     """
     # 调用 FAL AI 视频编辑服务
+    from app.services import task_ownership
+
     video_service = get_video_service()
     result = await video_service.replace_element(
         video_url=req.video_url,
@@ -220,6 +226,7 @@ async def replace_video_element(req: VideoElementReplaceRequest, current_user: d
         raise HTTPException(status_code=500, detail=result["error"])
 
     task_id = result.get("task_id", "unknown")
+    task_ownership.register(task_id, current_user["id"])
 
     return {
         "success": True,
@@ -240,6 +247,8 @@ async def clone_video(req: VideoCloneRequest, current_user: dict = Depends(get_c
     提取参考视频的运镜、节奏、动作，将主体替换为用户的模特和产品
     使用 Kling O1 Edit 模型
     """
+    from app.services import task_ownership
+
     video_service = get_video_service()
     result = await video_service.clone_video(
         reference_video_url=req.reference_video_url,
@@ -251,6 +260,7 @@ async def clone_video(req: VideoCloneRequest, current_user: dict = Depends(get_c
         raise HTTPException(status_code=500, detail=result["error"])
 
     task_id = result.get("task_id", "unknown")
+    task_ownership.register(task_id, current_user["id"])
 
     return {
         "success": True,

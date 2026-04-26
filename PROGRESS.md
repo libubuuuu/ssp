@@ -1,5 +1,23 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27(WS task 归属验证 v2 — 防越权订阅)
+
+### ✅ 闭环上次留下的安全坑
+- **问题**:WS 鉴权只验 token,没验 task 归属。任一登录用户拿到别人的 task_id 就能订阅别人的进度推送。
+- **真因**:WS 用的 task_id 是 FAL request_id,本身不带用户身份;`generation_history` 主键是新 uuid,task_id 没保留;`tasks` 表全库无人写。**没现成 task_id → user_id 映射**。
+- **方案**:新建 `app/services/task_ownership.py` — 进程内 dict + 30 分钟 TTL + 锁。提交 FAL 任务、拿到 request_id 时立即注册 (task_id, user_id);WS 接到连接 token 校验通过后再校归属,失败 close 4403(跟 4401 鉴权失败区分)。
+- **注册点**:`video.py` 的 image-to-video / replace/element / clone 三个端点 + `avatar.py /generate`。`jobs.py` 内部用 FAL task_id 不暴露给前端 WS,无需注册。
+- **不入库的取舍**:任务最长 10 分钟,内存够用;backend 重启后 in-flight 任务归属丢失,重新提交即可,可接受。
+
+### 测试 +3(84 → 87)
+- ws_owner_can_connect / ws_rejects_unregistered_task / ws_rejects_other_users_task / ownership 单元(总 8 例覆盖鉴权 + 归属两层)
+- 全 87 例过,零回归
+
+### 决策记录
+- 2026-04-27:**纯 in-memory 不入库** — 给 generation_history 加 task_id 列要 schema migration + 改若干写入点,ROI 不如 TTL 方案;Postgres + Alembic 落地后再考虑持久化
+- 2026-04-27:close code 选 **4403**(归属失败)与 **4401**(鉴权失败)分开 — 前端可区分"重新登录"与"task 不属于你"
+- 2026-04-27:未注册 / 已过期 / owner 不匹配三种情况对外**不区分**,统一返 4403 — 防信息泄漏(攻击者无法通过响应差异判断 task_id 是否真实存在)
+
 ## 2026-04-26 深夜·收尾(AIOps 闭环 + 响应式 UI)
 
 ### 🤖 AIOps 完整闭环建成
@@ -63,7 +81,7 @@
 - ~~WebSocket 鉴权~~ ✅ 已落地(2026-04-26 深夜)
 - **Sentry / 全自动 Agent**(都需 API 钱,用户不愿,搁置)
 - **合规打底**(ICP / 内容审核 / AIGC 水印,用户主导跑流程)
-- **WS task 归属验证**(v2,确保只有 task 拥有者能看)
+- ~~WS task 归属验证 v2~~ ✅ 已落地(2026-04-27)
 
 ## 2026-04-26 凌晨之后(用户体验 + AIOps 起步)
 

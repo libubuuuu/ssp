@@ -68,6 +68,8 @@ async def generate_avatar(req: AvatarGenerateRequest, current_user: dict = Depen
 
         # 创建消费记录
         task_id = result.get("task_id", str(uuid.uuid4()))
+        from app.services import task_ownership
+        task_ownership.register(task_id, current_user["id"])
         create_consumption_record(
             user_id=current_user["id"],
             task_id=task_id,

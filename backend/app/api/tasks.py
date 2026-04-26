@@ -108,15 +108,15 @@ async def get_history(current_user: dict = Depends(get_current_user)):
 async def websocket_task_updates(websocket: WebSocket, task_id: str):
     """任务进度推送 WebSocket。
 
-    鉴权:
-    - 必须带 ?token=<access_token> query 参数(WebSocket 不支持 Authorization header,只能用 query)
-    - 验签 + 用户级吊销(共用 decode_jwt_token,跟 HTTP API 同样规则)
-    - 失败时 close code 4401(自定义,通用约定 4xxx 是应用级)
+    鉴权(分两层,失败均不暴露差异):
+    - 4401:token 缺失/无效/过期/吊销/类型错(refresh 不能调业务)
+    - 4403:token 有效但当前用户不是该 task 的 owner(或 task 未注册/已过期)
+    - 4xxx 是应用级 close code 约定
 
-    未来可加(v2):验证 task_id 属于该 user_id(防偷看别人的进度)
-    需要 tasks 表加 user_id 字段查询,留下次。
+    归属注册由各 FAL 提交端点(video / avatar)调 task_ownership.register 完成。
     """
     from app.services.auth import decode_jwt_token
+    from app.services import task_ownership
 
     token = websocket.query_params.get("token", "")
     if not token:
@@ -125,6 +125,11 @@ async def websocket_task_updates(websocket: WebSocket, task_id: str):
     payload = decode_jwt_token(token)
     if not payload:
         await websocket.close(code=4401, reason="invalid or expired token")
+        return
+
+    user_id = payload.get("user_id") or payload.get("sub")
+    if not user_id or not task_ownership.verify(task_id, user_id):
+        await websocket.close(code=4403, reason="not your task")
         return
 
     await websocket.accept()
