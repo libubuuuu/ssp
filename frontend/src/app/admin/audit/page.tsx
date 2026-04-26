@@ -77,7 +77,12 @@ export default function AdminAuditPage() {
           {[
             { v: "", zh: "全部", en: "All" },
             { v: "adjust_credits", zh: "改额度", en: "Adjust Credits" },
+            { v: "confirm_order", zh: "确认订单", en: "Confirm Order" },
             { v: "force_logout", zh: "强制下线", en: "Force Logout" },
+            { v: "change_password", zh: "改密码", en: "Change Password" },
+            { v: "reset_password", zh: "重置密码", en: "Reset Password" },
+            { v: "logout_all_devices", zh: "登出所有设备", en: "Logout All" },
+            { v: "reset_model", zh: "重置模型", en: "Reset Model" },
           ].map(opt => (
             <button
               key={opt.v}
