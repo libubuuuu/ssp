@@ -31,6 +31,26 @@ const PUBLIC_AUTH_PATHS = [
   "/api/auth/reset-password-by-code",
 ];
 
+// 主动续期阈值:剩余 < 10 分钟时刷新
+const PROACTIVE_REFRESH_THRESHOLD_SEC = 600;
+// 周期检查间隔:5 分钟
+const PROACTIVE_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+
+/** 解 JWT payload(不验签,只取 exp 看剩余时间) */
+function getTokenExp(token: string): number | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    // base64url → base64
+    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const json = atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4));
+    const payload = JSON.parse(json);
+    return typeof payload.exp === "number" ? payload.exp : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function AuthFetchInterceptor() {
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -124,6 +144,67 @@ export default function AuthFetchInterceptor() {
         redirectToLogin();
       }
       return retryResp;
+    };
+  }, []);
+
+  // ========== 主动续期:在 access 快过期前提前刷,用户永远不被中断 ==========
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    let isProactiveRefreshing = false;
+
+    async function proactiveRefreshIfNeeded() {
+      if (isProactiveRefreshing) return;
+      const token = localStorage.getItem("token");
+      const refresh = localStorage.getItem("refresh_token");
+      if (!token || !refresh) return;
+
+      const exp = getTokenExp(token);
+      if (exp === null) return;
+      const nowSec = Math.floor(Date.now() / 1000);
+      const remainSec = exp - nowSec;
+      // 已经过期或快过期:刷新
+      if (remainSec < PROACTIVE_REFRESH_THRESHOLD_SEC) {
+        isProactiveRefreshing = true;
+        try {
+          // 用原始 fetch 而不是 patched 的(避免 401 拦截重入)
+          const originalFetch = window.fetch.bind(window);
+          const r = await originalFetch("/api/auth/refresh", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ refresh_token: refresh }),
+          });
+          if (r.ok) {
+            const data = await r.json();
+            const newAccess = data.access_token ?? data.token;
+            if (newAccess) localStorage.setItem("token", newAccess);
+          }
+          // refresh 失败:不主动跳登录,等用户下次实际请求触发 401 再让 fetch 拦截器处理
+        } catch {
+          // 网络错误:静默,下次再试
+        } finally {
+          isProactiveRefreshing = false;
+        }
+      }
+    }
+
+    // 启动时检查一次
+    proactiveRefreshIfNeeded();
+
+    // 周期检查
+    const interval = setInterval(proactiveRefreshIfNeeded, PROACTIVE_REFRESH_INTERVAL_MS);
+
+    // tab 重新可见时立即检查(用户切回浏览器,可能 token 已悄悄过期)
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        proactiveRefreshIfNeeded();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, []);
 
