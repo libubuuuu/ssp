@@ -152,6 +152,59 @@ def test_audit_log_limit_caps_at_500(client):
     assert "total" in r.json()
 
 
+def test_admin_confirm_order_creates_audit_record(client):
+    """管理员手动入账(payment.confirm_order)必须写审计 — 合规重点"""
+    admin = _make_admin("audit-confirm-admin@example.com")
+    target = _make_target_user("audit-confirm-target@example.com", credits=100)
+
+    # 直接造一个 pending 订单
+    import uuid as _uuid
+    order_id = str(_uuid.uuid4())
+    from app.database import get_db
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO credit_orders (id, user_id, amount, price, status) VALUES (?, ?, ?, ?, 'pending')",
+            (order_id, target, 50, 9.9),
+        )
+        conn.commit()
+
+    from app.services.auth import create_jwt_token
+    token = create_jwt_token(admin["id"], admin["email"], "admin")
+    r = client.post(
+        f"/api/payment/orders/{order_id}/confirm",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["credits_added"] == 50
+
+    rows = audit.list_audit_log(actor_user_id=admin["id"], action="confirm_order")
+    assert len(rows) == 1
+    assert rows[0]["target_id"] == order_id
+    assert rows[0]["details"]["target_user_id"] == target
+    assert rows[0]["details"]["credits_added"] == 50
+
+
+def test_admin_reset_model_creates_audit_record(client, app):
+    """管理员重置熔断器写审计 — 系统状态变更可追溯"""
+    # admin.py 的 router 只在 conftest.app fixture 里挂在 /api/admin
+    # reset_model 路由是 POST /api/admin/models/{model_name}/reset
+    admin = _make_admin("audit-reset-admin@example.com")
+    from app.services.auth import create_jwt_token
+    token = create_jwt_token(admin["id"], admin["email"], "admin")
+
+    r = client.post(
+        "/api/admin/models/test-model-xyz/reset",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    # 即使模型在 circuit_breaker 里不存在,接口依然成功 reset DB 状态
+    assert r.status_code == 200, r.text
+
+    rows = audit.list_audit_log(actor_user_id=admin["id"], action="reset_model")
+    assert len(rows) == 1
+    assert rows[0]["target_id"] == "test-model-xyz"
+
+
 def test_admin_adjust_credits_creates_audit_record(client):
     """端到端:管理员调 adjust-credits API,审计日志真的多一行"""
     # 创建管理员 + 目标用户

@@ -17,6 +17,9 @@ ACTION_ADJUST_CREDITS = "adjust_credits"
 ACTION_SET_ROLE = "set_role"
 ACTION_LOGIN_AS = "login_as"
 ACTION_DELETE_USER = "delete_user"
+ACTION_FORCE_LOGOUT = "force_logout"
+ACTION_CONFIRM_ORDER = "confirm_order"
+ACTION_RESET_MODEL = "reset_model"
 
 
 def log_admin_action(

@@ -37,7 +37,7 @@ async def get_model_status(model_name: str, _admin: dict = Depends(require_admin
 
 
 @router.post("/models/{model_name}/reset")
-async def reset_model(model_name: str, _admin: dict = Depends(require_admin)):
+async def reset_model(model_name: str, request: Request, admin: dict = Depends(require_admin)):
     """重置模型状态（手动恢复）"""
     circuit_breaker = get_circuit_breaker()
 
@@ -60,6 +60,17 @@ async def reset_model(model_name: str, _admin: dict = Depends(require_admin)):
             WHERE model_name = ?
         """, (model_name,))
         conn.commit()
+
+    # 审计:系统级状态变更,出问题时方便追溯谁在什么时候重置过
+    from app.services.audit import log_admin_action, ACTION_RESET_MODEL
+    log_admin_action(
+        actor_user_id=admin["id"],
+        actor_email=admin.get("email"),
+        action=ACTION_RESET_MODEL,
+        target_type="model",
+        target_id=model_name,
+        ip=request.client.host if request.client else None,
+    )
 
     return {"message": f"模型 {model_name} 已重置"}
 

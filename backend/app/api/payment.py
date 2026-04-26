@@ -4,7 +4,7 @@
 - 额度充值
 - 订单查询
 """
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 from typing import Optional, List, Literal
 from ..api.auth import get_current_user
@@ -179,7 +179,7 @@ async def list_orders(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/orders/{order_id}/confirm")
-async def admin_confirm_order(order_id: str, current_user: dict = Depends(get_current_user)):
+async def admin_confirm_order(order_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     """管理员确认订单入账（手动）"""
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="无权限，仅管理员可确认订单")
@@ -191,10 +191,25 @@ async def admin_confirm_order(order_id: str, current_user: dict = Depends(get_cu
             raise HTTPException(status_code=404, detail="订单不存在")
         if row[2] == "paid":
             raise HTTPException(status_code=400, detail="订单已确认过")
+        target_user_id = row[0]
+        credits_added = row[1]
         cursor.execute("UPDATE credit_orders SET status='paid', paid_at=CURRENT_TIMESTAMP WHERE id=?", (order_id,))
-        cursor.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (row[1], row[0]))
+        cursor.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (credits_added, target_user_id))
         conn.commit()
-    return {"success": True, "order_id": order_id, "credits_added": row[1], "user_id": row[0]}
+
+    # 审计:管理员手动入账等于"动钱",合规重点
+    from app.services.audit import log_admin_action, ACTION_CONFIRM_ORDER
+    log_admin_action(
+        actor_user_id=current_user["id"],
+        actor_email=current_user.get("email"),
+        action=ACTION_CONFIRM_ORDER,
+        target_type="order",
+        target_id=order_id,
+        details={"target_user_id": target_user_id, "credits_added": credits_added},
+        ip=request.client.host if request.client else None,
+    )
+
+    return {"success": True, "order_id": order_id, "credits_added": credits_added, "user_id": target_user_id}
 
 
 @router.get("/admin/orders")
