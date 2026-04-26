@@ -1,5 +1,63 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-26 深夜·收尾(AIOps 闭环 + 响应式 UI)
+
+### 🤖 AIOps 完整闭环建成
+- **一键诊断 API**:GET /api/admin/diagnose 收集完整快照(supervisor/nginx/后端 err/db 行数/磁盘/内存)
+- **admin Banner 一键复制按钮**:🩺 按钮 → 浏览器自动复制 JSON → 用户粘贴给 Claude
+- **诊断历史页 /admin/diagnose**:watchdog 告警时自动冻结快照写 /var/log/ssp-diagnose/{TS}-{LEVEL}.json,timeline 列出最近 100 份
+- **微信推送**:Server 酱接入,告警时自动 push 微信(SCKEY 已配 + 已轮换);推送内容含严重度图标 + 状态总览 + 行动建议
+- **合成监控**:watchdog 每 5 分钟模拟用户访问 /api/payment/packages、主页、/api/jobs/list 鉴权、admin 子域,bug 在用户撞到前抓到
+- **闭环 3 次实战**:用户粘 JSON → 30-90 秒精准定位 + 修 + push,无猜测
+
+### 🐛 真 bug 修复(从 AIOps 闭环抓到的)
+- **RequestIdMiddleware 真 bug**:starlette BaseHTTPMiddleware 在 client disconnect 时抛 RuntimeError("No response returned.")。重写为 pure ASGI middleware(scope/receive/send 风格),免疫 streaming/disconnect 问题
+- **watchdog 误报**:STOPPED 进程的 err.log 残留旧 RuntimeError,find -mmin -10 跳过老文件 + grep pattern 收紧到 ^(ERROR:|Traceback \(most|[A-Z]+Error:)
+- **watchdog health 5s timeout**:deploy 蓝绿切换 30-60s 窗口期误报,改 sleep 8s 重试 1 次再 CRIT
+- **disk/memory 字段空**:shell 引号嵌套吃掉了变量,改用中间变量 DISK_STR/MEM_STR
+
+### 📹 视频上传完整重做
+- **真因(用户报上传慢/失败)**:① 后端 await file.read() 一次性读全文件到内存 ② 前端 fetch 不支持 progress ③ 文件 > 100MB 撞 nginx client_max_body_size
+- **修复 3 层**:
+  - 后端流式 1MB 块写入(节内存)
+  - **分片上传**(对标 YouTube/OSS):前端切 5MB 块 → 顺序传 → 失败重试 3 次 → 后端最后一片到达时合并 + 创建 session。**任意大小都能传,无需用户压缩**
+  - 前端 XHR 进度条:"上传中 35.2% · 5.3 MB/s · 剩余约 12 秒"
+
+### 🛡️ nginx 大幅加固
+- limit_req api_limit rate 30→60 r/s,burst 60→200(多 tab + polling 不再撞限流)
+- proxy_connect_timeout 30s / send 120s / read 120s / client_body 120s(防大文件 reset)
+- client_max_body_size 100m→500m
+- **error_page JSON 化**(关键):429/502/503/504 全返 JSON 不返 HTML,前端 fetch.json() 永不再炸 "Unexpected token '<'"
+
+### 💻 admin 后台 UX 提升
+- /admin/users 用户管理页(列表 + ± 积分按钮 + 强制踢出按钮,触发 audit)
+- /admin/diagnose 诊断历史页(timeline + 一键复制)
+- profile 加"登出所有设备"红色按钮(用户主动安全自救)
+- audit 页 8 个 action 过滤按钮
+- **侧栏响应式**(< 768px):手机端汉堡菜单 ☰ + 全屏内容 + 滑出侧栏 + 点蒙层关闭 + 选菜单后自动收起
+
+### 决策记录(深夜段)
+- 2026-04-26:全局 fetch patch window.fetch 而不是替换 71 处 fetch,零业务代码改动所有调用自动获益
+- 2026-04-26:**修复必须从日志事实出发,不凭直觉猜**。Token 无效 / 上传慢 / connection reset 多次猜错,直到从 access log 看到 `400 body=0` 才定位 client_max_body_size
+- 2026-04-26:不做"自动 push 代码"(完整 AIOps 终态)— 风险大,需 Claude Agent SDK 几天工程,且必有 bug 周期。当前"半自动"已经把"用户描述+我猜"压缩到"复制 JSON+精准修",ROI 最高
+- 2026-04-26:Claude Max 月卡不能调 API(产品差异),用户用 claude.ai 网页版手机浏览器够用 + 0 额外成本
+
+### 📊 今天整体总账(最终)
+- **commit 数:25+**(从早上扣费修复到深夜响应式 UI)
+- **deploy 次数:13+**(全部蓝绿成功,零回滚)
+- **测试覆盖:38 → 79**(+41,翻倍)
+- **生产坐标:~45% → ~70%**(企业级安全 + AIOps + 用户体验三大类全跨过中线)
+- **真 bug 修复:5 个**(扣费竞态/Token UX/上传体系/nginx 限流/middleware streaming bug)
+- **AIOps 闭环建成:** watchdog → 微信推送 → admin/diagnose → 一键复制 → claude.ai/我修
+
+### ⏸ 真留给下次(已重复多次,这次写死)
+- **服务降权**(/root → /opt 大迁移,半天专项)
+- **微信支付正式接入**(用户备好商户号 + ICP 备案)
+- **Postgres + Alembic 迁移**(SQLite 撑不到几百用户)
+- **WebSocket 鉴权**(任务进度推送,中型安全工程)
+- **Sentry / 全自动 Agent**(都需 API 钱,用户不愿,搁置)
+- **合规打底**(ICP / 内容审核 / AIGC 水印,用户主导跑流程)
+
 ## 2026-04-26 凌晨之后(用户体验 + AIOps 起步)
 
 ### 🎯 用户报的问题 → 真因 → 修复
