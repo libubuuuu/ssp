@@ -1,5 +1,57 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 四续(服务降权阶段 1 准备完成,等阶段 2 切换窗口)
+
+### ✅ 阶段 1 — 0 停机准备(本次完成)
+1. 创建 `ssp-app` 系统用户(UID 998,nologin shell,home=/opt/ssp)
+2. `cp -a /root/ssp /opt/ssp`(1.9G,48 秒)
+3. **重建 venv**(原 venv 的 shebang 硬编码 `/root/ssp/...`,挪过去用不了)
+4. `pip install -r requirements.txt -r requirements-dev.txt`(60 秒)
+5. chown -R ssp-app:ssp-app /opt/ssp
+6. **主密钥 stage**:cp /root/.ssp_master_key → /etc/ssp/master.key,
+   chgrp ssp-app + chmod 640。(`/root/` 默认 700,ssp-app cd 不进,
+   这正是 CLAUDE.md 写的核心障碍 — 移到 /etc/ssp/ 解决)
+7. **路径硬编码相对化**(commit `b8834c4`,跟这次降权一起入仓):
+   - video_studio.py `STUDIO_DIR` — 开机直接 mkdir 崩在 ssp-app 上
+   - admin.py /upload-qr `target` — 收款码上传路径
+   - jobs.py `JOBS_FILE` 默认值
+   - 三处都改 `Path(__file__).parents[3] / ...` 推算项目根 +
+     保留环境变量覆盖
+8. **requirements.txt 补漏**:auth.py 用 pyotp + qrcode 做 TOTP,但
+   老 venv 是 pip install 单装的,没写进 requirements。任何换机/重建
+   都会启动崩。补 `pyotp==2.9.0 + qrcode==8.2`。
+9. **Stage 验证**:ssp-app 在 8002 端口手动起 uvicorn,`/api/payment/packages`
+   返回 200,trace_id middleware 正常,SQLite 初始化正常。
+10. 测试 90/90 全过零回归。
+
+### ⏸ 阶段 2 — 真切换(下次专门窗口做)
+**预期停机:supervisor stop→swap config→start,30-60 秒**
+
+阶段 2 步骤(预演):
+1. 备份当前生产数据(dev.db / sessions.json / jobs.json)
+2. **重新同步数据到 /opt/ssp**(/opt/ssp 是 cp 时刻的快照,切前要再 cp 一次拿最新)
+3. supervisor stop ssp-{backend,frontend}-{blue,green}
+4. 替换 /etc/supervisor/conf.d/ssp.conf:
+   - `user=ssp-app`
+   - `directory=/opt/ssp/...`
+   - master.key 路径换成 `/etc/ssp/master.key`
+5. supervisorctl reread + update + start(active 那一边)
+6. 同步改 `deploy/supervisor.conf`(版本控制下的镜像)+ `/root/backup_daily.sh` 路径
+7. 健康检查 + 监控 30 分钟
+8. 稳定后:`rm /root/.ssp_master_key`(stage 副本接管)
+9. 留 /root/ssp 至少 24 小时再删,作为 hard rollback
+
+### 阶段 2 回滚
+- supervisor 配置 revert 到 .preopt-backup
+- `supervisorctl reread + update + start`
+- /root/ssp 仍在原位,/root/.ssp_master_key 也在,生产能直接回到 root 跑
+
+### 决策记录(2026-04-27 服务降权)
+- **两阶段做** — 阶段 1 的"准备 + 验证"完全 0 停机;阶段 2 的"切换"在用户挑的窗口执行,生产风险窗口最小化
+- **主密钥放 /etc/ssp/master.key 而非项目里** — /etc/ 是系统配置标准位置;项目内会被 git 追踪到的风险
+- **重建 venv 而非 cp + 改 shebang** — venv 的所有 bin 脚本都硬编码绝对路径,sed 改一通脆弱;重建 1 分钟,稳
+- **路径修复跟降权方案一并入仓** — 这些 bug 任何"换机/灾备恢复"场景都会撞,跟降权耦合度高;不分两次提交
+
 ## 2026-04-27 三续(后端 CVE 清零 + audit CI 强制阻塞)
 
 ### ✅ FastAPI + starlette 联动升级,清掉最后所有 CVE
