@@ -19,7 +19,7 @@ aiofiles==23.2.1
 python-dotenv==1.0.0
 
 # 文件处理
-Pillow==10.2.0
+Pillow==12.2.0
 
 # 阿里云短信 (可选)
 alibabacloud-dysmsapi20170525==3.0.0
