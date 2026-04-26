@@ -21,7 +21,7 @@ JWT_SECRET = settings.JWT_SECRET
 JWT_ALGORITHM = "HS256"
 # access token:平时用,过期短,泄漏窗口小
 # refresh token:只用于 /refresh 换 access,过期长,平时不传
-JWT_ACCESS_EXPIRATION_HOURS = 24 * 7  # 7 天(暂保持兼容,前端切 refresh 流程后可缩到 1 小时)
+JWT_ACCESS_EXPIRATION_HOURS = 1       # 1 小时(前端 401 拦截 + 主动续期阈值 10 分 + 5 分轮询已就位)
 JWT_REFRESH_EXPIRATION_DAYS = 30      # refresh token 30 天
 
 

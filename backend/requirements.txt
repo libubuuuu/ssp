@@ -1,7 +1,7 @@
 # AI 创意平台 - 后端依赖
 fastapi==0.109.2
 uvicorn[standard]==0.27.1
-python-multipart==0.0.9
+python-multipart==0.0.26
 pydantic==2.6.1
 pydantic-settings==2.1.0
 
@@ -16,16 +16,16 @@ httpx==0.26.0
 aiofiles==23.2.1
 
 # 环境变量
-python-dotenv==1.0.0
+python-dotenv==1.2.2
 
 # 文件处理
-Pillow==10.2.0
+Pillow==12.2.0
 
 # 阿里云短信 (可选)
 alibabacloud-dysmsapi20170525==3.0.0
 
 # 认证
-PyJWT==2.8.0
+PyJWT==2.12.0
 bcrypt==4.1.2
 
 # FAL AI

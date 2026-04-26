@@ -40,6 +40,11 @@ jobs:
       - name: Lint (ruff)
         run: ruff check app tests || true   # Phase 1 不阻塞,先收集警告
 
+      - name: Security audit (pip-audit)
+        # 不阻塞:已知 starlette 2 个 CVE 必须联动 fastapi 升级才能修,留专项;
+        # 仍跑是为了让以后新增依赖的漏洞被看见,基线降到 0 后改为强制阻塞
+        run: pip-audit -r requirements.txt || true
+
       - name: Run tests
         env:
           # conftest 也会 setdefault,但显式给一份避免未来配置漂移
@@ -69,3 +74,8 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      - name: Security audit (npm audit)
+        # 不阻塞:high 漏洞均嵌套在 next 间接依赖,需 npm audit fix --force 跨主版本
+        # (next 16.2.4),Phase 1 先收集,主版本升级单独评估
+        run: npm audit --audit-level=high || true

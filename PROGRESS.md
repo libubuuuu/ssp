@@ -1,5 +1,37 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 续(JWT access 缩短 + 依赖 CVE 清理 + audit 入 CI)
+
+### ✅ JWT access:7 天 → 1 小时(泄漏窗口缩 168 倍)
+- backend `JWT_ACCESS_EXPIRATION_HOURS = 1`(原 24*7)
+- 前端配套早就位:401 拦截 + refresh 单例并发 + 主动续期阈值 10 分 + 5 分轮询 + visibility 兜底
+- 87 测试全过(decode 走 ExpiredSignatureError 与时长无关)
+- 用户实际无感:活跃 tab 永远不撞过期那一刻
+
+### ✅ 后端依赖 CVE 大扫除(8 → 2,清掉 75%)
+基线扫描 `pip-audit -r requirements.txt`:
+- **PyJWT 2.8.0 → 2.12.0**(CVE-2026-32597,JWT 命脉必修)
+- **python-multipart 0.0.9 → 0.0.26**(3 个 CVE,上传命脉)
+- **python-dotenv 1.0.0 → 1.2.2**(CVE-2026-28684)
+- **Pillow 10.2.0 → 12.2.0**(跨大版本,代码只用基础 API,稳)
+每升一个跑全测试:87/87 全过零回归
+
+### ⏸ 剩 2 个(starlette CVE-2024-47874 + 2025-54121)
+- 必须联动 FastAPI 0.109 → 0.110+ 一起升才能用 starlette 0.47.2
+- FastAPI 跨小版本可能有 breaking,留下次专项评估
+
+### ✅ pip-audit / npm audit 入 CI
+- backend job 加 `pip-audit -r requirements.txt`(暂 || true 不阻塞)
+- frontend job 加 `npm audit --audit-level=high`(暂 || true)
+- requirements-dev.txt 加 pip-audit==2.10.0
+- **基线降到 0 后改强制阻塞**,这样新增依赖带漏洞会立刻被 CI 抓到
+
+### 决策记录(2026-04-27)
+- 缩 access 到 1 小时:前端流程已就位 + 用户实测过(改密码/refresh/拦截器全链路),不是真"等下次",真是这次该做的事
+- pillow 跨大版本(10 → 12):代码只用 Image.open/new/paste/convert/split/size/mode 基础 API,不用 deprecated 接口,实测 87 测试全过 → 直升 12.2.0
+- audit 入 CI 不阻塞:**首次扫描总会有历史包袱,直接 fail-build 影响开发**。先 || true 收集,基线降到 0 再去掉 || true,Phase 1 完成的标志就是 audit 强制阻塞
+- starlette 单独留:fastapi 0.109 强约束 starlette<0.37,要联动升 — 是真"需要专项"
+
 ## 2026-04-27(WS task 归属验证 v2 — 防越权订阅)
 
 ### ✅ 闭环上次留下的安全坑
