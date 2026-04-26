@@ -213,6 +213,22 @@ def init_db():
         )
         """)
 
+        # 审计日志表(管理员操作不可变记录)
+        # 不提供 UPDATE / DELETE 接口,只增不改
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id TEXT PRIMARY KEY,
+            actor_user_id TEXT NOT NULL,
+            actor_email TEXT,
+            action TEXT NOT NULL,
+            target_type TEXT,
+            target_id TEXT,
+            details TEXT,
+            ip TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
         # 创建索引优化查询性能
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
@@ -220,6 +236,9 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_generation_history_user_id ON generation_history(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_credit_orders_user_id ON credit_orders(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(actor_user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at)")
 
         conn.commit()
         print("Database initialized successfully!")

@@ -5,7 +5,7 @@ import os
 - 任务队列状态
 - 平台统计数据
 """
-from fastapi import UploadFile, File, APIRouter, HTTPException, Depends
+from fastapi import UploadFile, File, APIRouter, HTTPException, Depends, Request
 from typing import Optional
 from ..services.circuit_breaker import get_circuit_breaker
 from ..services.task_queue import get_task_queue
@@ -203,20 +203,34 @@ async def admin_list_users(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/users/{user_id}/adjust-credits")
-async def admin_adjust_credits(user_id: str, delta: int, current_user: dict = Depends(get_current_user)):
+async def admin_adjust_credits(user_id: str, delta: int, request: Request, current_user: dict = Depends(get_current_user)):
     """管理员：手动加/减用户积分（delta 可正可负）"""
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="无权限")
-    
+
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT credits FROM users WHERE id = ?", (user_id,))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="用户不存在")
-        new_credits = max(0, row[0] + delta)
+        old_credits = row[0]
+        new_credits = max(0, old_credits + delta)
         cursor.execute("UPDATE users SET credits = ? WHERE id = ?", (new_credits, user_id))
         conn.commit()
+
+    # 审计日志(失败不阻塞业务)
+    from app.services.audit import log_admin_action, ACTION_ADJUST_CREDITS
+    log_admin_action(
+        actor_user_id=current_user["id"],
+        actor_email=current_user.get("email"),
+        action=ACTION_ADJUST_CREDITS,
+        target_type="user",
+        target_id=user_id,
+        details={"delta": delta, "old_credits": old_credits, "new_credits": new_credits},
+        ip=request.client.host if request.client else None,
+    )
+
     return {"success": True, "user_id": user_id, "new_credits": new_credits, "delta": delta}
 
 

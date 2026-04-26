@@ -48,13 +48,9 @@ async def generate_avatar(req: AvatarGenerateRequest, current_user: dict = Depen
     # 获取任务成本
     cost = get_task_cost("avatar/generate")
 
-    # 检查额度
-    if not check_user_credits(current_user["id"], cost):
-        raise HTTPException(status_code=402, detail=f"额度不足，需要 {cost} 积分")
-
-    # 扣减额度
+    # 扣费(原子:SQL 层 WHERE credits >= ?,无竞态)
     if not deduct_credits(current_user["id"], cost):
-        raise HTTPException(status_code=500, detail="扣费失败，请重试")
+        raise HTTPException(status_code=402, detail=f"积分不足,需要 {cost} 积分")
 
     try:
         # 调用 FAL AI 数字人服务
@@ -105,13 +101,9 @@ async def clone_voice(req: VoiceCloneRequest, current_user: dict = Depends(get_c
     # 获取任务成本
     cost = get_task_cost("voice/clone")
 
-    # 检查额度
-    if not check_user_credits(current_user["id"], cost):
-        raise HTTPException(status_code=402, detail=f"额度不足，需要 {cost} 积分")
-
-    # 扣减额度
+    # 扣费(原子:SQL 层 WHERE credits >= ?,无竞态)
     if not deduct_credits(current_user["id"], cost):
-        raise HTTPException(status_code=500, detail="扣费失败，请重试")
+        raise HTTPException(status_code=402, detail=f"积分不足,需要 {cost} 积分")
 
     try:
         # 调用 FAL AI 语音服务
@@ -160,13 +152,9 @@ async def text_to_speech(req: TTSRequest, current_user: dict = Depends(get_curre
     # 获取任务成本
     cost = get_task_cost("voice/tts")
 
-    # 检查额度
-    if not check_user_credits(current_user["id"], cost):
-        raise HTTPException(status_code=402, detail=f"额度不足，需要 {cost} 积分")
-
-    # 扣减额度
+    # 扣费(原子:SQL 层 WHERE credits >= ?,无竞态)
     if not deduct_credits(current_user["id"], cost):
-        raise HTTPException(status_code=500, detail="扣费失败，请重试")
+        raise HTTPException(status_code=402, detail=f"积分不足,需要 {cost} 积分")
 
     try:
         # 调用 FAL AI 语音服务

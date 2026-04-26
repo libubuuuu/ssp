@@ -57,9 +57,24 @@ def check_user_credits(user_id: str, required: int) -> bool:
 
 
 def deduct_credits(user_id: str, amount: int) -> bool:
-    """扣减用户额度"""
-    from .auth import update_user_credits
-    return update_user_credits(user_id, -amount)
+    """原子扣减用户额度。
+
+    在 SQL 层 ``WHERE credits >= ?`` 保证"检查 + 扣减"原子,杜绝
+    并发竞态把余额扣到负数。返回值即真实结果:
+      True  = 余额充足,扣减成功
+      False = 余额不足 / 用户不存在 / amount 非正数,数据未变
+    """
+    if amount <= 0:
+        return False
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE users
+               SET credits = credits - ?, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ? AND credits >= ?
+        """, (amount, user_id, amount))
+        conn.commit()
+        return cursor.rowcount == 1
 
 
 def add_credits(user_id: str, amount: int) -> bool:

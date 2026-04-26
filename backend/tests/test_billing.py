@@ -54,6 +54,36 @@ def test_deduct_then_refund_round_trip():
     assert billing.get_user_credits(uid) == 100
 
 
+def test_deduct_insufficient_returns_false_and_balance_unchanged():
+    """余额不足 → 返回 False,余额不被扣到负数"""
+    uid = _make_user("billing-low@example.com", credits=5)
+    assert billing.deduct_credits(uid, 10) is False
+    assert billing.get_user_credits(uid) == 5  # 未变
+
+
+def test_deduct_atomic_no_negative_via_double_call():
+    """串行模拟竞态:两次都过 check 余额够,但 SQL 原子拦下第二次"""
+    uid = _make_user("billing-race@example.com", credits=10)
+    # 第一次扣 10 成功,余额 → 0
+    assert billing.deduct_credits(uid, 10) is True
+    assert billing.get_user_credits(uid) == 0
+    # 第二次再扣 10,SQL WHERE credits >= 10 拦下,余额保持 0(不会变 -10)
+    assert billing.deduct_credits(uid, 10) is False
+    assert billing.get_user_credits(uid) == 0
+
+
+def test_deduct_zero_or_negative_amount_rejected():
+    """边界:amount <= 0 直接 False,余额不动"""
+    uid = _make_user("billing-zero@example.com", credits=100)
+    assert billing.deduct_credits(uid, 0) is False
+    assert billing.deduct_credits(uid, -5) is False
+    assert billing.get_user_credits(uid) == 100
+
+
+def test_deduct_unknown_user_returns_false():
+    assert billing.deduct_credits("ghost-user-id-not-real", 1) is False
+
+
 def test_consumption_record_persists():
     uid = _make_user("billing-d@example.com")
     ok = billing.create_consumption_record(

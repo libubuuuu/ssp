@@ -86,14 +86,17 @@ def reset_jobs():
 
 
 @pytest.fixture(autouse=True)
-def reset_database():
-    """每个 test 前 truncate 主要表,保证用例独立"""
+def reset_database(app):
+    """每个 test 前 truncate 主要表,保证用例独立。
+    依赖 app fixture 触发 init_db,这样不用 client 的纯函数测试也能拿到 schema。
+    """
     from app.database import get_db
     with get_db() as conn:
         c = conn.cursor()
         for table in ("users", "tasks", "credit_orders", "generation_history",
                       "merchants", "products", "orders", "order_items",
-                      "body_models", "body_measurements", "model_health"):
+                      "body_models", "body_measurements", "model_health",
+                      "audit_log"):
             c.execute(f"DELETE FROM {table}")
         conn.commit()
     yield
