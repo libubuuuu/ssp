@@ -1,5 +1,54 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 七续(发现并禁用 ai-frontend.service — 降权真正闭环)
+
+### ⚠ 重大发现:平行的 root 服务一直在跑老代码
+本会话准备 4 小时后健康巡检脚本时,dry-run 抓到 root 跑的 next-server
+PID,追踪环境变量看到 `SYSTEMD_EXEC_PID` + `INVOCATION_ID` →
+**systemd 服务起的!**
+
+`ai-frontend.service`(enabled,active running):
+- WorkingDirectory=`/root/ssp/frontend`(老路径!)
+- ExecStart=`node next start`,User 默认 root
+- Restart=always(每次 kill 5 秒后自动重启)
+- Environment=PORT=3000
+
+之前几次切换都看到":3000 root next-server zombie"以为是 supervisor
+残留,**真相是这个独立的 systemd 服务一直在跑**。降权这件事如果不
+管它:
+- 老 /root/ssp 不能删(在用)
+- root 进程一直跑(完全违背降权目的)
+- 重启服务器后 ai-frontend 自启,效果归零
+
+### ✅ 处理
+```bash
+systemctl stop ai-frontend.service
+systemctl disable ai-frontend.service
+systemctl disable ai-backend.service   # 顺手 disable(虽 inactive)
+cp /etc/systemd/system/ai-{frontend,backend}.service \
+   /etc/systemd/system/ai-{frontend,backend}.service.preopt-backup
+```
+
+7 秒后确认不再自动起,:3000 空了。降权战役**真正闭环**。
+
+### ✅ 健康巡检自动化(systemd-run 4 小时后跑)
+- `/root/post-deploy-check.sh`:8 项巡检,绿/黄/红 报告
+- `systemd-run --on-active=4h`:08:13 自动触发(单次)
+- 报告写到 `/root/HEALTH_AT_08.md`
+- 绿:推荐进入 24h 清理 + 列命令
+- 红:**直接列出回滚命令**
+
+dry-run 验证:7 项绿,1 项黄(就是 ai-frontend!)→ disable 后再
+dry-run **8 绿全过**。
+
+### 决策记录
+- **ai-frontend 找到才完整收尾** — 之前 5 次会话都没人发现这个平行
+  服务,因为 `nginx` 不反代 :3000,只反代 :3002,所以业务无感;
+  但它一直消耗 root 权限 + 内存 + 脱节的旧代码运行
+- **systemd-run 而非 at 命令** — at 没装,systemd-run 自带
+- **报告写文件而非 push 通知** — 用户起床直接 `cat` 一目了然,
+  不依赖任何外部服务
+
 ## 2026-04-27 六续(降权遗留扫尾 + 2FA 测试黑洞)
 
 ### ✅ 2FA / TOTP 测试黑洞补完(commit `a667b2f`)
