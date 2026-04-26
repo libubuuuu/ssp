@@ -24,9 +24,30 @@
 ### ⏸ 留给下次
 - 服务降权(专项工作日,/root/ssp → /opt/ssp 大迁移)
 - jti 黑名单 + 单设备 logout(本次只做用户级)
-- JWT refresh token + 短期 access token(降低令牌泄漏窗口)
-- Sentry / Prometheus 接入
+- ~~JWT refresh token + 短期 access token~~ ✅ 已落地基础设施(2026-04-26 晚)
+- Sentry / Prometheus 接入(trace_id 基础已就位 ✅)
 - 微信支付正式接入(替换"截图人工入账")
+
+## 2026-04-26 晚(继续干)
+
+### ✅ 后端 3 件
+- **扩大审计覆盖**:`payment.py::confirm_order`(管理员手动入账 — 合规重点)+ `admin.py::reset_model`(熔断器重置)接入审计钩子
+- **trace_id middleware**:每 HTTP 请求生成 12 位短 UUID 写 `X-Request-ID` 响应头 + 请求级日志(method/path/status/duration/trace_id);上游 X-Request-ID 自动复用,串成链路。**为接 Sentry / ELK 做基础设施**(可按 trace_id 串调用链)
+- **JWT access/refresh 分离**:`create_access_token`(7 天)+ `create_refresh_token`(30 天)+ `type` 字段 + 双向 decode 拒绝(refresh 不能调业务、access 不能换 access)+ 用户级吊销同样杀 refresh + `/api/auth/refresh` 重写。前端切 refresh 流程后可把 access 缩到 1 小时(泄漏窗口缩短 168 倍)
+
+### 测试覆盖再升一轮
+- 60 例(午)→ 76 例(晚),今天总增 38 例
+- 新增:audit confirm_order / reset_model 端到端 / RequestId 5 场景 / refresh access/refresh 双向 11 场景
+
+### 决策记录(再追加)
+- 2026-04-26:trace_id 选 12 位 UUID 短形式 + 优先复用上游 X-Request-ID — 短足够 + 跟网关/前端能串
+- 2026-04-26:refresh 实现选"不轮换"(refresh 用到过期为止)— 比"每次 refresh 都换新 refresh"简单,降低实现复杂度;后续可加轮换 + 黑名单
+- 2026-04-26:access 暂保持 7 天**不缩短** — 缩到 1 小时需要前端配合做 refresh 流程,本次只做后端基础设施,前端切换留下次
+
+### 部署状态(2026-04-26 19:20)
+- 主代码:`85d5419`
+- 生产 active = blue(蓝绿一天内来回切了 2 次,验证 deploy.sh 健康)
+- 4 ref 对齐于 `85d5419`(本地 + 远端 main + feat 双分支)
 
 ## 2026-04-26 凌晨(通宵交付)
 
