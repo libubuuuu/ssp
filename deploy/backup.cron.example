@@ -1,0 +1,13 @@
+# SSP 每日加密备份 cron 模板
+# 安装(把本文件追加到当前 crontab):
+#   crontab -l > /tmp/cron.bak 2>/dev/null || true
+#   cat /tmp/cron.bak /root/ssp/deploy/backup.cron.example | sort -u | crontab -
+#   crontab -l                              # 验证
+#   tail -f /var/log/ssp-backup.log         # 看 cron 输出
+#
+# 时间:每天 03:15 (避开本地备份脚本 backup_daily.sh 在 03:00 的窗口)
+# 失败时 cron 会发邮件给 root(若 MAILTO 配置了);也可在 verify-backup.sh 里报警
+#
+# 字段顺序:分 时 日 月 周 命令
+
+15 3 * * * /usr/bin/bash /root/ssp/deploy/backup.sh >> /var/log/ssp-backup.log 2>&1
