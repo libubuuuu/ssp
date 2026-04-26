@@ -1,0 +1,3 @@
+- [SSP 项目结构与栈](project_ssp.md) — 路径、技术栈、deploy/rollback 脚本位置
+- [SSP 编码约定与禁忌](feedback_ssp_conventions.md) — `??` 不用 `||`、i18n、不改 main、不提交敏感文件
+- [SSP 生产 bug 立即修复约定](feedback_ssp_bug_fix.md) — 用户报 bug 时立刻动手改代码,不只是诊断/指引

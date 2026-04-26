@@ -226,6 +226,27 @@ done
 mkdir -p /var/log/ssp-diagnose
 chmod 750 /var/log/ssp-diagnose
 
+# ========== 阶段 11.5:恢复 Claude 项目记忆 + 启动咒语 ==========
+stage 11.5 "恢复 Claude 项目记忆(memory + start-claude.txt)"
+
+# 把 git 仓库里的 memory 副本恢复到本地(让未来 Claude 继承协作约定 + 项目背景)
+if [[ -d "$REPO_ROOT/docs/memory-snapshot" ]]; then
+    mkdir -p /root/.claude/projects/-root/memory
+    # 只复制 .md 文件,跳过 README.md(那是说明,不是记忆)
+    for f in "$REPO_ROOT"/docs/memory-snapshot/*.md; do
+        bn=$(basename "$f")
+        [[ "$bn" == "README.md" ]] && continue
+        cp "$f" /root/.claude/projects/-root/memory/
+    done
+    echo "$LOG memory 已恢复到 /root/.claude/projects/-root/memory/"
+fi
+
+# 启动咒语(根 cat 文件让用户能立刻用)
+if [[ -f "$REPO_ROOT/start-claude.txt" ]]; then
+    cp "$REPO_ROOT/start-claude.txt" /root/start-claude.txt
+    echo "$LOG /root/start-claude.txt 已就位 — 新会话跑 cat /root/start-claude.txt 引导 Claude"
+fi
+
 # ========== 阶段 12:安装 cron 任务 ==========
 stage 12 "cron 任务(watchdog + 合成监控 + 备份)"
 
