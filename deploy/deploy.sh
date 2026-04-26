@@ -39,7 +39,7 @@ echo "" | tee -a $LOG
 # 3. 前端 build（如果改了前端）
 if [ "$1" = "frontend" ] || [ "$1" = "all" ]; then
     echo "[前端] 构建..." | tee -a $LOG
-    cd /root/ssp/frontend
+    cd /opt/ssp/frontend
     rm -rf .next
     npm run build 2>&1 | tail -3 | tee -a $LOG
 fi

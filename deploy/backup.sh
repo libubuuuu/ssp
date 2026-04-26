@@ -11,9 +11,10 @@ set -euo pipefail
 # === 全局 ===
 TS=$(date +%Y%m%d-%H%M)
 LOG="[backup]"
-SSP_ROOT=/root/ssp
-BACKUP_REPO=/root/ssp-backup-repo
-MASTER_KEY=/root/.ssp_master_key
+# 2026-04-27 起项目降权到 ssp-app + /opt/ssp,master.key 移到 /etc/ssp/
+SSP_ROOT="${SSP_ROOT:-/opt/ssp}"
+BACKUP_REPO="${BACKUP_REPO:-/root/ssp-backup-repo}"
+MASTER_KEY="${MASTER_KEY:-/etc/ssp/master.key}"
 RETENTION_DAYS=7
 
 TMP_DIR=$(mktemp -d -p /dev/shm backup.XXXXXX)
