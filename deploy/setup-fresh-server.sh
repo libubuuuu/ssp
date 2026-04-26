@@ -204,16 +204,54 @@ supervisorctl update
 supervisorctl stop ssp-backend-blue ssp-backend-green ssp-frontend-blue ssp-frontend-green 2>/dev/null || true
 echo "$LOG 应用进程已 stop — 等待主密码写入"
 
-# ========== 阶段 11:打印手动清单 ==========
-stage 11 "完成 — 4 步手动清单"
+# ========== 阶段 11:watchdog 配置 + 日志文件 ==========
+stage 11 "watchdog 配置文件 + 日志路径"
+
+if [[ ! -f /root/.ssp-watchdog-config ]]; then
+    cp "$REPO_ROOT/deploy/watchdog-config.example" /root/.ssp-watchdog-config
+    chmod 600 /root/.ssp-watchdog-config
+    echo "$LOG 创建 /root/.ssp-watchdog-config(从 example,需手工填推送 token + 合成账号密码)"
+else
+    echo "$LOG /root/.ssp-watchdog-config 已存在,保留不动"
+fi
+
+# 创建日志文件(后续 cron 任务写)
+for f in /var/log/ssp-watchdog.log \
+         /var/log/ssp-watchdog-alerts.log \
+         /var/log/ssp-synthetic-test.log \
+         /var/log/ssp-backup.log; do
+    touch "$f"
+    chmod 640 "$f"
+done
+mkdir -p /var/log/ssp-diagnose
+chmod 750 /var/log/ssp-diagnose
+
+# ========== 阶段 12:安装 cron 任务 ==========
+stage 12 "cron 任务(watchdog + 合成监控 + 备份)"
+
+# 备份现有 crontab
+crontab -l > /tmp/cron.bak 2>/dev/null || true
+
+# 合并现有 + 仓库 example,去重排序
+cat /tmp/cron.bak "$REPO_ROOT/deploy/cron.example" \
+    | grep -vE '^\s*#' \
+    | grep -vE '^\s*$' \
+    | sort -u \
+    | crontab -
+
+echo "$LOG cron 当前任务:"
+crontab -l | grep -v '^#' | grep -v '^$' | sed 's/^/    /'
+
+# ========== 阶段 13:打印手动清单 ==========
+stage 13 "完成 — 5 步手动清单"
 
 cat <<'NEXT'
 
 ╔══════════════════════════════════════════════════════════════════╗
-║          基础设施就绪。完成下面 4 步才能让站点上线                 ║
+║          基础设施就绪。完成下面 5 步才能让站点上线                 ║
 ╚══════════════════════════════════════════════════════════════════╝
 
-[1/4] 写主密码(解锁 .env.enc):
+[1/5] 写主密码(解锁 .env.enc):
   echo "你保管的主密码原文" > /root/.ssp_master_key
   chmod 400 /root/.ssp_master_key
 
@@ -222,26 +260,37 @@ cat <<'NEXT'
     -in /root/ssp/backend/.env.enc \
     -pass file:/root/.ssp_master_key | head -3
 
-[2/4] 恢复数据库:
-  # TODO:对象存储恢复脚本 deploy/restore-from-backup.sh 待写
-  # 当前手动:scp 最近一份 dev.db 到 /root/ssp/backend/dev.db
+[2/5] 恢复数据库:
+  # 从 GitHub libubuuuu/ssp-backup 拉最近备份(已加密)
+  bash /root/ssp/deploy/restore.sh
+  # 然后把 /tmp/restore-XXX/backend/dev.db cp 到 /root/ssp/backend/dev.db
   chmod 600 /root/ssp/backend/dev.db
 
-[3/4] 改 DNS A 记录到本机 IP,等生效后申请 SSL:
+[3/5] 改 DNS A 记录到本机 IP,等生效后申请 SSL:
   dig +short ailixiao.com   # 应返回本机 IP
   certbot --nginx \
     -d ailixiao.com -d www.ailixiao.com \
     -d admin.ailixiao.com -d monitor.ailixiao.com \
     --agree-tos --redirect
 
-[4/4] 启动应用:
+[4/5] 启动应用:
   supervisorctl start ssp-backend-blue ssp-frontend-blue
   supervisorctl status
   systemctl reload nginx
+  curl https://ailixiao.com/health   # 应 200
+
+[5/5] 配置监控告警通道(2 步):
+  # 5a. 创建合成监控账号(自动生成密码 + 写入 watchdog-config + 注册 user)
+  cd /root/ssp/backend && bash /root/ssp/deploy/create-synthetic-user.sh
+  # 5b. 配推送 token(任选一个,Server 酱 推荐):
+  #   去 https://sct.ftqq.com 微信扫码拿 SCKEY,然后:
+  vim /root/.ssp-watchdog-config   # 把 SERVERCHAN_KEY= 那行填上
+  bash /root/ssp/deploy/push-alert.sh "测试" "通了"   # 验证
 
 诊断:
   curl https://ailixiao.com/health
-  tail -f /var/log/ssp-backend-blue.{out,err}.log
+  tail -f /var/log/ssp-backend-blue.err.log
+  tail -f /var/log/ssp-watchdog-alerts.log
 
 完整流程见 docs/DISASTER-RECOVERY.md
 NEXT

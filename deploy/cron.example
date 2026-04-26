@@ -1,0 +1,18 @@
+# SSP 完整 cron 任务清单
+# 安装方式:
+#   crontab -l > /tmp/cron.bak 2>/dev/null || true
+#   cat /tmp/cron.bak /root/ssp/deploy/cron.example | grep -v '^#' | grep -v '^$' | sort -u | crontab -
+#   crontab -l 验证
+#
+# 字段:分 时 日 月 周 命令
+
+# === 监控类 ===
+# watchdog 每 5 分钟巡检(health / supervisor / nginx 5xx / 后端 ERROR / 备份新鲜度)
+*/5 * * * * /usr/bin/bash /root/ssp/deploy/watchdog.sh
+
+# 合成用户旅程测试 每 30 分钟一次(模拟真用户登录 → /me → /jobs/list → /packages)
+*/30 * * * * /usr/bin/bash /root/ssp/deploy/synthetic-user-test.sh
+
+# === 备份类 ===
+# 数据库 + .env.enc + jobs.json 每天 03:15 加密备份到 GitHub libubuuuu/ssp-backup
+15 3 * * * /usr/bin/bash /root/ssp/deploy/backup.sh >> /var/log/ssp-backup.log 2>&1
