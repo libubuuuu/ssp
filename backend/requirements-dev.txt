@@ -4,4 +4,4 @@ pytest-asyncio==0.24.0
 pytest-cov==5.0.0
 # httpx 已在 requirements.txt 里(0.26.0),用作 fastapi.testclient 后端
 # ruff 用于 lint(可选,CI 里跑)
-ruff==0.6.9
+ruff==0.15.12
