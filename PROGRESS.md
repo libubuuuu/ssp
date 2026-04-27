@@ -1,5 +1,38 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 二十六续(隐藏雷 #1:uploads 磁盘清理 + GC + 水位告警)
+
+### 背景
+BUG-2 把 fal.media 归档到 `/opt/ssp/uploads`,但没清理。一年下来磁盘必满。
+
+### 改动
+- `app/services/uploads_gc.py`(新):
+  - `clean_old_uploads(days=90, dry_run=False)`:扫整个树,删 mtime > N 天前的文件,顺手删空目录
+  - `delete_archived(url)`:用户主动删 generation_history 时调,**含路径穿越保护**(URL 必须真在 UPLOADS_ROOT 子树下)
+  - `disk_usage_pct()`:返回分区占用百分比,watchdog 用
+  - `_is_within_uploads`:`Path.resolve().relative_to()` 安全锚定
+- `deploy/uploads-gc.sh`:cron 入口脚本,sudo 切到 ssp-app 跑 Python 调清理函数
+- `deploy/uploads-gc.cron.example`:每天 04:00 模板(避开 03:00 备份窗口)
+- `deploy/watchdog.sh`:加 #7 uploads 磁盘 >= 80% WARN(写到 ssp-watchdog-alerts.log → 推微信)
+- `media_archiver.py`:re-export `delete_archived`(用户原话指定那里加;真实现仍在 uploads_gc)
+
+### 测试 +11(170 → **181**)
+- clean 保留新文件 / 删旧文件 / dry_run 不真删 / 删空目录 / uploads 不存在不抛
+- delete_archived happy path / 路径穿越拒绝(`../../../etc/passwd` 拒)/ 非 uploads URL 忽略 / missing 不抛
+- disk_usage_pct 返 int / 无目录返 None
+
+### 决策记录
+- **保留 90 天默认** — 用户极少回看 90 天前内容;改 `SSP_UPLOADS_RETENTION_DAYS` 环境变量调
+- **删空目录但不软删文件** — 软删(.deleted-{ts} + 7 天后真删)是过度工程,本期 unlink + log 即可;有 dry_run 兜底
+- **路径穿越保护强制做** — `delete_archived(url)` 接受用户输入的 URL,不做就是 RCE 类风险
+- **watchdog 告警 80%** — 用户有时间反应(GC + 调 retention),不会突然爆盘 100%
+- **不接腾讯云 COS / 阿里云 OSS** — 那是 BUG-2 阶段 B,本期专注本地清理
+
+### ⏸ 用户操作清单
+1. `cp /opt/ssp/deploy/uploads-gc.cron.example >> crontab`(用户判断要不要)
+2. 默认 90 天保留,需要更紧凑磁盘可改 SSP_UPLOADS_RETENTION_DAYS=30
+3. 第一次手动 dry-run:`bash /opt/ssp/deploy/uploads-gc.sh --dry`(脚本暂未提供 dry 参数,可改 retention 巨大测试)
+
 ## 2026-04-27 二十五续(P9:限流 Redis 后端可选 — 等用户启用)
 
 ### 设计决策

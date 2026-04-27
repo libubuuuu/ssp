@@ -101,6 +101,17 @@ if [[ "$RECENT_ERR" -gt 5 ]]; then
     warn_count=$((warn_count + 1))
 fi
 
+# === 7. uploads 磁盘水位(隐藏雷 #1) ===
+# /opt/ssp/uploads 落媒体归档,> 80% 推告警提醒人工 GC 或调 retention
+UPLOADS_DIR=/opt/ssp/uploads
+if [[ -d "$UPLOADS_DIR" ]]; then
+    UPLOADS_PCT=$(df --output=pcent "$UPLOADS_DIR" 2>/dev/null | tail -1 | tr -dc '0-9')
+    if [[ -n "$UPLOADS_PCT" ]] && [[ "$UPLOADS_PCT" -ge 80 ]]; then
+        alert "[WARN] uploads 磁盘水位 ${UPLOADS_PCT}% (>= 80%),建议跑 deploy/uploads-gc.sh 或调短 retention"
+        warn_count=$((warn_count + 1))
+    fi
+fi
+
 # === 6. 合成监控:模拟用户访问关键路径(bug 在用户撞到之前先抓到) ===
 # 跟 #1 health 重试一样的容忍度:失败重试一次,瞬时抖动不报警
 

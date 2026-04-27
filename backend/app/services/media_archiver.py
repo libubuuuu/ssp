@@ -154,3 +154,10 @@ async def archive_url(url: str, user_id: str, kind: str = "media") -> str:
     except (httpx.HTTPError, OSError) as e:
         logger.warning("archive_url exception: url=%s err=%s", url[:120], e)
         return url
+
+
+# 隐藏雷 #1:用户主动删 generation_history 时调,清掉本地文件
+# 真实现在 uploads_gc.delete_archived,这里只是按用户原话"media_archiver.py 加 delete_archived"
+# 提供一个对外稳定入口
+from app.services.uploads_gc import delete_archived  # noqa: E402  re-export
+__all__ = ["archive_url", "delete_archived"]
