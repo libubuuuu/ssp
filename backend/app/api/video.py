@@ -138,21 +138,29 @@ class VideoComposeRequest(BaseModel):
 
 @router.post("/link/init")
 async def init_video_link(req: VideoLinkRequest):
-    """解析视频链接，提取分镜与提示词"""
-    # TODO: 视频下载和分镜提取
-    return {"task_id": "placeholder", "shots": [], "message": "视频解析中"}
+    """解析视频链接,提取分镜与提示词"""
+    raise HTTPException(
+        status_code=503,
+        detail="视频链接改造功能正在开发中,预计 4-8 周内上线。本接口不扣积分。",
+    )
 
 
 @router.post("/link/replace")
 async def set_replace_config(req: VideoLinkReplaceRequest):
     """设置人物/背景替换与产品信息"""
-    return {"message": "已保存"}
+    raise HTTPException(
+        status_code=503,
+        detail="视频链接改造功能正在开发中,预计 4-8 周内上线。本接口不扣积分。",
+    )
 
 
 @router.post("/link/prompt")
 async def update_shot_prompt(req: ShotPromptUpdate):
     """更新镜头提示词 (同步飞书)"""
-    return {"message": "已更新并同步飞书"}
+    raise HTTPException(
+        status_code=503,
+        detail="视频链接改造功能正在开发中,预计 4-8 周内上线。本接口不扣积分。",
+    )
 
 
 @router.post("/text-to-video")
@@ -280,92 +288,47 @@ async def clone_video(req: VideoCloneRequest, current_user: dict = Depends(get_c
 
 @router.post("/editor/parse")
 async def parse_video(req: VideoParseRequest):
-    """
-    视频语义解析
-    使用多模态大模型对视频抽帧 + 音频转文字，逆向推导出分镜时间轴
-    """
-    # TODO: 实现视频解析
-    # 1. 使用 LLaVA 抽帧分析 -> 分镜描述
-    # 2. 使用 Whisper -> 音频转文字
-    # 3. 输出分镜时间轴 JSON
-    return {
-        "task_id": "parse_" + str(hash(req.video_url)),
-        "shots": [
-            {
-                "index": 0,
-                "start_time": 0.0,
-                "end_time": 3.5,
-                "description": "一位年轻女性站在咖啡店柜台前，微笑着看向镜头",
-                "camera_movement": "固定镜头，轻微推近",
-                "prompt": "young woman standing in front of coffee shop counter, smiling at camera",
-                "thumbnail_url": None,
-            },
-            {
-                "index": 1,
-                "start_time": 3.5,
-                "end_time": 7.0,
-                "description": "女性拿起咖啡杯，轻轻闻了一下香气",
-                "camera_movement": "特写镜头，聚焦手部动作",
-                "prompt": "woman picks up coffee cup, smells the aroma",
-                "thumbnail_url": None,
-            },
-        ],
-        "audio_transcript": "欢迎来到咖啡店，今天我们要品尝一杯特别的咖啡...",
-        "duration": 7.0,
-    }
+    """视频语义解析(多模态分镜)"""
+    raise HTTPException(
+        status_code=503,
+        detail="视频剪辑台(分镜解析)功能正在开发中,预计 6-10 周内上线。本接口不扣积分。",
+    )
 
 
 @router.post("/editor/shot/{shot_index}/update")
 async def update_shot(req: ShotUpdateRequest, shot_index: int):
     """更新分镜卡片"""
-    # TODO: 实现分镜更新
-    return {"message": "分镜已更新", "shot_index": shot_index}
+    raise HTTPException(
+        status_code=503,
+        detail="视频剪辑台(分镜更新)功能正在开发中,预计 6-10 周内上线。本接口不扣积分。",
+    )
 
 
 @router.post("/editor/shot/{shot_index}/regenerate")
 async def regenerate_shot(req: VideoRegenerateRequest, shot_index: int):
     """按新文本重新生成该段视频"""
-    # TODO: 实现分镜重新生成
-    return {
-        "task_id": f"regen_shot_{shot_index}",
-        "status": "pending",
-        "message": "分镜重新生成任务已提交",
-    }
+    raise HTTPException(
+        status_code=503,
+        detail="视频剪辑台(分镜重生成)功能正在开发中,预计 6-10 周内上线。本接口不扣积分。",
+    )
 
 
 @router.post("/editor/compose")
 async def compose_video(req: VideoComposeRequest):
     """视频合成 - 将分镜片段拼接成完整视频"""
-    # TODO: 实现视频合成
-    return {
-        "task_id": "compose_" + str(hash(str(req.shots))),
-        "status": "pending",
-        "message": "视频合成任务已提交",
-    }
+    raise HTTPException(
+        status_code=503,
+        detail="视频剪辑台(合成)功能正在开发中,预计 6-10 周内上线。本接口不扣积分。",
+    )
 
 
 @router.post("/editor/translate")
 async def translate_script(req: dict):
-    """
-    脚本翻译
-    支持 75 种语言，中英必选
-    """
-    text = req.get("text", "")
-    target_lang = req.get("target_lang", "en")
-
-    # TODO: 调用翻译 API
-    translations = {
-        "en": "Welcome to our coffee shop, today we're going to taste a special coffee...",
-        "zh": "欢迎来到咖啡店，今天我们要品尝一杯特别的咖啡...",
-        "ja": "コーヒーショップへようこそ。今日は特別なコーヒーを味わいます...",
-        "ko": "커피 샵에 오신 것을 환영합니다. 오늘 우리는 특별한 커피를 맛볼 것입니다...",
-    }
-
-    return {
-        "original": text,
-        "translated": translations.get(target_lang, text),
-        "target_lang": target_lang,
-    }
+    """脚本翻译"""
+    raise HTTPException(
+        status_code=503,
+        detail="脚本翻译功能正在开发中,预计 4-6 周内上线。本接口不扣积分。",
+    )
 
 
 @router.post("/upload/image")

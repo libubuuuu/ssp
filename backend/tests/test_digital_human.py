@@ -30,13 +30,13 @@ def _get_credits(user_id: str) -> int:
     return row[0]
 
 
-def test_digital_human_generate_returns_501(client, register):
-    token, user = register(client, "dh-501-a@example.com")
+def test_digital_human_generate_returns_503(client, register):
+    token, user = register(client, "dh-503-a@example.com")
     r = _post_generate(client, token)
-    assert r.status_code == 501, r.text
+    assert r.status_code == 503, r.text
     body = r.json()
     assert "积分" in body["detail"] or "credit" in body["detail"].lower(), \
-        "501 文案应明确说明不会扣费,避免用户误解"
+        "503 文案应明确说明不会扣费,避免用户误解"
 
 
 def test_digital_human_generate_does_not_deduct_credits(client, register):
@@ -48,14 +48,14 @@ def test_digital_human_generate_does_not_deduct_credits(client, register):
     # 调三次都应该 501
     for _ in range(3):
         r = _post_generate(client, token)
-        assert r.status_code == 501
+        assert r.status_code == 503
 
     after = _get_credits(user["id"])
     assert after == before, f"积分被扣了!{before} → {after}"
 
 
 def test_digital_human_unauthenticated_rejected(client):
-    """没 token 应该 401,而非泄漏 501"""
+    """没 token 应该 401,而非泄漏 503"""
     files = {"image": ("test.jpg", io.BytesIO(b"x"), "image/jpeg")}
     data = {"script": "x"}
     r = client.post("/api/digital-human/generate", files=files, data=data)

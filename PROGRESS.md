@@ -1,5 +1,45 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 十三续(P0 紧急扫尾:所有空壳付费/假回应接口 503 化)
+
+### 用户审计扫描结果
+按"@require_credits 装饰器存在 + 函数体只返回 placeholder"严格匹配:
+- digital_human.py — 1 个(已在十二续修),本次再调整 501 → 503 + 时间线措辞
+- video.py — **0 个匹配**(@require_credits 的 image-to-video / replace/element / clone 全是真实现的,FAL 调用闭环)
+
+### 顺手扩展:video.py 8 个"不扣钱但说谎"端点
+不属于"扣钱+placeholder"的严格匹配,但属于同一类 UX 欺诈(返回死写的假数据让用户以为成功)。逐一 503 + 时间线措辞:
+
+| 端点 | 旧行为 | 新 |
+|---|---|---|
+| /api/video/link/init | 返回 `task_id="placeholder"` | 503 "4-8 周内上线" |
+| /api/video/link/replace | 返回 "已保存"(没真保存) | 503 同上 |
+| /api/video/link/prompt | 返回 "已更新并同步飞书"(没真同步) | 503 同上 |
+| /api/video/editor/parse | 返回死写的咖啡店示例(用户以为是分析自己视频) | 503 "6-10 周内上线" |
+| /api/video/editor/shot/X/update | 返回 "分镜已更新"(没真更新) | 503 同上 |
+| /api/video/editor/shot/X/regenerate | 返回 `regen_shot_X` 假 task_id | 503 同上 |
+| /api/video/editor/compose | 返回 `compose_<hash>` 假 task_id | 503 同上 |
+| /api/video/editor/translate | 返回 4 种死写翻译 | 503 "4-6 周内上线" |
+
+### 前端配套
+- `/video/editor` 页改"敬请期待"(原页面 5 个端点全 503,留着会撞错误墙)
+- `/video/link*` 没前端引用,只清后端
+
+### 测试
+- digital_human 3 测试更新 501 → 503,assertion 全过
+- 后端总测试 103/103,零回归
+
+### 未受 503 化的(真实现,继续工作)
+- /api/image/style, /api/image/realistic, /api/image/multi-reference
+- /api/video/image-to-video, /api/video/replace/element, /api/video/clone
+- /api/avatar/generate(数字人 图片+音频)
+- /api/avatar/voice/clone, /voice/tts(语音克隆 / TTS)
+
+### 决策记录
+- **不扣钱但说谎也是欺诈** — 严格匹配只 1 个(digital_human),但 video.py 8 个让用户"以为做了什么"也是底线问题,扩展 P0 范围
+- **503 而非 501** — 用户指定语义,503 含"暂时不可用"+ 时间线,UX 比 501("永不实现")更友好
+- **前端 /video/editor 整页改 coming-soon** — 5 个端点全 503,UI 留着只会撞错误墙;改 landing 干净
+
 ## 2026-04-27 十二续(🚨 真 bug 修复:digital-human 假扣费 + avatar 真接通)
 
 ### ⚠ 用户抓到的真 bug
