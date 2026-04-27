@@ -1,5 +1,24 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 三十一续(P8 阶段 3 文档化 — 留 30 天等待期)
+
+### 阶段 3 不立即做,文档化触发条件
+- 30 天等待期(commit `3c09405` 起算约 5/27)
+- 或 nginx access log 显示 Authorization 调用 < 5%
+- 或合规催"localStorage 0 token"
+
+### 新文档 `docs/P8-COOKIE-MIGRATION.md`
+- 当前双轨状态总览
+- 阶段 3 清理清单(后端 / 前端 / 配置 各 4-7 项)
+- 老登录态升级**必须提前 1 周公告**(localStorage token 阶段 3 部署后不自动迁,用户被踢一次重登)
+- 跨子域 cookie:`COOKIE_DOMAIN=.ailixiao.com` 让两个子域共享
+- 回滚预案:rollback.sh 切回 standby(双轨版,header 还在)
+
+### 决策记录
+- **不强行清理 localStorage 路径** — 若现在清,所有当前活跃用户被踢;不公告就投诉爆;30 天等大部分 refresh 自然过期更友好
+- **测试全过(203 仍 PASS)** — 阶段 3 等用户决定时再启动,不影响当前测试
+- **WS 鉴权阶段 3 也不动** — 浏览器规范 cookie 不能给 WS;query token 永久保留
+
 ## 2026-04-27 三十续(P8 阶段 2:前端切 cookie — 中心 patch 一处搞定 71 fetch)
 
 ### 关键策略:不动 71 处 fetch
