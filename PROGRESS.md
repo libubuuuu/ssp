@@ -1,5 +1,33 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 十五续(P2:内容审核精简版上线)
+
+### 新模块 `app/services/content_filter.py`
+- 黑名单约 200 词,三类:**政治敏感 / 色情 / 暴力**,中英对照
+- 中文子串匹配;英文用 `\b` 单词边界(防 "kill" 误伤 "skill")
+- 大小写不敏感
+- 接口:`check_prompt(p) -> (is_safe, reason)`,`assert_safe_prompt(p)` raise HTTPException(400)
+
+### 接入 5 个真实 FAL 调用端点
+- image.py: /style, /realistic(prompt + refine_prompt), /multi-reference
+- video.py: /image-to-video(prompt), /replace/element(instruction)
+
+### 装饰器交互(关键)
+`assert_safe_prompt` 放在函数体第 1 行,@require_credits 装饰器 deduct → 函数体 raise HTTPException(400) → 装饰器 catch HTTPException → **add_credits 返还** → re-raise。**用户最终积分 0 变化**,只是多一次 deduct/refund 来回。
+
+### 测试 +17(103 → 120)
+- 17 个 content_filter 测试覆盖三类、word boundary、大小写、空 prompt、不泄漏命中词
+- 关键断言:`detail` 只透露分类("色情")不透露具体词,避免攻击者反推词表
+
+### 决策记录
+- **detail 不返回命中词** — 防字典爆破:攻击者输 "abc" → 200,"def" → 400 "色情" 就能推词;只回类别可挡
+- **400 而非 422** — 用户语义指定 400;Pydantic validator 路线会 422,要走 HTTPException
+- **检查 req.prompt 不检查 full_prompt** — 用户输入是 prompt;handler 加的 style prefix 是固定文本,过滤无意义
+- **voice/clone 和 voice/tts 暂不接** — text 字段同样需要审核但优先级低于图像/视频(违规图像/视频比 TTS 危害更大);留下次专项
+
+### ⚠ 这是底线不是合规
+Phase 4 必须接阿里云内容安全 / 腾讯云 CMS 才能满足"深度合成"监管要求(网信办备案)。当前实现挡明显违规,降低法律风险但不构成合规
+
 ## 2026-04-27 十四续(P1:SQLite 开 WAL + jobs.json fcntl 锁)
 
 ### a. database.py 开 WAL

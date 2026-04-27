@@ -11,6 +11,7 @@ from typing import Optional, List
 from enum import Enum
 from app.services.fal_service import get_video_service
 from app.services.decorators import require_credits
+from app.services.content_filter import assert_safe_prompt
 from app.api.auth import get_current_user
 
 router = APIRouter()
@@ -178,6 +179,7 @@ async def text_to_video(req: TextToVideoRequest):
 @require_credits("video/image-to-video")
 async def image_to_video(req: ImageToVideoRequest, current_user: dict = Depends(get_current_user)):
     """图生视频 (Kling)"""
+    assert_safe_prompt(req.prompt)
     from app.services import task_ownership
 
     service = get_video_service()
@@ -222,6 +224,7 @@ async def replace_video_element(req: VideoElementReplaceRequest, current_user: d
     视频元素替换
     使用 Kling O1 Edit 模型，根据自然语言指令替换视频中的元素
     """
+    assert_safe_prompt(req.instruction)
     # 调用 FAL AI 视频编辑服务
     from app.services import task_ownership
 

@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
 from app.services.fal_service import get_image_service
 from app.services.decorators import require_credits
+from app.services.content_filter import assert_safe_prompt
 from app.api.auth import get_current_user
 
 router = APIRouter()
@@ -56,6 +57,7 @@ class ImageMultiReferenceRequest(BaseModel):
 @require_credits("image/style")
 async def generate_style_image(req: ImageStyleRequest, current_user: dict = Depends(get_current_user)):
     """生成风格化/广告级图片"""
+    assert_safe_prompt(req.prompt)
     service = get_image_service()
 
     full_prompt = req.prompt
@@ -87,6 +89,8 @@ async def generate_style_image(req: ImageStyleRequest, current_user: dict = Depe
 @require_credits("image/realistic")
 async def generate_realistic_image(req: ImageRealisticRequest, current_user: dict = Depends(get_current_user)):
     """生成写实/可控图片"""
+    assert_safe_prompt(req.prompt)
+    assert_safe_prompt(req.refine_prompt)
     service = get_image_service()
 
     full_prompt = req.prompt
@@ -118,6 +122,7 @@ async def generate_multi_reference_image(req: ImageMultiReferenceRequest, curren
     多参考图生图
     参考图顺序决定权重：第一张 50%, 第二张 30%, 第三张 20%
     """
+    assert_safe_prompt(req.prompt)
     service = get_image_service()
 
     if not req.reference_images:
