@@ -1,5 +1,41 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 三十四续(deploy 进生产 + CLAUDE.md 重写)
+
+### Deploy 进生产(blue-green 30 秒)
+17:18 → 19:46 累积 5 个 commit 上线:
+- BUG-1 注册 IP 失败软配额 (`425f613`)
+- BUG-2 媒体归档 (`7235071`)
+- P5 Sentry 框架 (`ebb403d`)
+- P6 CF-Connecting-IP 优先 (`8642f59`)
+- P9 限流 Redis 后端 (`a8f34e4`)
+- 隐藏雷 #1/#2/#3 (`d313b62` / `3437855` / `f96d951`)
+- P8 阶段 1+2 (`d59aab3` / `3c09405`)
+- P8 阶段 3 doc (`04acca6`)
+- /login-by-code 修复 (`b4d8a7c`)
+- media_archiver client 共享 (`9519265`)
+
+实际操作:
+- 19:46 备份 dev.db_20260427_194620.db
+- rsync /root/ssp/backend → /opt/ssp/backend(排除 venv/db/logs)
+- chown ssp-app
+- bash /root/deploy.sh:active green → blue,30 秒切换
+- 验证:公网 200 / supervisor blue RUNNING / register_ip_failure_log 表已建 / Sentry 跳过日志正常
+
+### CLAUDE.md 重写(202 行,从 169 行)
+旧版严重过时:User=root / systemd / /root/ssp/backend/dev.db / "Phase 1 服务降权 todo"。新版反映:
+- 服务 supervisor + ssp-app 已降权
+- /opt/ssp 是生产路径
+- 一级差距从 6 项剩 4 项(降权 + 测试 + CI 完成)
+- 新增 P8/P9/BUG-1/2/隐藏雷 1-3 路线
+- "用户操作待办"清单 7 项
+
+### 最终状态
+- 4-ref 对齐 `9519265`(待 CLAUDE.md commit 后再齐)
+- 测试 205 全过
+- 生产已上线本轮所有修复
+- 仅余 P8 阶段 3(30 天后)+ Phase 2 大工程 + 用户决定项
+
 ## 2026-04-27 三十三续(自审橙色 #6:media_archiver httpx 客户端共享)
 
 ### 问题
