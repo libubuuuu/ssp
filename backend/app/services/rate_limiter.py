@@ -19,6 +19,10 @@ import time
 REGISTER_IP_LIMIT = 3      # 同 IP 24 小时内最多成功注册次数
 REGISTER_IP_WINDOW = 86400  # 时间窗口(秒)
 
+# === BUG-1:注册失败软配额(防脚本爆破 code) ===
+REGISTER_IP_FAILURE_LIMIT = 10   # 同 IP 24h 失败 >= 10 次 → 429
+REGISTER_IP_FAILURE_WINDOW = 86400
+
 
 def get_client_ip(request: Request) -> str:
     """统一从 request 抽 IP(模块级公用)"""
@@ -63,6 +67,48 @@ def assert_register_ip_quota(ip: str) -> None:
         raise HTTPException(
             status_code=429,
             detail=f"该 IP 24 小时内已注册 {used} 次,达到上限({REGISTER_IP_LIMIT}),请明天再来",
+        )
+
+
+# === BUG-1:失败软配额 ===
+
+def count_recent_register_failures_from_ip(ip: str) -> int:
+    """24h 内此 IP 失败注册次数"""
+    from app.database import get_db
+    cutoff_ts = time.time() - REGISTER_IP_FAILURE_WINDOW
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM register_ip_failure_log WHERE ip = ? AND attempted_at_ts >= ?",
+            (ip, cutoff_ts),
+        ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def record_register_ip_failure(ip: str, reason: str = "") -> None:
+    """注册失败后写一条 + GC 24h 之前的旧条目
+
+    reason: 自由文本(如 "wrong_code" / "expired_code" / "no_code" / "duplicate"),
+    便于后续审计但不参与限流逻辑。"""
+    from app.database import get_db
+    now_ts = time.time()
+    cutoff_ts = now_ts - REGISTER_IP_FAILURE_WINDOW
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO register_ip_failure_log (ip, attempted_at_ts, reason) VALUES (?, ?, ?)",
+            (ip, now_ts, reason[:64]),
+        )
+        c.execute("DELETE FROM register_ip_failure_log WHERE attempted_at_ts < ?", (cutoff_ts,))
+        conn.commit()
+
+
+def assert_register_ip_failure_quota(ip: str) -> None:
+    """超失败软配额直接 raise 429,挡脚本反复试错 code"""
+    used = count_recent_register_failures_from_ip(ip)
+    if used >= REGISTER_IP_FAILURE_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail=f"该 IP 24 小时内失败次数过多({used} 次),已临时封锁,请明天再来",
         )
 
 

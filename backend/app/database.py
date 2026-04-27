@@ -254,6 +254,19 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_register_ip_log_ip ON register_ip_log(ip)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_register_ip_log_ts ON register_ip_log(registered_at_ts)")
 
+        # BUG-1:注册失败 IP 日志(反脚本爆破 — 同 IP 24h 失败 >=10 次 → 429)
+        # 上一轮 P3-3 只对"成功"计数,脚本反复试错 code 无配额,本表补这个洞
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS register_ip_failure_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip TEXT NOT NULL,
+            attempted_at_ts REAL NOT NULL,
+            reason TEXT
+        )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_register_ip_failure_log_ip ON register_ip_failure_log(ip)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_register_ip_failure_log_ts ON register_ip_failure_log(attempted_at_ts)")
+
         # 创建索引优化查询性能
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")

@@ -82,25 +82,31 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
 
 @router.post("/register")
 async def register(req: RegisterRequest, request: Request):
-    """用户注册(P3-2 邮箱码 + P3-3 IP 限流)"""
+    """用户注册(P3-2 邮箱码 + P3-3 IP 限流 + BUG-1 失败软配额)"""
     from app.services.rate_limiter import (
         get_client_ip,
         assert_register_ip_quota,
+        assert_register_ip_failure_quota,
         record_register_ip,
+        record_register_ip_failure,
     )
 
-    # 1. IP 限流(优先级最高,挡住批量羊毛党)
+    # 1. IP 双重限流(优先级最高,挡批量羊毛党 + 脚本爆破)
     ip = get_client_ip(request)
-    assert_register_ip_quota(ip)
+    assert_register_ip_failure_quota(ip)  # BUG-1: 失败软配额(脚本)
+    assert_register_ip_quota(ip)          # P3-3: 成功硬配额(羊毛党)
 
-    # 2. 邮箱码校验(必须在创建用户前,失败永不落库)
+    # 2. 邮箱码校验(必须在创建用户前,失败永不落库;失败计入 IP 失败配额)
     cache = _EMAIL_CODES.get(req.email)
     if not cache:
+        record_register_ip_failure(ip, "no_code")
         raise HTTPException(status_code=400, detail="请先发送邮箱验证码")
     if cache["expires_at"] < _time.time():
         _EMAIL_CODES.pop(req.email, None)
+        record_register_ip_failure(ip, "expired_code")
         raise HTTPException(status_code=400, detail="验证码已过期,请重新发送")
     if cache["code"] != req.code:
+        record_register_ip_failure(ip, "wrong_code")
         raise HTTPException(status_code=400, detail="验证码错误")
     # 通过 — 立刻作废,防重放
     _EMAIL_CODES.pop(req.email, None)
@@ -108,14 +114,17 @@ async def register(req: RegisterRequest, request: Request):
     # 3. 检查邮箱是否已存在
     existing = get_user_by_email(req.email)
     if existing:
+        record_register_ip_failure(ip, "duplicate")
         raise HTTPException(status_code=400, detail="该邮箱已被注册")
 
     # 4. 创建用户
     user = create_user(req.email, req.password, req.name)
     if not user:
+        # 服务端错误也计 — 否则脚本可以利用 server bug 反复打
+        record_register_ip_failure(ip, "create_failed")
         raise HTTPException(status_code=500, detail="注册失败")
 
-    # 5. 注册成功 — 记录 IP(为下一次限流提供基线)
+    # 5. 注册成功 — 记录 IP(为下一次成功配额提供基线)
     record_register_ip(ip)
 
     # 同时签发 access + refresh

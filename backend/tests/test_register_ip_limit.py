@@ -103,10 +103,10 @@ def test_different_ips_isolated(client):
     assert sc_b1 == 200
 
 
-def test_failed_register_does_not_count(client):
-    """注册失败(错误验证码)不应记录 IP"""
-    # 用错误的 code,会 400 — 不应记录
+def test_failed_register_does_not_count_success_quota(client):
+    """注册失败不计成功配额(P3-3 行为),但会计 BUG-1 失败软配额"""
     from app.api import auth as auth_module
+    # 3 次失败仍未到失败软配额(10),所以仍能成功注册
     for i in range(3):
         _put_code(f"fail{i}@nope.com", code="111111")
         r = client.post(
@@ -116,6 +116,107 @@ def test_failed_register_does_not_count(client):
         )
         assert r.status_code == 400
 
-    # 同 IP 3 次失败后还应能成功(record 只在 success 后)
+    # 同 IP 3 次失败后还能成功 — 失败配额(10)还没到
     sc = _register_with_ip(client, "ok@later.com", ip="10.0.0.30")
     assert sc == 200
+
+
+# === BUG-1:失败软配额测试 ===
+
+def test_failure_quota_blocks_after_10_wrong_codes(client):
+    """同 IP 失败 10 次后,第 11 次直接 429(脚本爆破挡板)"""
+    ip = "10.0.99.1"
+    for i in range(10):
+        _put_code(f"brute{i}@nope.com", code="111111")
+        r = client.post(
+            "/api/auth/register",
+            json={"email": f"brute{i}@nope.com", "password": "secret123", "code": "222222"},
+            headers={"X-Forwarded-For": ip},
+        )
+        assert r.status_code == 400, f"第 {i+1} 次应该 400(错码),实际 {r.status_code}"
+
+    # 第 11 次 — 不管 code 对不对,先撞 429
+    _put_code("brute11@nope.com", code="222222")
+    r = client.post(
+        "/api/auth/register",
+        json={"email": "brute11@nope.com", "password": "secret123", "code": "222222"},
+        headers={"X-Forwarded-For": ip},
+    )
+    assert r.status_code == 429
+    assert "失败次数过多" in r.json()["detail"]
+
+
+def test_failure_quota_blocks_even_correct_code(client):
+    """关键:被失败软配额封后,正确码也注不进来(挡脚本"试出来再用对码注")"""
+    ip = "10.0.99.2"
+    # 先打 10 次错码
+    for i in range(10):
+        _put_code(f"x{i}@nope.com", code="111111")
+        client.post(
+            "/api/auth/register",
+            json={"email": f"x{i}@nope.com", "password": "secret123", "code": "222222"},
+            headers={"X-Forwarded-For": ip},
+        )
+
+    # 现在用正确的 code 注册,也 429
+    _put_code("legit@later.com", code="999999")
+    r = client.post(
+        "/api/auth/register",
+        json={"email": "legit@later.com", "password": "secret123", "code": "999999"},
+        headers={"X-Forwarded-For": ip},
+    )
+    assert r.status_code == 429
+
+
+def test_failure_quota_isolated_per_ip(client):
+    """A IP 失败 10 次封了,B IP 不受影响"""
+    ip_a = "10.0.99.3"
+    ip_b = "10.0.99.4"
+    for i in range(10):
+        _put_code(f"a{i}@nope.com", code="111111")
+        client.post(
+            "/api/auth/register",
+            json={"email": f"a{i}@nope.com", "password": "secret123", "code": "222222"},
+            headers={"X-Forwarded-For": ip_a},
+        )
+
+    # B IP 第 1 次,正常
+    sc = _register_with_ip(client, "b1@isolated.com", ip=ip_b)
+    assert sc == 200
+
+
+def test_failure_quota_unit():
+    """单元:rate_limiter 内部函数计数 / 临界 / 隔离"""
+    from app.services import rate_limiter as rl
+    assert rl.count_recent_register_failures_from_ip("4.4.4.4") == 0
+    rl.record_register_ip_failure("4.4.4.4", "wrong_code")
+    rl.record_register_ip_failure("4.4.4.4", "expired_code")
+    assert rl.count_recent_register_failures_from_ip("4.4.4.4") == 2
+    # 5.5.5.5 独立
+    assert rl.count_recent_register_failures_from_ip("5.5.5.5") == 0
+
+
+def test_failure_quota_old_records_gc():
+    """超过 24h 的失败记录不计入"""
+    from app.database import get_db
+    from app.services import rate_limiter as rl
+    old_ts = _time.time() - rl.REGISTER_IP_FAILURE_WINDOW - 100
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO register_ip_failure_log (ip, attempted_at_ts, reason) VALUES (?, ?, ?)",
+            ("6.6.6.6", old_ts, "old"),
+        )
+        conn.commit()
+    assert rl.count_recent_register_failures_from_ip("6.6.6.6") == 0
+
+
+def test_failure_quota_assert_at_limit_raises_429():
+    import pytest
+    from fastapi import HTTPException
+    from app.services import rate_limiter as rl
+    for _ in range(rl.REGISTER_IP_FAILURE_LIMIT):
+        rl.record_register_ip_failure("7.7.7.7", "test")
+    with pytest.raises(HTTPException) as ei:
+        rl.assert_register_ip_failure_quota("7.7.7.7")
+    assert ei.value.status_code == 429
+    assert "失败次数过多" in ei.value.detail

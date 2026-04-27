@@ -1,5 +1,38 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 二十续(BUG-1:注册 IP 失败软配额 — 堵脚本爆破洞)
+
+### 上一轮发现的洞
+P3-3 IP 限流只对**成功注册**计数(3 次/24h),失败不计。脚本可以反复打错 code 不被限流,直到撞对。
+
+### 方案
+新增"失败软配额":同 IP 24h 失败 ≥ 10 次 → 429,**正确码也注不进来**(直到 24h 窗口滑出)。
+- 比成功配额(3)宽松 — 真用户输错 code 还能多试几次
+- 比"失败也限 3"严格 — 脚本顶不住
+
+### 改动
+- `database.py`:新表 `register_ip_failure_log(ip, attempted_at_ts, reason)` + 双索引
+- `rate_limiter.py`:
+  - 常量 `REGISTER_IP_FAILURE_LIMIT = 10`,`REGISTER_IP_FAILURE_WINDOW = 86400`
+  - `count_recent_register_failures_from_ip` / `record_register_ip_failure(ip, reason)` / `assert_register_ip_failure_quota`
+- `auth.py /register` 流程:
+  - 第 1 步:`assert_register_ip_failure_quota`(失败配额优先,挡脚本)
+  - 第 2 步:`assert_register_ip_quota`(成功配额,挡羊毛党)
+  - 4 个失败分支(no_code / expired / wrong / duplicate / create_failed)各自 `record_register_ip_failure(ip, reason)` 后 raise
+
+### 测试 +6(134 → **140**)
+- `test_failure_quota_blocks_after_10_wrong_codes`(11 次 429)
+- `test_failure_quota_blocks_even_correct_code`(被封后正确码也封,关键挡脚本"试出再用对码")
+- `test_failure_quota_isolated_per_ip`
+- 单元:`count` / `record` / `gc 24h+` / `assert_at_limit_429`
+
+### 决策记录
+- **失败配额 10 次** — 真用户极少错 10 次邮箱码;脚本 1 秒内能打 100 次,撞 10 次封锁不会冤
+- **被封后正确码也注不进** — 关键设计:防"先试出 code,再用对码注册";代价是真用户被封后只能等 24h 或换 IP
+- **reason 字段不参与限流逻辑** — 仅留作审计;后续 admin/diagnose 接入可看哪些 IP 在打哪种错
+- **GC 内嵌在 record** — 表不会无限膨胀
+- **失败配额检查在成功配额之前** — 失败配额是更精确的"abuse 信号",优先级更高;数学上两个 if 顺序无所谓,语义上失败先
+
 ## 2026-04-27 十九续(P4:localStorage 改 httpOnly Cookie 方案文档化)
 
 ### 现状(已存在的安全债)
