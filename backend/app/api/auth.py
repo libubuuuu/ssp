@@ -5,10 +5,11 @@
 - 获取当前用户信息
 - 刷新 Token
 """
-from fastapi import APIRouter, HTTPException, Depends, Header, Request
+from fastapi import APIRouter, HTTPException, Depends, Header, Request, Response
 from pydantic import BaseModel, Field
 from typing import Optional
 import re
+from ..config import get_settings
 from ..services.auth import (
     create_user,
     get_user_by_email,
@@ -25,6 +26,55 @@ from ..services.auth import (
 from ..database import get_db
 
 router = APIRouter()
+
+
+# === P8: httpOnly Cookie 工具 ===
+# Cookie 名固定,不要更名(前端依赖)
+ACCESS_COOKIE_NAME = "access_token"
+REFRESH_COOKIE_NAME = "refresh_token"
+ACCESS_COOKIE_MAX_AGE = 3600          # 1 小时,跟 access JWT TTL 对齐
+REFRESH_COOKIE_MAX_AGE = 30 * 86400   # 30 天,跟 refresh JWT TTL 对齐
+
+
+def set_auth_cookies(response: Response, access_token: str, refresh_token: Optional[str] = None) -> None:
+    """登录/注册/refresh 成功后调用。Cookie 属性:
+    - HttpOnly:JS 读不到,挡 XSS 偷 token
+    - Secure:仅 HTTPS(生产开,dev 关)
+    - SameSite=Lax:挡 CSRF;Domain=.ailixiao.com 让主站 + admin 子域共用
+    - access path=/(全站需要),refresh path=/api/auth(仅刷新端点用,减少传输面)
+    """
+    settings = get_settings()
+    domain = settings.COOKIE_DOMAIN or None  # 空字符串 → 不设 Domain
+    secure = settings.COOKIE_SECURE
+    response.set_cookie(
+        key=ACCESS_COOKIE_NAME,
+        value=access_token,
+        max_age=ACCESS_COOKIE_MAX_AGE,
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        domain=domain,
+        path="/",
+    )
+    if refresh_token:
+        response.set_cookie(
+            key=REFRESH_COOKIE_NAME,
+            value=refresh_token,
+            max_age=REFRESH_COOKIE_MAX_AGE,
+            httponly=True,
+            secure=secure,
+            samesite="lax",
+            domain=domain,
+            path="/api/auth",  # 减少 refresh cookie 在非鉴权请求里的暴露
+        )
+
+
+def clear_auth_cookies(response: Response) -> None:
+    """登出时清两个 cookie。空字符串 + max_age=0 兼容老浏览器"""
+    settings = get_settings()
+    domain = settings.COOKIE_DOMAIN or None
+    response.delete_cookie(ACCESS_COOKIE_NAME, domain=domain, path="/")
+    response.delete_cookie(REFRESH_COOKIE_NAME, domain=domain, path="/api/auth")
 
 
 class RegisterRequest(BaseModel):
@@ -55,17 +105,34 @@ class AuthResponse(BaseModel):
     user: dict
 
 
-def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
-    """获取当前登录用户"""
-    if not authorization:
+def get_current_user(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+) -> dict:
+    """获取当前登录用户(P8 双轨:cookie 优先,Authorization header 兜底)
+
+    顺序:
+    1. cookie access_token(httpOnly,新方式)
+    2. Authorization: Bearer <token>(老方式,过渡期保留)
+    """
+    token: Optional[str] = None
+
+    # 1. 尝试 cookie
+    cookie_token = request.cookies.get(ACCESS_COOKIE_NAME)
+    if cookie_token:
+        token = cookie_token
+
+    # 2. fallback 到 Authorization header
+    if not token and authorization:
+        parts = authorization.split()
+        if len(parts) == 2 and parts[0] == "Bearer":
+            token = parts[1]
+        else:
+            raise HTTPException(status_code=401, detail="Token 格式错误")
+
+    if not token:
         raise HTTPException(status_code=401, detail="未登录")
 
-    # Bearer <token>
-    parts = authorization.split()
-    if len(parts) != 2 or parts[0] != "Bearer":
-        raise HTTPException(status_code=401, detail="Token 格式错误")
-
-    token = parts[1]
     payload = decode_jwt_token(token)
 
     if not payload:
@@ -81,8 +148,8 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
 
 
 @router.post("/register")
-async def register(req: RegisterRequest, request: Request):
-    """用户注册(P3-2 邮箱码 + P3-3 IP 限流 + BUG-1 失败软配额)"""
+async def register(req: RegisterRequest, request: Request, response: Response):
+    """用户注册(P3-2 邮箱码 + P3-3 IP 限流 + BUG-1 失败软配额 + P8 set_cookie)"""
     from app.services.rate_limiter import (
         get_client_ip,
         assert_register_ip_quota,
@@ -131,6 +198,9 @@ async def register(req: RegisterRequest, request: Request):
     access = create_access_token(user["id"], user["email"], user["role"])
     refresh = create_refresh_token(user["id"], user["email"], user["role"])
 
+    # P8: 写 httpOnly cookie(双轨,继续返 body 兼容老前端)
+    set_auth_cookies(response, access, refresh)
+
     return {
         "token": access,           # 向后兼容字段
         "access_token": access,
@@ -146,8 +216,8 @@ async def register(req: RegisterRequest, request: Request):
 
 
 @router.post("/login")
-async def login(req: LoginRequest):
-    """用户登录"""
+async def login(req: LoginRequest, response: Response):
+    """用户登录(P8 set_cookie)"""
     user = get_user_by_email(req.email)
     if not user:
         raise HTTPException(status_code=401, detail="邮箱或密码错误")
@@ -176,6 +246,9 @@ async def login(req: LoginRequest):
     access = create_access_token(user["id"], user["email"], user["role"])
     refresh = create_refresh_token(user["id"], user["email"], user["role"])
 
+    # P8: 写 httpOnly cookie(双轨)
+    set_auth_cookies(response, access, refresh)
+
     return {
         "token": access,           # 向后兼容字段
         "access_token": access,
@@ -197,19 +270,25 @@ async def get_current_user_info(current_user: dict = Depends(get_current_user)):
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    # P8 起 refresh_token 字段可空(改用 cookie);留兼容老前端 body 传 refresh_token
+    refresh_token: Optional[str] = None
 
 
 @router.post("/refresh")
-async def refresh_access_token(req: RefreshRequest):
+async def refresh_access_token(req: RefreshRequest, request: Request, response: Response):
     """用 refresh token 换新 access token。
 
-    设计:
+    设计(P8 双轨):
+    - 优先从 cookie(refresh_token)读;fallback 到 body req.refresh_token
     - 只接受 refresh token(type=refresh),access 不能用于刷新
     - 用户级吊销同样适用(改密码 / 强制下线后,refresh 也失效)
     - 此次实现不轮换 refresh(refresh 仍是原来那个,用到过期为止)
     """
-    payload = decode_refresh_token(req.refresh_token)
+    refresh_token = request.cookies.get(REFRESH_COOKIE_NAME) or req.refresh_token
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="缺少 refresh_token")
+
+    payload = decode_refresh_token(refresh_token)
     if not payload:
         raise HTTPException(status_code=401, detail="refresh_token 无效或已过期")
 
@@ -219,10 +298,24 @@ async def refresh_access_token(req: RefreshRequest):
         raise HTTPException(status_code=401, detail="用户不存在")
 
     new_access = create_access_token(user["id"], user["email"], user["role"])
+
+    # P8: 同时刷新 cookie 让 access 1h 续期到当下;refresh 不轮换不续期
+    set_auth_cookies(response, new_access, refresh_token=None)
+
     return {
         "token": new_access,           # 向后兼容
         "access_token": new_access,
     }
+
+
+@router.post("/logout")
+async def logout(response: Response, current_user: dict = Depends(get_current_user)):
+    """登出(本设备):清 cookie。不调用 invalidate_user_tokens(那是 logout-all-devices 干的事)
+
+    P8 新增。前端老的 fetch.delete localStorage 路径继续兼容,但应改用本端点 + 不再读 localStorage。
+    """
+    clear_auth_cookies(response)
+    return {"success": True, "message": "已登出"}
 
 
 @router.put("/me")

@@ -1,5 +1,45 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 二十九续(P8 阶段 1:Cookie 后端双轨支持 — 不破坏老前端)
+
+### 设计
+**双轨**:后端同时支持 cookie + Authorization header 两条路。
+- cookie 优先(新方式,httpOnly XSS 不可窃)
+- header fallback(老前端继续工作,过渡期内不强制)
+
+### 改动
+- `config.py`:加 `COOKIE_DOMAIN: str = ""` + `COOKIE_SECURE: bool = True`
+- `app/api/auth.py`:
+  - `set_auth_cookies(response, access, refresh)`:写两个 cookie
+    - `access_token`:HttpOnly + Secure + SameSite=Lax + Max-Age 1h + path=/
+    - `refresh_token`:同上但 Max-Age 30d + **path=/api/auth**(减少传输面)
+  - `clear_auth_cookies(response)`:登出时清两个
+  - `get_current_user(request, authorization)`:cookie 优先,header fallback
+  - `register / login / refresh`:全部 set cookie
+  - 新增 `/api/auth/logout`:清 cookie(单设备登出 — 不动 user level invalidation)
+- `tests/conftest.py`:
+  - `COOKIE_SECURE=false`(TestClient 走 http,Secure cookie 会被 httpx 忽略)
+  - `_register` helper 注册后清 client.cookies(让既存 header-based 测试不受 cookie 优先级污染)
+
+### 测试 +12(191 → **203**)
+- register/login set 两个 cookie
+- /me cookie 优先
+- /me header fallback(老前端)
+- /me cookie+header 都给 → cookie 优先(防老 header 残留误身份)
+- 401:都没 / 错格式 header
+- /refresh 从 cookie 读 / 从 body 读 / 都没 → 401
+- /logout 清 cookie + 401 未登录拒绝
+
+### 决策记录(被测试抓到的真问题)
+- **TestClient cookie sticky** — 第一次跑全套时 jobs/admin 5 个测试挂,因为 register 的 cookie 留在 client,后续 Authorization header 被 cookie 优先;改 `_register` 清 cookie 解
+- **path=/api/auth 给 refresh** — refresh cookie 只在调 /api/auth/refresh 时传,减少其他请求的 cookie 大小
+- **clear_auth_cookies 用 delete_cookie 而非 set_cookie max_age=0** — FastAPI delete_cookie 自动处理 Domain/Path 一致性,不易出错
+- **/logout 不调 invalidate_user_tokens** — 那是 logout-all-devices 的事;单设备登出只清当前 cookie 即可
+- **refresh 不轮换** — 沿用既存设计(/refresh 每次给新 access,refresh 用到过期为止)
+
+### 下一阶段(P8 阶段 2)
+前端 71 处 fetch 改 `credentials: "include"`,清掉 localStorage 读 token,`AuthFetchInterceptor` 简化(不再手动塞 Authorization)。WebSocket 鉴权保留 query 参数(浏览器规范不能传 cookie 给 WS)。
+
 ## 2026-04-27 二十八续(隐藏雷 #3:Sentry before_send 过滤 + 配额告警建议)
 
 ### 背景

@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     SENTRY_DSN: str = ""
     ENVIRONMENT: str = "production"  # 也用于 Sentry 标签;dev/staging/production
 
+    # P8: httpOnly Cookie 配置
+    # 生产推荐:COOKIE_DOMAIN=".ailixiao.com",COOKIE_SECURE=True
+    # 本地/测试:COOKIE_DOMAIN="",COOKIE_SECURE=False(http 也能 set)
+    COOKIE_DOMAIN: str = ""        # 空字符串 = 不设 Domain 属性(浏览器默认 exact host)
+    COOKIE_SECURE: bool = True     # production 必 True;dev http 设 False
+
     class Config:
         env_file = str(_ENV_PATH)
         extra = "ignore"

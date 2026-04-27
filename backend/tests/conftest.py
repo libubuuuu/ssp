@@ -19,6 +19,8 @@ os.environ.setdefault("FAL_KEY", "test-fal-key-fake")
 # RESEND_API_KEY 留空,_send_email_code 会 fallback 到打印模式,不真发邮件
 os.environ.setdefault("RESEND_API_KEY", "")
 os.environ.setdefault("ALLOWED_ORIGINS", "http://localhost:3000")
+# P8: TestClient 用 http://testserver,Secure cookie 会被 starlette/httpx 忽略
+os.environ.setdefault("COOKIE_SECURE", "false")
 
 # 测试库:每个 pytest session 一份 tmp 文件
 _TEST_DB_FD, _TEST_DB_PATH = tempfile.mkstemp(suffix=".db", prefix="ssp_test_")
@@ -122,6 +124,10 @@ def _register(client, email: str, password: str = "secret123", name: str | None 
 
     P3-2 后注册要求邮箱码:helper 自动注入 _EMAIL_CODES + 附 code 字段。
     单独测试"无 code"或"错 code"路径走 client.post 自己构造,不通过此 helper。
+
+    P8 后端会 set httpOnly cookie。本 helper 用于 header-based 测试场景,
+    所以注册后**清 client.cookies**,让后续 Authorization header 真正走 header 路径。
+    需要 cookie 持久的测试(test_p8_cookies.py)直接 client.post 不通过此 helper。
     """
     import time as _time
     from app.api import auth as auth_module
@@ -137,6 +143,8 @@ def _register(client, email: str, password: str = "secret123", name: str | None 
     r = client.post("/api/auth/register", json=payload)
     assert r.status_code == 200, r.text
     data = r.json()
+    # P8: 清 cookie,恢复"header-only"模式让既存测试不受 cookie 优先级影响
+    client.cookies.clear()
     return data["token"], data["user"]
 
 
