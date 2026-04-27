@@ -155,3 +155,50 @@ def test_logout_requires_auth(client):
     client.cookies.clear()
     r = client.post("/api/auth/logout")
     assert r.status_code == 401
+
+
+# === 红色洞修复:/login-by-code 也要 set cookie ===
+
+def test_login_by_code_sets_cookies_for_existing_user(client, register):
+    """已存在用户用邮箱码登录 → 也 set cookie"""
+    # 先注册创建用户
+    register(client, "lbc-existing@example.com")
+    client.cookies.clear()
+
+    # 注入 login code(login-by-code 是登录,不是注册)
+    from app.api import auth as auth_module
+    auth_module._EMAIL_CODES["lbc-existing@example.com"] = {
+        "code": "888888",
+        "expires_at": _time.time() + 300,
+        "sent_at": _time.time(),
+        "purpose": "login",
+    }
+
+    r = client.post("/api/auth/login-by-code", json={
+        "email": "lbc-existing@example.com",
+        "code": "888888",
+    })
+    assert r.status_code == 200, r.text
+    assert ACCESS_COOKIE_NAME in r.cookies
+    assert REFRESH_COOKIE_NAME in r.cookies
+
+
+def test_login_by_code_auto_registers_with_INITIAL_CREDITS(client):
+    """新邮箱用 login-by-code 自动注册 → credits = INITIAL_CREDITS(10),不是硬编码 10"""
+    from app.api import auth as auth_module
+    from app.services.auth import INITIAL_CREDITS
+
+    auth_module._EMAIL_CODES["lbc-newbie@example.com"] = {
+        "code": "777777",
+        "expires_at": _time.time() + 300,
+        "sent_at": _time.time(),
+        "purpose": "login",
+    }
+    r = client.post("/api/auth/login-by-code", json={
+        "email": "lbc-newbie@example.com",
+        "code": "777777",
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["user"]["credits"] == INITIAL_CREDITS
+    # cookie 也要 set
+    assert ACCESS_COOKIE_NAME in r.cookies

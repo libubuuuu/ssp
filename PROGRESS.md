@@ -1,5 +1,29 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 三十二续(自审发现的红色洞:/login-by-code 漏接 cookie + INITIAL_CREDITS 漂移)
+
+### 自审发现的真问题
+P8 阶段 1 只接了 `/login` `/register` `/refresh`,**漏了 `/login-by-code`**(passwordless 登录)。同时 `/login-by-code` 自动注册分支硬编码 `credits=10`,没用 `INITIAL_CREDITS` 常量 — 改 P3-1 不联动。
+
+### 修
+- `/login-by-code(VerifyCodeLoginRequest, response: Response)`:
+  - 加 `response: Response` 参数
+  - 自动注册分支用 `INITIAL_CREDITS` 常量(从 `app.services.auth` import)
+  - 末尾调 `set_auth_cookies(response, access, refresh)`
+
+### 测试 +2(203 → **205**)
+- `test_login_by_code_sets_cookies_for_existing_user`(已存在用户登录也写 cookie)
+- `test_login_by_code_auto_registers_with_INITIAL_CREDITS`(新用户用常量,不是硬编码)
+
+### 自审误报修正
+- 我之前的报告说 `/reset-password-by-code` 不 invalidate token,**这是误报** — 重读代码看到 `invalidate_user_tokens(row[0])` 真存在,我看花眼。
+- `/reset-password-by-code` 不接 cookie 是**正确设计**(行业标准:重置密码后跳登录页,不自动登录),不改。
+
+### 决策记录
+- **/login-by-code 是登录,该 set cookie** — 跟 /login 行为对齐
+- **/reset-password-by-code 不 set cookie** — 是密码恢复操作,自动登录会让"恢复账号"等场景出问题(AWS / Google 行业标准做法)
+- **INITIAL_CREDITS 常量化** — 单一来源 of truth,防多端漂移;修一个地方所有路径联动
+
 ## 2026-04-27 三十一续(P8 阶段 3 文档化 — 留 30 天等待期)
 
 ### 阶段 3 不立即做,文档化触发条件

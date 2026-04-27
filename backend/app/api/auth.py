@@ -580,8 +580,13 @@ class VerifyCodeLoginRequest(BaseModel):
 
 
 @router.post("/login-by-code")
-async def login_by_code(req: VerifyCodeLoginRequest):
-    """邮箱验证码登录（无密码）。首次登录自动注册。"""
+async def login_by_code(req: VerifyCodeLoginRequest, response: Response):
+    """邮箱验证码登录(无密码)。首次登录自动注册。
+
+    P8 红色洞修复:
+    - set_auth_cookies(P8 阶段 1 漏接,跟 /login /register 同步)
+    - 自动注册用 INITIAL_CREDITS 常量(P3-1 漂移修复)
+    """
     cache = _EMAIL_CODES.get(req.email)
     if not cache:
         raise HTTPException(status_code=400, detail="请先发送验证码")
@@ -590,33 +595,42 @@ async def login_by_code(req: VerifyCodeLoginRequest):
         raise HTTPException(status_code=400, detail="验证码已过期")
     if cache["code"] != req.code:
         raise HTTPException(status_code=400, detail="验证码错误")
-    
-    # 验证成功，作废验证码
+
+    # 验证成功,作废验证码
     _EMAIL_CODES.pop(req.email, None)
-    
+
     # 查找或创建用户
+    from app.services.auth import INITIAL_CREDITS  # P3-1 常量,本地 import 避免循环
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id, email, name, role, credits FROM users WHERE email = ?", (req.email,))
         row = cursor.fetchone()
-        
+
         if not row:
-            # 自动注册
+            # 自动注册:用 INITIAL_CREDITS 常量,跟 create_user 一致
             import uuid as _uuid
             user_id = str(_uuid.uuid4())
             default_name = req.email.split("@")[0]
             cursor.execute(
-                "INSERT INTO users (id, email, name, role, credits, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (user_id, req.email, default_name, "user", 10, "", datetime.utcnow().isoformat())
+                "INSERT INTO users (id, email, name, role, credits, password_hash, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (user_id, req.email, default_name, "user", INITIAL_CREDITS, "", datetime.utcnow().isoformat())
             )
             conn.commit()
-            user_data = {"id": user_id, "email": req.email, "name": default_name, "role": "user", "credits": 10}
+            user_data = {
+                "id": user_id, "email": req.email, "name": default_name,
+                "role": "user", "credits": INITIAL_CREDITS,
+            }
         else:
             user_data = {"id": row[0], "email": row[1], "name": row[2], "role": row[3], "credits": row[4]}
-    
+
     # 同时签发 access + refresh
     access = create_access_token(user_data["id"], user_data["email"], user_data["role"])
     refresh = create_refresh_token(user_data["id"], user_data["email"], user_data["role"])
+
+    # P8: 写 httpOnly cookie(双轨,继续返 body 兼容)
+    set_auth_cookies(response, access, refresh)
+
     return {
         "token": access,           # 向后兼容
         "access_token": access,
