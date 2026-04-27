@@ -81,9 +81,19 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
 
 
 @router.post("/register")
-async def register(req: RegisterRequest):
-    """用户注册(P3-2 起强制邮箱码验证)"""
-    # 1. 邮箱码校验(必须在创建用户前,失败永不落库)
+async def register(req: RegisterRequest, request: Request):
+    """用户注册(P3-2 邮箱码 + P3-3 IP 限流)"""
+    from app.services.rate_limiter import (
+        get_client_ip,
+        assert_register_ip_quota,
+        record_register_ip,
+    )
+
+    # 1. IP 限流(优先级最高,挡住批量羊毛党)
+    ip = get_client_ip(request)
+    assert_register_ip_quota(ip)
+
+    # 2. 邮箱码校验(必须在创建用户前,失败永不落库)
     cache = _EMAIL_CODES.get(req.email)
     if not cache:
         raise HTTPException(status_code=400, detail="请先发送邮箱验证码")
@@ -95,15 +105,18 @@ async def register(req: RegisterRequest):
     # 通过 — 立刻作废,防重放
     _EMAIL_CODES.pop(req.email, None)
 
-    # 2. 检查邮箱是否已存在
+    # 3. 检查邮箱是否已存在
     existing = get_user_by_email(req.email)
     if existing:
         raise HTTPException(status_code=400, detail="该邮箱已被注册")
 
-    # 3. 创建用户
+    # 4. 创建用户
     user = create_user(req.email, req.password, req.name)
     if not user:
         raise HTTPException(status_code=500, detail="注册失败")
+
+    # 5. 注册成功 — 记录 IP(为下一次限流提供基线)
+    record_register_ip(ip)
 
     # 同时签发 access + refresh
     access = create_access_token(user["id"], user["email"], user["role"])

@@ -100,7 +100,7 @@ def reset_database(app):
         for table in ("users", "tasks", "credit_orders", "generation_history",
                       "merchants", "products", "orders", "order_items",
                       "body_models", "body_measurements", "model_health",
-                      "audit_log"):
+                      "audit_log", "register_ip_log"):
             c.execute(f"DELETE FROM {table}")
         conn.commit()
     yield

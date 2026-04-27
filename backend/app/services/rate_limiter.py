@@ -1,8 +1,9 @@
 """
 限流防刷中间件
-- IP 限流
-- 用户限流
+- IP 限流(中间件,内存)
+- 用户限流(内存)
 - 验证码触发
+- 注册 IP 限流(SQLite 持久,P3-3 反羊毛党)
 """
 from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse
@@ -11,6 +12,58 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 import time
+
+
+# === P3-3:注册 IP 限流(SQLite 持久) ===
+
+REGISTER_IP_LIMIT = 3      # 同 IP 24 小时内最多成功注册次数
+REGISTER_IP_WINDOW = 86400  # 时间窗口(秒)
+
+
+def get_client_ip(request: Request) -> str:
+    """统一从 request 抽 IP(模块级公用)"""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        return real_ip
+    return request.client.host if request.client else "127.0.0.1"
+
+
+def count_recent_registers_from_ip(ip: str) -> int:
+    """查 24h 内此 IP 成功注册次数(用 SQLite,跨重启)"""
+    from app.database import get_db
+    cutoff_ts = time.time() - REGISTER_IP_WINDOW
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM register_ip_log WHERE ip = ? AND registered_at_ts >= ?",
+            (ip, cutoff_ts),
+        ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def record_register_ip(ip: str) -> None:
+    """注册成功后写一条;清掉 24h 之前的旧条目"""
+    from app.database import get_db
+    now_ts = time.time()
+    cutoff_ts = now_ts - REGISTER_IP_WINDOW
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute("INSERT INTO register_ip_log (ip, registered_at_ts) VALUES (?, ?)", (ip, now_ts))
+        # 顺手 GC,防表无限膨胀
+        c.execute("DELETE FROM register_ip_log WHERE registered_at_ts < ?", (cutoff_ts,))
+        conn.commit()
+
+
+def assert_register_ip_quota(ip: str) -> None:
+    """超额直接 raise HTTPException(429)"""
+    used = count_recent_registers_from_ip(ip)
+    if used >= REGISTER_IP_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail=f"该 IP 24 小时内已注册 {used} 次,达到上限({REGISTER_IP_LIMIT}),请明天再来",
+        )
 
 
 class RateLimiter:

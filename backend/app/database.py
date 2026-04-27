@@ -242,6 +242,18 @@ def init_db():
         )
         """)
 
+        # P3-3:注册 IP 日志(反羊毛党 — 同 IP 24h 限 3 次成功注册)
+        # registered_at_ts 用 unix 时间戳便于窗口比较
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS register_ip_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip TEXT NOT NULL,
+            registered_at_ts REAL NOT NULL
+        )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_register_ip_log_ip ON register_ip_log(ip)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_register_ip_log_ts ON register_ip_log(registered_at_ts)")
+
         # 创建索引优化查询性能
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")

@@ -1,5 +1,37 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 十八续(P3-3 + P3-4:注册 IP 限流 SQLite 持久 + 9 测试)
+
+### 后端
+- 新表 `register_ip_log(id, ip, registered_at_ts)`,加 ip + ts 索引
+- `rate_limiter.py` 加:
+  - `get_client_ip(request)`:优先 X-Forwarded-For → X-Real-IP → request.client
+  - `count_recent_registers_from_ip(ip)`:24h 窗口内此 IP 成功注册次数
+  - `record_register_ip(ip)`:写一条 + 顺手 GC 24h+ 旧记录
+  - `assert_register_ip_quota(ip)`:超额 raise 429 含上限说明
+- 配置常量:`REGISTER_IP_LIMIT = 3`,`REGISTER_IP_WINDOW = 86400`(24h)
+
+### 接入 /register
+- IP 限流放在第 1 步(优先级最高,挡批量羊毛党)
+- 邮箱码校验在第 2 步
+- 创建用户在第 4 步,**仅成功后** `record_register_ip` 写表(失败不计)
+- conftest reset_database 加 `register_ip_log` 到 truncate 列表
+
+### 测试 +9(125 → **134**)
+**单元**:`count_zero_for_fresh_ip` / `record_then_count` / `old_records_not_counted`(>24h 不计)/ `assert_within_quota_passes` / `assert_at_limit_raises_429`
+
+**集成**:
+- `first_three_register_succeed_same_ip`(同 IP 3 次都 OK)
+- `fourth_register_same_ip_429`(第 4 次 429)
+- `different_ips_isolated`(A 满 B 不受影响)
+- `failed_register_does_not_count`(错误 code 失败的注册不计 IP 配额)
+
+### 决策记录
+- **SQLite 持久化而非内存** — 重启后限流仍生效;羊毛党知道重启时间窗就能绕过纯内存版
+- **GC 内嵌在 record_register_ip** — 顺手清掉 24h+ 旧记录,表不会无限膨胀;不需要单独 cron
+- **失败注册不计 IP** — 否则用户输错 code 会被自己的 IP 限流锁住,UX 灾难
+- **REGISTER_IP_LIMIT = 3** — 用户语义指定;允许少量合理共用 IP(家庭/办公室)同时 3 个不同账号
+
 ## 2026-04-27 十七续(P3-2:注册必须验证邮箱码,反羊毛党第二步)
 
 ### 后端
