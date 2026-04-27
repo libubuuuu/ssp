@@ -1,5 +1,42 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 二十二续(P5:Sentry 错误监控接入 — 等用户贴 DSN 即可启用)
+
+### 改动
+- `requirements.txt`:加 `sentry-sdk[fastapi]==2.20.0`
+- `config.py`:加 `SENTRY_DSN: str = ""` + `ENVIRONMENT: str = "production"` 两个可选字段
+- `main.py`:启动时 if `SENTRY_DSN`: 调 `sentry_sdk.init(...)` 否则 log 一行"未配置,跳过"
+- `docs/SENTRY-SETUP.md`:5 步用户操作指南
+
+### 配置策略(写死在 main.py)
+| 选项 | 值 | 原因 |
+|---|---|---|
+| `traces_sample_rate` | 0.1 | 10% 采样,免费 5K events/月够用 |
+| `profiles_sample_rate` | 0.0 | 关闭,profiling 太耗 |
+| `send_default_pii` | False | 不上报 IP/cookie/UA,合规优先 |
+| `attach_stacktrace` | True | 错误必带栈 |
+| `environment` | settings.ENVIRONMENT | dev/staging/production 分流 |
+
+### 测试 +3(150 → **153**)
+- 默认 SENTRY_DSN 为空(不启用)
+- 显式 DSN 配置正常加载
+- sentry_sdk 包真装上了
+
+### 决策记录
+- **不替用户注册账号 / 写 DSN** — 留 docs/SENTRY-SETUP.md 让用户自己 5 分钟配
+- **try/except ImportError** — 即使 venv 没装 sentry-sdk,启动只报 warning 不爆;dev 环境友好
+- **send_default_pii=False** — 默认上报 IP/cookie/UA 不符合国内合规;Sentry 控制台后续可单独开
+- **不在前端接 Sentry** — 5K events 留给后端;前端有 watchdog + console
+- **ENVIRONMENT 复用** — 不为 Sentry 单独搞 SENTRY_ENV,跟系统其他工具用同一个变量
+
+### ⏸ 用户操作清单(docs/SENTRY-SETUP.md 详细)
+1. https://sentry.io 注册 → Python/FastAPI 项目
+2. 复制 DSN(Project Settings → Client Keys)
+3. 写到 `/opt/ssp/backend/.env.enc` 加密 env(命令在 docs 里)
+4. `supervisorctl restart ssp-backend-blue`(或 green,看当前 active)
+5. 启动日志看到 "Sentry 已启用" 即生效
+6. Sentry 控制台 Alerts 设邮件/Slack 通知
+
 ## 2026-04-27 二十一续(BUG-2:媒体归档 fal URL → 本地 /uploads 阶段 A)
 
 ### 上一轮发现的洞

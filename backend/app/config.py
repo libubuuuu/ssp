@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     # JWT 认证（必须从环境变量设置，无默认值）
     JWT_SECRET: str = ""
 
+    # P5: Sentry 错误监控(可选 — 空时不启用)
+    SENTRY_DSN: str = ""
+    ENVIRONMENT: str = "production"  # 也用于 Sentry 标签;dev/staging/production
+
     class Config:
         env_file = str(_ENV_PATH)
         extra = "ignore"

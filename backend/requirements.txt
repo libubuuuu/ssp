@@ -36,3 +36,6 @@ fal-client==0.5.6
 
 # 系统监控
 psutil==5.9.8
+
+# P5: 错误监控(可选 — SENTRY_DSN 环境变量启用,留空时跳过 init)
+sentry-sdk[fastapi]==2.20.0

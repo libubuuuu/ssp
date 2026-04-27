@@ -16,6 +16,32 @@ except ValueError as e:
     log_error(f"配置验证失败：{e}")
     raise
 
+# P5: Sentry 错误监控(SENTRY_DSN 为空时跳过 — 不阻塞本地/测试启动)
+if settings.SENTRY_DSN:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.starlette import StarletteIntegration
+        sentry_sdk.init(
+            dsn=settings.SENTRY_DSN,
+            environment=settings.ENVIRONMENT or "production",
+            integrations=[
+                StarletteIntegration(transaction_style="endpoint"),
+                FastApiIntegration(transaction_style="endpoint"),
+            ],
+            traces_sample_rate=0.1,    # 10% trace 采样,免费额度够用
+            profiles_sample_rate=0.0,   # profiling 关闭(免费额度有限)
+            send_default_pii=False,    # 不上报 user-agent / IP / cookie 之类
+            attach_stacktrace=True,
+        )
+        log_info(f"Sentry 已启用 (env={settings.ENVIRONMENT})")
+    except ImportError:
+        log_error("SENTRY_DSN 已配置但 sentry-sdk 未安装,跳过(pip install sentry-sdk[fastapi])")
+    except Exception as e:
+        log_error(f"Sentry 初始化失败,继续不带监控:{e}")
+else:
+    log_info("Sentry 未配置(SENTRY_DSN 为空),跳过")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
