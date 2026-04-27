@@ -8,9 +8,9 @@
 """
 
 
-def test_submit_image_job_deducts_credits(client, register, auth_header):
+def test_submit_image_job_deducts_credits(client, register, auth_header, set_credits):
     token, user = register(client, "j-a@example.com")
-    # 默认注册送 100 额度,image/style = 2 积分
+    set_credits(user["id"], 100)  # 显式设到 100,P3-1 后默认是 10 不够 image=2 任务多次测试
     r = client.post("/api/jobs/submit",
                     json={"type": "image", "params": {"prompt": "hello"}, "title": "t1"},
                     headers=auth_header(token))
@@ -24,8 +24,9 @@ def test_submit_image_job_deducts_credits(client, register, auth_header):
     assert r2.json()["credits"] == 98
 
 
-def test_submit_video_clone_deducts_higher_cost(client, register, auth_header):
-    token, _ = register(client, "j-b@example.com")
+def test_submit_video_clone_deducts_higher_cost(client, register, auth_header, set_credits):
+    token, user = register(client, "j-b@example.com")
+    set_credits(user["id"], 100)  # video/clone=20,P3-1 默认 10 不够
     r = client.post("/api/jobs/submit",
                     json={"type": "video_clone",
                           "params": {"reference_video_url": "x", "model_image_url": "y"}},

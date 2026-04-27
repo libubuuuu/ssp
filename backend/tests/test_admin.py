@@ -60,7 +60,7 @@ def test_admin_adjust_credits_round_trip(client, register, auth_header, set_role
     from app.database import get_db
     with get_db() as conn:
         row = conn.execute("SELECT credits FROM users WHERE id = ?", (target_id,)).fetchone()
-    assert row[0] == 150  # 100 (默认) + 50
+    assert row[0] == 60  # 10 (P3-1 默认) + 50
 
     # 减 30
     r2 = client.post(f"/api/admin/users/{target_id}/adjust-credits",
@@ -69,7 +69,7 @@ def test_admin_adjust_credits_round_trip(client, register, auth_header, set_role
     assert r2.status_code == 200
     with get_db() as conn:
         row = conn.execute("SELECT credits FROM users WHERE id = ?", (target_id,)).fetchone()
-    assert row[0] == 120
+    assert row[0] == 30
 
 
 def test_non_admin_cannot_adjust_credits(client, register, auth_header):
@@ -86,4 +86,4 @@ def test_non_admin_cannot_adjust_credits(client, register, auth_header):
     from app.database import get_db
     with get_db() as conn:
         row = conn.execute("SELECT credits FROM users WHERE id = ?", (target["id"],)).fetchone()
-    assert row[0] == 100
+    assert row[0] == 10  # P3-1 默认

@@ -41,11 +41,11 @@ def test_digital_human_generate_returns_503(client, register):
 
 def test_digital_human_generate_does_not_deduct_credits(client, register):
     """关键回归测试:无论调多少次,积分一分都不能少"""
-    token, user = register(client, "dh-501-b@example.com")
+    token, user = register(client, "dh-503-b@example.com")
     before = _get_credits(user["id"])
-    assert before == 100  # 注册默认
+    assert before == 10  # 注册默认(P3-1 反羊毛党降到 10)
 
-    # 调三次都应该 501
+    # 调三次都应该 503
     for _ in range(3):
         r = _post_generate(client, token)
         assert r.status_code == 503

@@ -1,5 +1,31 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 十六续(P3-1:新用户初始积分 100 → 10,反羊毛党第一步)
+
+### 改动
+- `app/services/auth.py`:加 `INITIAL_CREDITS = 10` 常量
+- `create_user` 用常量插入,不再硬编码 100
+- 文档说明:现有用户不变,新注册降到 10
+
+### 经济影响
+- 之前:注册即送 100 积分,可做 50 张 image/style(每张 2 积分)
+- 之后:注册送 10 积分,可做 5 张 image/style 或 1 次 image-to-video(10 积分)
+- video/clone(20 积分)需要充值或邀请奖励,不再"白嫖"
+
+### 测试更新(7 处既存假设 100)
+- `_make_user` / `_make_target_user` 改成显式 `set_user_credits` 不再依赖默认
+- `test_admin_can_adjust_credits`:期望从 150 → 60(10 + 50)
+- `test_non_admin_cannot_adjust_credits`:余额验证 100 → 10
+- `test_submit_*_job_deducts_credits`:加 `set_credits(uid, 100)` 兜底,因为 image=2 / video_clone=20
+- `test_register`:`credits == 100` → `credits == 10`
+
+### 测试 120 全过零回归
+
+### 决策记录
+- **常量 INITIAL_CREDITS 而非环境变量** — 反羊毛措施应"代码可见"而非"配置随手改";改这个值需要 PR 审查
+- **现有用户不变** — 只对新注册生效,避免一次性扣老用户积分引发投诉
+- **不做迁移降低老用户积分** — 不公平且违反"积分一旦给出不可撤回"的隐性合约
+
 ## 2026-04-27 十五续(P2:内容审核精简版上线)
 
 ### 新模块 `app/services/content_filter.py`

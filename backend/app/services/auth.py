@@ -197,17 +197,27 @@ def get_user_by_id(user_id: str) -> Optional[Dict]:
         return None
 
 
+INITIAL_CREDITS = 10  # 防羊毛(2026-04-27 P3-1):新用户默认积分;早前为 100
+
+
 def create_user(email: str, password: str, name: Optional[str] = None) -> Optional[Dict]:
-    """创建新用户"""
+    """创建新用户
+
+    新用户初始积分见 INITIAL_CREDITS(2026-04-27 起从 100 降到 10,反羊毛党)。
+    现有用户不受影响。需要给新用户更多额度,通过 admin 调 adjust-credits 加(留 audit)。
+    """
     with get_db() as conn:
         cursor = conn.cursor()
         try:
             user_id = str(uuid.uuid4())
             hashed = hash_password(password)
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO users (id, email, password_hash, name, credits)
-                VALUES (?, ?, ?, ?, 100)
-            """, (user_id, email, hashed, name or email.split('@')[0]))
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (user_id, email, hashed, name or email.split('@')[0], INITIAL_CREDITS),
+            )
             conn.commit()
             return get_user_by_email(email)
         except Exception as e:

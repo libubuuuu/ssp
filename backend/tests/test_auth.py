@@ -16,7 +16,7 @@ def test_register_happy_path(client):
     body = r.json()
     assert "token" in body
     assert body["user"]["email"] == "alice@example.com"
-    assert body["user"]["credits"] == 100  # 默认初始额度
+    assert body["user"]["credits"] == 10  # 默认初始额度(P3-1 反羊毛党降到 10)
 
 
 def test_register_duplicate_email_rejected(client):

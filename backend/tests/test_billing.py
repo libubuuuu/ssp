@@ -8,12 +8,11 @@ from app.services import billing
 
 
 def _make_user(email: str, credits: int = 100) -> str:
-    """创建用户并返回 user_id;直接走 services.auth"""
+    """创建用户并返回 user_id;P3-1 后 INITIAL_CREDITS=10,显式 set 到测试期望值"""
     from app.services.auth import create_user, set_user_credits
     user = create_user(email=email, password="secret123", name=email.split("@")[0])
     assert user is not None
-    if credits != 100:
-        set_user_credits(user["id"], credits)
+    set_user_credits(user["id"], credits)
     return user["id"]
 
 

@@ -27,10 +27,12 @@ def _make_admin(email: str) -> dict:
 
 
 def _make_target_user(email: str, credits: int = 100) -> str:
+    """测试用辅助:创建一个用户并强制把额度设到指定值。
+    P3-1 后初始 INITIAL_CREDITS=10,不再靠默认,显式 set。
+    """
     from app.services.auth import create_user, set_user_credits
     user = create_user(email=email, password="secret123", name=email.split("@")[0])
-    if credits != 100:
-        set_user_credits(user["id"], credits)
+    set_user_credits(user["id"], credits)
     return user["id"]
 
 
