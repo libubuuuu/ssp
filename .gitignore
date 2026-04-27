@@ -32,6 +32,10 @@ Thumbs.db
 *.log
 logs/
 
+# Coverage
+.coverage
+htmlcov/
+
 # Build
 build/
 dist/
