@@ -1,5 +1,52 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 十二续(🚨 真 bug 修复:digital-human 假扣费 + avatar 真接通)
+
+### ⚠ 用户抓到的真 bug
+`backend/app/api/digital_human.py` 的 `/generate` 端点:
+- `@require_credits("avatar/generate")` 真扣 10 积分
+- 函数体只有 `TODO: 接入 SadTalker / D-ID / HeyGen` + 返回 hardcoded `{"task_id": "placeholder"}`
+- **每次调用 = 用户损失 10 积分换一个假 task_id**
+
+**影响面更广**:两个前端页都调这个假接口
+- `frontend/src/app/digital-human/page.tsx:26`(图片 + 脚本)
+- `frontend/src/app/avatar/page.tsx:38`(图片 + 音频)
+
+更糟的是:`backend/app/api/avatar.py /generate` 是**真实现的**(FAL hunyuan-avatar / pixverse-lipsync,扣费失败自动返还,task_ownership 注册全套),但前端从来没有人调它。
+
+### ✅ 历史影响:幸运 0 受害者
+查 `generation_history` 表:`SELECT * WHERE module='avatar/generate'` → **0 条**。所有用户仍为 100 积分起始值,无人被坑。猜测:页面流程其他地方先报错(如 t() 未导入)挡住了 fetch。
+
+### ✅ 修复
+**1. 后端止血**(digital_human.py 重写)
+- 移除 `@require_credits` 装饰器(根除扣费路径)
+- 直接 `raise HTTPException(501, ...)`,detail 明确"不会扣除任何积分"
+- 文件加大段注释解释历史 bug,防止以后回归
+
+**2. 前端 /digital-human 改"敬请期待"**
+- 删除表单,不再发任何请求
+- 友好提示"不会扣除积分"
+- 引导到 /avatar(真接口)和 /voice-clone
+
+**3. 前端 /avatar 接通真接口**(关键)
+- 改成三步:`POST /api/video/upload/image` → URL,`POST /api/video/upload/video`(audio 复用,fal_client 不区分类型) → URL,`POST /api/avatar/generate {character_image_url, audio_url, model}`
+- 真正调用 FAL hunyuan-avatar / pixverse-lipsync,真出视频
+
+**4. 测试 +3**(100 → **103**)
+- `test_digital_human_generate_returns_501`
+- `test_digital_human_generate_does_not_deduct_credits`(关键:连调 3 次,积分 100→100 不变)
+- `test_digital_human_unauthenticated_rejected`
+- conftest 把 digital_human router 加进测试 app
+
+### 决策记录
+- **501 而非 410/503/200** — 501 Not Implemented 语义最准:接口存在但功能未实现;前端能识别区分"暂时不可用"vs"永久下线"
+- **/avatar 真接通而非"等回头"** — 后端能力早已就绪,前端只是接错了端点;改 30 行修好,没理由让能用的功能继续坏着
+- **不补偿用户** — generation_history 0 条 avatar/generate,确认无受害者;若有补偿需走 admin/users → 加积分(留 audit)
+- **501 detail 含"不会扣除积分"明文** — 用户/前端看到 detail 时立刻安心,不用查文档
+
+### ⚠ 待 deploy
+本次修复 + 上次 next 16.2.4 升级 + supervisor 配置,都需要下次 deploy 才到生产。**用户决定 deploy 时机**。
+
 ## 2026-04-27 十一续(CI 重新对齐:lint 暂非阻塞 + npm audit 收紧到 high)
 
 ### ⚠ 发现 CI lint 早就在红

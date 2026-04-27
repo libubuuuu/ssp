@@ -31,17 +31,28 @@ export default function AvatarPage(){
     setError("");setLoading(true);
     try{
       const token=localStorage.getItem("token")||"";
-      const fd=new FormData();
-      fd.append("image",image);
-      fd.append("audio",audio);
-      fd.append("model",model);
-      const res=await fetch(`${API_BASE}/api/digital-human/generate`,{
+      const auth={"Authorization":`Bearer ${token}`};
+
+      // 1. 上传图片拿 URL
+      const fdImg=new FormData();fdImg.append("file",image);
+      const rImg=await fetch(`${API_BASE}/api/video/upload/image`,{method:"POST",headers:auth,body:fdImg});
+      const dImg=await rImg.json();
+      if(!rImg.ok||!dImg.url)throw new Error(dImg.detail||"图片上传失败");
+
+      // 2. 上传音频拿 URL(复用 video upload,fal_client 不区分类型)
+      const fdAud=new FormData();fdAud.append("file",audio);
+      const rAud=await fetch(`${API_BASE}/api/video/upload/video`,{method:"POST",headers:auth,body:fdAud});
+      const dAud=await rAud.json();
+      if(!rAud.ok||!dAud.url)throw new Error(dAud.detail||"音频上传失败");
+
+      // 3. 提交真正的数字人生成(扣费在此步,失败自动返还)
+      const rGen=await fetch(`${API_BASE}/api/avatar/generate`,{
         method:"POST",
-        headers:{"Authorization":`Bearer ${token}`},
-        body:fd,
+        headers:{...auth,"Content-Type":"application/json"},
+        body:JSON.stringify({character_image_url:dImg.url,audio_url:dAud.url,model}),
       });
-      const data=await res.json();
-      if(!res.ok)throw new Error(data.detail||t("errors.generationFailed"));
+      const data=await rGen.json();
+      if(!rGen.ok)throw new Error(data.detail||t("errors.generationFailed"));
       if(!data.video_url)throw new Error("未返回视频");
       saveGallery([{url:data.video_url,prompt:`${model} · 数字人`,time:Date.now()},...gallery]);
     }catch(e:any){setError(e.message);}

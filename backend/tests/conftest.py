@@ -48,6 +48,7 @@ def app():
     from app.api import jobs as jobs_module
     from app.api import admin as admin_module
     from app.api import payment as payment_module
+    from app.api import digital_human as digital_human_module
 
     # 把真实 _execute_job 替成 no-op,避免测试触发 FAL API
     async def _noop_execute_job(job_id):  # pragma: no cover - test helper
@@ -59,6 +60,7 @@ def app():
     test_app.include_router(jobs_module.router, prefix="/api/jobs")
     test_app.include_router(admin_module.router, prefix="/api/admin")
     test_app.include_router(payment_module.router, prefix="/api/payment")
+    test_app.include_router(digital_human_module.router, prefix="/api/digital-human")
     return test_app
 
 
