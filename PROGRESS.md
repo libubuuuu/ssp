@@ -1,5 +1,35 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 三十九续(Playwright e2e 0→10 + PROGRESS.md 拆分归档)
+
+### Playwright e2e MVP(P1 路线图最后一项)
+- `npm install -D @playwright/test@^1.59.1`
+- `playwright.config.ts`:`baseURL` 默认 localhost,可 `PLAYWRIGHT_BASE_URL=https://ailixiao.com` 切生产 / staging
+- `e2e/smoke.spec.ts`:10 个金路径冒烟(浏览器 + API 双层)
+  - 首页 / /auth / /digital-human "敬请期待" / /video/editor "敬请期待"(浏览器渲染)
+  - /api/payment/packages 200 / /api/jobs/list 401
+  - /uploads/no-ext 403(BUG-2 + 自审 #1 验证)
+  - /api/auth/register 缺 code 422(P3-2 验证)
+  - /api/digital-human/generate 401/503(P0 验证)
+  - /api/auth/login-by-code 端点存在
+- npm scripts:`npm run e2e`(本地)/ `npm run e2e:prod`(打生产)
+- 装 chromium-headless-shell + system deps
+
+### 实测 against https://ailixiao.com
+**10/10 全过**(4.5s 总耗时,API 测试 ~10ms,页面测试 ~600ms)
+
+### PROGRESS.md 拆分归档
+1500 → 182 行(只留最近 5 续)+ `docs/PROGRESS-archive/2026-04.md` 归档 1440 行历史
+
+### 决策记录
+- **e2e 跑生产而非 staging** — 没 staging 环境;e2e 只读 + 公开端点不破坏数据
+- **冒烟测试不写注册 → 登录 → 改密码全链路** — 那需要 email code 注入或邮件接收,工程量大;留下次 + 那时再加 staging
+- **Playwright 装 chromium 不装 firefox/webkit** — 三套占空间 + 跑慢,先 1 浏览器够用
+- **PLAYWRIGHT_BASE_URL 留 env 切换** — 不写死 localhost,生产/dev 切换零代码改
+
+### 文档
+- `docs/INDEX.md` 加 PROGRESS-archive 入口
+
 ## 2026-04-27 三十八续(admin.py 覆盖 30→41 + 顺手修 force-logout 返 success bool)
 
 ### 改动
