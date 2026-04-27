@@ -1,5 +1,47 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 三十续(P8 阶段 2:前端切 cookie — 中心 patch 一处搞定 71 fetch)
+
+### 关键策略:不动 71 处 fetch
+所有 API 调用通过 `AuthFetchInterceptor` 全局 patch `window.fetch` — 改这一处,71 处自动获益。
+
+### 改动(`AuthFetchInterceptor.tsx`)
+- 主 patched fetch:`/api/*` 自动加 `credentials: "include"`
+- `tryRefresh`:加 credentials:include,服务端读 cookie refresh + 写新 cookie
+- 重试原请求:加 credentials:include + 保留 Authorization header(双轨)
+- 主动续期 fetch:加 credentials:include
+- localStorage 路径**保留**作过渡期兜底,后续阶段 3 才移除
+
+### 构建验证
+- `npm run build` 成功,35+ 页 prerendered
+- 无 TypeScript 错误
+- 19 处硬编码 Authorization 不改(header fallback 仍工作,服务端 get_current_user 优先 cookie)
+
+### 跨子域 cookie(留意)
+- 默认 `COOKIE_DOMAIN=""` → cookie 是 host-only
+  - ailixiao.com 设的 cookie 不能给 admin.ailixiao.com 用
+- **生产建议**:`.env.enc` 加 `COOKIE_DOMAIN=.ailixiao.com`,两个子域共享一份登录态
+- 测试环境保持 host-only 不变
+
+### 不写新前端测试
+没装 Playwright,前端 e2e 在 P1 路线图最后一项。本阶段验证靠:
+- 后端 P8 阶段 1 的 12 个 cookie 测试(server side 都过)
+- `npm run build` 通过(没引入 TS 错)
+- 等用户 deploy 后真浏览器试一次
+
+### 决策记录
+- **不改 19 处硬编码 Authorization** — 中心 patch 已让 cookie 生效;19 处 header 留兼容(服务端 prefer cookie),阶段 3 再清
+- **localStorage 写仍保留** — 过渡期老登录态(老 token 还在 localStorage)需要继续工作
+- **credentials:include 加在 effective init** — 不破坏调用方传的 init,只在缺 credentials 字段时补
+- **WebSocket 鉴权保留 query token** — 浏览器不能给 WS 传 cookie,/api/tasks/ws/{task_id}?token=... 不动
+
+### 下一阶段(P8 阶段 3,~30 天后)
+- 监控用户实际是否还有依赖 Authorization header 的(看 server log)
+- 若都迁完:从 `get_current_user` 移除 header fallback
+- 19 处硬编码 `Authorization: Bearer ${token}` 清掉
+- localStorage `token` / `refresh_token` 不再读不再写
+- 文档化迁移完成
+
 ## 2026-04-27 二十九续(P8 阶段 1:Cookie 后端双轨支持 — 不破坏老前端)
 
 ### 设计

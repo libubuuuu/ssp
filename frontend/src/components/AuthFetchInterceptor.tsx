@@ -1,22 +1,26 @@
 "use client";
 /**
- * 全局 fetch 拦截器,统一处理 401 token 失效场景。
+ * 全局 fetch 拦截器(P8 阶段 2:cookie + header 双轨)
  *
  * 触发场景(全部覆盖,前端代码无需改):
  *   - JWT_SECRET 轮换 → 旧 token 签名验证失败
  *   - access token 自然过期(1 小时,主动续期阈值 10 分钟)
  *   - 改密码 / 强制下线 / 用户主动登出所有设备 → 用户级吊销
  *
+ * P8 阶段 2 改动:
+ *   - 所有 /api/* 请求自动加 credentials: 'include' → httpOnly cookie 自动带
+ *   - localStorage 路径保留(过渡期兼容老登录态),后续阶段 3 移除
+ *   - refresh 也用 credentials:include,服务端读 cookie refresh_token + 写新 cookie
+ *
  * 行为:
  *   1. 任意 /api/* 调用返 401
- *   2. 拦截器自动调 /api/auth/refresh 用 refresh_token 换新 access
- *   3. 成功 → 用新 access 重试原请求,业务代码无感知
- *   4. 失败 → 静默清 localStorage,跳 /auth?expired=1
+ *   2. 拦截器自动调 /api/auth/refresh(cookie + body 兜底两路)
+ *   3. 成功 → 用新 cookie 自动跑,localStorage 也同步刷新(过渡)
+ *   4. 失败 → 静默清 localStorage + /auth?expired=1
  *
  * 关键设计:
  *   - 单例 refreshPromise 防并发(同时多个请求 401 时只刷一次)
  *   - 不拦截 /api/auth/login | register | send-code | login-by-code | reset-password-by-code
- *     (公开接口的 401 是真错误,该让前端代码自己处理)
  *   - 不拦截 /api/auth/refresh 自己(避免无限循环)
  *   - 已在 /auth 页不再跳(避免循环)
  *   - 模块级单 patch(防 React strict mode 双重渲染重复装)
@@ -61,18 +65,21 @@ export default function AuthFetchInterceptor() {
     let refreshPromise: Promise<string | null> | null = null;
 
     async function tryRefresh(): Promise<string | null> {
+      // P8 阶段 2:cookie 优先(credentials:include 自动带 refresh cookie),
+      // body 兜底兼容老登录态(localStorage 还在的过渡期)
       const refresh = localStorage.getItem("refresh_token");
-      if (!refresh) return null;
       try {
         const r = await originalFetch("/api/auth/refresh", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ refresh_token: refresh }),
+          credentials: "include",  // 关键:让浏览器带 cookie + 接受 set-cookie
+          body: JSON.stringify(refresh ? { refresh_token: refresh } : {}),
         });
         if (!r.ok) return null;
         const data = await r.json();
         const newAccess = data.access_token ?? data.token;
         if (newAccess) {
+          // 同步写 localStorage(过渡期);新 access cookie 服务端已经 set
           localStorage.setItem("token", newAccess);
           return newAccess;
         }
@@ -107,16 +114,22 @@ export default function AuthFetchInterceptor() {
     window.fetch = async function patchedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
       const url = urlOf(input);
 
-      // 不拦截:不是 API 调用 / 是 refresh 自己 / 是公开 auth 接口
+      // P8 阶段 2:所有 /api/* 自动加 credentials:include(cookie 双向)
       const isApi = url.includes("/api/");
       const isRefresh = url.includes("/api/auth/refresh");
       const isPublicAuth = PUBLIC_AUTH_PATHS.some(p => url.includes(p));
 
-      if (!isApi || isRefresh || isPublicAuth) {
-        return originalFetch(input, init);
+      // 即便公开接口(login/register)也要 credentials:include — 服务端 set 的 cookie 才能进 jar
+      let effectiveInit = init;
+      if (isApi && (!init || !("credentials" in init))) {
+        effectiveInit = { ...(init ?? {}), credentials: "include" };
       }
 
-      let response = await originalFetch(input, init);
+      if (!isApi || isRefresh || isPublicAuth) {
+        return originalFetch(input, effectiveInit);
+      }
+
+      let response = await originalFetch(input, effectiveInit);
       if (response.status !== 401) return response;
 
       // 401 → 试刷 token(并发请求共享同一次刷新)
@@ -132,11 +145,12 @@ export default function AuthFetchInterceptor() {
         return response;
       }
 
-      // 用新 token 重试原请求
-      const retryInit: RequestInit = init ? { ...init } : {};
+      // 用新 token 重试原请求(cookie 已由 refresh 响应 set;header 也保留兼容)
+      const retryInit: RequestInit = effectiveInit ? { ...effectiveInit } : { credentials: "include" };
       const headers = new Headers(retryInit.headers ?? {});
       headers.set("Authorization", `Bearer ${newToken}`);
       retryInit.headers = headers;
+      retryInit.credentials = "include";
       const retryResp = await originalFetch(input, retryInit);
 
       // 重试还 401 = refresh 拿到的 token 也被吊销 / 用户已被踢
@@ -172,6 +186,7 @@ export default function AuthFetchInterceptor() {
           const r = await originalFetch("/api/auth/refresh", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            credentials: "include",  // P8: 带 refresh cookie
             body: JSON.stringify({ refresh_token: refresh }),
           });
           if (r.ok) {
