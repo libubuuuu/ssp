@@ -1,5 +1,43 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 八续(supervisor 新配置真上线 + main fast-forward + Dependabot 复核)
+
+### ✅ supervisor stopasgroup/killasgroup 配置切到生产
+- `cp deploy/supervisor.conf → /etc/supervisor/conf.d/ssp.conf`
+- `supervisorctl reread`:4 个 program changed
+- `supervisorctl update`:停 → 重起 4 个程序;blue 保持 STOPPED(autostart=false),green 重启
+- 操作前手动备份:`/etc/supervisor/conf.d/ssp.conf.before-stopgroup-20260427-125529`
+- 操作前数据库快照:`/root/backups/dev_20260427_125454.db`
+
+### ⚠ 新老配置切换的"鸡生蛋"问题(一次性)
+新进程 FATAL "Exited too quickly":
+- 老 next-server(PID 434791)在**旧配置**下启动,**进程组没设好**;supervisor 用 stopasgroup 杀,bash 死了但 next-server 重新挂到 init(PPID=1)
+- :3002 仍被老进程占,新进程绑端口失败 → FATAL
+- **手动 `kill 434791`** 释放端口 → `supervisorctl start ssp-frontend-green` → 起来,新 PID 589447 由 ssp-app 跑
+- **从此以后** stopasgroup/killasgroup 真生效,下次切换不需要再手动 kill
+
+### ✅ 健康验证
+post-deploy-check 8 项 7 绿 1 黄(dev.db 9h 无写入,跟切换时点对得上,watchdog 4h 全 OK 视为正常)
+- 公网 https://ailixiao.com 200 / api 200 / 直连 backend:8001 200 / 直连 frontend:3002 200
+
+### ✅ git 4-ref 对齐
+- main(原 8ceac80)fast-forward 到 25271c8(merge 12 commits,无冲突,纯前进)
+- main / origin/main / feat / origin/feat 全部对齐于 25271c8
+
+### ✅ Dependabot 复核
+`.github/dependabot.yml` 在 main 分支已存在(commit fc5cdf3):pip + npm + actions 三套,周一 03:00 自动跑,next/react/react-dom 主版本 ignore,带 commit-message 前缀和 label。无需新增。
+
+### 决策记录
+- **24h 还没到不删 /root/ssp** — 切换发生于 03:42,本次操作 12:55,只过了 9h;按"留 24h 作 hard rollback"原则,删除留下次会话(预计 03:43 后)
+- **手动 kill 老进程而非等 supervisor 超时** — stopwaitsecs=15 已经过了,supervisor 已认为进程 STOPPED 但实际端口被占;主动 kill 比等不存在的 timeout 快
+- **Dependabot 不动** — 检查发现 fc5cdf3 已经把它推上去了,不重复劳动
+
+### ⏸ 下次会话(切换 24h+ 后)
+- `rm -rf /root/ssp`(切换发生于 03:42,24h+ 安全窗在 04:00 之后)
+- `rm /root/.ssp_master_key`(/etc/ssp/master.key 已接管)
+- 删 `/etc/supervisor/conf.d/ssp.conf.{bak,preopt-backup,before-stopgroup-*}`
+- 把 git working tree 迁到 /opt/ssp(可选)
+
 ## 2026-04-27 七续(发现并禁用 ai-frontend.service — 降权真正闭环)
 
 ### ⚠ 重大发现:平行的 root 服务一直在跑老代码
