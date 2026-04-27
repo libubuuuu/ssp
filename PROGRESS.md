@@ -1,5 +1,46 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 三十六续(覆盖率补齐 P7 承诺:decorators 27→98 / payment 50→98)
+
+### 上轮 P7 承诺
+> "decorators.py 27% → 70%(0.5h)— 扣费命脉单测"
+> "payment.py 50% → 70%(1.5h)— confirm_order + 退款"
+
+### 实际成绩(超额)
+- `decorators.py`:27% → **98%**(+71%)
+- `payment.py`:50% → **98%**(+48%)
+
+### 测试 +28(207 → **235**)
+**decorators.py 12 测试**(新文件 `test_decorators.py`):
+- 未登录 401 / current_user 通过 kwargs 或 args dict 注入
+- 余额不足 402 不扣
+- 成功扣费 + 写 generation_history(含 description 提取 + module fallback)
+- 非 dict 结果不报错不附 cost
+- HTTPException 路径返还积分 + re-raise(400 透传)
+- 普通 Exception 路径返还 + 转 500
+- ValueError 大额(20)也返还
+- get_user_credits 不存在用户返 0 / 真值
+
+**payment.py 16 测试**(新文件 `test_payment.py`):
+- /packages /credit-packs 公开列表
+- 创建订单:套餐 / 充值包 / 无效 id 400 / 无效 type 400
+- 查询订单:owner 200 / 别人 403 / 不存在 404
+- /orders 列表用户严格隔离(A 看不到 B 的)
+- /orders/{id}/confirm:非管理员 403 / 不存在 404 / 已确认 400 / 成功加积分
+- /admin/orders:非管理员 403 / status 过滤
+
+### 修过程发现
+**循环导入:** `decorators.py` 第 8 行 `from ..api.auth import get_current_user` 实际未使用,但触发 `decorators → auth → api/__init__ → image → decorators` 循环。删了 import 注释说明"由 FastAPI Depends() 注入,不需要 import"。
+
+### 整体覆盖率 46% → 52%
+- 核心路径 4 个里 3 个达标(auth 91%, billing 91%, payment 98%, decorators 98%);剩 jobs.py 48%(异步路径,留下次)
+- 总测试 159 → 235(本会话累计 +135 测试,从 100 起)
+
+### 决策记录
+- **decorators 单测直接 import** 而不是端点间接测 — 隔离逻辑,跑得快(0.04s/test)
+- **delete dead import 而非加 lazy import** — 该 import 本来就没用,直接删干净
+- **payment 测试不 mock 数据库** — `_register` + `set_role` 走真 DB,集成度更高发现真问题
+
 ## 2026-04-27 三十五续(再自审三个真问题 + JWT timing race 隐性 bug 修)
 
 ### 自审发现

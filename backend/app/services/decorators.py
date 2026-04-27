@@ -5,7 +5,7 @@
 from functools import wraps
 from fastapi import HTTPException
 from .billing import get_task_cost, check_user_credits, deduct_credits, add_credits, create_consumption_record
-from ..api.auth import get_current_user
+# get_current_user 由 FastAPI Depends() 注入,这里不需要 import(且会循环导入)
 import uuid
 
 
