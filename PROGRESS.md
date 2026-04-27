@@ -1,5 +1,36 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 二十八续(隐藏雷 #3:Sentry before_send 过滤 + 配额告警建议)
+
+### 背景
+P5 接的 Sentry 默认上报所有异常。免费 5K events/月,如果每次用户输入错(401/422)都上报,几小时烧光,真 bug 就被淹没。
+
+### 改动
+- `app/services/sentry_filter.py`(新):
+  - `_is_fal_transient`:严格双重匹配 — 必须同时含 `fal.media` 或 `fal-ai/` 标识 + 瞬时关键词(rate limit / service unavailable / gateway timeout / throttle)
+  - `before_send(event, hint)`:Sentry 钩子,4xx 丢 / 5xx 留 / fal 瞬时丢 / 其他留
+- `app/main.py`:`sentry_sdk.init` 加 `before_send=before_send`
+- `docs/SENTRY-SETUP.md`:加过滤逻辑表 + 配额接近告警建议(80%/100% 邮件 + custom limit 强制不超)
+
+### 测试 +10(181 → **191**)
+- 4xx 全状态码丢(400/401/402/403/404/422/429/451/499)
+- 5xx 全状态码留
+- fal 429/503/504 丢
+- 非 fal 503 留(测试抓到漏洞:文本含 "503" 但无 fal 标识曾被误丢)
+- ValueError / KeyError 留
+- 手动 capture_message(无 exc_info)留
+- _is_fal_transient 单元
+
+### 决策记录(被测试抓到的真问题)
+- **第一版用 OR(关键词 OR 数字)**导致非 fal 的 "503" 也被丢 — 测试抓到立刻改 AND(必须同时含 fal 标识)
+- **fal-ai/ 当 substr 而非 word boundary** — fal-ai/kling-video 之类型号都得能匹配
+- **关键词不含 "5xx"/"4xx" 数字** — 数字单独无意义,要带文本上下文(rate limit / service unavailable)
+
+### 配额管理建议(SENTRY-SETUP.md 新增)
+- 80% 邮件告警
+- 100% 邮件 + webhook + 自动停止上报(防意外升级账单)
+- 接近上限排查:看高频 issue → 补 before_send 还是修代码 → 不是加额度
+
 ## 2026-04-27 二十七续(隐藏雷 #2:Cloudflare IP 段自动校验)
 
 ### 背景

@@ -22,6 +22,7 @@ if settings.SENTRY_DSN:
         import sentry_sdk
         from sentry_sdk.integrations.fastapi import FastApiIntegration
         from sentry_sdk.integrations.starlette import StarletteIntegration
+        from app.services.sentry_filter import before_send
         sentry_sdk.init(
             dsn=settings.SENTRY_DSN,
             environment=settings.ENVIRONMENT or "production",
@@ -29,12 +30,13 @@ if settings.SENTRY_DSN:
                 StarletteIntegration(transaction_style="endpoint"),
                 FastApiIntegration(transaction_style="endpoint"),
             ],
-            traces_sample_rate=0.1,    # 10% trace 采样,免费额度够用
-            profiles_sample_rate=0.0,   # profiling 关闭(免费额度有限)
-            send_default_pii=False,    # 不上报 user-agent / IP / cookie 之类
+            traces_sample_rate=0.1,     # 10% trace 采样,免费额度够用
+            profiles_sample_rate=0.0,    # profiling 关闭(免费额度有限)
+            send_default_pii=False,     # 不上报 user-agent / IP / cookie 之类
             attach_stacktrace=True,
+            before_send=before_send,    # 隐藏雷 #3:过滤 4xx + fal 瞬时错
         )
-        log_info(f"Sentry 已启用 (env={settings.ENVIRONMENT})")
+        log_info(f"Sentry 已启用 (env={settings.ENVIRONMENT}, 过滤 4xx + fal 瞬时错)")
     except ImportError:
         log_error("SENTRY_DSN 已配置但 sentry-sdk 未安装,跳过(pip install sentry-sdk[fastapi])")
     except Exception as e:

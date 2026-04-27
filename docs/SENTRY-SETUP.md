@@ -60,6 +60,19 @@ Sentry 控制台 → Alerts → 创建新规则:
 | `send_default_pii` | False | 不上报 IP / cookie / user-agent,合规优先 |
 | `attach_stacktrace` | True | 错误带完整栈,定位快 |
 | `environment` | `settings.ENVIRONMENT` | dev / staging / production 各自分流 |
+| `before_send` | `sentry_filter.before_send` | 隐藏雷 #3:过滤 4xx + fal 瞬时错 |
+
+### before_send 过滤逻辑(`app/services/sentry_filter.py`)
+
+| 异常类型 | 处理 | 原因 |
+|---|---|---|
+| HTTPException 4xx(401/402/403/404/422)| **丢** | 用户输入错,不是 bug |
+| HTTPException 5xx(我们自己服务)| 留 | 真服务端问题 |
+| fal.media / fal-ai/ + 限流/超时关键词 | **丢** | 上游瞬时错,业务已重试 + 降级 |
+| ValueError / KeyError / etc | 留 | 业务异常 |
+| 手动 capture_message | 留 | 显式上报 |
+
+效果:5K 免费额度从"几小时烧光"延长到"够用一个月以上"。
 
 ## 不要做的事
 
@@ -71,6 +84,20 @@ Sentry 控制台 → Alerts → 创建新规则:
 
 - Sentry 控制台 → Stats:确认 events 用量 < 4K(留 1K 缓冲)
 - 如果用量超 4K,说明有错误风暴,先修代码再说,不是单纯加额度
+
+## 配额接近上限告警(强烈推荐)
+
+Sentry → Settings → Subscription → **Spend Allocation Notifications**:
+- "When usage reaches **80%** of monthly quota → email me"
+- "When usage reaches **100%** → email me + webhook"
+
+或更主动:Settings → Quotas → Set custom limit per project,**强制不超免费额度**(避免意外升级账单)。
+
+接近上限时排查清单:
+1. Issues → 按 frequency 排序 → 找出最高频的 issue
+2. 看 issue 详情:是不是 `before_send` 该过滤而没过滤的?如果是,补 sentry_filter.py
+3. 真 bug → 修代码,不是加额度
+4. 噪声重 → 在 Sentry UI 单独 mute / archive 该 issue
 
 ## 后端没装 sentry-sdk 时怎么办
 
