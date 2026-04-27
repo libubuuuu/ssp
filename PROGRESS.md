@@ -1,5 +1,40 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 二十四续(P7:覆盖率报告 — 整体 46%,核心 2/4 达标)
+
+### 跑命令
+`cd /root/ssp/backend && venv/bin/pytest --cov=app --cov-report=term-missing`
+
+### 整体
+- **46%**(3188 stmts / 1717 missed),159 测试全过
+
+### 核心路径(用户要求 >= 70%)
+| 模块 | 覆盖率 | 状态 |
+|---|---|---|
+| auth.py | **89%** | ✅ |
+| billing.py | **91%** | ✅ |
+| jobs.py | 48% | ❌ 不达标 |
+| payment.py | 50% | ❌ 不达标 |
+
+### 完整报告
+落到 `docs/COVERAGE-2026-04-27.md`(分模块 + 缺口分析 + 后续补齐建议)
+
+### 不达标分析
+- **jobs.py 48%**:`_execute_job` 异步路径未覆盖(测试用 `_noop_execute_job` 替代真 FAL),失败回滚路径未跑
+- **payment.py 50%**:confirm_order 部分分支 + 退款流程未测
+
+### 后续优先级建议(总 ~7h,作为下一轮专项)
+1. decorators.py 27% → 70%(0.5h)— @require_credits 是扣费命脉
+2. avatar.py 0% → 60%(1h)— 刚接通真接口该补
+3. jobs.py → 70%(2h)— mock fal_service 端到端
+4. payment.py → 70%(1.5h)
+5. admin.py → 60%(2h)
+
+### 决策记录
+- **本次不强求补齐** — 用户明确说"不强求这次补齐",列出报告即可
+- **整体 46% 在 SaaS 早期可接受** — 命脉 auth + billing 高(89%/91%);jobs/payment 是异步 + 管理员路径,补齐 ROI 高的留下次
+- **不强补 main.py / health_check / feishu / task_queue / fal_service / circuit_breaker** — 启动代码 / 外部依赖 / 即将退役,测试 ROI 低
+
 ## 2026-04-27 二十三续(P6:Cloudflare CDN 接入配套 — 等用户改 DNS)
 
 ### 改动
