@@ -1,5 +1,50 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 二十五续(P9:限流 Redis 后端可选 — 等用户启用)
+
+### 设计决策
+**不擅自在生产装 Redis 系统服务**,但把基础设施写完:
+- 默认走内存版(`InMemoryRateLimiter`)— 当前单 worker 已够用
+- `REDIS_URL` 配置开关 — 设了就用 Redis(`RedisRateLimiter`)
+- Redis 不可达 init 时静默回退内存版 + warning,服务不挂
+- 运行期 Redis 临时挂 → `check_ip_limit` fail-open(`(True, -1)`),不让请求 500
+
+### 改动
+- `rate_limiter.py`:重构为双类
+  - `_LimiterCommon`:共享常量 `ip_limit=60` / `user_limit=100` / `failure_threshold=5` / `window_seconds=60`
+  - `InMemoryRateLimiter`:既存逻辑搬过来(零行为变化)
+  - `RedisRateLimiter`:固定窗口 INCR+EXPIRE,失败计数 24h 自动作废
+  - `_make_rate_limiter()`:工厂函数,根据 `REDIS_URL` + Redis 可达性选后端
+  - `RateLimiter` alias = `InMemoryRateLimiter`(向后兼容外部 import)
+- `docs/REDIS-SETUP.md`:用户启用 4 步指南
+
+### Redis 算法
+- IP/User 60s 窗口:固定窗口(fixed window)+ INCR + EXPIRE 70s
+- 失败计数:INCR + EXPIRE 86400s(24h 自动作废,防永久卡合法用户)
+- **缺点**:窗口切换瞬间允许 2x 突发;sorted set sliding window 是升级路径(后续若需要)
+
+### 测试 +11(159 → **170**)
+- InMemory 既存语义保留(3 测试)
+- Redis 工厂三种路径:无 URL / URL 可达 / URL 不可达 → 各自正确选后端
+- Redis check_ip_limit 首次调用 EXPIRE,后续不重复
+- Redis 阈值边界正确
+- Redis 运行期挂 fail-open
+- Redis record_failure 24h expire / reset_failure DEL 正确
+
+### 决策记录
+- **不装 Redis 系统服务** — 改 prod 基础设施超出"代码贡献"范围,留给用户决定;接入路径完整文档化
+- **失败计数加 24h expire 而非永久** — 内存版没 expire,合法用户登录失败一次后永久标记需要验证码;Redis 版借此机会修这个隐性 bug
+- **fail-open 而非 fail-closed** — Redis 抖动时 fail-closed 会让所有请求 429,可用性灾难;fail-open 接受短时无限流,可用性优先
+- **保留 SQLite 长窗口表** — register_ip_log / register_ip_failure_log 是审计性数据 + 24h 长窗口,Redis 不是正确选择,不动
+- **不在 watchdog 自动启用监控 Redis** — 用户启用后再加,避免误报
+
+### ⏸ 用户操作清单(`docs/REDIS-SETUP.md` 详细)
+1. `apt install redis-server`
+2. 配置 bind 127.0.0.1 + protected-mode yes + maxmemory 256mb
+3. `redis-cli ping` 验证
+4. `REDIS_URL=redis://localhost:6379/0` 写到加密 .env
+5. `supervisorctl restart`,看启动日志 "RateLimiter: Redis 后端启用"
+
 ## 2026-04-27 二十四续(P7:覆盖率报告 — 整体 46%,核心 2/4 达标)
 
 ### 跑命令

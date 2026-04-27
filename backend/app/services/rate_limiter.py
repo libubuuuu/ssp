@@ -1,10 +1,17 @@
 """
 限流防刷中间件
-- IP 限流(中间件,内存)
-- 用户限流(内存)
-- 验证码触发
+- IP 限流(中间件)
+- 用户限流
+- 登录失败计数(触发验证码)
 - 注册 IP 限流(SQLite 持久,P3-3 反羊毛党)
+- 注册失败软配额(SQLite 持久,BUG-1)
+
+P9 backend 抽象:
+- 默认内存版(InMemoryRateLimiter)— 重启丢计数,单 worker OK
+- 可选 Redis 版(RedisRateLimiter)— 跨重启 / 跨 worker,需配 REDIS_URL
+- Redis 不可达 init 阶段静默回退内存版 + warning
 """
+import logging
 from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -12,6 +19,8 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 import time
+
+logger = logging.getLogger(__name__)
 
 
 # === P3-3:注册 IP 限流(SQLite 持久) ===
@@ -125,83 +134,152 @@ def assert_register_ip_failure_quota(ip: str) -> None:
         )
 
 
-class RateLimiter:
-    """限流器"""
+class _LimiterCommon:
+    """两个后端都用的常量"""
+    ip_limit = 60          # 每 IP 每分钟最多请求数
+    user_limit = 100       # 每用户每分钟最多请求数
+    failure_threshold = 5  # 失败多少次触发验证码
+    window_seconds = 60    # 时间窗口(秒)
+
+
+class InMemoryRateLimiter(_LimiterCommon):
+    """内存版(默认):单 worker 安全,重启丢计数"""
 
     def __init__(self):
-        # IP 请求计数：{ip: [(timestamp, count)]}
         self.ip_requests: Dict[str, list] = defaultdict(list)
-        # 用户请求计数：{user_id: [(timestamp, count)]}
         self.user_requests: Dict[str, list] = defaultdict(list)
-        # 失败计数（用于触发验证码）：{ip: count}
         self.failure_count: Dict[str, int] = defaultdict(int)
 
-        # 配置
-        self.ip_limit = 60  # 每 IP 每分钟最多请求数
-        self.user_limit = 100  # 每用户每分钟最多请求数
-        self.failure_threshold = 5  # 失败多少次触发验证码
-        self.window_seconds = 60  # 时间窗口（秒）
-
     def _clean_old_records(self, records: list, current_time: float) -> list:
-        """清理超出时间窗口的记录"""
         cutoff = current_time - self.window_seconds
         return [r for r in records if r[0] > cutoff]
 
     def check_ip_limit(self, ip: str) -> tuple[bool, int]:
-        """
-        检查 IP 限流
-        返回：(是否允许，剩余次数)
-        """
         current_time = time.time()
         self.ip_requests[ip] = self._clean_old_records(self.ip_requests[ip], current_time)
-
         count = len(self.ip_requests[ip])
         remaining = self.ip_limit - count
-
         if count >= self.ip_limit:
             return False, 0
-
         self.ip_requests[ip].append((current_time, count + 1))
         return True, remaining - 1
 
     def check_user_limit(self, user_id: str) -> tuple[bool, int]:
-        """
-        检查用户限流
-        返回：(是否允许，剩余次数)
-        """
         current_time = time.time()
         self.user_requests[user_id] = self._clean_old_records(
             self.user_requests[user_id], current_time
         )
-
         count = len(self.user_requests[user_id])
         remaining = self.user_limit - count
-
         if count >= self.user_limit:
             return False, 0
-
         self.user_requests[user_id].append((current_time, count + 1))
         return True, remaining - 1
 
     def record_failure(self, ip: str) -> bool:
-        """
-        记录失败
-        返回：是否需要验证码
-        """
         self.failure_count[ip] += 1
         return self.failure_count[ip] >= self.failure_threshold
 
     def reset_failure(self, ip: str):
-        """重置失败计数（成功登录后调用）"""
         self.failure_count[ip] = 0
 
     def should_require_captcha(self, ip: str) -> bool:
-        """检查是否需要验证码"""
         return self.failure_count[ip] >= self.failure_threshold
 
 
-# 全局限流器实例
-rate_limiter = RateLimiter()
+class RedisRateLimiter(_LimiterCommon):
+    """Redis 版(可选):跨重启 / 跨 worker 持久
+
+    算法:固定窗口(fixed window)
+    - key = "rl:ip:{ip}:{window_start}",window_start = floor(now / 60) * 60
+    - INCR + EXPIRE(窗口 + 10s 余量)
+    - 简单可靠;边界突发(window 切换瞬间双倍)可接受,需要严格平滑滑动用 sorted set
+
+    失败计数:
+    - key = "rl:fail:{ip}",普通 INCR,无过期(成功后人工 DEL)
+    """
+
+    KEY_PREFIX = "rl:"
+
+    def __init__(self, redis_url: str):
+        import redis
+        # decode_responses=True 让返回值直接是 str,省一层 .decode()
+        self.client = redis.Redis.from_url(redis_url, decode_responses=True, socket_timeout=2)
+        # 在 init 里 ping 一下,挂了立刻 raise(由调用方决定 fallback)
+        self.client.ping()
+
+    def _window_key(self, kind: str, key: str) -> str:
+        window_start = int(time.time() // self.window_seconds) * self.window_seconds
+        return f"{self.KEY_PREFIX}{kind}:{key}:{window_start}"
+
+    def _check_window(self, kind: str, key: str, limit: int) -> tuple[bool, int]:
+        rkey = self._window_key(kind, key)
+        try:
+            count = self.client.incr(rkey)
+            if count == 1:
+                self.client.expire(rkey, self.window_seconds + 10)
+        except Exception as e:  # Redis 临时故障不能让请求 500
+            logger.warning("Redis incr failed (%s),fail-open allowing request", e)
+            return True, -1
+        if count > limit:
+            return False, 0
+        return True, max(0, limit - count)
+
+    def check_ip_limit(self, ip: str) -> tuple[bool, int]:
+        return self._check_window("ip", ip, self.ip_limit)
+
+    def check_user_limit(self, user_id: str) -> tuple[bool, int]:
+        return self._check_window("user", user_id, self.user_limit)
+
+    def record_failure(self, ip: str) -> bool:
+        rkey = f"{self.KEY_PREFIX}fail:{ip}"
+        try:
+            count = self.client.incr(rkey)
+            # 失败计数 24h 自动作废(防永久卡住合法用户)
+            if count == 1:
+                self.client.expire(rkey, 86400)
+            return count >= self.failure_threshold
+        except Exception as e:
+            logger.warning("Redis record_failure failed: %s", e)
+            return False
+
+    def reset_failure(self, ip: str):
+        try:
+            self.client.delete(f"{self.KEY_PREFIX}fail:{ip}")
+        except Exception:
+            pass
+
+    def should_require_captcha(self, ip: str) -> bool:
+        try:
+            v = self.client.get(f"{self.KEY_PREFIX}fail:{ip}")
+            return int(v or 0) >= self.failure_threshold
+        except Exception:
+            return False
+
+
+def _make_rate_limiter():
+    """工厂:根据 REDIS_URL 选后端;Redis 不可达静默回退到内存版 + warning"""
+    import os
+    url = os.environ.get("REDIS_URL", "").strip()
+    if not url:
+        logger.info("RateLimiter: REDIS_URL 未配置,使用内存后端(单 worker OK,重启丢计数)")
+        return InMemoryRateLimiter()
+    try:
+        rl = RedisRateLimiter(url)
+        logger.info("RateLimiter: Redis 后端启用 (%s)", url)
+        return rl
+    except Exception as e:
+        logger.warning(
+            "RateLimiter: Redis 连接失败(%s),回退到内存后端;限流仍工作但跨重启不持久", e
+        )
+        return InMemoryRateLimiter()
+
+
+# 全局限流器实例(模块加载时一次性选好后端)
+rate_limiter = _make_rate_limiter()
+
+# 向后兼容:外部代码 import RateLimiter 仍能拿到一个具体类
+RateLimiter = InMemoryRateLimiter
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
