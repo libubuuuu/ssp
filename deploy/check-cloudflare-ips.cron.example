@@ -1,0 +1,10 @@
+# Cloudflare IP 段周扫(隐藏雷 #2)
+#
+# 安装:
+#   crontab -l > /tmp/cron.bak 2>/dev/null || true
+#   cat /tmp/cron.bak /opt/ssp/deploy/check-cloudflare-ips.cron.example | sort -u | crontab -
+#
+# 时间:每周一 04:30(避开备份 03:00 + uploads-gc 04:00)
+# 输出:/var/log/cf-ips-mismatch.log;有差异时推微信
+
+30 4 * * 1 /usr/bin/bash /opt/ssp/deploy/check-cloudflare-ips.sh

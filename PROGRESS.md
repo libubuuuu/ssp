@@ -1,5 +1,40 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 二十七续(隐藏雷 #2:Cloudflare IP 段自动校验)
+
+### 背景
+P6 的 `cloudflare-real-ip.conf` 写死了 CF IP 段(22 个),但 CF 每年加新段。如果不及时更新,**新边缘节点的请求被当公网 IP 处理**:
+- nginx `set_real_ip_from` 不匹配 → `$remote_addr` 是 CF IP
+- fail2ban / rate limit 一个 CF 节点的合法用户互相牵连 ban
+- 真用户 IP 写不进 audit_log
+
+### 改动
+- `deploy/check-cloudflare-ips.sh`(新):
+  - 拉 `https://www.cloudflare.com/ips-v4` + `ips-v6`
+  - 对比本地 snippet 的 `set_real_ip_from` 列表
+  - 用 `comm -23` 找新增 / `comm -13` 找废弃
+  - 有差异 → 写 `/var/log/cf-ips-mismatch.log` + 调 `push-alert.sh` 推微信
+  - 拉 CF API 失败也告警(避免静默失效)
+- `deploy/check-cloudflare-ips.cron.example`:每周一 04:30(避开备份 03:00 + uploads-gc 04:00)
+
+### 实测
+- 真跑一次:`OK: CF IP 段与本地 snippet 一致(22 段)` ✅
+- mock 缺一半:正确识别 22 个新增段 ✅
+
+### 决策记录
+- **每周一次而非每天** — CF 不会一夜之间换 IP;每周节奏配合人工修配置 + 重 deploy nginx
+- **拉失败也告警** — 静默失败比误报更糟(以为通过了实际检查没跑)
+- **不自动修复 snippet** — 自动改 nginx 配置风险大;告警让人手动 PR 改后过 review
+- **不写测试** — bash 脚本依赖 curl + 远端 API,单元测试 ROI 低;手工 dry-run 验证够用
+
+### ⏸ 用户操作清单
+1. cron 模板加进 crontab(可选,推荐):`crontab -l | cat - /opt/ssp/deploy/check-cloudflare-ips.cron.example | sort -u | crontab -`
+2. 收到微信告警 "🟡 CF IP 段需更新" 时:
+   - 看 `/var/log/cf-ips-mismatch.log` 拿新增段
+   - 编辑 `/opt/ssp/deploy/cloudflare-real-ip.conf` 补上
+   - `cp` 到 `/etc/nginx/snippets/` + `nginx -t && nginx -s reload`
+   - commit + push
+
 ## 2026-04-27 二十六续(隐藏雷 #1:uploads 磁盘清理 + GC + 水位告警)
 
 ### 背景
