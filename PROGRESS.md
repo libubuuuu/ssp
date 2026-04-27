@@ -1,5 +1,31 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 十四续(P1:SQLite 开 WAL + jobs.json fcntl 锁)
+
+### a. database.py 开 WAL
+```python
+conn.execute("PRAGMA journal_mode=WAL")     # 写不阻塞读,持久文件级生效
+conn.execute("PRAGMA synchronous=NORMAL")   # WAL 自带耐久性,降低 fsync 频次
+conn.execute("PRAGMA busy_timeout=5000")    # 撞锁等 5s 再放弃
+```
+- WAL 是 SQLite 高并发的标配;之前 journal_mode=delete 写阻塞读,生产用户体验受限
+- busy_timeout=5000 顺手加,避免高并发偶发 "database is locked"
+
+### b. jobs.py _save_jobs / _load_jobs 加 fcntl 锁
+- _save_jobs 加 `LOCK_EX`(排他锁)+ `os.fsync(f.fileno())` 写后落盘
+- _load_jobs 加 `LOCK_SH`(共享锁)防读到半量
+- 单 worker uvicorn 多协程下其实安全,但多 worker / cron 并发场景没锁会丢数据
+- Phase 2 迁 RQ/Celery + Redis 后整体退役
+
+### 测试 103/103 全过零回归
+- WAL 切换在 tmp 测试库上也工作(每个 session 一个 tmp 文件,首次连接自动升 WAL)
+- fcntl 锁在 Linux 上可用(项目部署平台)
+
+### 决策记录
+- **synchronous=NORMAL 而非 FULL** — WAL 模式下 NORMAL 的耐久性已够;FULL 每次提交都 fsync 严重拉慢小写入(用户改头像/扣费/审计日志频次极高)
+- **fcntl 锁选 advisory 而非 mandatory** — Linux 默认 advisory,只对自觉 flock 的进程生效;够用,不引入 mount 选项依赖
+- **加 os.fsync 不只 flush** — flush 只到内核缓冲,fsync 才到磁盘。jobs 是文件型队列,丢失这部分数据会让用户任务消失,值得花这点 IO 代价
+
 ## 2026-04-27 十三续(P0 紧急扫尾:所有空壳付费/假回应接口 503 化)
 
 ### 用户审计扫描结果

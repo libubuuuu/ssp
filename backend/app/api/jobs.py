@@ -4,6 +4,7 @@ import json
 import uuid
 import time
 import asyncio
+import fcntl
 from pathlib import Path
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends
@@ -24,16 +25,38 @@ MAX_CONCURRENT = 5
 _semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 
 def _load_jobs():
-    if JOBS_FILE.exists():
-        try:
-            return json.loads(JOBS_FILE.read_text())
-        except:
-            return {}
-    return {}
+    """读取 jobs.json,加共享锁(LOCK_SH)避免读到正在写的半量"""
+    if not JOBS_FILE.exists():
+        return {}
+    try:
+        with open(JOBS_FILE, "r", encoding="utf-8") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+            try:
+                return json.loads(f.read() or "{}")
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    except Exception as e:
+        print(f"load jobs failed: {e}")
+        return {}
+
 
 def _save_jobs():
+    """写 jobs.json,加排他锁(LOCK_EX)防止多 worker 并发覆盖损坏文件
+
+    Phase 2 迁 RQ/Celery + Redis 后退役。当前文件型队列单进程多协程是安全的,
+    多进程(uvicorn workers)/cron 并发场景下没锁会撞数据丢失。
+    """
     try:
-        JOBS_FILE.write_text(json.dumps(JOBS, ensure_ascii=False, indent=2, default=str))
+        # mode w 会 truncate,要在 flock 之前 open;flock 跨 close 不传播,
+        # 用 with open 保证锁只在写入期间持有
+        with open(JOBS_FILE, "w", encoding="utf-8") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                f.write(json.dumps(JOBS, ensure_ascii=False, indent=2, default=str))
+                f.flush()
+                os.fsync(f.fileno())
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     except Exception as e:
         print(f"save jobs failed: {e}")
 

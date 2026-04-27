@@ -15,8 +15,17 @@ DATABASE_PATH = os.environ.get("DATABASE_PATH", "./dev.db")
 
 @contextmanager
 def get_db():
-    """获取数据库连接"""
+    """获取数据库连接
+
+    PRAGMA 说明:
+    - journal_mode=WAL: 写不阻塞读,生产并发写场景必开;一次设置文件级生效持久
+    - synchronous=NORMAL: 配合 WAL 平衡耐久性和性能(满 fsync 太慢,WAL 自带保障)
+    - busy_timeout=5000: 撞锁等 5 秒再放弃,避免高并发下偶发 "database is locked"
+    """
     conn = sqlite3.connect(DATABASE_PATH)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.row_factory = sqlite3.Row
     try:
         yield conn
