@@ -25,7 +25,20 @@ REGISTER_IP_FAILURE_WINDOW = 86400
 
 
 def get_client_ip(request: Request) -> str:
-    """统一从 request 抽 IP(模块级公用)"""
+    """统一从 request 抽真实客户端 IP(模块级公用)
+
+    优先级(P6 Cloudflare 后):
+    1. CF-Connecting-IP — Cloudflare 透传的真用户 IP(最权威,只有 CF 会塞)
+    2. X-Forwarded-For — 标准代理头(取第一个,nginx 已加保护)
+    3. X-Real-IP — nginx real_ip 模块设置
+    4. request.client.host — 直连或 nginx 转发的 socket 地址
+
+    安全:nginx.conf 的 set_real_ip_from 配置必须包含 CF IP 段,否则
+    用户可以伪造 CF-Connecting-IP 头绕过 IP 限流。
+    """
+    cf_ip = request.headers.get("CF-Connecting-IP")
+    if cf_ip:
+        return cf_ip.strip()
     forwarded = request.headers.get("X-Forwarded-For")
     if forwarded:
         return forwarded.split(",")[0].strip()

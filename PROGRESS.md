@@ -1,5 +1,43 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 二十三续(P6:Cloudflare CDN 接入配套 — 等用户改 DNS)
+
+### 改动
+- `rate_limiter.py::get_client_ip`:`CF-Connecting-IP` 升至最高优先级
+  - 优先级:CF-Connecting-IP > X-Forwarded-For > X-Real-IP > request.client.host
+- `deploy/cloudflare-real-ip.conf`(snippet,新文件):
+  - 22 个 IPv4/IPv6 IP 段(2024-12 官方列表)
+  - `set_real_ip_from` + `real_ip_header CF-Connecting-IP`
+- `docs/CLOUDFLARE-SETUP.md`:7 步用户操作指南(注册 → DNS → SSL Full strict → 强制 HTTPS → server snippet include)
+
+### 测试 +6(153 → **159**)
+- CF-Connecting-IP 优先级最高
+- 4 层 fallback 顺序正确(CF > XFF > Real-IP > client)
+- 无 client 兜底 127.0.0.1
+- whitespace 被 strip
+
+### 决策记录
+- **CF IP 段写死 snippet 而非动态拉** — 动态拉一年才变一次,不值得引入运行时依赖;每年 1 月人工对一次
+- **real_ip_recursive on** — 多层代理时(用户 → CF → 我们 nginx 反代 → 业务),正确解析最深一级真实 IP
+- **写 SSL Full (strict) 不是 Flexible** — Flexible 回源 HTTP 会让后端跳 HTTPS 死循环 + 中间人风险
+- **用户仍要 manually `include`** — 不写到主 nginx.conf 是因为 sites-enabled/default 是 certbot 管的,自动改它会撞 certbot 续期
+- **不接 CF Pro WAF** — 免费版 + fail2ban 已挡 99% 自动攻击;Pro 19$/月不值
+
+### ⏸ 用户操作清单(docs/CLOUDFLARE-SETUP.md)
+1. cloudflare.com 注册 → Add Site `ailixiao.com` → Free
+2. 域名注册商改 nameservers 到 CF 给的两个
+3. CF DNS 4 条记录全部 ☁️ 橙色
+4. SSL/TLS 模式选 **Full (strict)**
+5. Edge Certificates: Always HTTPS / TLS 1.2+ / Auto Rewrites 全开
+6. 服务器:`cp deploy/cloudflare-real-ip.conf /etc/nginx/snippets/` + 各 server 加 include + nginx -s reload
+7. 验证 cf-ray 头 + 后端 audit_log.ip 是真 IP
+
+### 接入后好处
+- 国内访问延迟 ~200ms → ~50ms(CF 节点近)
+- 源 IP 隐藏(扫不到 ailixiao.com 真服务器)
+- 免费 L3/L4 DDoS 防护
+- audit_log / rate limiter 拿到真用户 IP(关键合规)
+
 ## 2026-04-27 二十二续(P5:Sentry 错误监控接入 — 等用户贴 DSN 即可启用)
 
 ### 改动
