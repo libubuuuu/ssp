@@ -62,6 +62,22 @@ _ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif",
 
 _SAFE_FILENAME_PART = re.compile(r"[^A-Za-z0-9._-]")
 
+# 共享 httpx 客户端(module-level,复用 TLS 连接,避免每次新建握手 + 端口耗尽)
+# 进程死时 OS 自动清,不主动 close;测试 monkeypatch 时通过 _get_client() 替换
+_client: Optional["httpx.AsyncClient"] = None
+
+
+def _get_client() -> "httpx.AsyncClient":
+    """lazy-init module-level httpx 客户端"""
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(
+            timeout=DOWNLOAD_TIMEOUT_SEC,
+            follow_redirects=True,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
+    return _client
+
 
 def _pick_ext(url: str, content_type: Optional[str]) -> str:
     """白名单选扩展名:URL 末段 ∩ 白名单 优先,否则 Content-Type 推,默认 .bin
@@ -115,41 +131,41 @@ async def archive_url(url: str, user_id: str, kind: str = "media") -> str:
     file_uuid = _uuid.uuid4().hex
 
     try:
-        async with httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT_SEC, follow_redirects=True) as client:
-            async with client.stream("GET", url) as resp:
-                if resp.status_code != 200:
-                    logger.warning(
-                        "archive_url failed: status=%d url=%s",
-                        resp.status_code, url[:120],
-                    )
-                    return url
+        client = _get_client()
+        async with client.stream("GET", url) as resp:
+            if resp.status_code != 200:
+                logger.warning(
+                    "archive_url failed: status=%d url=%s",
+                    resp.status_code, url[:120],
+                )
+                return url
 
-                ext = _pick_ext(url, resp.headers.get("content-type"))
-                filename = f"{kind[:16]}_{file_uuid}{ext}"
-                target_dir = UPLOADS_ROOT / safe_user / yyyymm
-                target_dir.mkdir(parents=True, exist_ok=True)
-                target_path = target_dir / filename
+            ext = _pick_ext(url, resp.headers.get("content-type"))
+            filename = f"{kind[:16]}_{file_uuid}{ext}"
+            target_dir = UPLOADS_ROOT / safe_user / yyyymm
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target_path = target_dir / filename
 
-                total = 0
-                with target_path.open("wb") as f:
-                    async for chunk in resp.aiter_bytes(chunk_size=64 * 1024):
-                        total += len(chunk)
-                        if total > MAX_BYTES:
-                            f.close()
-                            target_path.unlink(missing_ok=True)
-                            logger.warning(
-                                "archive_url skipped: file > %dMB url=%s",
-                                MAX_BYTES // 1024 // 1024, url[:120],
-                            )
-                            return url
-                        f.write(chunk)
+            total = 0
+            with target_path.open("wb") as f:
+                async for chunk in resp.aiter_bytes(chunk_size=64 * 1024):
+                    total += len(chunk)
+                    if total > MAX_BYTES:
+                        f.close()
+                        target_path.unlink(missing_ok=True)
+                        logger.warning(
+                            "archive_url skipped: file > %dMB url=%s",
+                            MAX_BYTES // 1024 // 1024, url[:120],
+                        )
+                        return url
+                    f.write(chunk)
 
-                # 设权限 644 让 nginx 能读(目录 755)
-                os.chmod(target_path, 0o644)
+            # 设权限 644 让 nginx 能读(目录 755)
+            os.chmod(target_path, 0o644)
 
-                public = f"{PUBLIC_BASE_URL.rstrip('/')}/{safe_user}/{yyyymm}/{filename}"
-                logger.info("archive_url ok: %s -> %s (%d bytes)", url[:80], public, total)
-                return public
+            public = f"{PUBLIC_BASE_URL.rstrip('/')}/{safe_user}/{yyyymm}/{filename}"
+            logger.info("archive_url ok: %s -> %s (%d bytes)", url[:80], public, total)
+            return public
 
     except (httpx.HTTPError, OSError) as e:
         logger.warning("archive_url exception: url=%s err=%s", url[:120], e)

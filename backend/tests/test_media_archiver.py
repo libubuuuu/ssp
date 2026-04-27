@@ -13,6 +13,12 @@ import pytest
 from app.services import media_archiver as ma
 
 
+@pytest.fixture(autouse=True)
+def _reset_client(monkeypatch):
+    """每个测试前重置 module-level client 单例,避免上次测试残留"""
+    monkeypatch.setattr(ma, "_client", None)
+
+
 @pytest.fixture
 def tmp_uploads(tmp_path, monkeypatch):
     """每个测试一份独立 uploads 目录,不污染 /opt/ssp/uploads"""
@@ -38,13 +44,12 @@ def _mock_stream_response(status_code: int, content_chunks: list[bytes], content
     return ctx
 
 
-def _mock_client(stream_ctx):
-    client_ctx = MagicMock()
+def _patch_get_client(monkeypatch, stream_ctx):
+    """共享 client 模式:mock _get_client 直接返回 stub client"""
     client = MagicMock()
     client.stream = MagicMock(return_value=stream_ctx)
-    client_ctx.__aenter__ = AsyncMock(return_value=client)
-    client_ctx.__aexit__ = AsyncMock(return_value=None)
-    return client_ctx
+    monkeypatch.setattr(ma, "_get_client", lambda: client)
+    return client
 
 
 def test_empty_url_returns_unchanged(tmp_uploads):
@@ -66,7 +71,7 @@ def test_successful_download(tmp_uploads, monkeypatch):
     """200 + 100KB 内容 → 写到本地 + 返回新 URL"""
     chunks = [b"\x89PNG" + b"x" * 100000]
     stream = _mock_stream_response(200, chunks, "image/png")
-    monkeypatch.setattr(ma.httpx, "AsyncClient", MagicMock(return_value=_mock_client(stream)))
+    _patch_get_client(monkeypatch, stream)
 
     new_url = asyncio.run(ma.archive_url("https://fal.media/files/abc.png", "user-aaa", "image"))
 
@@ -80,7 +85,7 @@ def test_successful_download(tmp_uploads, monkeypatch):
 
 def test_404_falls_back_to_original(tmp_uploads, monkeypatch):
     stream = _mock_stream_response(404, [b""])
-    monkeypatch.setattr(ma.httpx, "AsyncClient", MagicMock(return_value=_mock_client(stream)))
+    _patch_get_client(monkeypatch, stream)
 
     original = "https://fal.media/files/missing.png"
     new = asyncio.run(ma.archive_url(original, "uid", "image"))
@@ -92,7 +97,7 @@ def test_oversized_file_falls_back(tmp_uploads, monkeypatch):
     monkeypatch.setattr(ma, "MAX_BYTES", 1024)  # 临时降到 1KB 触发
     chunks = [b"x" * 800, b"x" * 800]  # 总 1600B > 1024B
     stream = _mock_stream_response(200, chunks, "video/mp4")
-    monkeypatch.setattr(ma.httpx, "AsyncClient", MagicMock(return_value=_mock_client(stream)))
+    _patch_get_client(monkeypatch, stream)
 
     original = "https://fal.media/big.mp4"
     new = asyncio.run(ma.archive_url(original, "uid", "video"))
@@ -101,10 +106,12 @@ def test_oversized_file_falls_back(tmp_uploads, monkeypatch):
 
 def test_http_exception_falls_back(tmp_uploads, monkeypatch):
     """httpx 抛异常 → fallback 不爆"""
-    bad_client_ctx = MagicMock()
-    bad_client_ctx.__aenter__ = AsyncMock(side_effect=ma.httpx.ConnectError("boom"))
-    bad_client_ctx.__aexit__ = AsyncMock(return_value=None)
-    monkeypatch.setattr(ma.httpx, "AsyncClient", MagicMock(return_value=bad_client_ctx))
+    bad_client = MagicMock()
+    bad_stream_ctx = MagicMock()
+    bad_stream_ctx.__aenter__ = AsyncMock(side_effect=ma.httpx.ConnectError("boom"))
+    bad_stream_ctx.__aexit__ = AsyncMock(return_value=None)
+    bad_client.stream = MagicMock(return_value=bad_stream_ctx)
+    monkeypatch.setattr(ma, "_get_client", lambda: bad_client)
 
     original = "https://fal.media/x.png"
     new = asyncio.run(ma.archive_url(original, "uid", "image"))
@@ -115,7 +122,7 @@ def test_path_traversal_safe_user_id(tmp_uploads, monkeypatch):
     """user_id 含路径穿越字符 → 被洗掉,不会写到 ../something"""
     chunks = [b"x" * 100]
     stream = _mock_stream_response(200, chunks, "image/jpeg")
-    monkeypatch.setattr(ma.httpx, "AsyncClient", MagicMock(return_value=_mock_client(stream)))
+    _patch_get_client(monkeypatch, stream)
 
     new = asyncio.run(ma.archive_url("https://fal.media/x.jpg", "../../../etc", "image"))
     assert new.startswith("https://example.com/uploads/")
@@ -127,7 +134,7 @@ def test_path_traversal_safe_user_id(tmp_uploads, monkeypatch):
 def test_ext_picked_from_content_type(tmp_uploads, monkeypatch):
     """URL 没扩展名时,从 Content-Type 推"""
     stream = _mock_stream_response(200, [b"x" * 100], "video/mp4")
-    monkeypatch.setattr(ma.httpx, "AsyncClient", MagicMock(return_value=_mock_client(stream)))
+    _patch_get_client(monkeypatch, stream)
 
     new = asyncio.run(ma.archive_url("https://fal.media/no-ext-here", "uid", "video"))
     assert new.endswith(".mp4")

@@ -1,5 +1,30 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 三十三续(自审橙色 #6:media_archiver httpx 客户端共享)
+
+### 问题
+原代码每次调 `archive_url` 新建 `httpx.AsyncClient`,FAL 大量并发任务时:
+- 每次 TLS 握手开销
+- 端口耗尽风险(TIME_WAIT 累积)
+- HTTP/2 连接复用失效
+
+### 修
+- module-level `_client: Optional[httpx.AsyncClient] = None`
+- `_get_client()` lazy init,首次调用时建,后续返回同一个
+- `httpx.Limits(max_connections=20, max_keepalive_connections=10)` 限制连接池上限
+- 不主动 close(进程死时 OS 清理)
+
+### 测试调整
+- `_reset_client` autouse fixture:每个测试前清 module-level singleton(防上次 mock 残留)
+- mock 路径从 `httpx.AsyncClient` 改成 patch `_get_client`(更直接)
+- 10 个既存测试全过
+
+### 决策记录
+- **lazy init 不在 main.py lifespan** — 避免跟 main.py 耦合;media_archiver 自己管
+- **不主动 close** — 进程级 cleanup 由 OS 接管;若需要严格清理(测试套件 / 长跑工具)再加 lifespan hook
+- **max_connections=20** — 当前 FAL 单 worker 并发 < 5,留 4x 余量
+- **max_keepalive=10** — 默认值偏小,fal.media 热点连接可复用
+
 ## 2026-04-27 三十二续(自审发现的红色洞:/login-by-code 漏接 cookie + INITIAL_CREDITS 漂移)
 
 ### 自审发现的真问题
