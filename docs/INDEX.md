@@ -6,7 +6,8 @@
 
 - [`../CLAUDE.md`](../CLAUDE.md) — 项目长期档案 / 技术栈 / 路线图 / 协作约定
 - [`../RUNBOOK.md`](../RUNBOOK.md) — 故障应急手册(supervisor / 蓝绿 / 回滚 / 备份恢复 / 密钥轮换 / 常见故障)
-- [`../PROGRESS.md`](../PROGRESS.md) — 进度日记(按"X 续"日记格式,最近的在最上)
+- [`../PROGRESS.md`](../PROGRESS.md) — 进度日记(只留最近 5 续,完整历史见下方 archive)
+- [`PROGRESS-archive/2026-04.md`](PROGRESS-archive/2026-04.md) — 2026-04 归档(P0-P9 + BUG-1/2 + 隐藏雷 1-3 + P8 阶段 1-2 + 通宵交付 + 灾备 + AIOps,1440 行)
 
 ## 用户操作 SOP(他要做的事)
 
