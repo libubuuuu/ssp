@@ -315,11 +315,11 @@ curl -s -H "Authorization: Bearer <admin_token>" \
 所有敏感操作(改积分/确认订单/强制下线/改密码/重置密码/重置模型/登出所有设备)写不可变 audit_log 表。
 ```bash
 sqlite3 /opt/ssp/backend/dev.db \
-  "SELECT ts, actor_email, action, target_email, ip FROM audit_log ORDER BY ts DESC LIMIT 30;"
+  "SELECT created_at, actor_email, action, target_id, ip FROM audit_log ORDER BY created_at DESC LIMIT 30;"
 
 # 按 action 过滤(前端 UI:https://admin.ailixiao.com/admin/audit)
 sqlite3 /opt/ssp/backend/dev.db \
-  "SELECT * FROM audit_log WHERE action='adjust_credits' ORDER BY ts DESC LIMIT 20;"
+  "SELECT * FROM audit_log WHERE action='adjust_credits' ORDER BY created_at DESC LIMIT 20;"
 ```
 
 ### 强制踢人(管理员侧)
