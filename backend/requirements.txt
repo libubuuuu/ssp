@@ -1,9 +1,9 @@
 # AI 创意平台 - 后端依赖
-fastapi==0.122.1
-uvicorn[standard]==0.27.1
+fastapi==0.136.1
+uvicorn[standard]==0.46.0
 python-multipart==0.0.26
-pydantic==2.6.1
-pydantic-settings==2.1.0
+pydantic==2.13.3
+pydantic-settings==2.14.0
 
 # 数据库
 # 直接使用 sqlite3，跳过 SQLAlchemy
@@ -12,7 +12,7 @@ pydantic-settings==2.1.0
 redis==5.0.1
 
 # HTTP 客户端
-httpx==0.26.0
+httpx==0.28.1
 aiofiles==23.2.1
 
 # 环境变量
@@ -25,17 +25,17 @@ Pillow==12.2.0
 alibabacloud-dysmsapi20170525==3.0.0
 
 # 认证
-PyJWT==2.12.0
+PyJWT==2.12.1
 bcrypt==4.1.2
 # 2FA / TOTP(管理员强制 2FA + 二维码)
 pyotp==2.9.0
 qrcode==8.2
 
 # FAL AI
-fal-client==0.5.6
+fal-client==0.14.1
 
 # 系统监控
 psutil==5.9.8
 
 # P5: 错误监控(可选 — SENTRY_DSN 环境变量启用,留空时跳过 init)
-sentry-sdk[fastapi]==2.20.0
+sentry-sdk[fastapi]==2.58.0
