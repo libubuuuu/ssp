@@ -31,6 +31,8 @@ class RegisterRequest(BaseModel):
     email: str = Field(..., min_length=1, max_length=254)
     password: str = Field(..., min_length=6, max_length=128)
     name: Optional[str] = Field(None, max_length=50)
+    # P3-2: 注册必须先 /api/auth/send-code 拿到 6 位邮箱码再附在请求里
+    code: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
 
 
 class LoginRequest(BaseModel):
@@ -80,13 +82,25 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
 
 @router.post("/register")
 async def register(req: RegisterRequest):
-    """用户注册"""
-    # 检查邮箱是否已存在
+    """用户注册(P3-2 起强制邮箱码验证)"""
+    # 1. 邮箱码校验(必须在创建用户前,失败永不落库)
+    cache = _EMAIL_CODES.get(req.email)
+    if not cache:
+        raise HTTPException(status_code=400, detail="请先发送邮箱验证码")
+    if cache["expires_at"] < _time.time():
+        _EMAIL_CODES.pop(req.email, None)
+        raise HTTPException(status_code=400, detail="验证码已过期,请重新发送")
+    if cache["code"] != req.code:
+        raise HTTPException(status_code=400, detail="验证码错误")
+    # 通过 — 立刻作废,防重放
+    _EMAIL_CODES.pop(req.email, None)
+
+    # 2. 检查邮箱是否已存在
     existing = get_user_by_email(req.email)
     if existing:
         raise HTTPException(status_code=400, detail="该邮箱已被注册")
 
-    # 创建用户
+    # 3. 创建用户
     user = create_user(req.email, req.password, req.name)
     if not user:
         raise HTTPException(status_code=500, detail="注册失败")

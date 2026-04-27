@@ -77,7 +77,10 @@ export default function AuthPage() {
         return;
       }
       const url = mode === "login" ? `${API_BASE}/api/auth/login` : `${API_BASE}/api/auth/register`;
-      const body = mode === "login" ? { ...form, totp_code: totpCode } : form;
+      const body =
+        mode === "login"
+          ? { ...form, totp_code: totpCode }
+          : { ...form, code: emailCode };  // P3-2: 注册必须携带邮箱码
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -109,7 +112,10 @@ export default function AuthPage() {
       const res = await fetch(`${API_BASE}/api/auth/send-code`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: form.email, purpose: "login" }),
+        body: JSON.stringify({
+          email: form.email,
+          purpose: mode === "register" ? "register" : "login",
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : t("errors.networkError"));
@@ -160,7 +166,7 @@ export default function AuthPage() {
         </h2>
         <p style={{color:"#888",textAlign:"center",marginBottom:"1.5rem",fontSize:"0.9rem"}}>
           {mode === "register"
-            ? (lang==="en"?"Create account, get 100 free credits":"创建新账号，赠送 100 积分")
+            ? (lang==="en"?"Create account, get 10 free credits":"创建新账号，赠送 10 积分")
             : mode === "email_code"
               ? t("auth.codeLoginTip")
               : (lang==="en"?"Welcome back":"欢迎回来")}
@@ -193,7 +199,7 @@ export default function AuthPage() {
             style={{width:"100%",padding:"0.75rem",marginBottom:"1rem",background:"#2a2a2a",border:"1px solid #333",borderRadius:"8px",color:"#fff",boxSizing:"border-box"}}/>
         )}
 
-        {mode === "email_code" && (
+        {(mode === "email_code" || mode === "register") && (
           <>
             <button type="button" onClick={handleSendCode} disabled={loading || countdown > 0}
               style={{width:"100%",padding:"0.6rem",marginBottom:"0.75rem",background:countdown>0?"#222":"transparent",border:"1px solid #f59e0b",borderRadius:"8px",color:countdown>0?"#666":"#f59e0b",cursor:countdown>0?"default":"pointer",fontSize:"0.9rem"}}>

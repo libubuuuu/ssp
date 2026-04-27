@@ -1,5 +1,34 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 十七续(P3-2:注册必须验证邮箱码,反羊毛党第二步)
+
+### 后端
+- `RegisterRequest` 加 `code: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")`
+- `/api/auth/register` 第一步:查 `_EMAIL_CODES[email]`,验存在/未过期/匹配,然后**立刻 pop**(防重放)
+- 失败具体 detail:"请先发送邮箱验证码" / "验证码已过期" / "验证码错误"
+- 校验在 `get_user_by_email`(查重)之前 — 即使邮箱已注册,没 code 也不会泄漏"邮箱已被注册"
+
+### 前端
+- 注册模式新增"发送邮箱码"按钮 + 输入框(复用 email_code 登录的 UI 组件)
+- send-code 的 `purpose` 字段动态:register 模式时发 "register",否则 "login"
+- 提交时 register 把 `code` 字段放进 body
+- 文案修正:"赠送 100 积分" → "赠送 10 积分"(P3-1)
+
+### 测试 +5(120 → **125**)
+- `test_register_missing_code_rejected`(422 Pydantic field required)
+- `test_register_wrong_code_rejected`(400 + 用户未创建)
+- `test_register_no_code_sent_rejected`(_EMAIL_CODES 无记录,400)
+- `test_register_expired_code_rejected`(已过期,400)
+- `test_register_consumes_code_one_shot`(成功后 code 立即作废,二次同 code 失败)
+- conftest `_register` 自动注入 code 到 `_EMAIL_CODES`,既存 22 个测试无需改
+- 修 `test_email_code.py::test_reset_password_by_code_happy`(原 register 调用没带 code)
+
+### 决策记录
+- **code 校验放在 get_user_by_email 之前** — 否则攻击者可以用错误的 code + 已知邮箱反推哪些邮箱已注册(信息泄漏);先 code 校验整体一致 400 detail
+- **422 vs 400** — 缺 code 字段 → 422(Pydantic 标准);有 code 但错 → 400(业务语义)。前端要分别处理
+- **Pydantic pattern `\d{6}` 强约束** — 阻止 "abc123" 之类奇怪 code 在到达后端业务逻辑前就 422
+- **现有 _register helper 自动注入 code** — 不破坏 22 个既存调用方,只对显式测错误路径的写新用例
+
 ## 2026-04-27 十六续(P3-1:新用户初始积分 100 → 10,反羊毛党第一步)
 
 ### 改动

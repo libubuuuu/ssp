@@ -87,10 +87,17 @@ def test_login_by_code_expired(client, monkeypatch):
 
 
 def test_reset_password_by_code_happy(client):
-    # 先注册一个普通邮箱密码用户
-    client.post("/api/auth/register", json={
-        "email": "reset@example.com", "password": "old-pw-123"
+    # 先注册(P3-2 起需要邮箱码,这里直接注入)
+    from app.api import auth as auth_module
+    import time as _time
+    auth_module._EMAIL_CODES["reset@example.com"] = {
+        "code": "999999", "expires_at": _time.time() + 300,
+        "sent_at": _time.time(), "purpose": "register",
+    }
+    r = client.post("/api/auth/register", json={
+        "email": "reset@example.com", "password": "old-pw-123", "code": "999999",
     })
+    assert r.status_code == 200, r.text
     # 发码
     client.post("/api/auth/send-code", json={
         "email": "reset@example.com", "purpose": "reset"

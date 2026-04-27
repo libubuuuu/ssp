@@ -118,8 +118,20 @@ def pytest_sessionfinish(session, exitstatus):
 # === 公用辅助 ===
 
 def _register(client, email: str, password: str = "secret123", name: str | None = None):
-    """注册,返回 (token, user_dict)"""
-    payload = {"email": email, "password": password}
+    """注册,返回 (token, user_dict)
+
+    P3-2 后注册要求邮箱码:helper 自动注入 _EMAIL_CODES + 附 code 字段。
+    单独测试"无 code"或"错 code"路径走 client.post 自己构造,不通过此 helper。
+    """
+    import time as _time
+    from app.api import auth as auth_module
+    auth_module._EMAIL_CODES[email] = {
+        "code": "999999",
+        "expires_at": _time.time() + 300,
+        "sent_at": _time.time(),
+        "purpose": "register",
+    }
+    payload = {"email": email, "password": password, "code": "999999"}
     if name:
         payload["name"] = name
     r = client.post("/api/auth/register", json=payload)
