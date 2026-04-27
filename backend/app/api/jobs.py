@@ -117,6 +117,44 @@ async def _run_video_job(params: dict, job_type: str):
     raise Exception("timeout (10 min)")
 
 
+async def _run_ad_video_job(params: dict):
+    """AI 带货视频 — Seedance 2.0 异步任务(2026-04-28 v3 新增)
+
+    参数:
+      - image_url: 首帧图(可以是 /preview 输出,也可以是直接上传的)
+      - script: 完整脚本 dict
+      - duration / aspect_ratio / resolution / enable_audio
+    """
+    from app.services import ad_video_models
+
+    submit_result = await ad_video_models.submit_seedance_video(
+        image_url=params["image_url"],
+        script=params["script"],
+        duration=params.get("duration", 15),
+        aspect_ratio=params.get("aspect_ratio", "9:16"),
+        resolution=params.get("resolution", "1080p"),
+        enable_audio=params.get("enable_audio", True),
+    )
+
+    if submit_result.get("error"):
+        raise Exception(submit_result["error"])
+
+    task_id = submit_result.get("task_id")
+    if not task_id:
+        raise Exception("Seedance 未返回 task_id")
+
+    # 轮询(最多 5 分钟,Seedance 一般 1-3 分钟)
+    for _ in range(60):
+        await asyncio.sleep(5)
+        status = await ad_video_models.poll_seedance_status(task_id)
+        if status.get("status") == "completed" and status.get("video_url"):
+            return {"video_url": status["video_url"], "type": "video"}
+        if status.get("status") == "failed":
+            raise Exception(status.get("error", "Seedance 失败"))
+
+    raise Exception("AI 带货视频生成超时(5 分钟)")
+
+
 async def _execute_job(job_id: str):
     async with _semaphore:
         job = JOBS.get(job_id)
@@ -131,6 +169,8 @@ async def _execute_job(job_id: str):
                 result = await _run_image_job(job["params"])
             elif t.startswith("video_"):
                 result = await _run_video_job(job["params"], t)
+            elif t == "ad_video":
+                result = await _run_ad_video_job(job["params"])
             else:
                 raise Exception(f"unknown type: {t}")
 
@@ -189,6 +229,8 @@ def _module_from_type(job_type: str, params: dict) -> str:
         return "video/replace/element"
     if job_type == "video_clone":
         return "video/clone"
+    if job_type == "ad_video":
+        return "ad_video/generate"
     return "image/style"
 
 

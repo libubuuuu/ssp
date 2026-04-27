@@ -51,6 +51,7 @@ def app():
     from app.api import admin as admin_module
     from app.api import payment as payment_module
     from app.api import digital_human as digital_human_module
+    from app.api import ad_video as ad_video_module
 
     # 把真实 _execute_job 替成 no-op,避免端点测试触发 FAL API
     # 但**先保存原引用**到 _execute_job_original,内部测试可以拿来用 + 配 mock 跑全路径
@@ -65,6 +66,7 @@ def app():
     test_app.include_router(admin_module.router, prefix="/api/admin")
     test_app.include_router(payment_module.router, prefix="/api/payment")
     test_app.include_router(digital_human_module.router, prefix="/api/digital-human")
+    test_app.include_router(ad_video_module.router, prefix="/api/ad-video")
     return test_app
 
 

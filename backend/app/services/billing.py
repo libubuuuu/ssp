@@ -30,6 +30,16 @@ PRICING: Dict[str, int] = {
     # 语音
     "voice/clone": 5,
     "voice/tts": 2,
+
+    # AI 带货视频(2026-04-28 v3 新增)
+    # analyze: VLM 视觉调用(qwen3-vl 235B via fal openrouter),成本约 $0.02 → 1 积分
+    # preview: Nano Banana 单图,成本约 $0.04 → 2 积分
+    # scene_regen: VLM 文本调用,几乎免费 → 1 积分
+    # generate: Seedance 2.0 1080p 15s 带音,成本约 $4.20 → 30 积分(留毛利)
+    "ad_video/analyze": 1,
+    "ad_video/preview": 2,
+    "ad_video/scene_regen": 1,
+    "ad_video/generate": 30,
 }
 
 

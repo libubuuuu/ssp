@@ -84,7 +84,11 @@ init_circuit_breaker()
 init_alert_service(settings.ALIYUN_ACCESS_KEY_ID, settings.ALIYUN_ACCESS_KEY_SECRET, "AI创意平台", settings.ALIYUN_SMS_TEMPLATE_CODE, [settings.DEVELOPER_PHONE] if settings.DEVELOPER_PHONE else [])
 init_task_queue()
 
-from app.api import image, video, digital_human, tasks, content, products, admin, avatar, auth, payment, video_studio, jobs
+# 2026-04-28 v3: AI 带货视频 - VLM 服务(走 fal OpenRouter,复用 FAL_KEY,零新依赖)
+from app.services.vlm_service import init_vlm_service
+init_vlm_service()
+
+from app.api import image, video, digital_human, tasks, content, products, admin, avatar, auth, payment, video_studio, jobs, ad_video
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(payment.router, prefix="/api/payment", tags=["支付"])
 app.include_router(image.router, prefix="/api/image", tags=["图片"])
@@ -96,6 +100,7 @@ app.include_router(avatar.router, prefix="/api/avatar", tags=["Avatar"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["任务"])
 app.include_router(content.router, prefix="/api/content", tags=["内容"])
 app.include_router(products.router, prefix="/api/products", tags=["产品"])
+app.include_router(ad_video.router, prefix="/api/ad-video", tags=["AI带货视频"])
 app.include_router(admin.router, prefix="/api/admin", tags=["管理员"])
 
 @app.get("/")
