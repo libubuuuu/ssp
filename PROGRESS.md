@@ -1,5 +1,27 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 三十八续(admin.py 覆盖 30→41 + 顺手修 force-logout 返 success bool)
+
+### 改动
+新增 `test_admin.py` 测试 11 个(原 5 个 → 16 个),覆盖:
+- `users-list`:管理员列出全部用户(数据库查询全路径)
+- `adjust-credits`:边界(超过余额 floor 0)+ 不存在用户 404
+- `force-logout`:成功踢人 + token 立即失效 + 不存在用户 404 + 非管理员 403
+- `audit-log`:管理员限制 + 列表 + action 过滤 + limit 500 截断
+- `diagnose-history`:权限 + 文件系统目录不存在仍 200 不抛
+
+### 顺手修 force-logout 返 success 字段
+P8 阶段 1 改 `invalidate_user_tokens` 返 int(原 bool)后,`admin.py force_logout` 把 int 当 bool 返了 `success: <ts>`(int)。前端 if 仍 truthy 但语义错。修:`success: True`,把 ts 移到 audit details 里方便事后追溯。
+
+### 覆盖率
+- admin.py:30% → **41%**(+11%)
+- 整体:54% → **55%**
+- 测试 257 → **268**(+11 此轮)
+- 累计本会话:100 → 268(+168,2.68x)
+
+### 不再继续补 admin
+剩下未覆盖的 admin 路径(stats/queue-status/diagnose-snapshot/watchdog/upload-qr/tasks-recent)依赖外部状态(supervisor 命令 / 文件系统 / circuit_breaker 内存)— 测试 ROI 低,留下次专项。
+
 ## 2026-04-27 三十七续(jobs.py 覆盖率 48→91 / 核心 4 路径全达标)
 
 ### 完成 P7 最后一项

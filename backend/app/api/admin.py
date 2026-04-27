@@ -509,7 +509,8 @@ async def admin_force_logout(user_id: str, request: Request, current_user: dict 
         target_email = row[0]
 
     from app.services.auth import invalidate_user_tokens
-    ok = invalidate_user_tokens(user_id)
+    # P8 后 invalidate_user_tokens 返 int 时间戳(原 bool);> 0 即成功
+    invalidate_ts = invalidate_user_tokens(user_id)
 
     # 写审计
     from app.services.audit import log_admin_action
@@ -519,11 +520,11 @@ async def admin_force_logout(user_id: str, request: Request, current_user: dict 
         action="force_logout",
         target_type="user",
         target_id=user_id,
-        details={"target_email": target_email},
+        details={"target_email": target_email, "invalidate_ts": invalidate_ts},
         ip=request.client.host if request.client else None,
     )
 
-    return {"success": ok, "user_id": user_id, "message": "该用户所有 token 已失效"}
+    return {"success": True, "user_id": user_id, "message": "该用户所有 token 已失效"}
 
 
 @router.post("/upload-qr")
