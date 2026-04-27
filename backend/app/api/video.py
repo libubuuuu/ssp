@@ -12,6 +12,7 @@ from enum import Enum
 from app.services.fal_service import get_video_service
 from app.services.decorators import require_credits
 from app.services.content_filter import assert_safe_prompt
+from app.services.media_archiver import archive_url
 from app.api.auth import get_current_user
 
 router = APIRouter()
@@ -191,6 +192,10 @@ async def image_to_video(req: ImageToVideoRequest, current_user: dict = Depends(
 
     task_ownership.register(result.get("task_id", ""), current_user["id"])
 
+    # BUG-2: 归档(若同步返回了 video_url;异步任务在 jobs.py / WS 完成时归档)
+    if result.get("video_url"):
+        result["video_url"] = await archive_url(result["video_url"], current_user["id"], "video")
+
     return {
         "success": True,
         **result,
@@ -241,10 +246,14 @@ async def replace_video_element(req: VideoElementReplaceRequest, current_user: d
     task_id = result.get("task_id", "unknown")
     task_ownership.register(task_id, current_user["id"])
 
+    if result.get("video_url"):
+        result["video_url"] = await archive_url(result["video_url"], current_user["id"], "video")
+
     return {
         "success": True,
         "task_id": task_id,
         "status": result.get("status", "pending"),
+        "video_url": result.get("video_url"),
         "message": "视频元素替换任务已提交，预计需要 2-5 分钟",
         "instruction": req.instruction,
         "model": result.get("model"),
@@ -275,10 +284,14 @@ async def clone_video(req: VideoCloneRequest, current_user: dict = Depends(get_c
     task_id = result.get("task_id", "unknown")
     task_ownership.register(task_id, current_user["id"])
 
+    if result.get("video_url"):
+        result["video_url"] = await archive_url(result["video_url"], current_user["id"], "video")
+
     return {
         "success": True,
         "task_id": task_id,
         "status": result.get("status", "pending"),
+        "video_url": result.get("video_url"),
         "message": "视频翻拍任务已提交，预计需要 3-5 分钟",
         "reference_video": req.reference_video_url,
         "model_image": req.model_image_url,

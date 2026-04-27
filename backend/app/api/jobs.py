@@ -133,6 +133,18 @@ async def _execute_job(job_id: str):
                 result = await _run_video_job(job["params"], t)
             else:
                 raise Exception(f"unknown type: {t}")
+
+            # BUG-2: 归档 fal URL → 本地 /uploads(防 fal.media 7-30 天过期)
+            try:
+                from app.services.media_archiver import archive_url
+                uid = job.get("user_numeric_id") or job.get("user_id") or "anon"
+                if result.get("image_url"):
+                    result["image_url"] = await archive_url(result["image_url"], uid, "image")
+                if result.get("video_url"):
+                    result["video_url"] = await archive_url(result["video_url"], uid, "video")
+            except Exception as arch_err:
+                print(f"archive failed (continuing with fal URL): {arch_err}")
+
             job["status"] = "completed"
             job["result"] = result
             job["finished_at"] = time.time()

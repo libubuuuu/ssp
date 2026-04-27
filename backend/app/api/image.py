@@ -11,6 +11,7 @@ from typing import Optional, List
 from app.services.fal_service import get_image_service
 from app.services.decorators import require_credits
 from app.services.content_filter import assert_safe_prompt
+from app.services.media_archiver import archive_url
 from app.api.auth import get_current_user
 
 router = APIRouter()
@@ -78,6 +79,10 @@ async def generate_style_image(req: ImageStyleRequest, current_user: dict = Depe
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
 
+    # BUG-2: 归档 fal URL 到本地 /uploads(防 fal.media 7-30 天过期)
+    if result.get("image_url"):
+        result["image_url"] = await archive_url(result["image_url"], current_user["id"], "image")
+
     return {
         "success": True,
         **result,
@@ -101,6 +106,9 @@ async def generate_realistic_image(req: ImageRealisticRequest, current_user: dic
 
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
+
+    if result.get("image_url"):
+        result["image_url"] = await archive_url(result["image_url"], current_user["id"], "image")
 
     return {
         "success": True,
@@ -161,6 +169,9 @@ async def generate_multi_reference_image(req: ImageMultiReferenceRequest, curren
 
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
+
+    if result.get("image_url"):
+        result["image_url"] = await archive_url(result["image_url"], current_user["id"], "image")
 
     return {
         "success": True,

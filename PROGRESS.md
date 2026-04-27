@@ -1,5 +1,62 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 二十一续(BUG-2:媒体归档 fal URL → 本地 /uploads 阶段 A)
+
+### 上一轮发现的洞
+fal.media URL 短期保留(7-30 天后 404),用户回看历史媒体 = 投诉 = 退款。
+
+### 阶段 A:本地 /opt/ssp/uploads(本次)
+新模块 `app/services/media_archiver.py`:
+- `archive_url(url, user_id, kind) -> str`:下载 → `/opt/ssp/uploads/{user}/{YYYY-MM}/{kind}_{uuid}{ext}` → 返回 `https://ailixiao.com/uploads/...`
+- 失败 fallback 返回原 URL + warning log,**绝不抛异常**(主流程不能因归档爆掉)
+- 100MB 硬上限,超额删半量文件 fallback
+- **扩展名白名单**(jpg/png/webp/gif/mp4/webm/mov/mp3/wav/m4a)— 测试抓到 `.exe` 落盘风险即修
+- 路径穿越保护(user_id 含 `../` 被洗成 `_`)
+
+### 接入(5 处真实 FAL 端点)
+- `image.py /style /realistic /multi-reference`(image_url)
+- `video.py /image-to-video /replace/element /clone`(video_url)
+- `avatar.py /generate`(video_url)
+- `jobs.py _execute_job` 异步任务完成后(image_url 和 video_url 都过)
+
+### nginx 配置(deploy/nginx.conf)
+```
+location /uploads/ {
+    alias /opt/ssp/uploads/;
+    expires 30d;
+    add_header Cache-Control "public, immutable";
+    autoindex off;
+    location ~* \.(jpg|jpeg|png|webp|gif|mp4|webm|mov|mp3|wav|m4a)$ { try_files $uri =404; }
+    location ~ /uploads/.*\. { return 403; }  # 非白名单扩展直接 403
+}
+```
+
+### 阶段 B(下次)
+- 接腾讯云 COS / 阿里云 OSS,`archive_url` 内部实现换 SDK,接入点不变
+- 历史 fal URL 不回溯(`generation_history` 老数据保留)
+
+### 测试 +10(140 → **150**)
+mock httpx.AsyncClient,不真上 fal 网络:
+- 空 URL / 非 http URL / 已归档 URL → 不动
+- 200 真下载 → 写本地 + 返回新 URL
+- 404 / httpx 异常 / 超大文件 → fallback 原 URL
+- 路径穿越 user_id 被洗
+- 扩展名从 Content-Type 推
+- 单元 `_pick_ext` 含 `.exe` 不被接受
+
+### 决策记录
+- **失败 fallback 不抛异常** — 用户花钱生成的图,即使归档失败也要正常返回原 fal URL,30 天内还能看;归档失败属于运维问题,不该让用户面对 500
+- **扩展名白名单** — 测试发现 `.exe` 风险后即改;nginx 也只 serve 白名单,双层保护
+- **uuid 文件名 + immutable 缓存** — 文件内容由 hash 唯一,30 天浏览器缓存不会撞
+- **/opt/ssp/uploads/ 不进 git** — `.gitignore` 加 uploads/(这条 P3-3 设计同款),但养成习惯
+- **阶段 A 而非直接上 OSS** — OSS 要用户提供 access key,本次不引入卡点;本地版 30 天内零问题
+
+### 上线步骤(下次 deploy)
+1. supervisor reread + update(代码自动加载新 import)
+2. nginx 配置 `cp /root/ssp/deploy/nginx.conf /etc/nginx/sites-enabled/default && nginx -t && nginx -s reload`
+3. 验证:生成一张图,看返回的 image_url 是 https://ailixiao.com/uploads/... 而不是 fal.media
+4. 24h 后检查 `/opt/ssp/uploads/` 大小(估算每天增量,确认磁盘水位)
+
 ## 2026-04-27 二十续(BUG-1:注册 IP 失败软配额 — 堵脚本爆破洞)
 
 ### 上一轮发现的洞

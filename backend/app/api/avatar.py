@@ -78,10 +78,16 @@ async def generate_avatar(req: AvatarGenerateRequest, current_user: dict = Depen
             description=f"数字人生成：{req.character_image_url[:50]}..."
         )
 
+        # BUG-2: 归档 fal video URL
+        archived_video = result.get("video_url")
+        if archived_video:
+            from app.services.media_archiver import archive_url
+            archived_video = await archive_url(archived_video, current_user["id"], "video")
+
         return {
             "task_id": task_id,
             "status": result.get("status", "pending"),
-            "video_url": result.get("video_url"),
+            "video_url": archived_video,
             "model": result.get("model"),
             "cost": cost,
         }

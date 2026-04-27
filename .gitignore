@@ -50,6 +50,8 @@ studio_workspace/
 # Runtime data (file-based queue/sessions; lives on the host, not in git)
 jobs_data/
 backups/
+# BUG-2: 用户生成媒体归档(/opt/ssp/uploads,nginx /uploads/ alias);仅养成习惯,实际不在仓库
+uploads/
 
 # 任务队列持久化文件(各级)
 jobs.json
