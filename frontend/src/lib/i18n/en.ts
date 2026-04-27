@@ -464,6 +464,10 @@ export const en = {
     modelHunyuanDesc: "High quality lip sync",
     modelPixverse: "Pixverse",
     modelPixverseDesc: "Fast, good for preview",
+    modelAurora: "Creatify Aurora",
+    modelAuroraDesc: "Studio-quality, ideal for spokesperson content",
+    modelOmnihuman: "ByteDance Omnihuman",
+    modelOmnihumanDesc: "Rich emotion, great for performance (audio ≤ 30s)",
   },
   jobs: {
     myTasks: "My Tasks",

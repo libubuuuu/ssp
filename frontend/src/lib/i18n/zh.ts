@@ -464,6 +464,10 @@ export const zh = {
     modelHunyuanDesc: "高质量口型驱动",
     modelPixverse: "Pixverse",
     modelPixverseDesc: "速度快，适合预览",
+    modelAurora: "Creatify Aurora",
+    modelAuroraDesc: "影棚级质量，推荐口播带货",
+    modelOmnihuman: "ByteDance Omnihuman",
+    modelOmnihumanDesc: "情绪丰富，适合演讲表演（音频 ≤ 30 秒）",
   },
   jobs: {
     myTasks: "我的任务",

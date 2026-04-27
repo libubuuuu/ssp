@@ -148,9 +148,13 @@ class FalVideoService:
 
 
 class FalAvatarService:
+    # 4 个数字人模型(2026-04-28 增量):前 2 是腾讯/Pixverse,后 2 是 Creatify/ByteDance
+    # 不同模型 fal 入参字段名不同,见 generate() 里的 model_key→args 分支
     MODELS = {
-        "hunyuan-avatar": {"endpoint": "fal-ai/hunyuan-avatar", "label": "腾讯混元数字人"},
-        "pixverse-lipsync": {"endpoint": "fal-ai/pixverse/lipsync", "label": "Pixverse 口型同步"},
+        "hunyuan-avatar":   {"endpoint": "fal-ai/hunyuan-avatar",            "label": "腾讯混元数字人"},
+        "pixverse-lipsync": {"endpoint": "fal-ai/pixverse/lipsync",          "label": "Pixverse 口型同步"},
+        "creatify-aurora":  {"endpoint": "fal-ai/creatify/aurora",           "label": "Creatify Aurora(影棚级)"},
+        "omnihuman-v1.5":   {"endpoint": "fal-ai/bytedance/omnihuman/v1.5",  "label": "ByteDance Omnihuman v1.5(强表情)"},
     }
 
     def __init__(self, fal_key: str):
@@ -162,13 +166,32 @@ class FalAvatarService:
             return {"error": f"模型 {model_key} 已熔断"}
         try:
             model_info = self.MODELS.get(model_key)
+            if not model_info:
+                # 防御:无效 model_key(以前会撞 None.["endpoint"] AttributeError → 500 + 不返还积分)
+                return {"error": f"未知模型:{model_key}"}
             endpoint = model_info["endpoint"]
-            result = await fal_client.run_async(endpoint, arguments={"character_image_url": character_image_url, "audio_url": audio_url})
+
+            # 按 model_key 分发 fal 入参字段名(2026-04-28 新增 Aurora / Omnihuman 用 image_url)
+            if model_key in ("hunyuan-avatar", "pixverse-lipsync"):
+                arguments = {"character_image_url": character_image_url, "audio_url": audio_url}
+            elif model_key in ("creatify-aurora", "omnihuman-v1.5"):
+                # Omnihuman v1.5 限制音频 ≤ 30s — fal 端报错时由外层 except 捕获,
+                # avatar.py /generate 的 add_credits 兜底自动返还积分,前端透明
+                arguments = {"image_url": character_image_url, "audio_url": audio_url}
+            else:
+                return {"error": f"未配置入参 schema:{model_key}"}
+
+            result = await fal_client.run_async(endpoint, arguments=arguments)
             await circuit_breaker.record_success(model_key)
             video_url = result.get("video", {}).get("url")
             if not video_url:
                 return {"error": "No video generated"}
-            return {"task_id": "avatar_" + str(hash(character_image_url)), "status": "completed", "video_url": video_url, "model": endpoint}
+            return {
+                "task_id": "avatar_" + str(hash(character_image_url)),
+                "status": "completed",
+                "video_url": video_url,
+                "model": endpoint,
+            }
         except Exception as e:
             await circuit_breaker.record_failure(model_key)
             return {"error": str(e)}

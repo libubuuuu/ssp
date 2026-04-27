@@ -106,7 +106,9 @@ export default function AvatarPage(){
           <div style={{display:"flex",flexDirection:"column",gap:"0.4rem"}}>
             {[
               {k:"hunyuan-avatar",lKey:"modelHunyuan",dKey:"modelHunyuanDesc"},
-              {k:"pixverse-lipsync",lKey:"modelPixverse",dKey:"modelPixverseDesc"}
+              {k:"pixverse-lipsync",lKey:"modelPixverse",dKey:"modelPixverseDesc"},
+              {k:"creatify-aurora",lKey:"modelAurora",dKey:"modelAuroraDesc"},
+              {k:"omnihuman-v1.5",lKey:"modelOmnihuman",dKey:"modelOmnihumanDesc"}
             ].map(m=>(
               <button key={m.k} onClick={()=>setModel(m.k)}
                 style={{textAlign:"left",padding:"0.7rem 0.9rem",border:model===m.k?"2px solid #0d0d0d":"1px solid #e5e5e5",background:model===m.k?"#f9f7f2":"#fff",borderRadius:"10px",cursor:"pointer"}}>
