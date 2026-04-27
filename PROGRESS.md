@@ -1,5 +1,37 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 十九续(P4:localStorage 改 httpOnly Cookie 方案文档化)
+
+### 现状(已存在的安全债)
+- 前端 71 处 fetch 从 localStorage 读 token,用 `Authorization: Bearer ${token}`
+- AuthFetchInterceptor 全局 patch window.fetch 处理 401 + refresh
+- localStorage 容易被 XSS 窃取(虽然项目无第三方脚本,但用户内容渲染、AIGC 输出都可能引入风险)
+
+### 目标方案(下一阶段)
+- access_token / refresh_token 改 httpOnly + Secure + SameSite=Lax Cookie
+- 后端 set-cookie:`/api/auth/login` `/register` `/refresh` 响应里 set;`/logout` 清
+- 前端去掉 localStorage 读写,fetch 默认 `credentials: "include"`
+- AuthFetchInterceptor 简化:不再手动塞 Authorization header
+
+### 改动量预估
+- 后端:5-6 个端点改响应 + 1 个 `set_auth_cookies` 工具函数 — 半天
+- 前端:71 处 fetch 调用清掉手 set Authorization + AuthFetchInterceptor 简化 — 一天
+- 测试:既存测试以 `Bearer token` 为基线,需要全套换 cookie 模式 — 半天
+- 总:~2 个工作日,跨前后端联动,适合作为独立"专项工作日"
+
+### 阻塞 / 风险
+- **跨域 cookie 在 admin.ailixiao.com vs ailixiao.com 上要 SameSite=None + Secure** — 要确认 nginx 都强制 https(已是)
+- **WebSocket 鉴权也用 token query 参数** — 改 cookie 后 WS 不能传 cookie(浏览器规范限制),需要保留 query 参数模式或改 WS 鉴权流程
+- **一次性切换 vs 渐进** — 渐进双轨(同时支持 header + cookie)期间复杂度高;一次性切要协调前端 + 后端 + 文档同时改
+
+### 建议优先级
+**P4 不在本紧急任务批次内**(用户明确指示)。当前实际安全姿态:
+- ✅ JWT_SECRET 轮换 → 旧 token 全失效
+- ✅ access 1h + refresh 30d 短窗
+- ✅ 用户级吊销(改密码 / 登出所有设备 / 强制踢人)
+- ✅ 全局 401 拦截器 + 主动续期 + 友好过期提示
+- ⏸ httpOnly Cookie 留 Phase 1.5 / Phase 2 专项
+
 ## 2026-04-27 十八续(P3-3 + P3-4:注册 IP 限流 SQLite 持久 + 9 测试)
 
 ### 后端
