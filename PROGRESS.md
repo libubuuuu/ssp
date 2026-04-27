@@ -1,5 +1,34 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 九续(前端 npm audit:8→5,2 high 清零)
+
+### ✅ 战果
+- **8 → 5 vulns**(3 个真清,4 个剩下全是 upstream 卡点)
+- **2 high → 0 high**(高危全清):
+  - next DoS Server Components(GHSA-q4gf-8mx6-v5v3)— 16.2.0 → 16.2.4 patch 修
+  - picomatch ReDoS + 方法注入(GHSA 双 CVE)— `npm audit fix` 自动清
+- 顺手清:hono JSX HTML 注入、brace-expansion ReDoS — 都是 npm audit fix 自动解
+
+### ⏸ 剩 5 个 moderate(全卡 upstream)
+| 包 | 问题 | npm 推荐"修复" | 实际不能动的原因 |
+|---|---|---|---|
+| postcss | XSS via Unescaped `</style>` | 把 next 降到 9.3.3 | 把 Next 16 降回 4 年前的 9.x,荒谬 |
+| next(via postcss)| 同上 | 同上 | 同上 |
+| @hono/node-server | 中间件路径绕过 | 把 prisma 降到 6.19.3 | 用户上次专门升到 7.7.0 GA,不擅自降 |
+| @prisma/dev | 间接 via @hono/node-server | 同上 | 同上 |
+| prisma | 间接 via @prisma/dev | 同上 | 同上 |
+
+**等待 upstream**:postcss 在 next 16.x 的下个补丁、prisma 7.x 解掉 @hono/node-server 依赖。CI 仍 `|| true` 不阻塞前端 audit(基线降到 0 才阻塞,这次离 0 又近一步)
+
+### ✅ 验证
+- `npm run build` 成功,35+ 页 prerendered
+- `npm run lint` 报 108 个 problems 全是 src/ 既存代码风格(setState in effect / no-explicit-any),版本 bump 没引入新问题
+- 生产仍跑 16.2.0,16.2.4 等下次 deploy 生效(deploy 由用户触发)
+
+### 决策记录
+- **不擅自 npm audit fix --force** — 它会把 next 降到 9.3.3、prisma 降到 6.19.3,**全是 4-5 年前的版本**;npm audit 推荐降级是已知反模式
+- **eslint-config-next 一并 16.2.4** — 跟 next 主版本号锁定,不锁会撞 lint 配置不兼容
+
 ## 2026-04-27 八续(supervisor 新配置真上线 + main fast-forward + Dependabot 复核)
 
 ### ✅ supervisor stopasgroup/killasgroup 配置切到生产
