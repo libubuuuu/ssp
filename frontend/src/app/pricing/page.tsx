@@ -3,6 +3,7 @@ import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
+import { adjustLocalUserCredits } from "@/lib/userState";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 interface Package { id: string; name: string; credits: number; price: number; discount: string; description: string; }
@@ -45,6 +46,8 @@ export default function PricingPage() {
           setProcessingOrder(null);
           setSuccess(`✅ 已确认入账！获得 ${expectedAmount} 积分`);
           setUserCredits(prev => prev + expectedAmount);
+          // sidebar 缓存修复:同步 localStorage + 触发 user-updated 让 Sidebar 等组件实时刷新
+          adjustLocalUserCredits(expectedAmount);
           return;
         }
         attempts++;

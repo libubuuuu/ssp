@@ -10,8 +10,19 @@ export default function Sidebar() {
   const { t } = useLang();
 
   useEffect(() => {
-    const u = localStorage.getItem("user");
-    if (u) try { setUser(JSON.parse(u)); } catch {}
+    const sync = () => {
+      const u = localStorage.getItem("user");
+      if (u) try { setUser(JSON.parse(u)); } catch {}
+    };
+    sync();
+    // 监听 user-updated(同 tab,自定义事件)+ storage(跨 tab,浏览器原生)
+    // 任何 updateLocalUser / adjustLocalUserCredits 调用都会触发,sidebar 自动刷新
+    window.addEventListener("user-updated", sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener("user-updated", sync);
+      window.removeEventListener("storage", sync);
+    };
   }, []);
 
   if (!user) return null;
