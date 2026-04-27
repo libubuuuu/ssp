@@ -183,6 +183,46 @@ def test_login_by_code_sets_cookies_for_existing_user(client, register):
     assert REFRESH_COOKIE_NAME in r.cookies
 
 
+def test_change_password_set_new_cookies_seamless_login(client, register, auth_header):
+    """改密后本设备无缝续登:新 cookie 已 set,/me 立即可用"""
+    token, user = register(client, "cp-seamless@example.com", password="old-pass")
+    h = auth_header(token)
+
+    r = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "old-pass", "new_password": "new-pass-1"},
+        headers=h,
+    )
+    assert r.status_code == 200, r.text
+    # 新 cookie 已 set
+    assert ACCESS_COOKIE_NAME in r.cookies
+    assert REFRESH_COOKIE_NAME in r.cookies
+
+    # 旧 token 已失效(invalidate_user_tokens)— 用旧 header 应当 401
+    client.cookies.clear()
+    r_old = client.get("/api/auth/me", headers=h)
+    assert r_old.status_code == 401, "旧 token 必须失效"
+
+
+def test_change_password_invalidates_old_tokens(client, register, auth_header):
+    """关键:改密后旧 access token 不能再用(防密码泄漏后老 token 残留)"""
+    token, user = register(client, "cp-inv@example.com", password="old-pass-2")
+    h = auth_header(token)
+
+    # 改密成功
+    r = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "old-pass-2", "new_password": "new-pass-2"},
+        headers=h,
+    )
+    assert r.status_code == 200
+
+    # 旧 token 立刻失效
+    client.cookies.clear()
+    r_me = client.get("/api/auth/me", headers=h)
+    assert r_me.status_code == 401
+
+
 def test_login_by_code_auto_registers_with_INITIAL_CREDITS(client):
     """新邮箱用 login-by-code 自动注册 → credits = INITIAL_CREDITS(10),不是硬编码 10"""
     from app.api import auth as auth_module

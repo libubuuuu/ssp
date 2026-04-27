@@ -1,5 +1,53 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 三十五续(再自审三个真问题 + JWT timing race 隐性 bug 修)
+
+### 自审发现
+1. 🟠 **nginx `/uploads/` 白名单漏 no-extension**:实测 `secret_no_ext` 文件返 200 而非 403
+2. 🟡 **change_password 改完密码不 set 新 cookies** → 用户被踢回登录
+3. 🟡 **docs 7 份散乱无索引**
+
+### 修 #1:nginx 白名单严格化
+- 原配置嵌套 location `~* \.(白名单)` + `~ /uploads/.*\.`,无扩展名漏过
+- 改成扁平正则 + catch-all 403:
+  ```
+  location ~* ^/uploads/(?<asset>[^?]+\.(jpg|jpeg|png|webp|gif|mp4|webm|mov|mp3|wav|m4a))$ {
+      alias /opt/ssp/uploads/$asset; expires 30d;
+  }
+  location /uploads/ { return 403; }
+  ```
+- 实测:no-ext → 403 ✓ / .sh → 403 ✓ / .bin → 403 ✓ / .jpg → 200 ✓ / 路径穿越 → 404
+
+### 修 #2:change_password set 新 cookies + 修 timing race
+**新功能**:改密成功后立即签新 access+refresh + set 新 cookies,**本设备无缝续登**(其他设备由 invalidate 踢)。
+
+**修过程发现 JWT timing race**:测试合跑挂,旧 token 被 invalidate 后仍能 decode。原因:JWT `iat` 和 `tokens_invalid_before` 都是整秒,同秒发的 token decode 检查 `tokens_invalid_before > iat` 是 False(同值不大于),误判为有效。
+
+**修法**:
+- `invalidate_user_tokens` 改返 int 时间戳(原 bool),设 `tokens_invalid_before = int(time.time()) + 1`(严格大于现存 token iat)
+- `create_access_token` / `create_refresh_token` 加可选参数 `iat_unix`,change_password 用 `iat_unix=invalidate_ts` 让新 token iat == tokens_invalid_before(decode `> iat` False → 通过)
+- 同步改 `test_token_revoke` 适配新返回类型
+
+### 测试 +2(205 → **207**)
+- `test_change_password_set_new_cookies_seamless_login`:改密后 cookie 已 set,旧 token 401
+- `test_change_password_invalidates_old_tokens`:关键安全断言 — 旧 token 立即失效
+
+### #3:docs/INDEX.md
+- 顶级文档(CLAUDE / RUNBOOK / PROGRESS)
+- 用户操作 SOP 表(Sentry / CF / Redis / DR)
+- 工程参考(P8 / COVERAGE)
+- 场景导航("查 bug" / "做新功能" / "服务器出问题" / "用户报 bug" / "新接外部服务")
+
+### 决策记录
+- **invalidate ts 用 +1 不是当前秒** — 否则同秒 token 误判为有效;返回 ts 让 caller 协调新 token
+- **create_access_token 加 iat_unix 不是 sleep** — 等 1 秒太蠢 + 阻塞;改 iat 直接绕过同秒碰撞
+- **nginx 白名单改扁平正则** — 嵌套 location 难推理 + 漏 no-ext;扁平 + catch-all 403 心智简单
+- **deploy 用 in-place restart 不走蓝绿** — 这次只改后端代码,5 秒重启 vs 30 秒蓝绿,影响小;蓝绿留给 schema 改动 / nginx 改动场景
+
+### 已 deploy 进生产
+- backend rsync + restart blue:200 OK
+- nginx /uploads/ 严格白名单已 reload(同时清掉旧 nested location)
+
 ## 2026-04-27 三十四续(deploy 进生产 + CLAUDE.md 重写)
 
 ### Deploy 进生产(blue-green 30 秒)

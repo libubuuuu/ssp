@@ -35,30 +35,37 @@ def verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
 
-def create_access_token(user_id: str, email: str, role: str) -> str:
-    """签发 access token(平时调业务接口用)"""
-    expire = datetime.utcnow() + timedelta(hours=JWT_ACCESS_EXPIRATION_HOURS)
+def create_access_token(user_id: str, email: str, role: str, iat_unix: Optional[int] = None) -> str:
+    """签发 access token(平时调业务接口用)
+
+    iat_unix: 可选的 iat 时间戳(unix 秒整数)。默认 None = 用当前时间。
+    用于 change_password 等场景:invalidate 后立即签新 token,避免同秒 iat
+    碰撞 tokens_invalid_before 导致新 token 也被拒。caller 传 invalidate_ts + 1 即可。
+    """
+    iat_dt = datetime.utcfromtimestamp(iat_unix) if iat_unix is not None else datetime.utcnow()
+    expire = iat_dt + timedelta(hours=JWT_ACCESS_EXPIRATION_HOURS)
     payload = {
         "user_id": user_id,
         "email": email,
         "role": role,
         "type": "access",
         "exp": expire,
-        "iat": datetime.utcnow(),
+        "iat": iat_dt,
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-def create_refresh_token(user_id: str, email: str, role: str) -> str:
-    """签发 refresh token(仅用于 /refresh 换新 access,平时不传)"""
-    expire = datetime.utcnow() + timedelta(days=JWT_REFRESH_EXPIRATION_DAYS)
+def create_refresh_token(user_id: str, email: str, role: str, iat_unix: Optional[int] = None) -> str:
+    """签发 refresh token(同 access 的 iat_unix 语义)"""
+    iat_dt = datetime.utcfromtimestamp(iat_unix) if iat_unix is not None else datetime.utcnow()
+    expire = iat_dt + timedelta(days=JWT_REFRESH_EXPIRATION_DAYS)
     payload = {
         "user_id": user_id,
         "email": email,
         "role": role,
         "type": "refresh",
         "exp": expire,
-        "iat": datetime.utcnow(),
+        "iat": iat_dt,
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
@@ -134,23 +141,31 @@ def decode_refresh_token(token: str) -> Optional[Dict]:
     return payload
 
 
-def invalidate_user_tokens(user_id: str) -> bool:
-    """把用户的 tokens_invalid_before 设为当前 unix 时间戳。
-    效果:用户当前所有有效 token 立即失效,需重新登录。
-    用于:
-      - 用户主动"登出所有设备"
-      - 管理员强制踢人
-      - 改密码(防止泄漏密码后旧 token 仍可用)
+def invalidate_user_tokens(user_id: str) -> int:
+    """把用户的 tokens_invalid_before 设为(当前 unix 秒 + 1)
+    并返回该时间戳供 caller 决定后续 token iat。
+
+    为什么 +1 不是当前秒:JWT iat 是整秒,如果 token 同秒签发又同秒
+    invalidate,decode 用 `> iat` 检查 tokens_invalid_before 等于 iat 时
+    会误判为"未撤销",老 token 仍能用 1 秒。+1 让旧 token 严格小于
+    invalidate ts,被拒。新 token 则 iat 设为同样的 +1 ts(通过
+    create_access_token 的 iat_unix 参数),decode 时 ts > iat 是
+    False(相等),通过。
+
+    返回值:invalidate 时间戳(int 秒)。caller 应:
+      - 不签新 token 的场景:忽略返回值
+      - 签新 token 的场景:把返回值传给 create_access_token(iat_unix=ts)
     """
     import time
+    ts = int(time.time()) + 1
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute(
             "UPDATE users SET tokens_invalid_before = ? WHERE id = ?",
-            (int(time.time()), user_id),
+            (ts, user_id),
         )
         conn.commit()
-        return cursor.rowcount == 1
+    return ts
 
 
 def get_user_by_email(email: str) -> Optional[Dict]:

@@ -331,8 +331,17 @@ async def update_user_name(req: UpdateNameRequest, current_user: dict = Depends(
 
 
 @router.post("/change-password")
-async def change_password(req: ChangePasswordRequest, request: Request, current_user: dict = Depends(get_current_user)):
-    """修改密码"""
+async def change_password(
+    req: ChangePasswordRequest,
+    request: Request,
+    response: Response,
+    current_user: dict = Depends(get_current_user),
+):
+    """修改密码
+
+    P8 改进:本设备无缝续登(签发新 token + set 新 cookies),其他设备被 invalidate。
+    旧的 cookie/token 此刻已失效,但新 cookie 立即生效,用户感知不被踢登录页。
+    """
     # 验证当前密码
     with get_db() as conn:
         cursor = conn.cursor()
@@ -349,7 +358,8 @@ async def change_password(req: ChangePasswordRequest, request: Request, current_
         conn.commit()
 
     # 改密后吊销该用户所有现有 token(防泄漏密码后旧 token 仍可用)
-    invalidate_user_tokens(current_user["id"])
+    # invalidate_user_tokens 返回 ts,新 token 用同样 ts 作 iat,避免同秒 token 误判
+    invalidate_ts = invalidate_user_tokens(current_user["id"])
 
     # 审计:改密码是合规重点(自己改自己,actor = target = user)
     from app.services.audit import log_admin_action, ACTION_CHANGE_PASSWORD
@@ -362,7 +372,17 @@ async def change_password(req: ChangePasswordRequest, request: Request, current_
         ip=request.client.host if request.client else None,
     )
 
-    return {"message": "密码已修改,所有设备已自动登出,请重新登录"}
+    # P8: 立刻签发新 token + set cookies,本设备保持登录(其他设备由 invalidate 踢)
+    # iat_unix=invalidate_ts:新 token iat == tokens_invalid_before,decode `> iat` 是 False → 通过
+    new_access = create_access_token(current_user["id"], current_user["email"], current_user["role"], iat_unix=invalidate_ts)
+    new_refresh = create_refresh_token(current_user["id"], current_user["email"], current_user["role"], iat_unix=invalidate_ts)
+    set_auth_cookies(response, new_access, new_refresh)
+
+    return {
+        "message": "密码已修改,本设备已续登,其他设备需重新登录",
+        "access_token": new_access,
+        "refresh_token": new_refresh,
+    }
 
 
 @router.post("/logout-all-devices")

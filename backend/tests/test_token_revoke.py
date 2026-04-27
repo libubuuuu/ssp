@@ -37,9 +37,9 @@ def test_decode_returns_none_after_invalidate():
     # 此刻 token 应该有效
     assert decode_jwt_token(token) is not None
 
-    # 等 1 秒确保 invalidate 时间 > token.iat
-    time.sleep(1)
-    assert invalidate_user_tokens(user["id"]) is True
+    # invalidate 返回时间戳(int 秒);该 ts 严格 > 旧 token iat 即生效
+    ts = invalidate_user_tokens(user["id"])
+    assert isinstance(ts, int) and ts > 0
 
     # 同一 token 现在应该被拒绝
     assert decode_jwt_token(token) is None
