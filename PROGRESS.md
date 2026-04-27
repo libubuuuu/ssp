@@ -1,5 +1,28 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 十续(RUNBOOK 大重写 — 适配降权后的现实)
+
+### ✅ 重写动机
+原 RUNBOOK(2026-04-25)写在降权 + 蓝绿之前,**几乎每个章节都过时**:
+- 还在写 `systemctl restart ssp-backend`(systemd unit 已 disable)
+- 还在写 `User=root, 待降权`(已降权完)
+- 还在写 `/root/ssp/backend/dev.db`(应是 `/opt/ssp/backend/dev.db`)
+- 还在写 `:8000 + :3000`(active=green 是 :8001 + :3002)
+- 部署还是"git pull + systemctl restart 瑟瑟发抖式"(应是 deploy.sh 蓝绿)
+
+### ✅ 重写战果(241 → 356 行)
+- 改写章节:服务进程、蓝绿部署、回滚、数据库与备份、密钥轮换、常见故障 6 大块
+- **新增章节**:
+  - 健康巡检 / 监控:watchdog + post-deploy-check + admin 一键诊断 + 诊断历史
+  - 审计 / 安全应急:audit_log 查询 + 强制踢人 + 用户自救 + 2FA 重置 + 凭据泄漏 SOP
+  - 故障 6 / 7 / 8:supervisor zombie 占端口、WS 4401/4403、用户老被踢
+- **加上 deploy.sh 不动 supervisor 配置**这个上次踩的坑 + 怎么手动应用 + zombie 释放方法
+
+### 决策记录
+- **整章重写而非 patch** — 旧版每个章节都过时,patch 会留下风格断层和事实矛盾,直接重写更干净
+- **审计 / 安全应急独立章节** — 之前散在"密钥轮换"和"故障"里;现在合并,出事时能秒定位
+- **保留 Phase 2 / Phase 3 的 forward-looking 注释**(如 jobs.json 退役、Postgres + Alembic 解 schema 回滚问题)— 提醒读者哪里是临时方案
+
 ## 2026-04-27 九续(前端 npm audit:8→5,2 high 清零)
 
 ### ✅ 战果
