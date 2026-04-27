@@ -1,5 +1,32 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 三十七续(jobs.py 覆盖率 48→91 / 核心 4 路径全达标)
+
+### 完成 P7 最后一项
+- `jobs.py`:48% → **91%**(+43%)
+- 核心路径 4 个全部达 70% 标线:auth 91% / billing 91% / payment 98% / **jobs 91%** / decorators 98%(虽然不在原 4 但补了)
+
+### 测试 +22(235 → **257**)
+新文件 `test_jobs_internals.py`,直接调内部函数 + mock fal:
+- `_module_from_type` 4 个变种 + unknown fallback
+- `_save_jobs / _load_jobs` 持久化 + 损坏 JSON / 空文件 / 不存在 — 全 fallback 不抛
+- `_run_image_job` simple + multi-reference + error 传播 + empty images raise
+- `_run_video_job` 三个 type(i2v/edit/clone) + unknown raise + no task_id raise + completed/failed
+- `_execute_job` happy path 写 history + failure 退还积分 + unknown type fail + missing job 静默 + 归档失败不影响主流程
+
+### 修过程发现
+**conftest 把 `_execute_job` 全局 noop'd 了**,我的内部测试直接调它得到 noop。修法:conftest 加 `jobs_module._execute_job_original = 原 fn` 保存,我的测试用 `_execute_job_original`。两者并存,端点测试继续走 noop,内部测试走真路径。
+
+### 累计本会话(从 100 测试起)
+- 测试 100 → **257**(+157,2.57x)
+- 整体覆盖率 46% → **54%**(+8%)
+- **核心 4 路径全达标**,P7 承诺 100% 兑现
+
+### 决策记录
+- **AsyncMock(asyncio.sleep)** — _run_video_job 内部 polling 5s × 120 次,测试不能等;monkeypatch sleep 让 polling 立即跑完
+- **conftest 保留双轨** — `_execute_job_original` 给内部测试,`_execute_job` 给端点测试;不破坏老测试
+- **不测真 FAL** — fal_service 单独 mock,不引入测试时网络依赖
+
 ## 2026-04-27 三十六续(覆盖率补齐 P7 承诺:decorators 27→98 / payment 50→98)
 
 ### 上轮 P7 承诺

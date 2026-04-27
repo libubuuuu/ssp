@@ -52,7 +52,9 @@ def app():
     from app.api import payment as payment_module
     from app.api import digital_human as digital_human_module
 
-    # 把真实 _execute_job 替成 no-op,避免测试触发 FAL API
+    # 把真实 _execute_job 替成 no-op,避免端点测试触发 FAL API
+    # 但**先保存原引用**到 _execute_job_original,内部测试可以拿来用 + 配 mock 跑全路径
+    jobs_module._execute_job_original = jobs_module._execute_job
     async def _noop_execute_job(job_id):  # pragma: no cover - test helper
         return None
     jobs_module._execute_job = _noop_execute_job
