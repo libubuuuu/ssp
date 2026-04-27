@@ -86,6 +86,16 @@ def test_login_by_code_expired(client, monkeypatch):
     assert "exp@example.com" not in auth_module._EMAIL_CODES
 
 
+def test_forgot_password_endpoint_deprecated_410(client):
+    """旧 /forgot-password 端点已废弃,返 410 Gone(原版返假成功消息)"""
+    r = client.post("/api/auth/forgot-password", json={"email": "any@example.com"})
+    assert r.status_code == 410
+    body = r.json()
+    assert "废弃" in body["detail"] or "deprecated" in body["detail"].lower()
+    # 应引导用新流程
+    assert "send-code" in body["detail"] or "reset-password-by-code" in body["detail"]
+
+
 def test_reset_password_by_code_happy(client):
     # 先注册(P3-2 起需要邮箱码,这里直接注入)
     from app.api import auth as auth_module

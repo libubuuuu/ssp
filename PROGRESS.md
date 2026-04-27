@@ -1,5 +1,28 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-27 四十续(`/forgot-password` dead code 410 化 — P0 同 pattern)
+
+### 自审发现
+`/api/auth/forgot-password` 是个 dead code:
+- 接受任意 email
+- TODO: 没真发邮件
+- 假装"重置链接已发送" — **跟 P0 数字人同 UX 欺诈 pattern**
+
+**前端不调它**(`/auth/forgot-password` 页早走 `send-code` + `reset-password-by-code` 真流程)。
+
+### 修
+- `/api/auth/forgot-password` → **410 Gone**(永久废弃,语义比 503 更准)
+- detail 引导用新流程:`send-code (purpose=reset) + reset-password-by-code`
+- 测试 +1(269 通过)
+
+### 决策记录
+- **410 而非 503** — 503 = 暂时不可用;410 = 永久废弃。这个端点不会回归
+- **保留端点不删** — 兼容老客户端(若有);返 410 + 引导文案让他们看到怎么迁
+
+### 已 deploy 进生产
+- backend rsync + restart blue
+- 实测:`POST /api/auth/forgot-password` → 410 + 引导文案 ✓
+
 ## 2026-04-27 三十九续(Playwright e2e 0→10 + PROGRESS.md 拆分归档)
 
 ### Playwright e2e MVP(P1 路线图最后一项)

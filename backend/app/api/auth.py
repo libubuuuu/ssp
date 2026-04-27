@@ -406,10 +406,18 @@ async def logout_all_devices(request: Request, current_user: dict = Depends(get_
 
 @router.post("/forgot-password")
 async def forgot_password(req: dict):
-    """密码找回 - 发送重置链接（模拟）"""
-    email = req.get("email", "")
-    # TODO: 实际部署时发送重置邮件
-    return {"message": "重置链接已发送到邮箱", "email": email}
+    """密码找回 — **已废弃**(P0 自审同 pattern,原版返假成功)。
+
+    替代流程:
+    1. POST /api/auth/send-code  body: {email, purpose: "reset"}
+    2. POST /api/auth/reset-password-by-code  body: {email, code, new_password}
+
+    前端 /auth/forgot-password 页已经走新流程,本端点保留只是兼容老客户端。
+    """
+    raise HTTPException(
+        status_code=410,  # Gone:语义上比 503 更准 — 此端点永久废弃
+        detail="此端点已废弃。请改用 /api/auth/send-code (purpose=reset) + /api/auth/reset-password-by-code 流程。",
+    )
 
 
 # ===== 2FA 双因素认证 =====
