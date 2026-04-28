@@ -204,20 +204,25 @@ async def image_to_video(req: ImageToVideoRequest, current_user: dict = Depends(
 
 
 @router.get("/status/{task_id}")
-async def get_task_status(task_id: str):
+async def get_task_status(task_id: str, current_user: dict = Depends(get_current_user)):
     """查询视频生成任务状态(前端 video/replace、video/clone 在用)。
 
+    五十四续加鉴权:之前匿名可调,任意人猜 task_id 可拿归档视频 URL(隐私泄漏)。
+    现在 require login + task_ownership.verify 校归属:
+      - 401:未登录 / token 失效 / 吊销
+      - 403:登录了但不是这个 task 的 owner
+
     失败时同 /api/tasks/status:走 refund_tracker.try_refund 原子退款。
-    本端点无鉴权(历史遗留;task_id 是 fal UUID 难猜),由 refund_tracker
-    内部按 register 时记的 user_id 退,匿名调用最多触发"早一步把退款落到正主账号",
-    不会退到攻击者账户。
     """
+    from app.services import task_ownership
+    if not task_ownership.verify(task_id, current_user["id"]):
+        raise HTTPException(status_code=403, detail="not your task")
+
     service = get_video_service()
     result = await service.get_task_status(task_id)
 
     if result.get("status") == "failed":
         from app.services.refund_tracker import try_refund
-        from app.services import task_ownership
         refunded = try_refund(task_id)
         if refunded > 0:
             result["refunded"] = refunded
