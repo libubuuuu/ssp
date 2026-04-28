@@ -1,5 +1,28 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 六十三续(explicit-any 26→0 全清 — Phase 1 lint cleanup 终结)
+
+接六十二续把 catch any 收完后,把剩 26 处 explicit-any 真 narrow 到具体类型。
+**不是绕规则,是补全类型加固。**
+
+按模式批量:
+- 4 文件 gallery 抽 `src/lib/types/gallery.ts::GalleryItem` 共享 interface
+- profile user / tasks history:inline 具体 shape
+- pricing translatePkg:用同文件 Package interface
+- video/studio map/some 回调:inline shape narrow
+- 5 处 `as any` lookup:`as Record<string, string>`
+- onError event:`(e.target as HTMLImageElement)` React 标准
+- admin/orders setFilter:union literal `as "pending"|"paid"|"all"`
+
+数字:
+- lint problems 66(六十一续起) → **22**(-44,-67%)
+- explicit-any errors 45 → **0**(全清)
+- 剩 1 set-state-in-effect 错 + 21 no-img-element warning(独立项)
+- npm run build 0 error,纯类型层无需 deploy
+
+踩坑:`sed -i` 又把 admin/orders/page.tsx 误清(之前 video/page.tsx 也踩过同样)。
+git restore 修。**结论:多文件批量替换不再用 sed -i,改用 Edit 单处替换或单文件 sed**。
+
 ## 2026-04-28 六十二续(catch any 19→0 + errMsg helper)
 
 Phase 1 lint 残余 cleanup,真 TS 类型加固(不是绕规则):
