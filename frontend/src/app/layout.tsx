@@ -4,6 +4,7 @@ import "./globals.css";
 import JobPanel from "@/components/JobPanel";
 import AuthFetchInterceptor from "@/components/AuthFetchInterceptor";
 import CookieConsent from "@/components/CookieConsent";
+import SiteFooter from "@/components/SiteFooter";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
 
 const geistSans = Geist({
@@ -32,6 +33,7 @@ export default function RootLayout({
         <LanguageProvider>
           <AuthFetchInterceptor />
           {children}
+          <SiteFooter />
           <JobPanel />
           <CookieConsent />
         </LanguageProvider>

@@ -166,4 +166,15 @@ test.describe("六十六续 法务文档页", () => {
     expect(response?.status()).toBe(200);
     await expect(page.locator("h1").first()).toContainText("Cookie");
   });
+
+  test("首页 footer 含 ICP 占位 + 政策三链接(六十九续)", async ({ page }) => {
+    await page.goto("/");
+    // 备案占位(env 未配 ICP_NUMBER 时显示"备案中")或真备案号
+    const footer = page.locator("footer");
+    await expect(footer).toBeVisible();
+    // 三个法务链接
+    await expect(footer.locator('a[href="/privacy"]')).toBeVisible();
+    await expect(footer.locator('a[href="/terms"]')).toBeVisible();
+    await expect(footer.locator('a[href="/cookie"]')).toBeVisible();
+  });
 });
