@@ -285,6 +285,11 @@ class FalVoiceService:
         self.fal_key = fal_key
 
     async def clone_voice(self, reference_audio_url: str, text: str) -> dict:
+        """fal-ai/minimax/voice-clone 一步:reference_audio + text → 新音频。
+
+        七十七续 P2:返回结构清理 — voice_id 用 fal/minimax 真返字段(custom_voice_id
+        或 voice_id),旧版本用 hash 假造已废弃。如果 fal 不返,留 None,前端不依赖。
+        """
         circuit_breaker = get_circuit_breaker()
         model_key = "minimax-voice-clone"
         if not circuit_breaker.is_available(model_key):
@@ -294,10 +299,14 @@ class FalVoiceService:
             endpoint = model_info["endpoint"]
             result = await fal_client.run_async(endpoint, arguments={"reference_audio_url": reference_audio_url, "text": text})
             await circuit_breaker.record_success(model_key)
-            audio_url = result.get("audio", {}).get("url")
+            audio_url = result.get("audio", {}).get("url") if isinstance(result.get("audio"), dict) else result.get("audio_url")
             if not audio_url:
                 return {"error": "No audio generated"}
-            return {"voice_id": "cloned_" + str(hash(reference_audio_url)), "audio_url": audio_url, "model": endpoint}
+            return {
+                "voice_id": result.get("custom_voice_id") or result.get("voice_id"),
+                "audio_url": audio_url,
+                "model": endpoint,
+            }
         except Exception as e:
             await circuit_breaker.record_failure(model_key)
             return {"error": str(e)}
@@ -321,19 +330,55 @@ class FalVoiceService:
             return {"error": str(e)}
 
 
+class FalASRService:
+    """七十七续 P2:fal-ai/wizper ASR(口播带货 Step 1)。
+
+    定价:$0.0005 / 音频分钟,~250x realtime。返回原文 + word-level timestamps。
+    """
+    MODELS = {
+        "wizper": {"endpoint": "fal-ai/wizper", "label": "Wizper ASR"},
+    }
+
+    def __init__(self, fal_key: str):
+        self.fal_key = fal_key
+
+    async def transcribe(self, audio_url: str, language: Optional[str] = None) -> dict:
+        circuit_breaker = get_circuit_breaker()
+        model_key = "wizper"
+        if not circuit_breaker.is_available(model_key):
+            return {"error": f"模型 {model_key} 已熔断"}
+        try:
+            endpoint = self.MODELS[model_key]["endpoint"]
+            args: Dict[str, Any] = {"audio_url": audio_url, "task": "transcribe"}
+            if language:
+                args["language"] = language
+            result = await fal_client.run_async(endpoint, arguments=args)
+            await circuit_breaker.record_success(model_key)
+            return {
+                "text": result.get("text", ""),
+                "chunks": result.get("chunks", []),
+                "model": endpoint,
+            }
+        except Exception as e:
+            await circuit_breaker.record_failure(model_key)
+            return {"error": str(e)}
+
+
 _image_service: Optional[FalImageService] = None
 _video_service: Optional[FalVideoService] = None
 _avatar_service: Optional[FalAvatarService] = None
 _voice_service: Optional[FalVoiceService] = None
+_asr_service: Optional[FalASRService] = None
 
 
 def init_fal_services(fal_key: str):
     os.environ["FAL_KEY"] = fal_key
-    global _image_service, _video_service, _avatar_service, _voice_service
+    global _image_service, _video_service, _avatar_service, _voice_service, _asr_service
     _image_service = FalImageService(fal_key)
     _video_service = FalVideoService(fal_key)
     _avatar_service = FalAvatarService(fal_key)
     _voice_service = FalVoiceService(fal_key)
+    _asr_service = FalASRService(fal_key)
 
 def get_image_service() -> FalImageService:
     return _image_service
@@ -346,3 +391,6 @@ def get_avatar_service() -> FalAvatarService:
 
 def get_voice_service() -> FalVoiceService:
     return _voice_service
+
+def get_asr_service() -> FalASRService:
+    return _asr_service

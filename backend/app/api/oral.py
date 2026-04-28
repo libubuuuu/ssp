@@ -1,15 +1,22 @@
-"""口播带货工作台 — 七十七续 Step 1(P1 骨架 + 经济档先行)
+"""口播带货工作台 — 七十七续 P1 骨架 + P2 ASR/TTS 异步链路(经济档先行)
 
 完整规划:docs/ORAL-BROADCAST-PLAN.md
-本文件实现 6 端点骨架 + DB 持久化 + 状态机基础。
-fal 真实调用(ASR / voice-clone / wan-vace inpainting / lipsync)留 P2/P3 milestone。
+
+P1(Step 1):6 端点骨架 + DB 持久化 + 状态机基础(2026-04-29)
+P2(本续):
+  - Step 1 ASR 真实调用(fal-ai/wizper)— ffmpeg 提取音轨 → fal upload → wizper
+  - Step 3 经济档 voice-clone+TTS 一步(fal-ai/minimax/voice-clone)
+  - asyncio.create_task 异步驱动状态机
+P3(下波):wan-vace inpainting + lipsync + 中间产物归档
 
 经济档先行:不依赖 ElevenLabs。标准/顶级档预留 voice_provider 字段,等 EL_API_KEY 接入再激活。
 """
+import asyncio
 import json
 import math
 import os
 import shutil
+import sys
 import uuid
 from pathlib import Path
 from typing import Optional, List
@@ -136,6 +143,174 @@ def _create_session(
             (session_id, str(user_id), "economy", STATUS_INITIAL, video_path, duration, 0),
         )
         conn.commit()
+
+
+def _log(msg: str) -> None:
+    """带前缀的 stderr 日志,Sentry / 巡检方便看 oral pipeline 命中"""
+    print(f"ORAL_PIPELINE {msg}", file=sys.stderr, flush=True)
+
+
+# ==================== ffmpeg 音轨提取 ====================
+
+
+def _extract_audio_track(video_path: str, audio_path: str, voice_ref_path: str) -> tuple[bool, str]:
+    """七十七续 P2:从原视频提取两个音频:
+    - audio_path:完整音轨,送 wizper ASR
+    - voice_ref_path:前 10 秒,送 minimax voice-clone 作 reference 样本(规划文档要求 ≥10s)
+
+    复用 video_studio._run_ffmpeg(已有的 subprocess.run 包装,300s 超时)。
+    """
+    from app.api.video_studio import _run_ffmpeg
+
+    ok1, err1 = _run_ffmpeg([
+        "ffmpeg", "-y", "-i", video_path,
+        "-vn", "-acodec", "libmp3lame", "-q:a", "2",
+        audio_path,
+    ])
+    if not ok1:
+        return False, f"完整音轨失败: {err1[:200]}"
+
+    ok2, err2 = _run_ffmpeg([
+        "ffmpeg", "-y", "-i", video_path, "-t", "10",
+        "-vn", "-acodec", "libmp3lame", "-q:a", "2",
+        voice_ref_path,
+    ])
+    if not ok2:
+        return False, f"voice_ref 截取失败: {err2[:200]}"
+
+    return True, ""
+
+
+# ==================== 异步驱动:Step 1 ASR ====================
+
+
+async def _run_asr_step(session_id: str) -> None:
+    """Step 1:ffmpeg 提取音轨 → fal upload → wizper ASR → 写 transcript → status=asr_done。
+
+    失败按 §7.2 退 100%。**绝不让异常逃逸**(asyncio task 异常会静默丢失日志)。
+    """
+    import fal_client
+
+    session = _get_session(session_id)
+    if not session:
+        _log(f"_run_asr_step: session {session_id} 已不存在,跳过")
+        return
+
+    try:
+        video_path = session["original_video_path"]
+        session_dir = Path(video_path).parent
+        audio_path = str(session_dir / "audio.mp3")
+        voice_ref_path = str(session_dir / "voice_ref.mp3")
+
+        # 1) ffmpeg 提取
+        ok, err = _extract_audio_track(video_path, audio_path, voice_ref_path)
+        if not ok:
+            raise RuntimeError(f"ffmpeg 失败: {err}")
+
+        # 2) 上传到 fal storage(私有 URL,不依赖我们 nginx 公开)
+        audio_fal_url = await fal_client.upload_file_async(audio_path)
+
+        # 3) 调 wizper
+        from app.services.fal_service import get_asr_service
+        asr_svc = get_asr_service()
+        if not asr_svc:
+            raise RuntimeError("FAL ASR service 未初始化")
+        result = await asr_svc.transcribe(audio_fal_url)
+        if "error" in result:
+            raise RuntimeError(f"wizper: {result['error']}")
+
+        # 4) 写库,推进状态
+        _update_session(
+            session_id,
+            extracted_audio_path=audio_path,
+            voice_ref_audio_path=voice_ref_path,
+            asr_transcript=result.get("text", ""),
+            asr_word_timestamps=json.dumps(result.get("chunks", []), ensure_ascii=False),
+            status="asr_done",
+        )
+        _log(f"_run_asr_step OK session={session_id} text_len={len(result.get('text', ''))}")
+    except Exception as e:
+        _log(f"_run_asr_step FAIL session={session_id} err={e}")
+        sess2 = _get_session(session_id)
+        if not sess2 or sess2["status"] != "asr_running":
+            return  # 已被改(比如用户 cancel),不要覆盖
+        refunded = _refund(sess2, "failed_step1")
+        _update_session(
+            session_id,
+            status="failed_step1",
+            error_step="step1",
+            error_message=str(e)[:500],
+            credits_refunded=refunded,
+        )
+
+
+# ==================== 异步驱动:Step 3 经济档 voice-clone + TTS ====================
+
+
+async def _run_tts_step(session_id: str) -> None:
+    """Step 3 经济档:fal-ai/minimax/voice-clone 一步完成 clone + TTS。
+
+    标准/顶级档(ElevenLabs)留下波(P6,等用户拿到 EL API key)。
+    失败按 §7.2 退 95%。
+    """
+    import fal_client
+
+    session = _get_session(session_id)
+    if not session:
+        _log(f"_run_tts_step: session {session_id} 已不存在,跳过")
+        return
+
+    try:
+        # 推进状态
+        _update_session(session_id, status="tts_running")
+
+        if session["tier"] != "economy":
+            # 标准/顶级档暂不支持(等 ElevenLabs key)
+            raise RuntimeError(f"tier={session['tier']} 暂未支持 — 等 ElevenLabs API key 接入(P6)")
+
+        voice_ref_path = session["voice_ref_audio_path"]
+        edited_text = session["edited_transcript"]
+        if not voice_ref_path or not edited_text:
+            raise RuntimeError("voice_ref / edited_transcript 缺失,数据不一致")
+
+        # 1) 上传 voice_ref 到 fal storage
+        voice_ref_fal_url = await fal_client.upload_file_async(voice_ref_path)
+
+        # 2) 调 minimax voice-clone 一步生成新音频
+        from app.services.fal_service import get_voice_service
+        voice_svc = get_voice_service()
+        if not voice_svc:
+            raise RuntimeError("FAL Voice service 未初始化")
+        result = await voice_svc.clone_voice(voice_ref_fal_url, edited_text)
+        if "error" in result:
+            raise RuntimeError(f"voice-clone: {result['error']}")
+
+        new_audio_url = result.get("audio_url")
+        if not new_audio_url:
+            raise RuntimeError("voice-clone 未返 audio_url")
+
+        # 3) 写库,推进状态(P3 下波接 Step 4 inpainting + Step 5 lipsync 才能到 completed)
+        _update_session(
+            session_id,
+            voice_provider="minimax",
+            voice_id=result.get("voice_id") or "",
+            new_audio_url=new_audio_url,
+            status="tts_done",
+        )
+        _log(f"_run_tts_step OK session={session_id}")
+    except Exception as e:
+        _log(f"_run_tts_step FAIL session={session_id} err={e}")
+        sess2 = _get_session(session_id)
+        if not sess2 or sess2["status"] not in ("edit_submitted", "tts_running"):
+            return
+        refunded = _refund(sess2, "failed_step3")
+        _update_session(
+            session_id,
+            status="failed_step3",
+            error_step="step3",
+            error_message=str(e)[:500],
+            credits_refunded=refunded,
+        )
 
 
 def _update_session(session_id: str, **fields) -> None:
@@ -281,8 +456,8 @@ async def start_pipeline(
     except Exception:
         pass  # audit 失败不阻塞主流程
 
-    # TODO P2:触发 ASR 异步任务
-    #   asyncio.create_task(_run_asr_step(req.session_id))
+    # 七十七续 P2:触发 ASR 异步任务(non-blocking)
+    asyncio.create_task(_run_asr_step(req.session_id))
 
     estimated_eta = int(session["duration_seconds"] * 8) + 60  # 粗估 8x realtime + 1min 缓冲
 
@@ -321,9 +496,9 @@ async def submit_edited_transcript(
         status="edit_submitted",
     )
 
-    # TODO P2/P3:并行触发 Step 3 (TTS) + Step 4 (inpainting)
-    #   asyncio.create_task(_run_step3_tts(req.session_id))
-    #   asyncio.create_task(_run_step4_inpainting(req.session_id))
+    # 七十七续 P2:触发 Step 3 TTS 异步任务
+    # P3 下波加并行 Step 4 inpainting:asyncio.create_task(_run_inpainting_step(req.session_id))
+    asyncio.create_task(_run_tts_step(req.session_id))
 
     return {"status": "edit_submitted"}
 
