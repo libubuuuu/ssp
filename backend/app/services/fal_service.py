@@ -3,7 +3,7 @@ AI 服务封装
 """
 import fal_client
 import os
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from .circuit_breaker import get_circuit_breaker
 from .alert import get_alert_service
 
@@ -364,21 +364,128 @@ class FalASRService:
             return {"error": str(e)}
 
 
+class FalInpaintingService:
+    """七十七续 P3:fal-ai/wan-vace-14b/inpainting(口播带货 Step 4 视频换装)。
+
+    单端点参数选分辨率(详见 docs/ORAL-BROADCAST-PLAN.md §3 Step 4):
+    - 480p $0.04/秒(经济档)
+    - 580p $0.06/秒(标准档)
+    - 720p $0.08/秒(顶级档)
+
+    按 16fps 计算视频秒数。mask_image_url + salient tracking 自动跨帧传播(§14)。
+    """
+    ENDPOINT = "fal-ai/wan-vace-14b/inpainting"
+
+    def __init__(self, fal_key: str):
+        self.fal_key = fal_key
+
+    async def inpaint(
+        self,
+        video_url: str,
+        mask_image_url: str,
+        prompt: str,
+        reference_image_urls: Optional[List[str]] = None,
+        resolution: str = "480p",
+        num_frames: int = 81,
+    ) -> dict:
+        circuit_breaker = get_circuit_breaker()
+        model_key = "wan-vace-inpainting"
+        if not circuit_breaker.is_available(model_key):
+            return {"error": f"模型 {model_key} 已熔断"}
+        try:
+            args: Dict[str, Any] = {
+                "video_url": video_url,
+                "mask_image_url": mask_image_url,
+                "prompt": prompt,
+                "resolution": resolution,
+                "num_frames": num_frames,
+            }
+            if reference_image_urls:
+                args["reference_image_urls"] = reference_image_urls
+            result = await fal_client.run_async(self.ENDPOINT, arguments=args)
+            await circuit_breaker.record_success(model_key)
+            video_obj = result.get("video") if isinstance(result, dict) else None
+            video_url_out = (
+                video_obj.get("url") if isinstance(video_obj, dict)
+                else result.get("video_url") if isinstance(result, dict)
+                else None
+            )
+            if not video_url_out:
+                return {"error": "wan-vace 未返 video URL"}
+            return {"video_url": video_url_out, "model": self.ENDPOINT}
+        except Exception as e:
+            await circuit_breaker.record_failure(model_key)
+            return {"error": str(e)}
+
+
+class FalLipsyncService:
+    """七十七续 P3:口型对齐(三档不同 endpoint)。
+
+    详见 docs/ORAL-BROADCAST-PLAN.md §3 Step 5:
+    - economy → veed/lipsync           $0.40 / 视频分钟
+    - standard → fal-ai/latentsync     ≤40s 固定 $0.20,>40s $0.005/秒
+    - premium → fal-ai/sync-lipsync/v2 $3.00 / 分钟(Pro $5/min)
+
+    三个端点输入字段统一:video_url + audio_url。
+    """
+    TIER_ENDPOINTS = {
+        "economy":  "veed/lipsync",
+        "standard": "fal-ai/latentsync",
+        "premium":  "fal-ai/sync-lipsync/v2",
+    }
+
+    def __init__(self, fal_key: str):
+        self.fal_key = fal_key
+
+    def endpoint_for(self, tier: str) -> str:
+        ep = self.TIER_ENDPOINTS.get(tier)
+        if not ep:
+            raise ValueError(f"未知 tier: {tier}")
+        return ep
+
+    async def sync(self, video_url: str, audio_url: str, tier: str) -> dict:
+        circuit_breaker = get_circuit_breaker()
+        model_key = f"lipsync-{tier}"
+        if not circuit_breaker.is_available(model_key):
+            return {"error": f"模型 {model_key} 已熔断"}
+        try:
+            endpoint = self.endpoint_for(tier)
+            args = {"video_url": video_url, "audio_url": audio_url}
+            result = await fal_client.run_async(endpoint, arguments=args)
+            await circuit_breaker.record_success(model_key)
+            video_obj = result.get("video") if isinstance(result, dict) else None
+            video_url_out = (
+                video_obj.get("url") if isinstance(video_obj, dict)
+                else result.get("video_url") if isinstance(result, dict)
+                else None
+            )
+            if not video_url_out:
+                return {"error": "lipsync 未返 video URL"}
+            return {"video_url": video_url_out, "model": endpoint}
+        except Exception as e:
+            await circuit_breaker.record_failure(model_key)
+            return {"error": str(e)}
+
+
 _image_service: Optional[FalImageService] = None
 _video_service: Optional[FalVideoService] = None
 _avatar_service: Optional[FalAvatarService] = None
 _voice_service: Optional[FalVoiceService] = None
 _asr_service: Optional[FalASRService] = None
+_inpainting_service: Optional[FalInpaintingService] = None
+_lipsync_service: Optional[FalLipsyncService] = None
 
 
 def init_fal_services(fal_key: str):
     os.environ["FAL_KEY"] = fal_key
-    global _image_service, _video_service, _avatar_service, _voice_service, _asr_service
+    global _image_service, _video_service, _avatar_service, _voice_service, _asr_service, _inpainting_service, _lipsync_service
     _image_service = FalImageService(fal_key)
     _video_service = FalVideoService(fal_key)
     _avatar_service = FalAvatarService(fal_key)
     _voice_service = FalVoiceService(fal_key)
     _asr_service = FalASRService(fal_key)
+    _inpainting_service = FalInpaintingService(fal_key)
+    _lipsync_service = FalLipsyncService(fal_key)
 
 def get_image_service() -> FalImageService:
     return _image_service
@@ -394,3 +501,9 @@ def get_voice_service() -> FalVoiceService:
 
 def get_asr_service() -> FalASRService:
     return _asr_service
+
+def get_inpainting_service() -> FalInpaintingService:
+    return _inpainting_service
+
+def get_lipsync_service() -> FalLipsyncService:
+    return _lipsync_service

@@ -3,11 +3,16 @@
 完整规划:docs/ORAL-BROADCAST-PLAN.md
 
 P1(Step 1):6 端点骨架 + DB 持久化 + 状态机基础(2026-04-29)
-P2(本续):
+P2:
   - Step 1 ASR 真实调用(fal-ai/wizper)— ffmpeg 提取音轨 → fal upload → wizper
   - Step 3 经济档 voice-clone+TTS 一步(fal-ai/minimax/voice-clone)
   - asyncio.create_task 异步驱动状态机
-P3(下波):wan-vace inpainting + lipsync + 中间产物归档
+P3(本续):
+  - Step 4 视频换装(fal-ai/wan-vace-14b/inpainting,3 档分辨率)
+  - Step 5 口型对齐(三档不同 endpoint:veed/latentsync/sync-v2)
+  - Step 3/4 真并行 + Step 5 汇合(_try_advance_to_lipsync SQL 原子)
+  - mask 上传端点 + media_archiver 中间产物归档
+  - _step_progress 改读字段派生(避免 status 字段爆炸)
 
 经济档先行:不依赖 ElevenLabs。标准/顶级档预留 voice_provider 字段,等 EL_API_KEY 接入再激活。
 """
@@ -289,15 +294,19 @@ async def _run_tts_step(session_id: str) -> None:
         if not new_audio_url:
             raise RuntimeError("voice-clone 未返 audio_url")
 
-        # 3) 写库,推进状态(P3 下波接 Step 4 inpainting + Step 5 lipsync 才能到 completed)
+        # 3) 写库 — 不直接改 status,留给 _try_advance_to_lipsync 原子判断双完成
         _update_session(
             session_id,
             voice_provider="minimax",
             voice_id=result.get("voice_id") or "",
             new_audio_url=new_audio_url,
-            status="tts_done",
         )
         _log(f"_run_tts_step OK session={session_id}")
+
+        # 4) 尝试推进到 lipsync(若 inpainting 也完成)
+        if _try_advance_to_lipsync(session_id):
+            _log(f"_run_tts_step: 双完成,触发 lipsync session={session_id}")
+            asyncio.create_task(_run_lipsync_step(session_id))
     except Exception as e:
         _log(f"_run_tts_step FAIL session={session_id} err={e}")
         sess2 = _get_session(session_id)
@@ -308,6 +317,213 @@ async def _run_tts_step(session_id: str) -> None:
             session_id,
             status="failed_step3",
             error_step="step3",
+            error_message=str(e)[:500],
+            credits_refunded=refunded,
+        )
+
+
+# ==================== Tier → 模型参数映射 ====================
+
+
+_RESOLUTION_FOR_TIER = {"economy": "480p", "standard": "580p", "premium": "720p"}
+
+
+def _resolution_for_tier(tier: str) -> str:
+    return _RESOLUTION_FOR_TIER.get(tier, "480p")
+
+
+# ==================== Step 3/4 汇合到 Step 5 的原子推进 ====================
+
+
+def _try_advance_to_lipsync(session_id: str) -> bool:
+    """SQL 原子检查:new_audio_url + swapped_video_url 都有 → status='lipsync_running'。
+
+    并行 step3/step4 完成时各自调一次,SQL 层 WHERE 保证只有一次 rowcount==1
+    返回 True,触发 lipsync。第二次调用 rowcount=0 返 False,不重复触发。
+
+    防 race condition 的核心 — 替代复合状态(both_ready)。
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE oral_sessions
+               SET status = 'lipsync_running',
+                   updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?
+               AND new_audio_url IS NOT NULL AND new_audio_url != ''
+               AND swapped_video_url IS NOT NULL AND swapped_video_url != ''
+               AND status NOT IN ('lipsync_running', 'completed', 'cancelled')
+               AND status NOT LIKE 'failed_%'
+            """,
+            (session_id,),
+        )
+        conn.commit()
+        return cursor.rowcount == 1
+
+
+# ==================== 异步驱动:Step 4 视频换装(wan-vace inpainting)====================
+
+
+async def _run_inpainting_step(session_id: str) -> None:
+    """Step 4 视频换装:fal-ai/wan-vace-14b/inpainting + 单帧 mask + salient tracking。
+
+    与 _run_tts_step 真并行(/edit 端点同时启 2 个 task)。
+    完成后调 _try_advance_to_lipsync 触发 Step 5。
+    失败按 §7.2 退 20%。
+    """
+    import fal_client
+
+    session = _get_session(session_id)
+    if not session:
+        _log(f"_run_inpainting_step: session {session_id} 已不存在,跳过")
+        return
+
+    try:
+        if not session.get("mask_image_path"):
+            raise RuntimeError("mask_image_path 缺失 — 用户必须先上传 mask 才能换装")
+
+        models = json.loads(session.get("selected_models") or "[]")
+        products = json.loads(session.get("selected_products") or "[]")
+        if not models:
+            raise RuntimeError("selected_models 为空")
+
+        # 1) 上传 mask 到 fal storage
+        mask_fal_url = await fal_client.upload_file_async(session["mask_image_path"])
+
+        # 2) 上传原视频到 fal(也可以 archive_url 后用 https URL,但 fal upload 最稳)
+        video_fal_url = await fal_client.upload_file_async(session["original_video_path"])
+
+        # 3) reference_image_urls:模特 + 产品图(已经是 https URL,直接传)
+        ref_urls = [m["image_url"] for m in models if m.get("image_url")]
+        ref_urls += [p["image_url"] for p in products if p.get("image_url")]
+
+        # 4) 自动 prompt
+        names = [m.get("name", "") for m in models] + [p.get("name", "") for p in products]
+        prompt = (
+            f"Replace the person and product in the video with: {', '.join(names)}. "
+            f"Maintain camera angles and movements."
+        )
+
+        # 5) 调 wan-vace inpainting
+        from app.services.fal_service import get_inpainting_service
+        inp_svc = get_inpainting_service()
+        if not inp_svc:
+            raise RuntimeError("FAL Inpainting service 未初始化")
+
+        result = await inp_svc.inpaint(
+            video_url=video_fal_url,
+            mask_image_url=mask_fal_url,
+            prompt=prompt,
+            reference_image_urls=ref_urls if ref_urls else None,
+            resolution=_resolution_for_tier(session["tier"]),
+        )
+        if "error" in result:
+            raise RuntimeError(f"wan-vace: {result['error']}")
+
+        swapped_url = result.get("video_url")
+        if not swapped_url:
+            raise RuntimeError("wan-vace 未返 video URL")
+
+        # 6) 归档防 fal.media 30 天过期
+        try:
+            from app.services.media_archiver import archive_url
+            swapped_url = await archive_url(swapped_url, str(session["user_id"]), "video")
+        except Exception as arch_err:
+            _log(f"_run_inpainting_step archive failed (continuing with fal URL): {arch_err}")
+
+        # 7) 写库
+        _update_session(
+            session_id,
+            swap_fal_request_id=result.get("model", ""),
+            swapped_video_url=swapped_url,
+        )
+        _log(f"_run_inpainting_step OK session={session_id} url={swapped_url[:80]}")
+
+        # 8) 尝试推进到 lipsync(若 TTS 也完成)
+        if _try_advance_to_lipsync(session_id):
+            _log(f"_run_inpainting_step: 双完成,触发 lipsync session={session_id}")
+            asyncio.create_task(_run_lipsync_step(session_id))
+    except Exception as e:
+        _log(f"_run_inpainting_step FAIL session={session_id} err={e}")
+        sess2 = _get_session(session_id)
+        if not sess2 or sess2["status"] not in ("edit_submitted",):
+            return
+        # Step 4 失败退 20%(§7.2)
+        refunded = _refund(sess2, "failed_step4")
+        _update_session(
+            session_id,
+            status="failed_step4",
+            error_step="step4",
+            error_message=str(e)[:500],
+            credits_refunded=refunded,
+        )
+
+
+# ==================== 异步驱动:Step 5 口型对齐 ====================
+
+
+async def _run_lipsync_step(session_id: str) -> None:
+    """Step 5:口型对齐 + 合成最终视频(三档不同 endpoint)。
+
+    由 _try_advance_to_lipsync 原子推进后触发。
+    完成后状态 → completed。失败按 §7.2 退 30%。
+    """
+    import fal_client
+
+    session = _get_session(session_id)
+    if not session:
+        _log(f"_run_lipsync_step: session {session_id} 已不存在,跳过")
+        return
+
+    try:
+        if not session.get("swapped_video_url") or not session.get("new_audio_url"):
+            raise RuntimeError("Step 4/3 产物缺失,_try_advance_to_lipsync 不该已经推进")
+
+        from app.services.fal_service import get_lipsync_service
+        lip_svc = get_lipsync_service()
+        if not lip_svc:
+            raise RuntimeError("FAL Lipsync service 未初始化")
+
+        result = await lip_svc.sync(
+            video_url=session["swapped_video_url"],
+            audio_url=session["new_audio_url"],
+            tier=session["tier"],
+        )
+        if "error" in result:
+            raise RuntimeError(f"lipsync: {result['error']}")
+
+        final_url = result.get("video_url")
+        if not final_url:
+            raise RuntimeError("lipsync 未返 video URL")
+
+        # 归档 final
+        archived_url = final_url
+        try:
+            from app.services.media_archiver import archive_url
+            archived_url = await archive_url(final_url, str(session["user_id"]), "video")
+        except Exception as arch_err:
+            _log(f"_run_lipsync_step archive failed (continuing with fal URL): {arch_err}")
+
+        _update_session(
+            session_id,
+            lipsync_fal_request_id=result.get("model", ""),
+            final_video_url=archived_url,
+            final_video_archived=archived_url if archived_url != final_url else None,
+            status="completed",
+            completed_at="CURRENT_TIMESTAMP",
+        )
+        _log(f"_run_lipsync_step OK session={session_id} url={archived_url[:80]}")
+    except Exception as e:
+        _log(f"_run_lipsync_step FAIL session={session_id} err={e}")
+        sess2 = _get_session(session_id)
+        if not sess2 or sess2["status"] != "lipsync_running":
+            return
+        refunded = _refund(sess2, "failed_step5")
+        _update_session(
+            session_id,
+            status="failed_step5",
+            error_step="step5",
             error_message=str(e)[:500],
             credits_refunded=refunded,
         )
@@ -387,6 +603,49 @@ async def upload_video(
         "duration_seconds": round(duration, 2),
         "size_mb": round(size_bytes / 1024 / 1024, 2),
     }
+
+
+# ==================== 端点 1.5:POST /upload-mask ====================
+
+
+@router.post("/upload-mask")
+async def upload_mask(
+    session_id: str = Form(...),
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """七十七续 P3:用户在前端 canvas 画完首帧 mask 后上传 PNG。
+
+    fal salient tracking 沿时间轴自动传播全片(详见 docs/ORAL-BROADCAST-PLAN.md §14)。
+    """
+    user_id = str(current_user["id"])
+    session = _get_session(session_id)
+    if not session:
+        raise HTTPException(404, "session not found")
+    if session["user_id"] != user_id:
+        raise HTTPException(403, "无权限")
+
+    # mask 上传不限状态(用户可能 ASR 跑完后再补 mask),但终态拒
+    if session["status"] in (STATUS_TERMINAL_OK, STATUS_CANCELLED) or session["status"].startswith(STATUS_FAILED_PREFIX):
+        raise HTTPException(400, f"session {session['status']},不能上传 mask")
+
+    # 校验 PNG / JPG / WebP
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(400, "mask 必须是图片(image/*)")
+
+    # mask 通常 < 5MB,做基本上限保护
+    contents = await file.read()
+    if len(contents) > 10 * 1024 * 1024:
+        raise HTTPException(413, "mask 文件过大(>10MB)")
+
+    video_path = Path(session["original_video_path"])
+    session_dir = video_path.parent
+    mask_path = session_dir / "mask.png"
+    mask_path.write_bytes(contents)
+
+    _update_session(session_id, mask_image_path=str(mask_path))
+
+    return {"mask_image_path": str(mask_path), "size_bytes": len(contents)}
 
 
 # ==================== 端点 2:POST /start ====================
@@ -496,9 +755,10 @@ async def submit_edited_transcript(
         status="edit_submitted",
     )
 
-    # 七十七续 P2:触发 Step 3 TTS 异步任务
-    # P3 下波加并行 Step 4 inpainting:asyncio.create_task(_run_inpainting_step(req.session_id))
+    # 七十七续 P3:Step 3 (TTS) + Step 4 (inpainting) 真并行
+    # 各自完成后调 _try_advance_to_lipsync,SQL 原子保证 Step 5 只触发一次
     asyncio.create_task(_run_tts_step(req.session_id))
+    asyncio.create_task(_run_inpainting_step(req.session_id))
 
     return {"status": "edit_submitted"}
 
@@ -506,36 +766,70 @@ async def submit_edited_transcript(
 # ==================== 端点 4:GET /status/{session_id} ====================
 
 
-def _step_progress(status: str) -> dict:
-    """状态字符串 → 5 步进度字典(前端进度条用)"""
+def _step_progress(status: str, session: Optional[dict] = None) -> dict:
+    """5 步进度字典(前端进度条用)。
+
+    P3 改造:**主要从 session 字段派生**(new_audio_url / swapped_video_url /
+    final_video_url 是否为空),避免 status 字段需要表示 "tts_running + swap_running 同时"
+    的复合状态。status 仅作为 transition 标记(asr_running / lipsync_running / completed)。
+    """
     p = {"step1": "pending", "step2": "pending", "step3": "pending", "step4": "pending", "step5": "pending"}
-    if status == "uploaded":
-        return p
-    if status == "asr_running":
-        p["step1"] = "running"; return p
-    if status == "asr_done":
-        p["step1"] = "done"; return p
-    if status == "edit_submitted":
-        p["step1"] = "done"; p["step2"] = "done"; return p
-    if status in ("tts_running", "swap_running"):
-        p["step1"] = "done"; p["step2"] = "done"
-        p["step3"] = "running" if "tts" in status else "pending"
-        p["step4"] = "running" if "swap" in status else "pending"
-        return p
-    if status == "tts_done":
-        p["step1"] = p["step2"] = p["step3"] = "done"; return p
-    if status == "swap_done":
-        p["step1"] = p["step2"] = p["step4"] = "done"; return p
-    if status == "both_ready":
-        p["step1"] = p["step2"] = p["step3"] = p["step4"] = "done"; return p
-    if status == "lipsync_running":
-        p["step1"] = p["step2"] = p["step3"] = p["step4"] = "done"
-        p["step5"] = "running"; return p
+
+    # 终态优先短路
     if status == "completed":
         return {k: "done" for k in p}
     if status.startswith("failed_") or status == "cancelled":
-        # 失败时把当前进度冻结
+        # 失败时根据 session 字段冻结当前进度
+        if session:
+            if session.get("asr_transcript"):
+                p["step1"] = "done"
+            if session.get("edited_transcript"):
+                p["step2"] = "done"
+            if session.get("new_audio_url"):
+                p["step3"] = "done"
+            if session.get("swapped_video_url"):
+                p["step4"] = "done"
         return p
+
+    # 进行态:status 推断起点 + session 字段填实际进度
+    if status == "uploaded":
+        return p
+    if status == "asr_running":
+        p["step1"] = "running"
+        return p
+    if status == "asr_done":
+        p["step1"] = "done"
+        return p
+
+    # 从 edit_submitted 起,Step 3/4 真并行,字段派生
+    if session is None:
+        # session 不传,只能保守映射(老接口兼容)
+        if status == "edit_submitted":
+            p["step1"] = p["step2"] = "done"
+            return p
+        if status == "lipsync_running":
+            p["step1"] = p["step2"] = p["step3"] = p["step4"] = "done"
+            p["step5"] = "running"
+            return p
+        return p
+
+    p["step1"] = "done" if session.get("asr_transcript") else p["step1"]
+    p["step2"] = "done" if session.get("edited_transcript") else p["step2"]
+
+    # Step 3/4 状态由字段派生
+    if session.get("new_audio_url"):
+        p["step3"] = "done"
+    elif session.get("edited_transcript"):
+        p["step3"] = "running"
+
+    if session.get("swapped_video_url"):
+        p["step4"] = "done"
+    elif session.get("edited_transcript") and session.get("mask_image_path"):
+        p["step4"] = "running"
+
+    if status == "lipsync_running":
+        p["step5"] = "running"
+
     return p
 
 
@@ -555,7 +849,7 @@ async def get_session_status(session_id: str, current_user: dict = Depends(get_c
         "duration_seconds": session["duration_seconds"],
         "credits_charged": session["credits_charged"],
         "credits_refunded": session["credits_refunded"],
-        "step_progress": _step_progress(session["status"]),
+        "step_progress": _step_progress(session["status"], session),
         "products": {
             "asr_transcript": session.get("asr_transcript"),
             "edited_transcript": session.get("edited_transcript"),

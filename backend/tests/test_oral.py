@@ -463,8 +463,9 @@ def test_run_asr_step_skips_if_status_changed(monkeypatch, register, client_oral
     assert sess["status"] == "cancelled"
 
 
-def test_run_tts_step_happy_path_to_tts_done(patch_voice_ok, register, client_oral, tmp_path):
-    """模拟 minimax voice-clone 成功,session 推进到 tts_done"""
+def test_run_tts_step_happy_path_writes_audio(patch_voice_ok, register, client_oral, tmp_path):
+    """P3 改造后:_run_tts_step 只写 new_audio_url,status 不直接推到 done(留给
+    _try_advance_to_lipsync 原子判断)。单独跑 tts 时 swap 还未完成,status 保持 tts_running。"""
     from app.api import oral as oral_mod
 
     voice_ref = tmp_path / "voice_ref.mp3"
@@ -481,10 +482,39 @@ def test_run_tts_step_happy_path_to_tts_done(patch_voice_ok, register, client_or
     asyncio.run(oral_mod._run_tts_step(sid))
 
     sess = oral_mod._get_session(sid)
-    assert sess["status"] == "tts_done"
     assert sess["new_audio_url"] == "https://fal.media/new_audio.mp3"
     assert sess["voice_provider"] == "minimax"
     assert sess["voice_id"] == "v_abc"
+    # status 保持 tts_running(swap 还没完成,不会推进 lipsync)
+    assert sess["status"] == "tts_running"
+
+
+def test_run_tts_step_with_swap_done_advances_to_lipsync(patch_voice_ok, register, client_oral, tmp_path, monkeypatch):
+    """P3 关键:tts 完成时若 swap 已 done,_try_advance_to_lipsync 触发 status=lipsync_running"""
+    from app.api import oral as oral_mod
+
+    # 拦截 lipsync 任务避免真跑
+    triggered = []
+    async def fake_lipsync(sid):
+        triggered.append(sid)
+    monkeypatch.setattr(oral_mod, "_run_lipsync_step", fake_lipsync)
+
+    voice_ref = tmp_path / "voice_ref.mp3"
+    voice_ref.touch()
+
+    token, user = register(client_oral, "oral-tts-advance@x.com")
+    sid = _seed_session(user["id"], status="edit_submitted", credits_charged=160)
+    oral_mod._update_session(
+        sid,
+        voice_ref_audio_path=str(voice_ref),
+        edited_transcript="hi",
+        swapped_video_url="https://x/swapped.mp4",  # swap 已经完成
+    )
+
+    asyncio.run(oral_mod._run_tts_step(sid))
+
+    sess = oral_mod._get_session(sid)
+    assert sess["status"] == "lipsync_running"
 
 
 def test_run_tts_step_minimax_fail_refunds_95pct(monkeypatch, register, client_oral, tmp_path):
@@ -544,3 +574,289 @@ def test_run_tts_step_unsupported_tier_fails(monkeypatch, register, client_oral,
     sess = oral_mod._get_session(sid)
     assert sess["status"] == "failed_step3"
     assert "ElevenLabs" in sess["error_message"] or "tier" in sess["error_message"]
+
+
+# ==================== P3:inpainting + lipsync + 并行汇合 ====================
+
+
+@pytest.fixture()
+def patch_inpainting_ok(monkeypatch):
+    class FakeInp:
+        async def inpaint(self, **kwargs):
+            return {"video_url": "https://fal.media/swapped.mp4", "model": "fal-ai/wan-vace-14b/inpainting"}
+
+    from app.services import fal_service
+    monkeypatch.setattr(fal_service, "_inpainting_service", FakeInp())
+
+    import fal_client
+    async def fake_upload(p):
+        return f"fal://{p}"
+    monkeypatch.setattr(fal_client, "upload_file_async", fake_upload)
+
+    # 跳过 archive_url(/uploads 写权限不在测试环境)
+    async def fake_archive(url, uid, kind):
+        return url
+    monkeypatch.setattr("app.services.media_archiver.archive_url", fake_archive)
+
+
+@pytest.fixture()
+def patch_lipsync_ok(monkeypatch):
+    class FakeLip:
+        async def sync(self, video_url, audio_url, tier):
+            return {"video_url": "https://fal.media/final.mp4", "model": "veed/lipsync"}
+
+    from app.services import fal_service
+    monkeypatch.setattr(fal_service, "_lipsync_service", FakeLip())
+
+    async def fake_archive(url, uid, kind):
+        return url
+    monkeypatch.setattr("app.services.media_archiver.archive_url", fake_archive)
+
+
+def test_run_inpainting_step_happy_path(patch_inpainting_ok, register, client_oral, tmp_path):
+    from app.api import oral as oral_mod
+
+    mask = tmp_path / "mask.png"
+    mask.write_bytes(b"\x89PNG\r\n\x1a\n")  # 假 PNG header
+
+    token, user = register(client_oral, "oral-inp-ok@x.com")
+    sid = _seed_session(user["id"], status="edit_submitted", credits_charged=160)
+    oral_mod._update_session(
+        sid,
+        mask_image_path=str(mask),
+        edited_transcript="hi",
+        selected_models=json.dumps([{"name": "M1", "image_url": "https://x/m.jpg"}]),
+        selected_products=json.dumps([]),
+    )
+
+    asyncio.run(oral_mod._run_inpainting_step(sid))
+
+    sess = oral_mod._get_session(sid)
+    assert sess["swapped_video_url"] == "https://fal.media/swapped.mp4"
+    # status 此时不会推进到 lipsync_running(因为 new_audio_url 还为空,_try_advance 返 False)
+    assert sess["status"] == "edit_submitted"
+
+
+def test_run_inpainting_step_no_mask_fails(register, client_oral):
+    from app.api import oral as oral_mod
+
+    token, user = register(client_oral, "oral-inp-no-mask@x.com")
+    sid = _seed_session(user["id"], status="edit_submitted", credits_charged=160)
+    oral_mod._update_session(sid, edited_transcript="hi")
+    # mask_image_path 没设
+
+    asyncio.run(oral_mod._run_inpainting_step(sid))
+
+    sess = oral_mod._get_session(sid)
+    assert sess["status"] == "failed_step4"
+    assert "mask" in sess["error_message"].lower()
+    # Step 4 失败退 20%:160 * 0.20 = 32
+    assert sess["credits_refunded"] == 32
+
+
+def test_run_inpainting_step_fal_fail_refunds_20pct(monkeypatch, register, client_oral, tmp_path):
+    from app.api import oral as oral_mod
+    from app.services import fal_service
+
+    class FailInp:
+        async def inpaint(self, **kwargs):
+            return {"error": "wan-vace 服务挂了"}
+
+    monkeypatch.setattr(fal_service, "_inpainting_service", FailInp())
+
+    import fal_client
+    async def fake_upload(p):
+        return "fal://x"
+    monkeypatch.setattr(fal_client, "upload_file_async", fake_upload)
+
+    mask = tmp_path / "mask.png"
+    mask.write_bytes(b"x")
+
+    token, user = register(client_oral, "oral-inp-fail@x.com")
+    sid = _seed_session(user["id"], status="edit_submitted", credits_charged=200)
+    oral_mod._update_session(
+        sid,
+        mask_image_path=str(mask),
+        edited_transcript="hi",
+        selected_models=json.dumps([{"name": "M1", "image_url": "https://x/m.jpg"}]),
+    )
+
+    asyncio.run(oral_mod._run_inpainting_step(sid))
+
+    sess = oral_mod._get_session(sid)
+    assert sess["status"] == "failed_step4"
+    assert sess["credits_refunded"] == 40  # 200 * 0.20
+
+
+def test_try_advance_to_lipsync_atomic(register, client_oral):
+    """SQL 原子 UPDATE:只有一次返 True。第二次返 False 不重复触发。"""
+    from app.api import oral as oral_mod
+
+    token, user = register(client_oral, "oral-advance@x.com")
+    sid = _seed_session(user["id"], status="edit_submitted")
+    oral_mod._update_session(
+        sid,
+        new_audio_url="https://x/a.mp3",
+        swapped_video_url="https://x/v.mp4",
+    )
+
+    assert oral_mod._try_advance_to_lipsync(sid) is True
+    # 第二次返 False(rowcount=0 因为 status 已经是 lipsync_running)
+    assert oral_mod._try_advance_to_lipsync(sid) is False
+
+    sess = oral_mod._get_session(sid)
+    assert sess["status"] == "lipsync_running"
+
+
+def test_try_advance_blocks_when_one_side_missing(register, client_oral):
+    from app.api import oral as oral_mod
+
+    token, user = register(client_oral, "oral-advance-half@x.com")
+    sid = _seed_session(user["id"], status="edit_submitted")
+    oral_mod._update_session(sid, new_audio_url="https://x/a.mp3")
+    # swapped_video_url 没设
+
+    assert oral_mod._try_advance_to_lipsync(sid) is False
+    sess = oral_mod._get_session(sid)
+    assert sess["status"] == "edit_submitted"
+
+
+def test_run_lipsync_step_happy_path_completes(patch_lipsync_ok, register, client_oral):
+    from app.api import oral as oral_mod
+
+    token, user = register(client_oral, "oral-lip-ok@x.com")
+    sid = _seed_session(user["id"], status="lipsync_running", credits_charged=160)
+    oral_mod._update_session(
+        sid,
+        new_audio_url="https://x/a.mp3",
+        swapped_video_url="https://x/v.mp4",
+    )
+
+    asyncio.run(oral_mod._run_lipsync_step(sid))
+
+    sess = oral_mod._get_session(sid)
+    assert sess["status"] == "completed"
+    assert sess["final_video_url"] == "https://fal.media/final.mp4"
+
+
+def test_run_lipsync_step_fal_fail_refunds_30pct(monkeypatch, register, client_oral):
+    from app.api import oral as oral_mod
+    from app.services import fal_service
+
+    class FailLip:
+        async def sync(self, **kwargs):
+            return {"error": "veed service down"}
+
+    monkeypatch.setattr(fal_service, "_lipsync_service", FailLip())
+
+    token, user = register(client_oral, "oral-lip-fail@x.com")
+    sid = _seed_session(user["id"], status="lipsync_running", credits_charged=200)
+    oral_mod._update_session(
+        sid,
+        new_audio_url="https://x/a.mp3",
+        swapped_video_url="https://x/v.mp4",
+    )
+
+    asyncio.run(oral_mod._run_lipsync_step(sid))
+
+    sess = oral_mod._get_session(sid)
+    assert sess["status"] == "failed_step5"
+    assert sess["credits_refunded"] == 60  # 200 * 0.30
+
+
+def test_resolution_for_tier():
+    from app.api.oral import _resolution_for_tier
+    assert _resolution_for_tier("economy") == "480p"
+    assert _resolution_for_tier("standard") == "580p"
+    assert _resolution_for_tier("premium") == "720p"
+
+
+def test_lipsync_endpoint_for_tier():
+    from app.services.fal_service import FalLipsyncService
+    svc = FalLipsyncService("fake")
+    assert svc.endpoint_for("economy") == "veed/lipsync"
+    assert svc.endpoint_for("standard") == "fal-ai/latentsync"
+    assert svc.endpoint_for("premium") == "fal-ai/sync-lipsync/v2"
+    with pytest.raises(ValueError):
+        svc.endpoint_for("diamond")
+
+
+def test_step_progress_derives_from_fields():
+    """改造后 _step_progress 读 session 字段派生 step3/4 状态"""
+    from app.api.oral import _step_progress
+
+    # Step3/4 都没开始
+    sess = {"asr_transcript": "x", "edited_transcript": "y"}
+    p = _step_progress("edit_submitted", sess)
+    assert p["step1"] == "done"
+    assert p["step2"] == "done"
+    assert p["step3"] == "running"  # 有 edited_transcript 触发
+    assert p["step4"] == "pending"  # mask 没传
+
+    # Step3 完成,step4 还在跑
+    sess["new_audio_url"] = "https://x/a.mp3"
+    sess["mask_image_path"] = "/tmp/mask.png"
+    p = _step_progress("edit_submitted", sess)
+    assert p["step3"] == "done"
+    assert p["step4"] == "running"
+
+    # 都 done,等 lipsync 触发
+    sess["swapped_video_url"] = "https://x/v.mp4"
+    p = _step_progress("lipsync_running", sess)
+    assert p["step3"] == "done"
+    assert p["step4"] == "done"
+    assert p["step5"] == "running"
+
+
+# ==================== /upload-mask 端点 ====================
+
+
+def test_upload_mask_unauthenticated_401(client_oral):
+    r = client_oral.post("/api/oral/upload-mask", data={"session_id": "x"})
+    assert r.status_code == 401
+
+
+def test_upload_mask_happy_path(client_oral, register, auth_header):
+    token, user = register(client_oral, "oral-mask@x.com")
+    sid = _seed_session(user["id"], status="asr_done")
+
+    # 假 PNG bytes
+    fake_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+
+    r = client_oral.post(
+        "/api/oral/upload-mask",
+        data={"session_id": sid},
+        files={"file": ("mask.png", fake_png, "image/png")},
+        headers=auth_header(token),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["size_bytes"] == len(fake_png)
+    assert "mask.png" in body["mask_image_path"]
+
+
+def test_upload_mask_non_image_rejected(client_oral, register, auth_header):
+    token, user = register(client_oral, "oral-mask-bad@x.com")
+    sid = _seed_session(user["id"])
+
+    r = client_oral.post(
+        "/api/oral/upload-mask",
+        data={"session_id": sid},
+        files={"file": ("evil.exe", b"binary", "application/octet-stream")},
+        headers=auth_header(token),
+    )
+    assert r.status_code == 400
+
+
+def test_upload_mask_session_completed_400(client_oral, register, auth_header):
+    """终态不能再传 mask"""
+    token, user = register(client_oral, "oral-mask-done@x.com")
+    sid = _seed_session(user["id"], status="completed")
+
+    r = client_oral.post(
+        "/api/oral/upload-mask",
+        data={"session_id": sid},
+        files={"file": ("mask.png", b"\x89PNG", "image/png")},
+        headers=auth_header(token),
+    )
+    assert r.status_code == 400
