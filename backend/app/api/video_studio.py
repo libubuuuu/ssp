@@ -15,6 +15,13 @@ from typing import List, Optional
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from pydantic import BaseModel
 from app.services.fal_service import get_video_service
+from app.services.billing import (
+    get_task_cost,
+    check_user_credits,
+    deduct_credits,
+    add_credits,
+    create_consumption_record,
+)
 from app.api.auth import get_current_user
 
 router = APIRouter()
@@ -309,9 +316,25 @@ async def batch_generate(
     # 选模型
     model_key = "kling/edit-o3" if req.mode == "o3" else "kling/edit"
 
+    # 计费:N 段 × video/replace/element 单价。先预扣全额,提交失败按段返还(镜像 ad_video.py + jobs.py 的 fail-refund 模式)
+    user_id = current_user["id"]
+    per_seg_cost = get_task_cost("video/replace/element")
+    n = len(segments)
+    total_cost = per_seg_cost * n
+
+    if total_cost > 0:
+        if not check_user_credits(user_id, total_cost):
+            raise HTTPException(
+                status_code=402,
+                detail=f"积分不足,{n} 段需 {total_cost} 积分",
+            )
+        if not deduct_credits(user_id, total_cost):
+            raise HTTPException(status_code=500, detail="扣费失败,请重试")
+
     # 批量提交
     service = get_video_service()
     batch_results = []
+    submit_failed = 0
     for seg in segments:
         args = {
             "video_url": seg["fal_url"],
@@ -320,16 +343,37 @@ async def batch_generate(
             "keep_audio": True,
         }
         result = await service._generate_video(model_key, args)
+        status = result.get("status", "failed")
+        if status != "pending":
+            submit_failed += 1
         batch_results.append({
             "segment_index": seg["index"],
             "task_id": result.get("task_id"),
             "endpoint_tag": result.get("endpoint_tag"),
-            "status": result.get("status", "failed"),
+            "status": status,
             "error": result.get("error"),
+            "cost": per_seg_cost,
         })
+
+    # 失败段返还(只覆盖 fal submit 失败;async 失败由 batch-status / merge 阶段后续补)
+    refund = submit_failed * per_seg_cost
+    if refund > 0:
+        add_credits(user_id, refund)
+    actual_cost = total_cost - refund
+
+    # 写消费记录(实扣金额,用户在 /tasks/history 能看到)
+    if actual_cost > 0:
+        create_consumption_record(
+            user_id=user_id,
+            task_id=req.session_id,
+            module="video/replace/element",
+            cost=actual_cost,
+            description=f"长视频翻拍 · {n - submit_failed}/{n} 段提交成功",
+        )
 
     task["batch_results"] = batch_results
     task["batch_model"] = model_key
+    task["batch_cost"] = actual_cost  # 留个记录,merge 阶段以后补 async 失败返还时要查
     task["status"] = "generating"
     _save_tasks()
 
@@ -337,6 +381,8 @@ async def batch_generate(
         "session_id": req.session_id,
         "total": len(batch_results),
         "tasks": batch_results,
+        "cost": actual_cost,  # 让前端 sidebar adjustLocalUserCredits(-cost)
+        "submit_failed": submit_failed,
     }
 
 

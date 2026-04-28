@@ -3,6 +3,7 @@ import { useLang } from "@/lib/i18n/LanguageContext";
 import React, { useState, useRef, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
+import { adjustLocalUserCredits } from "@/lib/userState";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -242,9 +243,11 @@ export default function VideoStudioDetailPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || t("errors.submitFailed"));
+      if (typeof data.cost === "number" && data.cost > 0) adjustLocalUserCredits(-data.cost);
       setBatchTasks(data.tasks);
       setStep(4);
-      setMsg(`已提交 ${data.total} 个任务，等待生成...`);
+      const failedNote = data.submit_failed ? `(${data.submit_failed} 段提交失败已退款)` : "";
+      setMsg(`已提交 ${data.total} 个任务，等待生成...${failedNote}`);
       startPolling();
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
