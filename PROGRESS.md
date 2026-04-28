@@ -1,5 +1,38 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 四十五续(死代码扫除 + Sidebar 收口 + image loading 真接)
+
+### 顺手扫 lint 残留挖出 2 个真 bug
+四十四续做完 set-state-in-effect 重构,扫 21 个 unused-vars warning 时发现:
+
+1. **image/page.tsx setLoading 从未被调用** — `[loading,setLoading]=useState(false)`,提交时不更新,用户看不到 loading 反馈,UI 一直显示空 gallery 占位 → 接通 generate() 的 try/finally
+2. **voice-clone resultAudioUrl + clonedVoiceId 死状态** — 设了从不读,UI 实际用 saveGallery 显示成品,早期版本残留 → 删
+
+### Sidebar.tsx 收口
+原 commit 623ceac 用 useEffect + 手挂 user-updated/storage listener;这一版统一改 `useLocalStorageItem` 走 useSyncExternalStore,逻辑减半 + 加 `SidebarUser` 类型替 `any`(顺手再修 1 个 explicit-any error)。
+
+### 死代码扫除清单(13 文件)
+- ad-video: 删 unused `t` / `jobId` state + 配套 reset 调用
+- admin/orders: useLang 改只取 lang
+- dashboard: useLang 改只取 t
+- admin/dashboard: `catch (err)` → `catch`(err 没用)
+- canvas: 删 unused `THREE` import
+- image/multi-reference: 删 handleDragOver 的 index 参数
+- products/[id]: 删 unused `useParams` + import
+- try-on(stub 页): 整理 unused imports + 函数 props
+- video/clone: `catch (err)` → `catch`
+- voice-clone: 删两个死 state
+- SystemHealthBanner: 删 unused `router`
+
+### 数字
+- lint: 101 → **79** problems(session 起 117 → 79,-32%)
+- error: 54 → **44**(-10)
+- warning: 56 → **35**(-21)
+- unused-vars: **21 → 0**
+
+### 已 deploy 进生产
+(待执行)
+
 ## 2026-04-28 四十四续(React 19 set-state-in-effect 5 → 0 收口)
 
 ### 自审发现
