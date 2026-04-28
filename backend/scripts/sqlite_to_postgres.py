@@ -56,11 +56,19 @@ def migrate_table(src_engine, dst_engine, dst_metadata, table_name: str, dry_run
     """迁移单表,返回迁移行数。
 
     每表独立连接 + 独立 begin/commit,避免长连接 autobegin 状态污染。
+    源缺表 graceful skip(老 dev.db 可能没新表,不当 fail)。
     """
-    from sqlalchemy import select
+    from sqlalchemy import select, inspect
 
     if table_name not in dst_metadata.tables:
         print(f"  ⚠ 目标库无表 {table_name},跳过(确认 alembic upgrade 是否完整)")
+        return 0
+
+    # 源端表存在性检查 — 老 dev.db 可能缺新表(如 register_ip_log / pending_refunds)
+    # 这种情况不是 fail,业务部署后 init_db 会建表,只是历史无数据
+    src_tables = inspect(src_engine).get_table_names()
+    if table_name not in src_tables:
+        print(f"  ⚠ 源库无表 {table_name},跳过(老 dev.db 缺新增表,可接受)")
         return 0
 
     dst_table = dst_metadata.tables[table_name]

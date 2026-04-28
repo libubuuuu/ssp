@@ -151,5 +151,32 @@ A: 跑这个对比脚本(可加 CI):
 - [ ] init_db() 改成调用 `alembic upgrade head`(消除两份 schema 维护)
 - [ ] tests 仍用 init_db 还是 alembic?(性能 vs 一致性的取舍)
 - [x] 写 SQLite → Postgres 数据迁移脚本 — ✅ 六十一续就位 + 6 测试
+- [x] **写 staging 演练脚本 — ✅ 六十七续 `scripts/postgres_drill.py`** + 演练已捕获 prod model_health.id NULL bug
 - [ ] backend/app/database.py 切 SQLAlchemy(体力活,1-2 天)
 - [ ] 跑全量 pytest against Postgres(改 conftest fixtures 切 PG test DB)
+
+## ⚠ 切 PG 前**必须**跑 staging 演练 + 数据清理
+
+`scripts/postgres_drill.py` 端到端验证(五步):清空 → alembic upgrade →
+schema 反射 → 数据迁移 → 行数+抽样校验。任一失败立即知道,不在切上线时挂。
+
+```bash
+# 演练 1:对 SQLite-as-staging 跑,验脚本逻辑(无依赖,本地试)
+python scripts/postgres_drill.py \
+  --source-sqlite /opt/ssp/backend/dev.db \
+  --target-url sqlite:////tmp/drill_target.db
+
+# 演练 2:对真 PG staging 跑(用户开 PG 后)
+python scripts/postgres_drill.py \
+  --source-sqlite /opt/ssp/backend/dev.db \
+  --target-url postgresql+psycopg2://USER:PWD@STAGING:5432/ssp_staging
+```
+
+**已知数据清理**(六十七续演练捕获,生产 dev.db 已 fix):
+```sql
+-- model_health.id PRIMARY KEY 历史 NULL(SQLite 容忍,PG 严格 NOT NULL)
+UPDATE model_health SET id = model_name WHERE id IS NULL OR id = '';
+```
+新写入路径已修(`circuit_breaker.py` INSERT 加 id 字段)。切 PG 前:
+1. 在生产 SQLite 上跑这条 UPDATE(已做)
+2. 演练再跑一次验证 0 fail

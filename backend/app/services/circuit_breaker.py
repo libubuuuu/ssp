@@ -116,10 +116,13 @@ class CircuitBreaker:
                     """, (success_count, failure_count, not success, model_name))
                 else:
                     # 记录不存在，插入新记录
+                    # 六十七续:id 用 model_name(已 UNIQUE),Postgres 切迁移时 PK NOT NULL 严格
+                    # 历史数据(SQLite 容忍 NULL PK)需通过 UPDATE 清理:
+                    #   UPDATE model_health SET id = model_name WHERE id IS NULL OR id = ''
                     cursor.execute("""
-                        INSERT INTO model_health (model_name, success_count, failure_count, last_error_at, updated_at)
-                        VALUES (?, ?, ?, CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END, CURRENT_TIMESTAMP)
-                    """, (model_name, 1 if success else 0, 0 if success else 1, not success))
+                        INSERT INTO model_health (id, model_name, success_count, failure_count, last_error_at, updated_at)
+                        VALUES (?, ?, ?, ?, CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END, CURRENT_TIMESTAMP)
+                    """, (model_name, model_name, 1 if success else 0, 0 if success else 1, not success))
 
                 # 如果失败次数达到阈值，禁用模型
                 cursor.execute("SELECT failure_count FROM model_health WHERE model_name = ?", (model_name,))
