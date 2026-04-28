@@ -1,6 +1,6 @@
 "use client";
 import { useLang } from "@/lib/i18n/LanguageContext";
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
@@ -22,7 +22,7 @@ export default function AdminDiagnosePage() {
   const [openContent, setOpenContent] = useState<string>("");
   const [openBusy, setOpenBusy] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const token = localStorage.getItem("token") ?? "";
@@ -38,7 +38,7 @@ export default function AdminDiagnosePage() {
       setList(data.snapshots ?? []);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  };
+  }, [isEn, router]);
 
   const openSnapshot = async (fn: string) => {
     setOpenFile(fn);
@@ -66,7 +66,7 @@ export default function AdminDiagnosePage() {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   const fmtTime = (ts: number) => {
     const d = new Date(ts * 1000);

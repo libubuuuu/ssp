@@ -1,8 +1,9 @@
 "use client";
 import { useLang } from "@/lib/i18n/LanguageContext";
-import { useState, useEffect } from "react";
+import { useCallback, useMemo, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { clearAuthSession } from "@/lib/userState";
+import { useLocalStorageItem } from "@/lib/hooks/useLocalStorageItem";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -22,16 +23,13 @@ export default function AdminUsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null); // user id 正在操作
-  const [me, setMe] = useState<{ id: string } | null>(null);
+  const userJson = useLocalStorageItem("user");
+  const me: { id: string } | null = useMemo(() => {
+    if (!userJson) return null;
+    try { return JSON.parse(userJson) as { id: string }; } catch { return null; }
+  }, [userJson]);
 
-  useEffect(() => {
-    try {
-      const u = localStorage.getItem("user");
-      if (u) setMe(JSON.parse(u));
-    } catch {}
-  }, []);
-
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const token = localStorage.getItem("token") ?? "";
@@ -50,9 +48,9 @@ export default function AdminUsersPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isEn, router]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   const adjustCredits = async (user: User) => {
     const promptMsg = isEn

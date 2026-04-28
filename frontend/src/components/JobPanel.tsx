@@ -145,7 +145,7 @@ export default function JobPanel() {
                   </div>
                 </div>
                 {j.result?.image_url && (
-                  <img src={j.result.image_url} style={{ width: "100%", borderRadius: 8, marginTop: 6, maxHeight: 120, objectFit: "cover" }} />
+                  <img src={j.result.image_url} alt={j.title || "任务结果"} style={{ width: "100%", borderRadius: 8, marginTop: 6, maxHeight: 120, objectFit: "cover" }} />
                 )}
                 {j.result?.video_url && (
                   <video src={j.result.video_url} controls style={{ width: "100%", borderRadius: 8, marginTop: 6, maxHeight: 150 }} />

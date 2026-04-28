@@ -1,6 +1,6 @@
 "use client";
 import { useLang } from "@/lib/i18n/LanguageContext";
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 
@@ -29,7 +29,7 @@ export default function StudioListPage() {
 
   const token = () => localStorage.getItem("token") || "";
 
-  const loadSessions = async () => {
+  const loadSessions = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/api/studio/list`, {
         headers: { Authorization: `Bearer ${token()}` },
@@ -38,13 +38,13 @@ export default function StudioListPage() {
       const data = await res.json();
       setSessions(data.sessions || []);
     } catch {} finally { setLoading(false); }
-  };
+  }, []);
 
   useEffect(() => {
     loadSessions();
     const t = setInterval(loadSessions, 5000);
     return () => clearInterval(t);
-  }, []);
+  }, [loadSessions]);
 
   const createNew = async (file: File) => {
     setError("");

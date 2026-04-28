@@ -185,7 +185,7 @@ export default function ImagePage(){
           <div style={{display:"flex",gap:"0.4rem",flexWrap:"wrap"}}>
             {refPreviews.map((p,i)=>(
               <div key={i} style={{position:"relative",width:60,height:60}}>
-                <img src={p} style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:8}}/>
+                <img src={p} alt="参考图" style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:8}}/>
                 <button onClick={()=>removeRef(i)} style={{position:"absolute",top:-6,right:-6,width:18,height:18,borderRadius:"50%",background:"#c00",color:"#fff",border:"none",cursor:"pointer",fontSize:"0.7rem",lineHeight:1}}>×</button>
               </div>
             ))}

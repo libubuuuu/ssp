@@ -410,11 +410,11 @@ export default function AdVideoPage() {
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                 <div>
                   <div style={smallLabel}>原始产品图</div>
-                  <img src={productPreview} style={{ width: "100%", borderRadius: 12, background: "#fff" }} />
+                  <img src={productPreview} alt="产品图预览" style={{ width: "100%", borderRadius: 12, background: "#fff" }} />
                 </div>
                 <div>
                   <div style={smallLabel}>AI 合成首帧</div>
-                  <img src={previewImageUrl} style={{ width: "100%", borderRadius: 12, background: "#fff", border: "2px solid #0d0d0d" }} />
+                  <img src={previewImageUrl} alt="首帧预览" style={{ width: "100%", borderRadius: 12, background: "#fff", border: "2px solid #0d0d0d" }} />
                 </div>
               </div>
             </Card>
@@ -535,7 +535,7 @@ function UploadBox({ label, preview, onFile, required, hint }: { label: string; 
           }}
         />
         {preview ? (
-          <img src={preview} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+          <img src={preview} alt="图片预览" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", color: "#999", fontSize: "0.85rem", gap: 8 }}>
             <span style={{ fontSize: "1.5rem" }}>⬆</span>

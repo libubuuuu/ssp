@@ -154,7 +154,7 @@ export default function VideoPage() {
                       updateCard(c.id, { imageFile: f, imagePreview: URL.createObjectURL(f) });
                     }} />
                   {c.imagePreview
-                    ? <img src={c.imagePreview} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    ? <img src={c.imagePreview} alt="视频首帧" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#999", fontSize: "0.85rem" }}>{t("video.clickUpload")}</div>}
                 </label>
               </div>

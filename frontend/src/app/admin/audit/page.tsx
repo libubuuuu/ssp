@@ -1,6 +1,6 @@
 "use client";
 import { useLang } from "@/lib/i18n/LanguageContext";
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
@@ -25,7 +25,7 @@ export default function AdminAuditPage() {
   const [loading, setLoading] = useState(true);
   const [actionFilter, setActionFilter] = useState<string>("");
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const token = localStorage.getItem("token") ?? "";
@@ -45,9 +45,9 @@ export default function AdminAuditPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [actionFilter, isEn, router]);
 
-  useEffect(() => { load(); }, [actionFilter]);
+  useEffect(() => { load(); }, [load]);
 
   const formatTime = (iso: string) => {
     try { return new Date(iso).toLocaleString(isEn ? "en-US" : "zh-CN"); }

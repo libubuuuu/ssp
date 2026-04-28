@@ -1,6 +1,6 @@
 "use client";
 import { useLang } from "@/lib/i18n/LanguageContext";
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
@@ -25,7 +25,7 @@ export default function AdminOrdersPage() {
   const [filter, setFilter] = useState<"pending" | "paid" | "all">("pending");
   const [confirming, setConfirming] = useState<string | null>(null);
 
-  const loadOrders = async () => {
+  const loadOrders = useCallback(async () => {
     setLoading(true);
     try {
       const token = localStorage.getItem("token") || "";
@@ -44,9 +44,9 @@ export default function AdminOrdersPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filter, lang, router]);
 
-  useEffect(() => { loadOrders(); }, [filter]);
+  useEffect(() => { loadOrders(); }, [loadOrders]);
 
   const confirmOrder = async (orderId: string) => {
     if (!confirm(lang === "en" ? `Confirm order ${orderId.slice(0, 8)}...?` : `确认订单 ${orderId.slice(0, 8)}... 入账？`)) return;

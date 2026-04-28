@@ -94,6 +94,9 @@ export default function VideoStudioDetailPage() {
         setError(e.message || "加载项目失败");
       }
     })();
+    // startPolling 定义在下方,引用在内部 IIFE 里;effect 只在 urlSessionId 变化时重跑,
+    // 把 startPolling 放进 deps 会因为它每渲染重生而无限循环
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlSessionId]);
 
   const token = () => localStorage.getItem("token") || "";
@@ -418,7 +421,7 @@ export default function VideoStudioDetailPage() {
                       <input type="file" accept="image/*" style={{ display: "none" }}
                         onChange={e => { const f = e.target.files?.[0]; if (f) handleMainImage(idx, f); }} />
                       {elem.main_preview
-                        ? <img src={elem.main_preview} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        ? <img src={elem.main_preview} alt="元素主图" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                         : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#999", fontSize: "0.8rem" }}>点击上传</div>}
                     </label>
                   </div>
@@ -429,7 +432,7 @@ export default function VideoStudioDetailPage() {
                     <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                       {elem.reference_previews.map((p, i) => (
                         <div key={i} style={{ position: "relative", width: 80, height: 80 }}>
-                          <img src={p} style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 8 }} />
+                          <img src={p} alt="参考图" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 8 }} />
                           <button onClick={() => removeRefImage(idx, i)} style={{ position: "absolute", top: -6, right: -6, width: 18, height: 18, borderRadius: "50%", background: "#c00", color: "#fff", border: "none", cursor: "pointer", fontSize: "0.7rem" }}>×</button>
                         </div>
                       ))}
