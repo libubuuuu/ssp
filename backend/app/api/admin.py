@@ -15,10 +15,28 @@ from .auth import get_current_user
 router = APIRouter()
 
 
-def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
-    """验证管理员权限"""
+def _check_admin_role(current_user: dict) -> None:
+    """非 Depends 版本,给 17 处 inline check 用"""
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="需要管理员权限")
+    # 强制 2FA — 默认关(scaffolding pattern,与 Sentry/CF/Redis 一致):
+    # 用户在 /profile/2fa 给 admin 账号 enroll 2FA 后,再 .env.enc 设
+    # ADMIN_2FA_REQUIRED=true 重启 supervisor 真启用。详见 docs/ADMIN-2FA.md
+    if os.environ.get("ADMIN_2FA_REQUIRED", "false").lower() == "true":
+        if not current_user.get("totp_enabled"):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "ADMIN_2FA_REQUIRED",
+                    "message": "管理员账号必须启用 2FA 才能访问后台,请先到 /profile/2fa 设置",
+                    "redirect": "/profile/2fa",
+                },
+            )
+
+
+def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    """验证管理员权限 + 强制 2FA"""
+    _check_admin_role(current_user)
     return current_user
 
 
@@ -167,8 +185,7 @@ async def get_recent_tasks(limit: Optional[int] = 20, _admin: dict = Depends(req
 @router.get("/orders")
 async def admin_list_orders(status: str = "all", current_user: dict = Depends(get_current_user)):
     """管理员：查所有订单（status=pending/paid/all）"""
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="无权限")
+    _check_admin_role(current_user)
     
     with get_db() as conn:
         cursor = conn.cursor()
@@ -198,8 +215,7 @@ async def admin_list_orders(status: str = "all", current_user: dict = Depends(ge
 @router.get("/users-list")
 async def admin_list_users(current_user: dict = Depends(get_current_user)):
     """管理员：列出所有用户"""
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="无权限")
+    _check_admin_role(current_user)
     
     with get_db() as conn:
         cursor = conn.cursor()
@@ -216,8 +232,7 @@ async def admin_list_users(current_user: dict = Depends(get_current_user)):
 @router.post("/users/{user_id}/adjust-credits")
 async def admin_adjust_credits(user_id: str, delta: int, request: Request, current_user: dict = Depends(get_current_user)):
     """管理员：手动加/减用户积分（delta 可正可负）"""
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="无权限")
+    _check_admin_role(current_user)
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -248,8 +263,7 @@ async def admin_adjust_credits(user_id: str, delta: int, request: Request, curre
 @router.get("/diagnose-history")
 async def admin_diagnose_history(current_user: dict = Depends(get_current_user)):
     """列出 watchdog 告警时自动冻结的诊断快照(最近 100 份)"""
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="无权限")
+    _check_admin_role(current_user)
     import os
     SNAPSHOT_DIR = "/var/log/ssp-diagnose"
     if not os.path.isdir(SNAPSHOT_DIR):
@@ -279,8 +293,7 @@ async def admin_diagnose_history(current_user: dict = Depends(get_current_user))
 @router.get("/diagnose-snapshot/{filename}")
 async def admin_diagnose_snapshot(filename: str, current_user: dict = Depends(get_current_user)):
     """读取单份快照内容"""
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="无权限")
+    _check_admin_role(current_user)
     import os, re, json
     # 严格校验 filename 格式,防路径穿越
     if not re.fullmatch(r"\d{8}-\d{6}-(CRIT|WARN)\.json", filename):
@@ -314,8 +327,7 @@ async def admin_diagnose(current_user: dict = Depends(get_current_user)):
     - 当前蓝绿状态
     - 数据库基础统计
     """
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="无权限")
+    _check_admin_role(current_user)
 
     import subprocess
     import os
@@ -410,8 +422,7 @@ async def admin_diagnose(current_user: dict = Depends(get_current_user)):
 @router.get("/watchdog")
 async def admin_get_watchdog_status(current_user: dict = Depends(get_current_user)):
     """读 watchdog 最近报告 + 告警列表(供 admin dashboard 卡片用)"""
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="无权限")
+    _check_admin_role(current_user)
 
     import os
     LOG_PATH = "/var/log/ssp-watchdog.log"
@@ -484,8 +495,7 @@ async def admin_list_audit_log(
     """管理员查询审计日志。
     支持按 action / actor_user_id 过滤,按 created_at DESC,默认 100 条上限 500。
     """
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="无权限")
+    _check_admin_role(current_user)
     if limit > 500:
         limit = 500
     from app.services.audit import list_audit_log
@@ -496,8 +506,7 @@ async def admin_list_audit_log(
 @router.post("/users/{user_id}/force-logout")
 async def admin_force_logout(user_id: str, request: Request, current_user: dict = Depends(get_current_user)):
     """管理员强制踢人:把目标用户在所有设备的 token 一次性失效"""
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="无权限")
+    _check_admin_role(current_user)
 
     # 验证目标用户存在
     with get_db() as conn:
@@ -530,8 +539,7 @@ async def admin_force_logout(user_id: str, request: Request, current_user: dict 
 @router.post("/upload-qr")
 async def admin_upload_qr(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     """管理员上传收款码图片"""
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="无权限")
+    _check_admin_role(current_user)
     
     # 保存到 frontend/public/qr-payment.png(项目根的相对路径,与部署位置解耦)
     from pathlib import Path

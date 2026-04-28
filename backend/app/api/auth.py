@@ -259,6 +259,8 @@ async def login(req: LoginRequest, response: Response):
             "name": user["name"],
             "role": user["role"],
             "credits": user["credits"],
+            # 给前端 admin layout 用,判断是否要显示 2FA 引导横幅
+            "totp_enabled": bool(user.get("totp_enabled")),
         },
     }
 

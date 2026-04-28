@@ -239,3 +239,58 @@ def test_diagnose_history_returns_list_or_empty(client, register, auth_header, s
     assert r.status_code == 200
     body = r.json()
     assert "snapshots" in body or isinstance(body, dict)
+
+
+# === 管理员 2FA 强制开关 ===
+
+
+def test_admin_2fa_enforce_off_admin_without_2fa_passes(client, register, auth_header, set_role, monkeypatch):
+    """ADMIN_2FA_REQUIRED=false(默认):无 2FA 的管理员仍能进入"""
+    monkeypatch.setenv("ADMIN_2FA_REQUIRED", "false")
+    a_token, a_user = register(client, "no2fa-admin@example.com")
+    set_role(a_user["id"], "admin")
+    r = client.get("/api/admin/users-list", headers=auth_header(a_token))
+    assert r.status_code == 200
+
+
+def test_admin_2fa_enforce_on_admin_without_2fa_blocked(client, register, auth_header, set_role, monkeypatch):
+    """ADMIN_2FA_REQUIRED=true:无 2FA 的管理员被拦"""
+    monkeypatch.setenv("ADMIN_2FA_REQUIRED", "true")
+    a_token, a_user = register(client, "needs2fa-admin@example.com")
+    set_role(a_user["id"], "admin")
+    r = client.get("/api/admin/users-list", headers=auth_header(a_token))
+    assert r.status_code == 403
+    body = r.json()
+    # detail 是结构化对象给前端引导
+    assert isinstance(body["detail"], dict)
+    assert body["detail"]["code"] == "ADMIN_2FA_REQUIRED"
+    assert body["detail"]["redirect"] == "/profile/2fa"
+
+
+def test_admin_2fa_enforce_on_admin_with_2fa_passes(client, register, auth_header, set_role, monkeypatch):
+    """ADMIN_2FA_REQUIRED=true:已 enroll 2FA 的管理员通行"""
+    monkeypatch.setenv("ADMIN_2FA_REQUIRED", "true")
+    a_token, a_user = register(client, "has2fa-admin@example.com")
+    set_role(a_user["id"], "admin")
+    # 直接改 DB 模拟已 enroll 2FA(2FA setup 流程涉及 TOTP secret + verify 太长)
+    from app.database import get_db
+    with get_db() as conn:
+        conn.cursor().execute(
+            "UPDATE users SET totp_enabled = 1, totp_secret = 'TESTSECRET' WHERE id = ?",
+            (a_user["id"],),
+        )
+        conn.commit()
+    r = client.get("/api/admin/users-list", headers=auth_header(a_token))
+    assert r.status_code == 200
+
+
+def test_admin_2fa_enforce_doesnt_affect_non_admin(client, register, auth_header, monkeypatch):
+    """ADMIN_2FA_REQUIRED=true 时,普通用户访问 admin 端点仍是 403,但 detail 是普通的'需要管理员权限',不是 2FA 引导"""
+    monkeypatch.setenv("ADMIN_2FA_REQUIRED", "true")
+    token, _ = register(client, "regular-user@example.com")
+    r = client.get("/api/admin/users-list", headers=auth_header(token))
+    assert r.status_code == 403
+    body = r.json()
+    # detail 是字符串(普通 role 不足)而不是 2FA dict
+    assert isinstance(body["detail"], str)
+    assert "管理员" in body["detail"]

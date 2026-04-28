@@ -191,11 +191,14 @@ def get_user_by_email(email: str) -> Optional[Dict]:
 
 
 def get_user_by_id(user_id: str) -> Optional[Dict]:
-    """根据 ID 获取用户"""
+    """根据 ID 获取用户
+
+    包含 totp_enabled — admin 强制 2FA 检查依赖此字段
+    """
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, email, name, role, credits, phone, created_at
+            SELECT id, email, name, role, credits, phone, created_at, totp_enabled
             FROM users WHERE id = ?
         """, (user_id,))
         row = cursor.fetchone()
@@ -208,6 +211,7 @@ def get_user_by_id(user_id: str) -> Optional[Dict]:
                 "credits": row[4],
                 "phone": row[5],
                 "created_at": row[6],
+                "totp_enabled": bool(row[7]),
             }
         return None
 

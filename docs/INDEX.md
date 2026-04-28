@@ -14,6 +14,7 @@
 | 文档 | 用途 | 用户工作量 |
 |---|---|---|
 | [SENTRY-SETUP.md](SENTRY-SETUP.md) | 错误监控接入(后端代码已就绪等 DSN) | 5 分钟 |
+| [ADMIN-2FA.md](ADMIN-2FA.md) | 管理员账号强制 2FA(代码就位,默认关) | 5 分钟启用 + 后端重启 |
 | [CLOUDFLARE-SETUP.md](CLOUDFLARE-SETUP.md) | CDN + 真用户 IP 透传 | 15 分钟 + 24h DNS |
 | [REDIS-SETUP.md](REDIS-SETUP.md) | 限流 Redis 后端启用(可选,多 worker 时必要) | 15 分钟 |
 | [DISASTER-RECOVERY.md](DISASTER-RECOVERY.md) | 全新服务器 30-60 分钟恢复手册 | 灾备时按步骤跑 |
