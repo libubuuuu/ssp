@@ -1,5 +1,51 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 四十二续(studio /batch-generate 收漏 — 真扣费上线)
+
+### 自审发现
+四十一续接 sidebar credits 时调研到 `/api/studio/batch-generate`,挖到底层:
+**这个端点既无 `@require_credits` 也无手动 `deduct_credits`,完全免费**。
+
+- `video/replace/element` 定价 15 积分(已在 PRICING 里)
+- 一个 session 5-20 段
+- 单 session **75-300 积分**免费 FAL 视频生成
+- FAL 那边按调用收钱,我们 0 入账 → 直接漏成本
+
+### 修
+**后端 `app/api/video_studio.py`** 镜像 `ad_video.py /generate` + `jobs.py` 的 fail-refund pattern:
+- 进入业务前 `check_user_credits(N × 15)` 不够 → 402
+- `deduct_credits` 上预扣全额(SQL WHERE credits >= 原子)
+- 批量循环跟踪 `submit_failed`(status != pending)
+- 循环后 `add_credits(refund)` 把失败段退回
+- `create_consumption_record` 写实扣到 `generation_history`(用户 /tasks/history 看得到)
+- 返 `{cost: actual_cost, submit_failed}` 给前端
+
+**前端 `studio/[id]/page.tsx`:**
+- `adjustLocalUserCredits(-data.cost)` 实时反映 sidebar
+- 失败段数量提示透明告知用户
+
+### 测试 (新 `test_video_studio.py` 8 例)
+| 用例 | 验证 |
+|---|---|
+| 401 | 未登录 |
+| 403 | 别人的 session |
+| 404 | session 不存在 |
+| 402 | 余额不足不扣费 |
+| happy path | 3 段全 ok → 扣 45 |
+| 部分失败 | 1/3 失败 → 实扣 30 退 15 |
+| 全失败 | 实扣 0 全退 |
+| generation_history | 写消费记录 |
+
+总测试 287 → **295**(+8)
+
+### 决策记录
+- **预扣 + 失败退** 而非 **per-call 扣费** — 一次性 SQL 扣减比 N 次 SQL 写竞态少;失败比例通常很低,补退一次更便宜
+- **只 cover fal submit 失败** — async 任务后续失败的返还(circuit breaker / fal 内部错)留下次。当前如果 fal 接了任务但跑挂,用户被多扣 ¯\_(ツ)_/¯;改这层要动 batch-status 阶段,scope 较大
+- **/merge 不再扣费** — 算力费已在 batch-generate 阶段付完;merge 只是 ffmpeg + fal 上传,免费给用户
+
+### 已 deploy 进生产
+(待执行)
+
 ## 2026-04-28 四十一续(自审清理 + sidebar credits 扣费路径接通)
 
 ### 自审发现
