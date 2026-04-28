@@ -1,5 +1,75 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 五十一续(异步退款必落地 — refund_tracker 接通 4 类异步任务)
+
+### 自审挖出的真生产 bug
+做完五十续(batch-status 双退竞态)后审"还有没有同源退款洞",找到一处更狠的:
+**require_credits 装饰器扣费 + fal 异步任务失败 → 用户钱不退**。
+
+具体死的退款逻辑:
+- `tasks.py:50` `SELECT generation_history WHERE id = fal_task_id` —
+  但 generation_history 主键 = 装饰器自生成的 uuid4 ≠ fal task_id → 永远查不到 → 永远不退
+- `_poll_fal_task` WS 后台 polling 检测到 failed 直接关连接,**根本没退款逻辑**
+- `video.py /status/{task_id}` 完全无退款
+
+后果:用户做 image-to-video(10) / video/replace(15) / video/clone(20) /
+avatar/generate(10),fal 异步失败 = 白丢钱。
+
+### 修
+**新增 `services/refund_tracker.py`** — 内存级 register/try_refund + 30min TTL
+- `pop` 是 dict 原子操作,确保只退一次,多 tab / HTTP+WS 双轨触发都幂等
+- 与既存 `task_ownership.py` 同 pattern(threading.Lock + TTL)
+
+**接通 4 处:**
+| 文件 | 改动 |
+|---|---|
+| decorators.py | require_credits 扣费成功 + result 含 task_id → 自动 register |
+| tasks.py /status/{id} | 删死 SELECT,接 try_refund |
+| tasks.py _poll_fal_task | failed 时调 try_refund + 推 refunded 给前端 |
+| video.py /status/{id} | 接 try_refund(前端 video/replace、clone 在用) |
+| avatar.py /generate | fal async 任务 register |
+
+### 测试 +9(317 → **326**)
+- 基本流程:register → try_refund 成功 / 未注册返 0 / 二次返 0
+- 参数无效 noop(空 task_id / 空 user / cost ≤ 0)
+- peek 不消费
+- **并发幂等**:10 线程 Barrier 同时 try_refund,断言**恰好一次** = cost
+- TTL 过期返 0
+- 装饰器集成:async 任务 register / 同步任务不 register
+
+### 限制(代码注释化)
+- 进程级 dict,backend 重启 → 退款记录丢。失败任务不退,需人工补
+- multi-worker 时各 worker 一份。当前 uvicorn 单 worker,acceptable
+- 后续切 SQLite 表持久化(可走 alembic 迁移,五十续刚就位)
+
+### 已 deploy 进生产 ✅
+五十 + 五十一两 commit 一起切,蓝绿 green → blue,~30s。
+**踩坑:** rsync 用 root 跑导致 /opt/ssp/backend/app 文件 owner 变 root,
+backend 跑 ssp-app 拿不到 logs/ 写权限(EXITED + spawn error)。
+**修法:** chown -R ssp-app:ssp-app /opt/ssp/backend/app 后重跑 deploy → 通过。
+
+**Lesson learned**:rsync 后必跟 chown,或用 `--chown=ssp-app:ssp-app`(rsync 3.1+)。
+下次 deploy.sh 加这一步。
+
+## 2026-04-28 五十续(/batch-status 加 asyncio.Lock — 防多 tab 双退)
+
+### 真竞态
+`video_studio.py /batch-status` 失败段退款的 `_refund_if_needed`:
+1. 检 `seg.get("refunded")` 为 False
+2. add_credits(user_id, cost)
+3. 标 `seg["refunded"] = True`
+
+**check-then-set 非原子**。同 user 多 tab 各自 startPolling 调 batch-status,
+两个协程同时进入 1.,各自看到 False → 都 add_credits → **双退**。
+
+### 修
+- 新增 `_SESSION_LOCKS: dict[session_id, asyncio.Lock]`
+- `_refund_if_needed` + `_save_tasks` 全部搬进 `async with lock`
+- 注释说明:重启后 refunded 标记已持久化(sessions.json),锁丢不会双退过去已退的
+
+### 测试 +1
+- `test_batch_status_concurrent_polls_no_double_refund`:asyncio.gather + httpx.ASGITransport 启 2 并发,断言总退款 = 30 而非 60
+
 ## 2026-04-28 四十九续(管理员强制 2FA — scaffolding 就位,默认关)
 
 ### 为什么
