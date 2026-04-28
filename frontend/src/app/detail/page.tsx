@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, Suspense } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
@@ -105,14 +106,14 @@ function DetailContent() {
       {/* 顶部导航 */}
       <nav className="sticky top-0 z-50 bg-zinc-950/90 backdrop-blur border-b border-zinc-800">
         <div className="max-w-5xl mx-auto px-6 py-3 flex items-center justify-between">
-          <a href="/" className="text-amber-400 font-bold">AI 创意平台</a>
+          <Link href="/" className="text-amber-400 font-bold">AI 创意平台</Link>
           <div className="flex gap-3">
-            <a
+            <Link
               href={detail.content_type === "video" ? "/video" : "/image"}
               className="text-sm text-zinc-400 hover:text-white transition-colors"
             >
               继续创作
-            </a>
+            </Link>
           </div>
         </div>
       </nav>
@@ -253,7 +254,7 @@ function DetailContent() {
                 </li>
                 <li className="flex gap-2">
                   <span className="text-amber-400">-</span>
-                  可配合\"复制文案\"功能，将卖点用于商品描述
+                  可配合「复制文案」功能，将卖点用于商品描述
                 </li>
                 <li className="flex gap-2">
                   <span className="text-amber-400">-</span>

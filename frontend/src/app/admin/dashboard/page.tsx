@@ -1,7 +1,7 @@
 "use client";
 import { useLang } from "@/lib/i18n/LanguageContext";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
@@ -37,13 +37,7 @@ export default function AdminDashboard() {
   const [stats, setStats] = useState<StatsOverview | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 5000); // 每 5 秒刷新
-    return () => clearInterval(interval);
-  }, []);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const [modelsRes, queueRes, statsRes] = await Promise.all([
         fetch(`${API_BASE}/api/admin/models/status`),
@@ -63,7 +57,13 @@ export default function AdminDashboard() {
       console.error(err);
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadData();
+    const interval = setInterval(loadData, 5000);
+    return () => clearInterval(interval);
+  }, [loadData]);
 
   const handleResetModel = async (modelName: string) => {
     if (!confirm(`确定要重置模型 ${modelName} 的状态吗？`)) return;

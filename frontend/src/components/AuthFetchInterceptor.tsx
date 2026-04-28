@@ -129,7 +129,7 @@ export default function AuthFetchInterceptor() {
         return originalFetch(input, effectiveInit);
       }
 
-      let response = await originalFetch(input, effectiveInit);
+      const response = await originalFetch(input, effectiveInit);
       if (response.status !== 401) return response;
 
       // 401 → 试刷 token(并发请求共享同一次刷新)
