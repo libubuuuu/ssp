@@ -473,14 +473,20 @@ async def batch_generate(
         prompt_template = f"Replace elements in the video with: {joined}. Maintain the same movements and camera angles."
 
     # 选模型
-    # 七十六续 Step 3 灰度:admin role + mode=edit → kling/reference(空间引导更强,改善空气穿衣)。
-    # mode=o3 保持不动(中文口播是付费卖点);普通用户也走原模型,零影响。
-    if req.mode == "o3":
-        model_key = "kling/edit-o3"
-    elif current_user.get("role") == "admin":
+    # 七十六续 Step 3 修正(短期灰度方案,后续可能升级为独立 force_model 字段做 A/B 对比):
+    # 前端 mode 只发 "o1" / "o3",原 elif 链 admin 永远进不来。改成 admin 优先,
+    # admin 不管选 o1/o3 一律切 kling/reference,用于评估"空气穿衣"改善效果。
+    # 普通用户继续按 mode 走老逻辑:o3 → edit-o3,o1 → edit,行为零变化。
+    if current_user.get("role") == "admin":
         model_key = "kling/reference"
         import sys
-        print(f"STUDIO_GRAYSCALE admin user_id={current_user.get('id')} session={req.session_id} → kling/reference", file=sys.stderr, flush=True)
+        print(
+            f"STUDIO_GRAYSCALE_BYPASS_MODE admin user_id={current_user.get('id')} "
+            f"mode={req.mode} session={req.session_id} → kling/reference",
+            file=sys.stderr, flush=True,
+        )
+    elif req.mode == "o3":
+        model_key = "kling/edit-o3"
     else:
         model_key = "kling/edit"
 

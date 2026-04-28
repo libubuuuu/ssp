@@ -309,25 +309,25 @@ def _capture_model_key(studio_client, token, payload):
         return mock_svc._generate_video.call_args.args[0]
 
 
-def test_grayscale_admin_edit_mode_picks_reference(
+def test_grayscale_admin_o1_mode_picks_reference(
     studio_client, register, set_role, set_credits
 ):
-    """admin + mode=edit → 灰度到 kling/reference"""
+    """admin + mode=o1(前端"快速")→ 灰度到 kling/reference"""
     from app.api import video_studio as studio_mod
     studio_mod.STUDIO_TASKS.clear()
     token, user = register(studio_client, "grayscale_admin1@x.com")
     set_role(user["id"], "admin")
     set_credits(user["id"], 1000)
     sid = _seed_studio_session(user["id"], n=1)
-    mk = _capture_model_key(studio_client, token, _grayscale_payload(sid, "edit"))
+    mk = _capture_model_key(studio_client, token, _grayscale_payload(sid, "o1"))
     assert mk == "kling/reference"
     studio_mod.STUDIO_TASKS.clear()
 
 
-def test_grayscale_admin_o3_mode_keeps_o3(
+def test_grayscale_admin_o3_mode_picks_reference(
     studio_client, register, set_role, set_credits
 ):
-    """admin + mode=o3 → 保持 kling/edit-o3(中文口播不灰度)"""
+    """admin + mode=o3(前端"高质量")→ 也灰度到 kling/reference(admin 优先,不管 mode)"""
     from app.api import video_studio as studio_mod
     studio_mod.STUDIO_TASKS.clear()
     token, user = register(studio_client, "grayscale_admin2@x.com")
@@ -335,20 +335,20 @@ def test_grayscale_admin_o3_mode_keeps_o3(
     set_credits(user["id"], 1000)
     sid = _seed_studio_session(user["id"], n=1)
     mk = _capture_model_key(studio_client, token, _grayscale_payload(sid, "o3"))
-    assert mk == "kling/edit-o3"
+    assert mk == "kling/reference"
     studio_mod.STUDIO_TASKS.clear()
 
 
-def test_grayscale_normal_user_edit_mode_unchanged(
+def test_grayscale_normal_user_o1_mode_unchanged(
     studio_client, register, set_credits
 ):
-    """普通用户 + mode=edit → 仍是 kling/edit(灰度不波及)"""
+    """普通用户 + mode=o1 → 仍是 kling/edit(灰度不波及)"""
     from app.api import video_studio as studio_mod
     studio_mod.STUDIO_TASKS.clear()
     token, user = register(studio_client, "grayscale_user1@x.com")
     set_credits(user["id"], 1000)
     sid = _seed_studio_session(user["id"], n=1)
-    mk = _capture_model_key(studio_client, token, _grayscale_payload(sid, "edit"))
+    mk = _capture_model_key(studio_client, token, _grayscale_payload(sid, "o1"))
     assert mk == "kling/edit"
     studio_mod.STUDIO_TASKS.clear()
 
