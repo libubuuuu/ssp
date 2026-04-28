@@ -1,5 +1,50 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 四十四续(React 19 set-state-in-effect 5 → 0 收口)
+
+### 自审发现
+四十一续修 lint 时跳过的 5 个 set-state-in-effect 错(localStorage hydration 模式)。React 19.2 收紧了这个 anti-pattern,5 个挂载流程都中招:
+- LanguageContext / JobPanel / AdminSidebar / homepage / dashboard
+
+正确写法:`useSyncExternalStore` 订阅外部 store,SSR snapshot 与 client snapshot 分离 → 无 hydration mismatch + 无渲染期级联
+
+### 实现
+**新 2 个 hook:**
+- `src/lib/hooks/useLocalStorageItem.ts` — 订阅 localStorage 单 key,SSR 安全,跨 tab + 同 tab 双通信
+- `src/lib/hooks/useIsMobile.ts` — 订阅 resize,< 768px 判定
+
+**userState.ts 加 2 个 helper(token 写入闭环):**
+- `setAuthToken(t)` — 写 localStorage + dispatch user-updated
+- `clearAuthSession()` — 删 token/user/refresh_token + dispatch
+
+**9 个 token 写入点全部事件化:**
+- login(auth/page) 1 个 → setAuthToken
+- refresh(AuthFetchInterceptor ×2) → setAuthToken  
+- logout(profile ×2 / homepage / admin/users / AdminSidebar / AuthFetchInterceptor redirectToLogin)→ clearAuthSession
+
+**5 个站点重构:**
+1. LanguageContext: `useLocalStorageItem("lang", "zh")`
+2. JobPanel: `useLocalStorageItem("token")` 替原 2s 轮询黑科技 + 简化 401 cascade(AuthFetchInterceptor 已统一处理)
+3. AdminSidebar: `useLocalStorageItem("user")` + `useIsMobile()`
+4. homepage: `useLocalStorageItem` token + user
+5. dashboard: 同上
+
+**1 处显式 disable:** `admin/dashboard` 的 `loadData()` 是 async,setState 在微任务,实际不算 sync-in-effect,但 lint 规则不分辨;eslint-disable 加注释说明
+
+### 行为改进(用户能感知)
+- 登录后 sidebar/JobPanel **立刻**显示登录态,不再 2s 滞后
+- 充值/扣费 → 所有订阅组件实时刷新(原已支持 user 缓存,这次扩到 token)
+- 跨 tab:tab A 登出 → tab B 立刻反应(storage 事件原生触发)
+- SSR/CSR 首渲一致,消除 hydration mismatch 警告
+
+### 数字
+- lint:54 errors → 45(-9)
+- set-state-in-effect:5 → 0
+- 测试无变化(298 全过)
+
+### 已 deploy 进生产
+(待执行)
+
 ## 2026-04-28 四十三续(studio /batch-status async 退款 — 收漏第二刀)
 
 ### 上轮(四十二续)留下的 TODO
