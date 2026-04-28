@@ -87,3 +87,63 @@ test.describe("P8 cookie 双轨", () => {
     expect(response.status()).toBe(400);
   });
 });
+
+test.describe("五十+续 鉴权矩阵守门(本轮修过的真生产 bug)", () => {
+  test("匿名 POST /api/products → 401(五十七续 OWASP 越权)", async ({ request }) => {
+    // 之前完全裸跑,任意人可注入产品。修后必须 401。
+    const response = await request.post("/api/products", {
+      data: {
+        merchant_id: "x",
+        name: "playwright-attacker",
+        category: "shirt",
+        gender: "unisex",
+        price: 1.0,
+        stock: 0,
+      },
+    });
+    expect(response.status()).toBe(401);
+  });
+
+  test("匿名 PUT /api/products/{id} → 401(五十七续)", async ({ request }) => {
+    const response = await request.put("/api/products/anyid", {
+      data: { name: "hacked" },
+    });
+    expect(response.status()).toBe(401);
+  });
+
+  test("匿名 DELETE /api/products/{id} → 401(五十七续)", async ({ request }) => {
+    const response = await request.delete("/api/products/anyid");
+    expect(response.status()).toBe(401);
+  });
+
+  test("匿名 GET /api/products → 200(电商展示场景仍 public)", async ({ request }) => {
+    // 反向守门:别一刀切关了,list/detail 必须保持 public
+    const response = await request.get("/api/products");
+    expect(response.status()).toBe(200);
+  });
+
+  test("匿名 GET /api/video/status/{id} → 401(五十四续 归属窥探)", async ({ request }) => {
+    // 之前匿名可调 = 任意人猜 task_id 拿归档视频 URL 隐私泄漏
+    const response = await request.get("/api/video/status/random-task-id");
+    expect(response.status()).toBe(401);
+  });
+
+  test("匿名 POST /api/content/upload → 401(五十六续 OOM 守卫)", async ({ request }) => {
+    const response = await request.post("/api/content/upload");
+    expect(response.status()).toBe(401);
+  });
+
+  test("匿名 POST /api/content/enhance → 401(五十八续 attack surface)", async ({ request }) => {
+    const response = await request.post("/api/content/enhance", {
+      data: { prompt: "x" },
+    });
+    expect(response.status()).toBe(401);
+  });
+
+  test("匿名 POST /api/image/inpaint → 401(五十八续 stub 防扫)", async ({ request }) => {
+    const response = await request.post("/api/image/inpaint", {
+      data: { image_url: "x", mask_url: "y", prompt: "z" },
+    });
+    expect(response.status()).toBe(401);
+  });
+});
