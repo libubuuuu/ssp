@@ -57,6 +57,17 @@ class Settings(BaseSettings):
     COOKIE_DOMAIN: str = ""        # 空字符串 = 不设 Domain 属性(浏览器默认 exact host)
     COOKIE_SECURE: bool = True     # production 必 True;dev http 设 False
 
+    # 七十二续:对象存储直传(B 方案 — 用户上传走前端 → COS 直传,服务器只签 STS 凭证)
+    # 默认关,启用前 /api/storage/sts 返 503;启用后所有上传端点应改走 OSS URL
+    STORAGE_DIRECT_UPLOAD_ENABLED: bool = False
+    STORAGE_PROVIDER: str = "tencent_cos"        # 当前只实现 tencent_cos,留接口给 aliyun_oss 等
+    STORAGE_BUCKET: str = ""                     # COS bucket 名,如 "ssp-uploads-1300000000"
+    STORAGE_REGION: str = ""                     # 区域,如 "ap-guangzhou"
+    STORAGE_SECRET_ID: str = ""                  # 子账号 SecretId(读 STS 权限即可,不用 root)
+    STORAGE_SECRET_KEY: str = ""                 # 子账号 SecretKey
+    STORAGE_DURATION_SECONDS: int = 900          # 临时凭证有效期(15 分钟,够大文件上传)
+    STORAGE_BUCKET_PREFIX: str = "uploads/"      # 限制 STS 凭证只能写这个前缀,防越权
+
     # 六十八续:微信支付 V3(默认关,等用户开商户号 + 配 cert 后启用)
     WECHAT_PAY_ENABLED: bool = False
     WECHAT_PAY_MCH_ID: str = ""                  # 商户号(10 位数字)

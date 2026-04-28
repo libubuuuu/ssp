@@ -42,3 +42,7 @@ psutil==5.9.8
 
 # P5: 错误监控(可选 — SENTRY_DSN 环境变量启用,留空时跳过 init)
 sentry-sdk[fastapi]==2.20.0
+
+# 七十二续:腾讯云 STS SDK(B 方案 OSS 直传,只签发临时凭证)
+tencentcloud-sdk-python-sts>=3.0.1400
+tencentcloud-sdk-python-common>=3.1.0
