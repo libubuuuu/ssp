@@ -1,5 +1,34 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 六十五续(法务文档草案就绪 — ICP 备案为用户解锁)
+
+### 为用户主导项降本
+六十四续把"无须用户参与"的工程项榨干后,挑能为用户主导项目降本的事:
+**ICP 备案 / 公安备案 / 个人信息保护法合规** 必交隐私政策 / 用户协议 / Cookie 政策。
+我代起草中文草案,法务基础上改而非从零起,省 1-2 天工作量。
+
+### 4 份就位
+| 文件 | 行数 | 核心内容 |
+|---|---|---|
+| privacy-policy.md | 227 | 11 章,含跨境数据传输声明、第三方共享清单、存储期限按实际实现写实 |
+| terms-of-service.md | 274 | 12 章,含 AIGC 标识(深度合成规定 §16)+ 内容审核(生成式 AI 办法) |
+| cookie-consent.md | 148 | 4 类 Cookie 分类 + PIPL §13 法定要件对照 |
+| README.md | 55 | 占位符表(11 个)+ 上线 checklist + 法规依据(6 部) |
+
+法规对照:PIPL / DSL / 网安法 / 深度合成规定 / 生成式 AI 管理办法 / 算法推荐管理规定。
+
+### 占位符体系
+11 个 `{{XXX}}` 占位符,法务审阅后用户替换:COMPANY_NAME / ICP_NUMBER /
+CONTACT_EMAIL / EFFECTIVE_DATE / LEGAL_REPRESENTATIVE 等。
+
+### 业务对接
+- 第三方共享清单覆盖 FAL / Resend / Cloudflare / Sentry / 阿里云 SMS,含跨境声明
+- 存储期限按实际实现写实(uploads 90d / register_ip_log 24h / 访问日志 6 月)
+- AIGC 显式 + 隐式标识符合《深度合成管理规定》§16
+
+### ⚠ 警示
+README + 三份文件顶部均明确"非法律意见,使用前必须法务 / 律师审阅"。
+
 ## 2026-04-28 六十四续(no-img-element + set-state-in-effect 收尾 — lint 0 全清)
 
 ### 决策
