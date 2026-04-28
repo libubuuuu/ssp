@@ -383,7 +383,9 @@ async def _do_split(session_id, segment_duration, task, video_path, duration, se
     # 2核4G 服务器 libx264 跑会 CPU 100% 卡死整站。
     # 切点对齐到最近 keyframe(可能差 1-2 秒),业务可接受;-ss 放 -i 前
     # 让 ffmpeg 用 demuxer seek(快但稍不准),够大多数带货素材用。
-    segments = []
+    # 七十四续:ffmpeg 切片仍串行(在 Semaphore 内,CPU 串行),
+    # 但 fal upload 拆出来并发(IO bound + 跨境,N 路并发延迟 ≈ 单路)
+    cut_results = []  # [(index, start, output_path)]
     for i in range(total_segments):
         start = i * segment_duration
         output = session_dir / f"segment_{i:03d}.mp4"
@@ -398,19 +400,32 @@ async def _do_split(session_id, segment_duration, task, video_path, duration, se
         ]
         ok, err = _run_ffmpeg(cmd)
         if ok and output.exists() and output.stat().st_size > 1000:
-            # 上传到 fal
-            import fal_client
-            try:
-                fal_url = await fal_client.upload_file_async(str(output))
-                segments.append({
-                    "index": i,
-                    "start": start,
-                    "duration": min(segment_duration, duration - start),
-                    "local_path": str(output),
-                    "fal_url": fal_url,
-                })
-            except Exception as e:
-                print(f"fal upload failed for segment {i}: {e}")
+            cut_results.append((i, start, output))
+
+    # 七十四续:并发上传所有 segments 到 fal — 之前串行 N×5s,现在 max ≈ 5s
+    import fal_client
+    async def _upload_one(index, start, output):
+        try:
+            fal_url = await fal_client.upload_file_async(str(output))
+            return {
+                "index": index,
+                "start": start,
+                "duration": min(segment_duration, duration - start),
+                "local_path": str(output),
+                "fal_url": fal_url,
+            }
+        except Exception as e:
+            print(f"fal upload failed for segment {index}: {e}")
+            return None
+
+    if cut_results:
+        upload_tasks = await asyncio.gather(
+            *[_upload_one(i, s, p) for i, s, p in cut_results],
+            return_exceptions=False,
+        )
+        segments = [r for r in upload_tasks if r is not None]
+    else:
+        segments = []
 
     task["segments"] = segments
     task["status"] = "split"
@@ -570,29 +585,42 @@ async def batch_status(
             seg["refunded"] = True
             return seg_cost
 
+        # 七十四续:并发查询 fal — 之前串行 4 段 × 1-2s = 4-8s 用户体验卡。
+        # asyncio.gather 并发后 max(各段 fal 延迟) ≈ 1-2s,提速 4x。
+        # 已完成 / 已失败的段不查 fal,只在内存里数。
+        pending_segs = []
         for r in task["batch_results"]:
             if r.get("status") == "completed" and r.get("video_url"):
                 completed += 1
                 results.append(r)
-                continue
-            if r.get("status") == "failed":
-                # 历史失败 — submit 时已退或上轮 poll 已退,refunded 标记保证不重复
+            elif r.get("status") == "failed":
                 refunded_this_call += _refund_if_needed(r)
                 failed += 1
                 results.append(r)
-                continue
-            # 查询 fal
-            if r.get("task_id"):
-                status = await service.get_task_status(r["task_id"], endpoint_hint=r.get("endpoint_tag"))
+            elif r.get("task_id"):
+                pending_segs.append(r)
+                results.append(r)
+            else:
+                results.append(r)
+
+        # 并发查所有 pending 段(同一 fal 后端,N 路并发延迟 ≈ 单路)
+        if pending_segs:
+            statuses = await asyncio.gather(
+                *[service.get_task_status(r["task_id"], endpoint_hint=r.get("endpoint_tag"))
+                  for r in pending_segs],
+                return_exceptions=True,
+            )
+            for r, status in zip(pending_segs, statuses):
+                if isinstance(status, Exception):
+                    # fal 抖动:保持 processing,下轮再试
+                    continue
                 r["status"] = status.get("status", "processing")
                 if status.get("video_url"):
                     r["video_url"] = status["video_url"]
                     completed += 1
                 elif status.get("status") == "failed":
-                    # 新发现的 async 失败 — fal 接了任务但跑挂,这里退款
                     refunded_this_call += _refund_if_needed(r)
                     failed += 1
-            results.append(r)
 
         # task 写入 + 持久化也要在锁内(防 _save_tasks 并发写坏 sessions.json)
         total = len(task["batch_results"])
