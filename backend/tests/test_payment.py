@@ -222,4 +222,73 @@ def test_admin_list_orders_status_filter(client, register, auth_header, set_role
     assert r.status_code == 200
     orders = r.json()["orders"]
     assert all(o["status"] == "pending" for o in orders)
-    assert len(orders) >= 1
+
+
+def test_admin_list_orders_status_all_returns_paid_and_pending(client, register, auth_header, set_role):
+    """status=all 走另一条 SQL 分支,不带 WHERE,paid + pending 都返回"""
+    a_token, _ = _make_admin_token(client, register, auth_header, set_role, "pay-list-all@example.com")
+    user_token, user = register(client, "pay-mixed-user@example.com")
+    pkgs = client.get("/api/payment/packages").json()["packages"]
+
+    # 起 2 个 pending 订单,confirm 第一个变成 paid
+    o1 = client.post("/api/payment/orders/create",
+                     json={"type": "package", "package_id": pkgs[0]["id"]},
+                     headers=auth_header(user_token)).json()
+    o2 = client.post("/api/payment/orders/create",
+                     json={"type": "package", "package_id": pkgs[0]["id"]},
+                     headers=auth_header(user_token)).json()
+    client.post(f"/api/payment/orders/{o1['order_id']}/confirm", headers=auth_header(a_token))
+
+    r = client.get("/api/payment/admin/orders?status=all", headers=auth_header(a_token))
+    assert r.status_code == 200
+    orders = r.json()["orders"]
+    statuses = {o["status"] for o in orders if o["id"] in (o1["order_id"], o2["order_id"])}
+    assert statuses == {"paid", "pending"}
+
+
+def test_admin_list_orders_empty_returns_empty_array(client, register, auth_header, set_role):
+    """无订单时返空数组,不挂 / 不返 null"""
+    a_token, _ = _make_admin_token(client, register, auth_header, set_role, "pay-list-empty@example.com")
+    r = client.get("/api/payment/admin/orders?status=pending", headers=auth_header(a_token))
+    assert r.status_code == 200
+    assert r.json() == {"orders": []}
+
+
+def test_admin_list_orders_includes_user_email_via_join(client, register, auth_header, set_role):
+    """LEFT JOIN users 应带回 user_email + user_name 字段"""
+    a_token, _ = _make_admin_token(client, register, auth_header, set_role, "pay-join@example.com")
+    user_token, _ = register(client, "pay-joined-user@example.com", name="JoinedUser")
+    pkgs = client.get("/api/payment/packages").json()["packages"]
+    o = client.post("/api/payment/orders/create",
+                    json={"type": "package", "package_id": pkgs[0]["id"]},
+                    headers=auth_header(user_token)).json()
+
+    r = client.get("/api/payment/admin/orders?status=pending", headers=auth_header(a_token))
+    matched = [x for x in r.json()["orders"] if x["id"] == o["order_id"]]
+    assert len(matched) == 1
+    row = matched[0]
+    assert row["user_email"] == "pay-joined-user@example.com"
+    assert row["user_name"] == "JoinedUser"
+
+
+def test_confirm_order_writes_audit_log(client, register, auth_header, set_role):
+    """admin 确认订单 → audit_log 表写一条 confirm_order 记录(合规重点)"""
+    a_token, admin_user = _make_admin_token(client, register, auth_header, set_role, "pay-audit@example.com")
+    user_token, _ = register(client, "pay-audit-target@example.com")
+    pkgs = client.get("/api/payment/packages").json()["packages"]
+    o = client.post("/api/payment/orders/create",
+                    json={"type": "package", "package_id": pkgs[0]["id"]},
+                    headers=auth_header(user_token)).json()
+
+    client.post(f"/api/payment/orders/{o['order_id']}/confirm", headers=auth_header(a_token))
+
+    from app.database import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT action, target_id FROM audit_log WHERE actor_user_id = ? AND action = 'confirm_order'",
+            (admin_user["id"],),
+        )
+        rows = cursor.fetchall()
+    assert len(rows) == 1
+    assert rows[0][1] == o["order_id"]

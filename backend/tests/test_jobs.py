@@ -110,3 +110,104 @@ def test_unauthenticated_jobs_calls_rejected(client):
     r3 = client.get("/api/jobs/anything")
     for r in (r1, r2, r3):
         assert r.status_code in (401, 403)
+
+
+# === happy path 补漏 ===
+
+
+def test_get_job_owner_returns_200_with_full_payload(client, register, auth_header):
+    """owner 自己读 → 200 + 含 type/cost/status/params"""
+    token, _ = register(client, "j-get-ok@example.com")
+    r = client.post("/api/jobs/submit",
+                    json={"type": "image", "params": {"prompt": "happy"}, "title": "OK"},
+                    headers=auth_header(token))
+    job_id = r.json()["job_id"]
+
+    r_get = client.get(f"/api/jobs/{job_id}", headers=auth_header(token))
+    assert r_get.status_code == 200
+    body = r_get.json()
+    assert body["id"] == job_id
+    assert body["type"] == "image"
+    assert body["cost"] == 2
+    assert body["status"] == "pending"
+    assert body["title"] == "OK"
+
+
+def test_get_job_404_for_nonexistent_id(client, register, auth_header):
+    """不存在的 job_id → 404(走 if job_id not in JOBS 分支)"""
+    token, _ = register(client, "j-get-404@example.com")
+    r = client.get("/api/jobs/zzznosuch", headers=auth_header(token))
+    assert r.status_code == 404
+
+
+def test_delete_job_owner_returns_200_and_removes(client, register, auth_header):
+    """owner 删自己 job → 200 + 后续 GET 拿 404"""
+    token, _ = register(client, "j-del-ok@example.com")
+    r = client.post("/api/jobs/submit",
+                    json={"type": "image", "params": {"prompt": "del"}},
+                    headers=auth_header(token))
+    job_id = r.json()["job_id"]
+
+    r_del = client.delete(f"/api/jobs/{job_id}", headers=auth_header(token))
+    assert r_del.status_code == 200
+
+    # 删后再 GET 应 404
+    r_get = client.get(f"/api/jobs/{job_id}", headers=auth_header(token))
+    assert r_get.status_code == 404
+
+
+def test_delete_job_404_for_nonexistent_id(client, register, auth_header):
+    """不存在的 job_id → 404"""
+    token, _ = register(client, "j-del-404@example.com")
+    r = client.delete("/api/jobs/zzznosuch", headers=auth_header(token))
+    assert r.status_code == 404
+
+
+def test_list_jobs_empty_returns_empty_array(client, register, auth_header):
+    """新用户无 job → list 返空数组(确认无空指针 / 异常)"""
+    token, _ = register(client, "j-list-empty@example.com")
+    r = client.get("/api/jobs/list", headers=auth_header(token))
+    assert r.status_code == 200
+    assert r.json() == {"jobs": []}
+
+
+def test_list_jobs_sorted_desc_by_created_at(client, register, auth_header):
+    """list 按 created_at 倒序(最新在前)"""
+    import time as _time
+    token, _ = register(client, "j-list-sort@example.com")
+
+    # 提交 3 个 image jobs(显式 sleep 区分时间戳)
+    titles = []
+    for i in range(3):
+        r = client.post("/api/jobs/submit",
+                        json={"type": "image", "params": {"prompt": f"p{i}"}, "title": f"T{i}"},
+                        headers=auth_header(token))
+        titles.append(r.json()["job_id"])
+        _time.sleep(0.01)  # 确保 created_at 有差异
+
+    r = client.get("/api/jobs/list", headers=auth_header(token))
+    listed = r.json()["jobs"]
+    assert len(listed) == 3
+    # 最新的(最后提交的)排第一
+    assert listed[0]["id"] == titles[2]
+    assert listed[2]["id"] == titles[0]
+
+
+def test_submit_zero_cost_skips_deduct_check(client, register, auth_header, set_credits):
+    """cost==0 路径(虚拟免费 type):不走扣费,余额不变。
+
+    现有 PRICING 表所有 type 都 > 0,但 _module_from_type 走默认 5,
+    get_task_cost 也是默认 5。所以构造一个 cost==0 场景需要 monkeypatch get_task_cost。
+    """
+    from unittest.mock import patch
+    token, user = register(client, "j-zerocost@example.com")
+    set_credits(user["id"], 50)
+
+    with patch("app.api.jobs.get_task_cost", return_value=0):
+        r = client.post("/api/jobs/submit",
+                        json={"type": "image", "params": {"prompt": "free"}},
+                        headers=auth_header(token))
+    assert r.status_code == 200
+    assert r.json()["cost"] == 0
+    me = client.get("/api/auth/me", headers=auth_header(token)).json()
+    assert me["credits"] == 50  # 未扣
