@@ -352,7 +352,8 @@ async def upload_image(file: UploadFile = File(...), current_user: dict = Depend
     import fal_client, tempfile, os
     from PIL import Image
     import io
-    contents = await file.read()
+    from app.services.upload_guard import read_bounded, IMAGE_MIMES
+    contents = await read_bounded(file, max_bytes=10 * 1024 * 1024, allowed_mimes=IMAGE_MIMES, label="图片")
     # 用 Pillow 处理图片，自动满足 fal 要求
     img = Image.open(io.BytesIO(contents))
     if img.mode in ("RGBA", "P", "LA"):
@@ -401,7 +402,9 @@ async def upload_image(file: UploadFile = File(...), current_user: dict = Depend
 @router.post("/upload/video")
 async def upload_video(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     import fal_client, tempfile, os
-    contents = await file.read()
+    from app.services.upload_guard import read_bounded, SHORT_VIDEO_MIMES
+    # 短视频限 100MB(图生视频 / 编辑用,> 100MB 走 studio 分片)
+    contents = await read_bounded(file, max_bytes=100 * 1024 * 1024, allowed_mimes=SHORT_VIDEO_MIMES, label="视频")
     suffix = os.path.splitext(file.filename)[1] or ".mp4"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(contents)

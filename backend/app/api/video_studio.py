@@ -99,22 +99,21 @@ async def upload_video(
     current_user: dict = Depends(get_current_user)
 ):
     """上传长视频到工作区"""
+    from app.services.upload_guard import stream_bounded_to_path, LONG_VIDEO_MIMES
     session_id = str(uuid.uuid4())[:8]
     session_dir = STUDIO_DIR / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
 
-    # 保存原视频(流式 1MB 块写入,不一次性读全到内存)
+    # 保存原视频(流式 1MB 块写入,超 2GB 立刻终止 + 清掉部分文件)
     ext = os.path.splitext(file.filename)[1] or ".mp4"
     video_path = session_dir / f"source{ext}"
-    chunk_size = 1024 * 1024  # 1 MB
-    with open(video_path, "wb") as f:
-        while True:
-            chunk = await file.read(chunk_size)
-            if not chunk:
-                break
-            f.write(chunk)
-
-    size_bytes = video_path.stat().st_size
+    size_bytes = await stream_bounded_to_path(
+        file,
+        target_path=video_path,
+        max_bytes=2 * 1024 * 1024 * 1024,  # 2GB,长视频工作台是核心场景
+        allowed_mimes=LONG_VIDEO_MIMES,
+        label="长视频",
+    )
     duration = _get_video_duration(str(video_path))
 
     STUDIO_TASKS[session_id] = {
