@@ -484,6 +484,46 @@ def test_upload_chunk_continuation_doesnt_count_as_new(client_st, register, auth
         shutil.rmtree(UPLOAD_TMP_DIR / f"{user_id}_{i:016x}", ignore_errors=True)
 
 
+def test_batch_status_concurrent_polls_no_double_refund(client_st, register, auth_header, set_credits):
+    """同 session 并发两个 /batch-status 调用,async 失败段只退一次
+
+    场景:用户多 tab 打开 /studio/[id],各自 startPolling → 同时调 /batch-status
+    修前:_refund_if_needed 的 check-then-set 非原子,两个协程都看到 refunded=False → 双退
+    修后:asyncio.Lock per session 串行,只退一次
+    """
+    import asyncio
+    import httpx
+
+    token, user, sid = _seed_after_submit(client_st, register, auth_header, set_credits, "studio-race@example.com", 2)
+
+    async def always_failed(task_id, endpoint_hint=None):
+        return {"status": "failed", "error": "fal down"}
+
+    # 用真 ASGI httpx + 2 个并发 client 模拟 multi-tab
+    async def run_concurrent():
+        from app.api.video_studio import _SESSION_LOCKS
+        _SESSION_LOCKS.clear()  # 干净起步
+        with patch("app.api.video_studio.get_video_service") as mock_svc_factory:
+            mock_svc = mock_svc_factory.return_value
+            mock_svc.get_task_status = AsyncMock(side_effect=always_failed)
+            transport = httpx.ASGITransport(app=client_st.app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+                # gather 启两个并发请求
+                r1, r2 = await asyncio.gather(
+                    ac.get(f"/api/studio/batch-status/{sid}", headers=auth_header(token)),
+                    ac.get(f"/api/studio/batch-status/{sid}", headers=auth_header(token)),
+                )
+                return r1.json(), r2.json()
+
+    body1, body2 = asyncio.run(run_concurrent())
+    # 关键:两次 refunded_this_call 之和应该正好等于 30(2 段 × 15),不是 60
+    total_refund = body1["refunded_this_call"] + body2["refunded_this_call"]
+    assert total_refund == 30, f"双退:body1={body1['refunded_this_call']}, body2={body2['refunded_this_call']}, total={total_refund}"
+
+    me = client_st.get("/api/auth/me", headers=auth_header(token)).json()
+    assert me["credits"] == 1000 - 30 + 30  # 只退了一次,结果余额 = 初始
+
+
 def test_clean_stale_uploads_removes_old_dirs(tmp_path, monkeypatch):
     """GC: 超 24h 的老目录被删,新目录保留"""
     import time

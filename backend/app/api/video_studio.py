@@ -81,6 +81,18 @@ def _save_tasks():
 
 STUDIO_TASKS = _load_tasks()
 
+# session_id → asyncio.Lock,保护 batch_results 的 refunded 标记非原子读改写
+# 重启后 dict 清空(STUDIO_TASKS 也是 dict 内存态,重启后会从 sessions.json 重载 batch_results,
+# 但 refunded 标记已持久化,即使丢锁也不会双退过去已退的 — 锁只防同一进程并发)
+_SESSION_LOCKS: "dict[str, asyncio.Lock]" = {}
+
+
+def _get_session_lock(session_id: str) -> asyncio.Lock:
+    """按需创建 + 缓存 Lock(同一 event loop 内 dict 写入安全)"""
+    if session_id not in _SESSION_LOCKS:
+        _SESSION_LOCKS[session_id] = asyncio.Lock()
+    return _SESSION_LOCKS[session_id]
+
 
 class ElementConfig(BaseModel):
     """元素配置"""
@@ -460,51 +472,57 @@ async def batch_status(
     if "batch_results" not in task:
         raise HTTPException(400, "no batch task")
 
-    service = get_video_service()
-    completed = 0
-    failed = 0
-    results = []
-    refunded_this_call = 0  # 本次 poll 新退的钱(给前端 sidebar adjustLocalUserCredits(+))
-    user_id = current_user["id"]
+    # asyncio.Lock 保护 refunded 标记的 check-then-set
+    # 攻击场景:同 user 多 tab polling 同一 session,两个协程同时进入
+    # _refund_if_needed,各自看到 refunded=False → 都 add_credits → 双退
+    # 加锁后串行,确保单段只退一次
+    async with _get_session_lock(session_id):
+        service = get_video_service()
+        completed = 0
+        failed = 0
+        results = []
+        refunded_this_call = 0
+        user_id = current_user["id"]
 
-    def _refund_if_needed(seg: dict) -> int:
-        """async 失败时退该段(幂等:refunded 标记防止双退)。返回本次实退积分"""
-        if seg.get("refunded"):
-            return 0
-        seg_cost = seg.get("cost", 0)
-        if seg_cost > 0:
-            add_credits(user_id, seg_cost)
-        seg["refunded"] = True
-        return seg_cost
+        def _refund_if_needed(seg: dict) -> int:
+            """async 失败时退该段(幂等:refunded 标记防双退)。返回本次实退积分"""
+            if seg.get("refunded"):
+                return 0
+            seg_cost = seg.get("cost", 0)
+            if seg_cost > 0:
+                add_credits(user_id, seg_cost)
+            seg["refunded"] = True
+            return seg_cost
 
-    for r in task["batch_results"]:
-        if r.get("status") == "completed" and r.get("video_url"):
-            completed += 1
-            results.append(r)
-            continue
-        if r.get("status") == "failed":
-            # 历史失败 — submit 时已退或上轮 poll 已退,refunded 标记保证不重复
-            refunded_this_call += _refund_if_needed(r)
-            failed += 1
-            results.append(r)
-            continue
-        # 查询 fal
-        if r.get("task_id"):
-            status = await service.get_task_status(r["task_id"], endpoint_hint=r.get("endpoint_tag"))
-            r["status"] = status.get("status", "processing")
-            if status.get("video_url"):
-                r["video_url"] = status["video_url"]
+        for r in task["batch_results"]:
+            if r.get("status") == "completed" and r.get("video_url"):
                 completed += 1
-            elif status.get("status") == "failed":
-                # **新发现的 async 失败 — fal 接了任务但跑挂,这里退款**
+                results.append(r)
+                continue
+            if r.get("status") == "failed":
+                # 历史失败 — submit 时已退或上轮 poll 已退,refunded 标记保证不重复
                 refunded_this_call += _refund_if_needed(r)
                 failed += 1
-        results.append(r)
+                results.append(r)
+                continue
+            # 查询 fal
+            if r.get("task_id"):
+                status = await service.get_task_status(r["task_id"], endpoint_hint=r.get("endpoint_tag"))
+                r["status"] = status.get("status", "processing")
+                if status.get("video_url"):
+                    r["video_url"] = status["video_url"]
+                    completed += 1
+                elif status.get("status") == "failed":
+                    # 新发现的 async 失败 — fal 接了任务但跑挂,这里退款
+                    refunded_this_call += _refund_if_needed(r)
+                    failed += 1
+            results.append(r)
 
-    total = len(task["batch_results"])
-    if completed + failed == total:
-        task["status"] = "done"
-    _save_tasks()
+        # task 写入 + 持久化也要在锁内(防 _save_tasks 并发写坏 sessions.json)
+        total = len(task["batch_results"])
+        if completed + failed == total:
+            task["status"] = "done"
+        _save_tasks()
 
     return {
         "session_id": session_id,
