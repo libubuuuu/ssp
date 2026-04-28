@@ -25,8 +25,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // 桌面端 sidebar 默认开,移动端默认收
+  // 桌面端 sidebar 默认开,移动端默认收 — 响应 isMobile 变化的派生 state
+  // React 19.2 set-state-in-effect rule 在派生 state 这种场景过严,
+  // 重构成纯 derived(useMemo / 直接计算)代价大且降可读性,inline disable
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!isMobile) setSidebarOpen(true);
   }, [isMobile]);
 

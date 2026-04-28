@@ -2,6 +2,7 @@
 import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
 
@@ -173,8 +174,9 @@ export default function PricingPage() {
             <h2 style={{ margin: "0 0 1rem", fontSize: "1.2rem", fontWeight: 500 }}>{t("pricing.scanTitle")}</h2>
             <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "1.5rem" }}>{t("pricing.scanHint")}</div>
             <div style={{ background: "#fafaf7", borderRadius: 12, padding: "2rem", marginBottom: "1rem" }}>
-              <img src="/qr-payment.png" alt={t("pricing.qrAlt")} onError={(e) => { (e.target as HTMLImageElement).src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Crect width='200' height='200' fill='%23ddd'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.35em' fill='%23666'%3E收款码占位%3C/text%3E%3C/svg%3E"; }}
-                style={{ width: 200, height: 200, display: "block", margin: "0 auto" }} />
+              <Image src="/qr-payment.png" alt={t("pricing.qrAlt")} width={200} height={200}
+                onError={(e) => { (e.target as HTMLImageElement).src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Crect width='200' height='200' fill='%23ddd'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.35em' fill='%23666'%3E收款码占位%3C/text%3E%3C/svg%3E"; }}
+                style={{ display: "block", margin: "0 auto" }} />
             </div>
             <div style={{ background: "#fff8ea", border: "1px solid #f5d884", borderRadius: 10, padding: "0.8rem", marginBottom: "1rem", textAlign: "left", fontSize: "0.82rem", color: "#7a5400" }}>
               <div style={{ fontWeight: 600, marginBottom: 4 }}>⚠ {t("pricing.payFlow")}</div>
