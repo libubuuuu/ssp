@@ -73,6 +73,27 @@ def test_register_invalid_args_noop():
         assert refund_tracker.try_refund(tid) == 0
 
 
+def test_register_persists_to_db():
+    """SQL 持久化:register 后直接查 pending_refunds 表能看到 row。
+    backend 重启后内存丢失但 DB 仍在 → try_refund 仍可正确退款。
+    """
+    from app.database import get_db
+    user = _mk_user("rt-persist@example.com", 50)
+    refund_tracker.register("fal_persist", user["id"], 12)
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT user_id, cost, refunded FROM pending_refunds WHERE task_id = ?",
+            ("fal_persist",),
+        )
+        row = cursor.fetchone()
+    assert row is not None, "register 应写进 pending_refunds 表"
+    assert row[0] == user["id"]
+    assert row[1] == 12
+    assert row[2] == 0  # 未退
+
+
 def test_peek_does_not_consume():
     user = _mk_user("rt-peek@example.com", 50)
     refund_tracker.register("fal_peek", user["id"], 8)

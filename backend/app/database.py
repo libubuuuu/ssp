@@ -274,6 +274,19 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_register_ip_failure_log_ip ON register_ip_failure_log(ip)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_register_ip_failure_log_ts ON register_ip_failure_log(attempted_at_ts)")
 
+        # 五十一续:异步任务失败退款追踪(refund_tracker 持久化)
+        # 进程重启不丢退款记录;UPDATE refunded=1 WHERE refunded=0 SQL 原子保证只退一次
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pending_refunds (
+            task_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            cost INTEGER NOT NULL,
+            registered_at REAL NOT NULL,
+            refunded INTEGER NOT NULL DEFAULT 0
+        )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_pending_refunds_registered_at ON pending_refunds(registered_at)")
+
         # 创建索引优化查询性能
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
