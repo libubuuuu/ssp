@@ -473,7 +473,16 @@ async def batch_generate(
         prompt_template = f"Replace elements in the video with: {joined}. Maintain the same movements and camera angles."
 
     # 选模型
-    model_key = "kling/edit-o3" if req.mode == "o3" else "kling/edit"
+    # 七十六续 Step 3 灰度:admin role + mode=edit → kling/reference(空间引导更强,改善空气穿衣)。
+    # mode=o3 保持不动(中文口播是付费卖点);普通用户也走原模型,零影响。
+    if req.mode == "o3":
+        model_key = "kling/edit-o3"
+    elif current_user.get("role") == "admin":
+        model_key = "kling/reference"
+        import sys
+        print(f"STUDIO_GRAYSCALE admin user_id={current_user.get('id')} session={req.session_id} → kling/reference", file=sys.stderr, flush=True)
+    else:
+        model_key = "kling/edit"
 
     # 计费:N 段 × video/replace/element 单价。先预扣全额,提交失败按段返还(镜像 ad_video.py + jobs.py 的 fail-refund 模式)
     user_id = current_user["id"]

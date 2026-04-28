@@ -250,3 +250,118 @@ def test_admin_studio_model_status_requires_admin(client, register, auth_header)
     token, _user = register(client, "studio_normal@x.com")
     r = client.get("/api/admin/studio-model-status", headers=auth_header(token))
     assert r.status_code == 403
+
+
+# ==================== Step 3 灰度:admin role 选 kling/reference ====================
+
+
+@pytest.fixture()
+def studio_client(app):
+    """挂 video_studio 路由,用法同 test_video_studio.py 但隔离用同名属性避免污染"""
+    from app.api import video_studio as studio_mod
+    if not any(str(r.path).startswith("/api/studio/") for r in app.routes):
+        app.include_router(studio_mod.router, prefix="/api/studio")
+    from fastapi.testclient import TestClient
+    return TestClient(app)
+
+
+def _seed_studio_session(user_id: int, n: int = 1) -> str:
+    from app.api import video_studio as studio_mod
+    sid = f"grayscale-test-{user_id}"
+    studio_mod.STUDIO_TASKS[sid] = {
+        "user_id": str(user_id),
+        "segments": [
+            {"index": i, "fal_url": f"https://fal.media/seg{i}.mp4", "duration": 5.0}
+            for i in range(n)
+        ],
+        "status": "split_done",
+    }
+    return sid
+
+
+def _grayscale_payload(sid: str, mode: str) -> dict:
+    return {
+        "session_id": sid,
+        "segments": [],
+        "elements": [{
+            "name": "模特A",
+            "main_image_url": "https://fal.media/m.jpg",
+            "reference_image_urls": [],
+        }],
+        "mode": mode,
+    }
+
+
+def _capture_model_key(studio_client, token, payload):
+    """触发 batch-generate,捕获传给 _generate_video 的 model_key"""
+    from unittest.mock import patch, AsyncMock
+    fake_ok = {"task_id": "x", "endpoint_tag": "edit", "status": "pending"}
+    with patch("app.api.video_studio.get_video_service") as factory:
+        mock_svc = factory.return_value
+        mock_svc._generate_video = AsyncMock(return_value=fake_ok)
+        r = studio_client.post(
+            "/api/studio/batch-generate",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200, r.text
+        # 第一个 positional arg 是 model_key
+        return mock_svc._generate_video.call_args.args[0]
+
+
+def test_grayscale_admin_edit_mode_picks_reference(
+    studio_client, register, set_role, set_credits
+):
+    """admin + mode=edit → 灰度到 kling/reference"""
+    from app.api import video_studio as studio_mod
+    studio_mod.STUDIO_TASKS.clear()
+    token, user = register(studio_client, "grayscale_admin1@x.com")
+    set_role(user["id"], "admin")
+    set_credits(user["id"], 1000)
+    sid = _seed_studio_session(user["id"], n=1)
+    mk = _capture_model_key(studio_client, token, _grayscale_payload(sid, "edit"))
+    assert mk == "kling/reference"
+    studio_mod.STUDIO_TASKS.clear()
+
+
+def test_grayscale_admin_o3_mode_keeps_o3(
+    studio_client, register, set_role, set_credits
+):
+    """admin + mode=o3 → 保持 kling/edit-o3(中文口播不灰度)"""
+    from app.api import video_studio as studio_mod
+    studio_mod.STUDIO_TASKS.clear()
+    token, user = register(studio_client, "grayscale_admin2@x.com")
+    set_role(user["id"], "admin")
+    set_credits(user["id"], 1000)
+    sid = _seed_studio_session(user["id"], n=1)
+    mk = _capture_model_key(studio_client, token, _grayscale_payload(sid, "o3"))
+    assert mk == "kling/edit-o3"
+    studio_mod.STUDIO_TASKS.clear()
+
+
+def test_grayscale_normal_user_edit_mode_unchanged(
+    studio_client, register, set_credits
+):
+    """普通用户 + mode=edit → 仍是 kling/edit(灰度不波及)"""
+    from app.api import video_studio as studio_mod
+    studio_mod.STUDIO_TASKS.clear()
+    token, user = register(studio_client, "grayscale_user1@x.com")
+    set_credits(user["id"], 1000)
+    sid = _seed_studio_session(user["id"], n=1)
+    mk = _capture_model_key(studio_client, token, _grayscale_payload(sid, "edit"))
+    assert mk == "kling/edit"
+    studio_mod.STUDIO_TASKS.clear()
+
+
+def test_grayscale_normal_user_o3_mode_unchanged(
+    studio_client, register, set_credits
+):
+    """普通用户 + mode=o3 → 仍是 kling/edit-o3"""
+    from app.api import video_studio as studio_mod
+    studio_mod.STUDIO_TASKS.clear()
+    token, user = register(studio_client, "grayscale_user2@x.com")
+    set_credits(user["id"], 1000)
+    sid = _seed_studio_session(user["id"], n=1)
+    mk = _capture_model_key(studio_client, token, _grayscale_payload(sid, "o3"))
+    assert mk == "kling/edit-o3"
+    studio_mod.STUDIO_TASKS.clear()
