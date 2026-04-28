@@ -1,5 +1,48 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 六十八续(微信支付 V3 stub — 商户号到位即用)
+
+### 为 Phase 4 商业化降本
+用户拿到微信商户号(2-4 周流程)那一刻,直接改 env 启用,不用从零写 V3 客户端。
+默认 `WECHAT_PAY_ENABLED=false`,所有端点 503,**不影响现有手动入账流程**。
+
+### 完成度
+| 路径 | 状态 |
+|---|---|
+| Native 扫码下单 | ✅ /api/wechat-pay/create/{order_id} |
+| 订单查询 | ✅ /api/wechat-pay/query/{order_id}(本地 paid 短路不打微信) |
+| 回调通知 + AESGCM 解密 + 自动入账 | ✅ /api/wechat-pay/notify(原子 UPDATE 防双回调) |
+| 审计日志 | ✅ actor=system_wechat_pay |
+| RSA-SHA256 商户私钥签名 | ✅ |
+| 平台公钥验签 | ⚠ inline TODO(启用前必补) |
+| 退款 / 对账 / JSAPI / 小程序 | ⏸ 留下次 |
+
+### 关键安全
+- 回调入账幂等:`UPDATE credit_orders SET status='paid' WHERE id = ? AND status = 'pending'`,rowcount==1 才真加积分,防同一 out_trade_no 多次回调双扣
+- 默认关 + 必要字段缺失 → 503 fail-fast
+- 商户私钥路径放 `/etc/ssp/wechat-pay/`(权限 600,跟 master.key 同级)
+
+### 测试 +10(373 → 383)
+- 未启用 503 / 鉴权(401/403/404/已paid 400)
+- 本地 paid 短路 query
+- AESGCM 解密 round-trip(纯单元真 32 字节密钥)
+
+### 文档 docs/WECHAT-PAY-SETUP.md
+7 步用户启用 SOP:商户号申请 → APIv3 密钥 → cert 上传 → env →
+**平台公钥验签补全(必)** → 蓝绿部署 → 前端集成 + Checklist。
+
+### 已 deploy 进生产 ✅
+蓝绿 blue → green。验证:
+- 匿名 POST /create → 401(鉴权 OK)
+- 匿名 POST /notify → 200(空 body event_type 非 SUCCESS,符合微信规范)
+- 默认 ENABLED=false → 启用功能前 503
+
+### Phase 4 进度
+30%(法务文档 + 前端三页) → ~45%。
+真正商业化变现进度:
+- ✅ 工程层:微信支付代码 + 法务文档 + AIGC 内容审核简版
+- ⏸ 用户主导:商户号申请 / ICP 备案 / AIGC 水印版式
+
 ## 2026-04-28 六十七续(Postgres 演练脚本 + 挖到真生产 latent bug)
 
 ### 演练脚本
