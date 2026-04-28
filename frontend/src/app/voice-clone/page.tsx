@@ -2,6 +2,7 @@
 import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
+import { adjustLocalUserCredits } from "@/lib/userState";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -55,6 +56,7 @@ export default function VoiceClonePage() {
       });
       const data = await res.json();
       if (data.voice_id) {
+        if (typeof data.cost === "number" && data.cost > 0) adjustLocalUserCredits(-data.cost);
         setClonedVoiceId(data.voice_id);
         setResultAudioUrl(data.audio_url);
         saveGallery([{ url: data.audio_url, label: text.slice(0, 30), mode: "克隆", time: Date.now() }, ...gallery]);
@@ -74,6 +76,7 @@ export default function VoiceClonePage() {
       });
       const data = await res.json();
       if (data.audio_url) {
+        if (typeof data.cost === "number" && data.cost > 0) adjustLocalUserCredits(-data.cost);
         setResultAudioUrl(data.audio_url);
         saveGallery([{ url: data.audio_url, label: text.slice(0, 30), mode: "TTS", time: Date.now() }, ...gallery]);
       } else { setError(data.detail || t("errors.generationFailed")); }

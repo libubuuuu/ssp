@@ -2,6 +2,7 @@
 import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
+import { adjustLocalUserCredits } from "@/lib/userState";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 const STYLES = [
   { key:"advertising", labelKey:"advertising" },
@@ -89,10 +90,9 @@ export default function ImagePage(){
       });
       const data=await res.json();
       if(!res.ok)throw new Error(data.detail||t("errors.submitFailed"));
-      // 立刻返回，不阻塞。任务完成后右下角浮窗会显示
+      if(typeof data.cost==="number"&&data.cost>0)adjustLocalUserCredits(-data.cost);
       setMsg(`任务已提交！查看右下角⚡ 我的任务`);
       setTimeout(()=>setMsg(""),3000);
-      // 后台轮询这个任务，完成后加入 gallery
       pollJob(data.job_id,prompt);
     }catch(e:any){setError(e.message);}
   };

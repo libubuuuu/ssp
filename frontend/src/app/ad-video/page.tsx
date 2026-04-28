@@ -2,6 +2,7 @@
 import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
+import { adjustLocalUserCredits } from "@/lib/userState";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -104,6 +105,7 @@ export default function AdVideoPage() {
       });
       const d = await r.json();
       if (!r.ok) throw new Error(typeof d.detail === "string" ? d.detail : (d.detail?.message || "审核失败"));
+      if (typeof d.cost === "number" && d.cost > 0) adjustLocalUserCredits(-d.cost);
 
       setAudit(d.audit);
       setScript(d.script);
@@ -171,6 +173,7 @@ export default function AdVideoPage() {
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || "首帧合成失败");
+      if (typeof d.cost === "number" && d.cost > 0) adjustLocalUserCredits(-d.cost);
 
       setPreviewImageUrl(d.image_url);
       setStep(3);
@@ -205,6 +208,7 @@ export default function AdVideoPage() {
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || "提交失败");
+      if (typeof d.cost === "number" && d.cost > 0) adjustLocalUserCredits(-d.cost);
 
       setJobId(d.job_id);
       setStep(4);
@@ -280,6 +284,7 @@ export default function AdVideoPage() {
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || "重新生成失败");
+      if (typeof d.cost === "number" && d.cost > 0) adjustLocalUserCredits(-d.cost);
 
       const newScenes = [...script.scenes];
       newScenes[idx] = d.scene;

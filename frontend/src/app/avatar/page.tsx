@@ -2,6 +2,7 @@
 import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
+import { adjustLocalUserCredits } from "@/lib/userState";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -54,6 +55,7 @@ export default function AvatarPage(){
       const data=await rGen.json();
       if(!rGen.ok)throw new Error(data.detail||t("errors.generationFailed"));
       if(!data.video_url)throw new Error("未返回视频");
+      if(typeof data.cost==="number"&&data.cost>0)adjustLocalUserCredits(-data.cost);
       saveGallery([{url:data.video_url,prompt:`${model} · 数字人`,time:Date.now()},...gallery]);
     }catch(e:any){setError(e.message);}
     finally{setLoading(false);}
