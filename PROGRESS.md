@@ -1,5 +1,36 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 五十二续(refund_tracker 改 SQLite 持久化 — 收 v1 进程内存 limitation)
+
+### 为什么
+五十一续遗留 limitation:
+- 进程内存 dict → backend 重启丢退款记录 → 异步失败任务永远不退
+- multi-worker 时各 worker 一份,扩 worker 后 register/refund 可能不在同一 worker
+
+alembic 脚手架 47 续刚就位,顺手用上。
+
+### v2 设计
+**新表 `pending_refunds`(PK=task_id):**
+- `INSERT OR IGNORE` 防重复 register
+- `try_refund` = `UPDATE WHERE refunded=0 AND registered_at>=cutoff` — SQL 层原子,
+  rowcount==1 才真退,**多 tab / HTTP+WS / multi-worker 并发都靠 SQL 锁幂等**
+- 惰性 GC(1/50 写入概率),删 30min 过期 entries
+- 双轨:init_db() CREATE TABLE IF NOT EXISTS(测试 + 重启自愈)+ alembic migration `76b4501342c9`(schema 漂移管理)
+
+### API 兼容
+register / try_refund / peek / _clear_for_test 签名不变,五十一续既存 9 测试**零改动**通过。
++1 新测试 `test_register_persists_to_db` 直接 SQL 查询验证落表。
+
+### 已 deploy 进生产 ✅
+- rsync app/ + alembic/ + chown(踩坑后已成 SOP)
+- 蓝绿 blue → green ~30s
+- `alembic stamp 76b4501342c9`:生产 dev.db schema_version 24bf7cbb36fb → 76b4501342c9
+- `sqlite3 dev.db ".schema pending_refunds"` 验证表 + 索引就位
+- 生产 health 200
+
+### 测试统计
+326(五十一续) → **327**(+1)
+
 ## 2026-04-28 五十一续(异步退款必落地 — refund_tracker 接通 4 类异步任务)
 
 ### 自审挖出的真生产 bug
