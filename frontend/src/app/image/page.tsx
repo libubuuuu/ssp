@@ -3,6 +3,8 @@ import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
+import { GalleryItem } from "@/lib/types/gallery";
+import { errMsg } from "@/lib/utils/errors";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 const STYLES = [
   { key:"advertising", labelKey:"advertising" },
@@ -26,7 +28,7 @@ export default function ImagePage(){
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState("");
   const [msg,setMsg]=useState("");
-  const [gallery,setGallery]=useState<any[]>([]);
+  const [gallery,setGallery]=useState<GalleryItem[]>([]);
   useEffect(()=>{
     const userData=localStorage.getItem("user")||"{}";
     let userId="anonymous";
@@ -34,7 +36,7 @@ export default function ImagePage(){
     const saved=localStorage.getItem(`img_gallery_${userId}`);
     if(saved){try{setGallery(JSON.parse(saved));}catch{}}
   },[]);
-  const saveGallery=(g:any[])=>{
+  const saveGallery=(g:GalleryItem[])=>{
     setGallery(g);
     const userData2=localStorage.getItem("user")||"{}";
     let userId2="anonymous";
@@ -60,7 +62,7 @@ export default function ImagePage(){
       const preview=URL.createObjectURL(file);
       setRefImages([...refImages,data.url]);
       setRefPreviews([...refPreviews,preview]);
-    }catch(err:any){setError(err.message);}
+    }catch(err){setError(errMsg(err));}
     finally{setUploading(false);e.target.value="";}
   };
   const removeRef=(i:number)=>{
@@ -94,7 +96,7 @@ export default function ImagePage(){
       setMsg(`任务已提交！查看右下角⚡ 我的任务`);
       setTimeout(()=>setMsg(""),3000);
       pollJob(data.job_id,prompt);
-    }catch(e:any){setError(e.message);}
+    }catch(e){setError(errMsg(e));}
     finally{setLoading(false);}
   };
 

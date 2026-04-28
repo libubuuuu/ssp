@@ -87,7 +87,7 @@ export default function AdminOrdersPage() {
             { v: "paid", zh: "已入账", en: "Paid" },
             { v: "all", zh: "全部", en: "All" },
           ].map(f => (
-            <button key={f.v} onClick={() => setFilter(f.v as any)} style={{
+            <button key={f.v} onClick={() => setFilter(f.v as "pending" | "paid" | "all")} style={{
               padding: "0.5rem 1.2rem",
               border: filter === f.v ? "2px solid #0d0d0d" : "1px solid #ddd",
               background: filter === f.v ? "#0d0d0d" : "#fff",

@@ -70,21 +70,21 @@ export default function JobPanel() {
     running: t("jobs.statusRunning"),
     completed: t("jobs.statusCompleted"),
     failed: t("jobs.statusFailed"),
-  } as any)[s] || s;
+  } as Record<string, string>)[s] || s;
 
   const statusColor = (s: string) => ({
     pending: "#f80",
     running: "#0080ff",
     completed: "#0a0",
     failed: "#c00",
-  } as any)[s] || "#888";
+  } as Record<string, string>)[s] || "#888";
 
   const typeLabel = (typ: string) => ({
     image: t("jobs.typeImage"),
     video_i2v: t("jobs.typeI2V"),
     video_edit: t("jobs.typeEdit"),
     video_clone: t("jobs.typeClone"),
-  } as any)[typ] || typ;
+  } as Record<string, string>)[typ] || typ;
 
   const deleteJob = async (id: string) => {
     const token = localStorage.getItem("token") || "";

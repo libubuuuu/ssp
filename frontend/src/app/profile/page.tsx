@@ -4,13 +4,14 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import { clearAuthSession, updateLocalUser } from "@/lib/userState";
+import { errMsg } from "@/lib/utils/errors";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export default function ProfilePage(){
   const { t, lang } = useLang();
   const router=useRouter();
-  const [user,setUser]=useState<any>(null);
+  const [user,setUser]=useState<{ id: string; email: string; name?: string; credits?: number; role?: string } | null>(null);
   const [name,setName]=useState("");
   const [curPwd,setCurPwd]=useState("");
   const [newPwd,setNewPwd]=useState("");
@@ -47,7 +48,7 @@ export default function ProfilePage(){
       updateLocalUser({name});
       setNameMsg("✓ 昵称已更新");
       setTimeout(()=>setNameMsg(""),2000);
-    }catch(e:any){setNameErr(e.message);}
+    }catch(e){setNameErr(errMsg(e));}
   };
 
   const changePwd=async()=>{
@@ -65,7 +66,7 @@ export default function ProfilePage(){
       setPwdMsg("✓ 密码已修改");
       setCurPwd("");setNewPwd("");
       setTimeout(()=>setPwdMsg(""),2000);
-    }catch(e:any){setPwdErr(e.message);}
+    }catch(e){setPwdErr(errMsg(e));}
   };
 
   const logout=()=>{

@@ -3,6 +3,8 @@ import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
+import { GalleryItem } from "@/lib/types/gallery";
+import { errMsg } from "@/lib/utils/errors";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -13,7 +15,7 @@ export default function AvatarPage(){
   const [model,setModel]=useState("hunyuan-avatar");
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState("");
-  const [gallery,setGallery]=useState<any[]>([]);
+  const [gallery,setGallery]=useState<GalleryItem[]>([]);
   const imgRef=useRef<HTMLInputElement>(null);
   const audRef=useRef<HTMLInputElement>(null);
 
@@ -22,7 +24,7 @@ export default function AvatarPage(){
     if(saved){try{setGallery(JSON.parse(saved));}catch{}}
   },[]);
 
-  const saveGallery=(g:any[])=>{
+  const saveGallery=(g:GalleryItem[])=>{
     setGallery(g);
     localStorage.setItem("avatar_gallery",JSON.stringify(g.slice(0,50)));
   };
@@ -57,7 +59,7 @@ export default function AvatarPage(){
       if(!data.video_url)throw new Error("未返回视频");
       if(typeof data.cost==="number"&&data.cost>0)adjustLocalUserCredits(-data.cost);
       saveGallery([{url:data.video_url,prompt:`${model} · 数字人`,time:Date.now()},...gallery]);
-    }catch(e:any){setError(e.message);}
+    }catch(e){setError(errMsg(e));}
     finally{setLoading(false);}
   };
 

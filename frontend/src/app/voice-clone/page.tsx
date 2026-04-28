@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
 import { errMsg } from "@/lib/utils/errors";
+import { GalleryItem } from "@/lib/types/gallery";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -23,7 +24,7 @@ export default function VoiceClonePage() {
   const [voicePresets, setVoicePresets] = useState<VoicePreset[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [gallery, setGallery] = useState<any[]>([]);
+  const [gallery, setGallery] = useState<GalleryItem[]>([]);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/avatar/voice/presets`).then(r => r.json()).then(d => { if (d.voices) setVoicePresets(d.voices); }).catch(() => {});
@@ -31,7 +32,7 @@ export default function VoiceClonePage() {
     if (saved) { try { setGallery(JSON.parse(saved)); } catch {} }
   }, []);
 
-  const saveGallery = (g: any[]) => {
+  const saveGallery = (g: GalleryItem[]) => {
     setGallery(g);
     localStorage.setItem("voice_gallery", JSON.stringify(g.slice(0, 50)));
   };

@@ -48,7 +48,7 @@ export default function AdminSettingsPage() {
 
           <div style={{ display: "flex", gap: "1.5rem", alignItems: "flex-start" }}>
             <div style={{ background: "#fafaf7", padding: "1rem", borderRadius: 10, width: 200 }}>
-              <img src={qrUrl} alt={t("admin.currentQr")} onError={(e: any) => e.target.style.display = "none"}
+              <img src={qrUrl} alt={t("admin.currentQr")} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                 style={{ width: "100%", display: "block" }} />
             </div>
             <div style={{ flex: 1 }}>

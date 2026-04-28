@@ -134,12 +134,12 @@ export default function StudioListPage() {
   const statusLabel = (s: string) => ({
     uploaded: t("studio.statusUploaded"), split: t("studio.statusSplit"), generating: t("studio.statusGenerating"),
     done: t("studio.statusDone"), finished: t("studio.statusFinished"),
-  } as any)[s] || s;
+  } as Record<string, string>)[s] || s;
 
   const statusColor = (s: string) => ({
     uploaded: "#888", split: "#f80", generating: "#0080ff",
     done: "#0a0", finished: "#0a0",
-  } as any)[s] || "#888";
+  } as Record<string, string>)[s] || "#888";
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "#edeae4", fontFamily: "-apple-system,BlinkMacSystemFont,sans-serif" }}>

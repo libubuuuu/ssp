@@ -72,7 +72,7 @@ export default function VideoStudioDetailPage() {
         const data = await res.json();
         setSessionId(urlSessionId);
         setDuration(data.duration || 0);
-        setSegments((data.segments || []).map((s: any) => ({
+        setSegments((data.segments || []).map((s: { index: number; start: number; duration: number; fal_url?: string; url?: string }) => ({
           index: s.index, start: s.start, duration: s.duration, url: s.fal_url || s.url,
         })));
         if (data.batch_results) {
@@ -80,7 +80,7 @@ export default function VideoStudioDetailPage() {
           if (data.final_url) {
             setFinalUrl(data.final_url);
             setStep(5);
-          } else if ((data.batch_results || []).some((r: any) => r.status === "completed" || r.status === "running" || r.status === "pending")) {
+          } else if ((data.batch_results || []).some((r: { status?: string }) => r.status === "completed" || r.status === "running" || r.status === "pending")) {
             setStep(4);
             startPolling();
           } else {

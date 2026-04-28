@@ -7,9 +7,18 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export default function HistoryPage() {
   const { t } = useLang();
-  const [history, setHistory] = useState<any[]>([]);
+  interface HistoryItem {
+    id: string;
+    module: string;
+    prompt?: string;
+    images?: string[];
+    videos?: string[];
+    cost?: number;
+    created_at?: string;
+  }
+  const [history, setHistory] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<any>(null);
+  const [selected, setSelected] = useState<HistoryItem | null>(null);
 
   useEffect(() => {
     const token = localStorage.getItem("token") || "";
