@@ -77,11 +77,35 @@ DATABASE_URL=postgresql+psycopg2://... venv/bin/alembic upgrade head
 # 验证表全部建好:psql -c "\dt"
 ```
 
-### 2. 数据迁移(SQLite → Postgres)
+### 2. 数据迁移(SQLite → Postgres)— ✅ 脚本已就位
 
-写一份 dump+load 脚本(单独 PR,本脚手架不含):
-- `pgloader sqlite:///opt/ssp/backend/dev.db postgresql://...`
-- 或 Python 写脚本:逐表 SELECT * FROM source → INSERT INTO target
+`backend/scripts/sqlite_to_postgres.py`(六十一续):
+
+```bash
+cd /opt/ssp/backend
+
+# Step 1: dry-run 验证(只 count + 前 5 行 sample,不写)
+venv/bin/python scripts/sqlite_to_postgres.py \
+  --sqlite-path /opt/ssp/backend/dev.db \
+  --postgres-url postgresql+psycopg2://USER:PWD@HOST:5432/ssp \
+  --dry-run
+
+# Step 2: 真迁移(业务停机或切只读模式后跑,防数据漂移)
+venv/bin/python scripts/sqlite_to_postgres.py \
+  --sqlite-path /opt/ssp/backend/dev.db \
+  --postgres-url postgresql+psycopg2://USER:PWD@HOST:5432/ssp
+
+# Step 3: 失败时单表重迁(前面已迁的表已 commit)
+venv/bin/python scripts/sqlite_to_postgres.py \
+  --sqlite-path ... --postgres-url ... --tables credit_orders
+```
+
+设计要点:
+- SQLAlchemy Core 跨方言通用,反射目标库 schema(无需手维护字段映射)
+- 迁移顺序按 FK 依赖(users → merchants → products,等)
+- 每表 row count 校验,源 != 目标 → raise
+- 单表事务隔离,失败仅 rollback 该表
+- 测试:`tests/test_sqlite_to_postgres.py` 6 case(SQLite→SQLite round-trip 验证逻辑)
 
 ### 3. 切 `app/database.py` 到 SQLAlchemy
 
@@ -126,6 +150,6 @@ A: 跑这个对比脚本(可加 CI):
 
 - [ ] init_db() 改成调用 `alembic upgrade head`(消除两份 schema 维护)
 - [ ] tests 仍用 init_db 还是 alembic?(性能 vs 一致性的取舍)
-- [ ] 写 SQLite → Postgres 数据迁移脚本
-- [ ] backend/app/database.py 切 SQLAlchemy
-- [ ] 跑全量 pytest against Postgres
+- [x] 写 SQLite → Postgres 数据迁移脚本 — ✅ 六十一续就位 + 6 测试
+- [ ] backend/app/database.py 切 SQLAlchemy(体力活,1-2 天)
+- [ ] 跑全量 pytest against Postgres(改 conftest fixtures 切 PG test DB)
