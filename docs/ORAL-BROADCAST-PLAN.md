@@ -196,11 +196,13 @@
 | 字段 | 值 |
 |---|---|
 | Endpoint | `fal-ai/wan-vace-14b/inpainting`(**单一端点**,通过参数选分辨率,**不是三个端点**) |
-| 定价 | 480p **$0.04**/秒,580p **$0.06**/秒,720p **$0.08**/秒 |
-| 输入 | `video_url`(mp4/mov/webm/m4v/gif)+ **`mask_video_url`**(必填,见风险)+ `reference_image_urls`(模特/产品)+ `prompt` + `resolution` |
+| 定价 | 480p **$0.04**/秒,580p **$0.06**/秒,720p **$0.08**/秒(按 16fps 计算视频秒数) |
+| 必填 | `prompt`(string)+ `video_url`(mp4/mov/webm/m4v/gif) |
+| Mask(二选一,必给一个) | `mask_image_url` 单帧 PNG → 服务端 salient tracking 自动传播全片(**推荐**)/ `mask_video_url` 整段黑白 mask 视频(用户体验差,不推荐) |
+| 可选 | `reference_image_urls`(模特/产品图)+ `negative_prompt` + `num_frames`(81-241,默认 81)+ `frames_per_second`(5-30,默认 16)+ `resolution`(auto/240p-720p)+ `aspect_ratio`(auto/16:9/1:1/9:16)+ `acceleration` + `video_quality` |
 | 输出 | MP4 URL |
 | 处理时长 | ~1 分钟 / 次生成(60s 视频在 720p 约 3-5 分钟) |
-| **风险** | **极高 — mask 怎么生成是核心未知数**。fal 文档要求传 mask_video,项目里没有视频分割能力。详见风险 §10 #1 |
+| **风险** | **中 — mask_image_url 单帧方案已确认**(§14)。salient tracking 鲁棒性需 PoC 实测;追踪丢失/多区域行为 fal 文档未披露 |
 
 ### Step 5 — 口型对齐(三档不同模型)
 
@@ -649,16 +651,16 @@ def refund_on_failure(session, failed_step: str):
 
 ## 9. 关键风险列表
 
-### 🔴 #1(最高)— VACE inpainting 的 mask 怎么生成
+### 🟡 #1(已找到方案,2026-04-29 调研出清)— VACE inpainting 的 mask
 
-**问题**:`fal-ai/wan-vace-14b/inpainting` 必须传 `mask_video_url`(白色区域 = 要换的部分,黑色 = 保留)。项目里没有视频分割能力。
+**结论**:**用 `mask_image_url`(单帧 mask)+ fal 服务端 salient tracking 自动传播**。详见 §14 mask 方案研究结论。
 
-**3 个方案**:
-- **A. 用户手动传 mask**:UI 给画笔工具让用户在第一帧画区域,自动复制到所有帧。**MVP 最简,但用户体验差,且固定 mask 无法跟随主体移动**。预估 +1 天前端
-- **B. 接 SAM 2 / Florence-2 自动分割**:fal.ai 上找个 video segmentation 模型(如 `fal-ai/sam-2-video` 或类似),传"主体"prompt,模型自动出 mask。**MVP 可行**,预估 +2 天后端 + $0.05-0.10/秒额外成本(成本核算要重算)
-- **C. wan-vace 是否支持 prompt-only 自动 mask**:**需要查 fal 文档**。如果支持,无需 mask 视频,直接传文字 prompt。**最理想,但未确认**
-
-**建议**:先 WebFetch fal-ai/wan-vace-14b 详细文档确认支持哪种;若必须传 mask,MVP 走方案 B(接 SAM 2)。**这个风险不解决,工程不能启动**。
+简述:
+- `fal-ai/wan-vace-14b/inpainting` 接受**单帧 PNG mask**(用户在视频首帧上涂抹要换的区域),fal 服务端用 salient tracking 沿时间轴自动追踪,无需用户提供整段 mask 视频
+- **额外成本 $0**(salient tracking 是端点内置,不另收费)
+- **额外工程量 1.5-2 天**(前端 canvas 蒙版编辑器 + 首帧抽帧 + 后端透传)
+- **降级方案**:salient tracking 失败时切 `fal-ai/sam2/video`(已在 fal 平台,接 point/box prompt,定价未公开,工程量再 +1 天)
+- **必做 PoC**(第一周):花 $1 + 2 小时,跑一段真实视频 + 手画 mask,验证 salient tracking 鲁棒性
 
 ### 🟠 #2 — ElevenLabs 不在 fal.ai 托管 voice-clone
 
@@ -765,7 +767,8 @@ metric: oral_retry_count_distribution
 | MiniMax voice-clone | 现成模型直接调 | 🟢 低 | 已接(扩 caching)| 复用 FalVoiceService |
 | ElevenLabs voice-clone | **新接入(vendor lock-in)** | 🟠 中 | 1.0 天 | 必须走官方 API + 月订阅 |
 | ElevenLabs TTS | 现成模型直接调 | 🟢 低 | 0.5 天 | fal 端点存在,标准/顶级档共用类 |
-| **wan-vace inpainting** | **新接入 + mask 生成方案待定** | 🔴 **高** | **0.5 + 2-3 天** | **mask 风险见 #1,不解决不启动** |
+| **wan-vace inpainting** | 新接入(mask 方案已定) | 🟡 中 | 0.5 + 1.5-2 天 mask UI | mask_image_url 单帧 + salient tracking,详见 §14 |
+| **前端 canvas 蒙版编辑器** | 自研 UI | 🟡 中 | 1.5-2 天 | react-konva 或 fabric.js,单帧涂抹/矩形/点击 |
 | veed/lipsync | 现成模型直接调 | 🟢 低 | 0.2 天 | fal 标准 |
 | latentsync | 现成模型直接调 | 🟢 低 | 0.2 天 | fal 标准 |
 | sync-lipsync v2 | 现成模型直接调 | 🟢 低 | 0.2 天 | fal 标准 |
@@ -779,9 +782,10 @@ metric: oral_retry_count_distribution
 | 模特/产品库选择 | 复用现有 | 🟢 低 | 0.5 天 | 复用 studio 模式 |
 
 **汇总**:
-- **必须先解决的高风险:VACE mask 生成方案(#1)**
-- 总工作量(含 mask 方案 B):**16-18 个工作日**
+- ~~~~必须先解决的高风险:VACE mask 生成方案(#1)~~~~ → 已解决,mask_image_url 单帧 + salient tracking
+- 总工作量:**17-19 个工作日**(原 16-18 + 蒙版编辑器 1.5-2 天)
 - 单人全职 → **3-4 周交付 MVP**
+- **第一周必做 PoC**($1 + 2 小时验证 mask salient tracking 鲁棒性)
 
 ---
 
@@ -880,12 +884,13 @@ metric: oral_retry_count_distribution
 
 ### 短期(MVP,3-4 周)
 
-1. **必须先解决 VACE mask 生成方案**(风险 #1)— 我建议接 SAM 2 自动分割,+2 天工作量 + 成本核算重算
+1. ~~~~必须先解决 VACE mask 生成方案~~~~ → **已解决**:mask_image_url 单帧 + salient tracking,详见 §14
 2. **接受 ElevenLabs vendor lock-in**(风险 #2)— 月订阅 $22 + 实现简单
 3. **走方案 B 不允许升档**(产品决策 Q1)— 简化 MVP,V2 再升级
 4. **60 秒视频硬上限**(产品决策 Q2)
 5. **不做免费重跑,按阶段退款**(产品决策 Q3)
 6. **L1 用户责任 + L2 AIGC 水印**(产品决策 Q4)
+7. **第一周必做 mask salient tracking PoC**($1 + 2 小时)— 在写正式工程代码前,先跑一段真实视频验证
 
 ### 启动前置(用户主导)
 
@@ -910,6 +915,69 @@ metric: oral_retry_count_distribution
 
 ---
 
+## 14. mask 方案研究结论(2026-04-29 调研出清)
+
+### 14.1 fal-ai/wan-vace-14b/inpainting 真实参数清单
+
+**必填**:`prompt`(string)+ `video_url`(mp4/mov/webm/m4v/gif)
+
+**Mask 字段**(schema 都标 optional,但描述里两个二选一必给一个):
+- **`mask_image_url`** — 单帧 PNG/JPG mask。fal 描述原文:*"If provided, the model will use this mask as reference to create masked video using salient mask tracking. Will be ignored if mask_video_url provided."* — 服务端自动 salient tracking 跨帧传播
+- **`mask_video_url`** — 整段黑白 mask 视频。fal 描述原文:*"Required for inpainting."* — 用户须提供整段对齐的 mask 视频(白=换,黑=保留)
+
+**可选生成控制**:`negative_prompt`、`num_frames`(81-241,默认 81)、`frames_per_second`(5-30,默认 16)、`num_inference_steps`(默认 30)、`guidance_scale`(默认 5)、`resolution`(auto/240p-720p)、`aspect_ratio`、`sampler`(unipc/dpm++/euler)、`seed`、`acceleration`(none/low/regular)、`video_quality`(low-maximum)、`reference_image_urls`(参考图列表)、`enable_safety_checker`、`return_frames_zip`
+
+### 14.2 主路径:mask_image_url 单帧 + salient tracking
+
+**用户 UX**:前端 canvas 蒙版编辑器,在视频首帧上:
+- 涂抹(brush)
+- 矩形框
+- 点击(click,可发展为 SAM2 image prompt)
+
+导出 PNG → 上传 OSS / 后端 → 透传 `mask_image_url` 给 fal。
+
+**额外成本**:**$0**(salient tracking 是 wan-vace 端点内置功能,不另外计费)
+**额外工程量**:**1.5-2 天**
+- 前端 canvas 编辑器(react-konva 或 fabric.js)~ 1.0 天
+- 后端 mask 上传 + 透传 + 首帧抽帧 ~ 0.5 天
+- 首帧预览 + 接口联调 ~ 0.5 天
+
+**未确认风险点**(需 PoC 验证):
+- salient tracking 鲁棒性(主体快速移动 / 出画 / 多人同框是否丢追踪)
+- 是否支持多区域 mask(同时换人物 + 产品 = 两个分离区域)
+- 追踪丢失时的失败行为(全图灰 / 报错 / 用首帧 mask 硬覆盖)
+
+### 14.3 降级方案(salient tracking 实测不稳时启用)
+
+**方案 A:`fal-ai/sam2/video`**(已存在,接 point/box prompts → 输出 segmented video)
+- 工程量再 +1 天(mask UI 输出格式从 PNG 切到 point list,后端串两次 fal 调用)
+- 定价 fal 公开页未列,需控制台/邮件确认
+- 输出格式未明确(纯黑白 mask 还是 overlay,可能要加一道 ffmpeg 阈值化)
+
+**方案 B(不可行)**:`fal-ai/evf-sam`(text-prompt 分割)— fal 上目前是 image-to-image,**无 video 端点**
+
+**方案 C(终极兜底)**:Replicate `meta/sam-2` video 版本 — +1 天接入,新增 vendor
+
+### 14.4 必做 PoC(写正式代码前)
+
+**目标**:验证 mask_image_url + salient tracking 在真实口播带货场景的可用性。
+
+**步骤**(2 小时投入):
+1. 拿一段 5-10 秒口播视频(用户原本要做翻拍的素材)
+2. 抽首帧 → 在 Photoshop / 简易在线工具画一个 mask(白色覆盖要换的人物 / 产品区域)
+3. 上传两个文件到任意公网 URL(OSS / fal storage)
+4. curl 直接调 `POST https://queue.fal.run/fal-ai/wan-vace-14b/inpainting` 传 video_url + mask_image_url + reference_image_urls + prompt
+5. 看结果视频:换得干不干净 / mask 跨帧追踪稳不稳 / 多区域是否有效
+
+**判断标准**:
+- ✅ 单主体追踪稳定 → 走主路径
+- ⚠ 单主体追踪偶发丢失 → 走主路径 + 用户教育(尽量选静止主体视频)
+- ❌ 单主体都不稳 → 切方案 A(sam2/video)
+
+**预算**:1 段 5 秒 480p 测试 ≈ $0.20,跑 5 段 ≈ $1。**必做,绝不跳过**。
+
+---
+
 ## Sources(fal.ai 模型实时定价,2026-04-29)
 
 - [fal-ai/wizper](https://fal.ai/models/fal-ai/wizper)
@@ -918,6 +986,11 @@ metric: oral_retry_count_distribution
 - [fal-ai/elevenlabs/tts/turbo-v2.5](https://fal.ai/models/fal-ai/elevenlabs/tts/turbo-v2.5)
 - [fal-ai/elevenlabs/tts/multilingual-v2](https://fal.ai/models/fal-ai/elevenlabs/tts/multilingual-v2)
 - [fal-ai/wan-vace-14b/inpainting](https://fal.ai/models/fal-ai/wan-vace-14b/inpainting)
+- [fal-ai/wan-vace-14b/inpainting API 详细参数](https://fal.ai/models/fal-ai/wan-vace-14b/inpainting/api)
+- [Wan 2.2 VACE Fun A14B Inpainting(姊妹端点)](https://fal.ai/models/fal-ai/wan-22-vace-fun-a14b/inpainting/api)
+- [fal-ai/sam2/video API(降级方案 A)](https://fal.ai/models/fal-ai/sam2/video/api)
+- [fal-ai/sam2/image API](https://fal.ai/models/fal-ai/sam2/image/api)
+- [fal-ai/evf-sam(image-only,不可用)](https://fal.ai/models/fal-ai/evf-sam/api)
 - [veed/lipsync](https://fal.ai/models/veed/lipsync)
 - [fal-ai/latentsync](https://fal.ai/models/fal-ai/latentsync)
 - [fal-ai/sync-lipsync](https://fal.ai/models/fal-ai/sync-lipsync)
