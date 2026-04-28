@@ -174,24 +174,24 @@ def test_analyze_violation_returns_400_and_refunds(client_av, mock_fal_upload, r
 
 
 def test_analyze_oversized_file_rejected(client_av, mock_fal_upload, register, auth_header, set_credits):
-    """图片 > 10MB 拒收"""
+    """图片 > 10MB 拒收(upload_guard 返 413)"""
     token, user = register(client_av, "av-d@example.com")
     set_credits(user["id"], 50)
 
     huge = b"x" * (11 * 1024 * 1024)
     files = {"file": ("big.jpg", huge, "image/jpeg")}
     r = client_av.post("/api/ad-video/analyze", files=files, headers=auth_header(token))
-    assert r.status_code == 400
+    assert r.status_code == 413
 
 
 def test_analyze_unsupported_mime_rejected(client_av, mock_fal_upload, register, auth_header, set_credits):
-    """不支持的 MIME 拒收"""
+    """不支持的 MIME 拒收(upload_guard 返 415)"""
     token, user = register(client_av, "av-e@example.com")
     set_credits(user["id"], 50)
 
     files = {"file": ("test.bmp", b"BM_fake", "image/bmp")}
     r = client_av.post("/api/ad-video/analyze", files=files, headers=auth_header(token))
-    assert r.status_code == 400
+    assert r.status_code == 415
 
 
 def test_analyze_service_unavailable_503(client_av, mock_fal_upload, register, auth_header, set_credits):
@@ -401,3 +401,37 @@ def test_user_isolation_in_jobs(client_av, register, auth_header, set_credits):
     # B 拿不到
     r_b = client_av.get(f"/api/jobs/{a_job_id}", headers=auth_header(b_token))
     assert r_b.status_code == 403
+
+
+# ==================== /upload/image(upload_guard 守卫) ====================
+
+
+def test_upload_image_oversize_returns_413(client_av, register, auth_header):
+    """upload_guard:>10MB 拒收 413"""
+    token, _ = register(client_av, "av-up-big@example.com")
+    huge = b"x" * (11 * 1024 * 1024)
+    files = {"file": ("big.jpg", huge, "image/jpeg")}
+    r = client_av.post("/api/ad-video/upload/image", files=files, headers=auth_header(token))
+    assert r.status_code == 413
+
+
+def test_upload_image_unsupported_mime_returns_415(client_av, register, auth_header):
+    """upload_guard:非白名单 MIME 拒收 415"""
+    token, _ = register(client_av, "av-up-mime@example.com")
+    files = {"file": ("a.bmp", b"BM_fake", "image/bmp")}
+    r = client_av.post("/api/ad-video/upload/image", files=files, headers=auth_header(token))
+    assert r.status_code == 415
+
+
+def test_upload_image_valid_passes_guard(client_av, register, auth_header):
+    """合规图片 < 10MB + image/jpeg → 通过 upload_guard 进 Pillow 流程
+
+    fal_client.upload_file_async 走真路径会出网,这里 mock 掉。
+    业务返回 200 即证 guard 放行。
+    """
+    token, _ = register(client_av, "av-up-ok@example.com")
+    valid = _fake_image_bytes(size=(1000, 1000))
+    files = {"file": ("ok.jpg", valid, "image/jpeg")}
+    with patch("fal_client.upload_file_async", new=AsyncMock(return_value="https://fal.media/test.jpg")):
+        r = client_av.post("/api/ad-video/upload/image", files=files, headers=auth_header(token))
+    assert r.status_code == 200, r.text

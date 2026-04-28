@@ -103,16 +103,10 @@ async def analyze_product(
     import os
     from PIL import Image
     import io
+    from app.services.upload_guard import read_bounded, IMAGE_MIMES
 
-    # 读取图片
-    contents = await file.read()
-    if len(contents) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="图片不能超过 10MB")
-
-    # MIME 推断
-    mime_type = file.content_type or "image/jpeg"
-    if mime_type not in ("image/jpeg", "image/png", "image/webp", "image/gif"):
-        raise HTTPException(status_code=400, detail="仅支持 JPG / PNG / WebP / GIF")
+    # 读取图片(upload_guard 统一 size + MIME 校验,超 10MB raise 413)
+    contents = await read_bounded(file, 10 * 1024 * 1024, IMAGE_MIMES, "ad-video 产品图")
 
     # 上传到 fal storage(VLM 端点需要 URL)
     # 用 Pillow 标准化(沿用 video.py /upload/image 的处理逻辑,保证兼容性)
@@ -329,8 +323,10 @@ async def upload_image(
     import os
     from PIL import Image
     import io
+    from app.services.upload_guard import read_bounded, IMAGE_MIMES
 
-    contents = await file.read()
+    # upload_guard 统一 size + MIME 校验(防 OOM 攻击),超 10MB raise 413
+    contents = await read_bounded(file, 10 * 1024 * 1024, IMAGE_MIMES, "ad-video 上传图")
     img = Image.open(io.BytesIO(contents))
 
     # 转 RGB
