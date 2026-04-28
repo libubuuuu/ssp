@@ -1,5 +1,38 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 五十八续(content/enhance + image/inpaint 加鉴权 — sweep 收尾)
+
+### 收尾
+五十七续做完 sweep 剩两条低优先级 endpoint(无外部 API 调用所以风险低,
+但仍是 attack surface):
+- `/api/content/enhance`:纯模板字符串拼接,匿名扫返大量营销文案 → 脏 log
+- `/api/image/inpaint`:501 stub,匿名扫无功能但仍可用作探测
+
+各 1 行加 `Depends(get_current_user)`。
+
+### 测试 +4(363 → 367)
+- enhance 401 / 200(模板返回校 title/scenes)
+- inpaint 401 / 501(鉴权放行后仍是 stub)
+- /api/image/models 保持 public 注释化(实现耦合 fal init 不验)
+
+### 已 deploy 进生产 ✅
+蓝绿 green → blue。生产验:
+- `curl POST /api/content/enhance`(无 token)→ **401**(之前 200)
+- `curl POST /api/image/inpaint`(无 token)→ **401**(之前直接 501)
+
+### sweep 完整 audit 清单(全部已修)
+| Endpoint | 修法 |
+|---|---|
+| /api/products POST/PUT/DELETE | 五十七续:鉴权 + 商家归属 |
+| /api/video/status/{id} | 五十四续:鉴权 + task_ownership |
+| /api/content/upload | 五十六续:upload_guard |
+| /api/ad-video/upload/image | 五十三续:upload_guard |
+| /api/content/enhance | **五十八续:鉴权** |
+| /api/image/inpaint | **五十八续:鉴权** |
+
+剩余 public endpoints 已 audit 确认应该 public:auth/* 所有入口、
+payment 价格列表、products GET、image/models、avatar/voice/presets。
+
 ## 2026-04-28 五十七续(products CUD 加鉴权 — 🚨 OWASP 越权大洞)
 
 ### 系统性 sweep 挖到的真严重 bug
