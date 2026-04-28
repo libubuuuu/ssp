@@ -1,5 +1,33 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 五十四续(/api/video/status 加鉴权 — 收匿名归属窥探洞)
+
+### 真隐私洞
+`/api/video/status/{task_id}` 之前 `def get_task_status(task_id: str)` 完全匿名,
+任意人猜对 fal task_id(UUID 难猜但不绝对)就能拿到归档视频 URL。
+归档地址 `/uploads/<user>/...` 暴露 → 用户视频隐私泄漏。
+
+### 修
+- `Depends(get_current_user)` + `task_ownership.verify(task_id, user_id)`:
+  - 401:未登录 / token 失效
+  - 403:登录但非 owner(包括"瞎猜 task_id 没注册过"也走这条,不区分泄信息)
+- 失败退款逻辑(refund_tracker)保持不变
+
+### 前端零改动
+AuthFetchInterceptor(P8 阶段 2)已 patch 所有 `/api/*` 自动 `credentials:include`,
+登录用户 fetch 走 cookie 鉴权 → 后端 get_current_user 拿 cookie token → 通过。
+旧用户没 cookie 时 401 → AuthFetchInterceptor 走 /refresh → 新 cookie → 重试。
+
+### 测试 +5(330 → 335)
+- 未登录 401
+- 登录但非 owner 403
+- 瞎猜 task_id 没注册 403
+- owner + processing 透传
+- owner + failed 触发 refund(余额涨)
+
+### 已 deploy 进生产 ✅
+蓝绿 blue → green。生产 `curl /api/video/status/random` 现在返 401,之前是 200 泄漏。
+
 ## 2026-04-28 五十三续(ad-video upload 接 upload_guard — 收 OOM 攻击面 + 模式统一)
 
 ### 47 续遗留
