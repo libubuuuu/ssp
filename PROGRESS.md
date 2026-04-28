@@ -1,5 +1,40 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 六十七续(Postgres 演练脚本 + 挖到真生产 latent bug)
+
+### 演练脚本
+`backend/scripts/postgres_drill.py` 5 步端到端:
+1. 清空目标库
+2. alembic upgrade head against 目标
+3. schema 反射校验(15 张业务表)
+4. 数据迁移(调 sqlite_to_postgres,源缺表 graceful skip)
+5. 行数 + 抽样字段比对
+
+跨方言通用:`--target-url sqlite:///...`(本地试)或 `postgresql+psycopg2://...`(真 staging)。
+
+### 演练立刻挖到真 latent bug ✨
+`model_health.id` PRIMARY KEY 历史 NULL — SQLite 容忍但 Postgres 切上线 100% 挂。
+根因:`circuit_breaker.py:120` INSERT 漏 id 字段(SQLite 不强制 PK NOT NULL)。
+
+**生产数据被影响**:6 行 model_health 全部 id=NULL。
+
+### 修复
+- `circuit_breaker.py` INSERT 加 id = model_name(后者已 UNIQUE 是真 PK)
+- `UPDATE model_health SET id = model_name WHERE id IS NULL OR id = ''`(已对生产 dev.db 跑过,backup 后)
+- `sqlite_to_postgres.py` 源缺表 graceful skip 不当 fail
+- POSTGRES-MIGRATION.md 加"切 PG 前必跑演练 + 已知数据清理"章节
+
+### 验证
+生产 dev.db 演练 **92 行迁移成功**,15 张业务表全 schema OK。
+工作区 dev.db 演练 **77 行迁移成功**(老库缺 3 张新表 graceful skip)。
+
+### 已 deploy 进生产 ✅
+蓝绿 green → blue。circuit_breaker fix 生效,新 model_health 写入有 id。
+
+### Phase 2 进度
+50% → ~70%(alembic + 数据迁移 + 演练 + 真 latent bug 都修了),
+真切 PG 那一刻只剩 1-2 天 SQLAlchemy 体力活。
+
 ## 2026-04-28 六十六续(法务文档接前端 — /privacy /terms /cookie 上线)
 
 ### 三页就位
