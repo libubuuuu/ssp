@@ -1,5 +1,37 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 四十七续(Phase 2 alembic 脚手架就位)
+
+### 用户拍板
+四十六续后我列了剩余真值得做的几件:lint 改 ROI 触底,Postgres 迁移最大,但需要拍板。用户选 A(alembic 脚手架,不切 Postgres)。
+
+### 为什么这样做
+- CLAUDE.md 一级差距 #1:数据库 SQLite 无迁移管理
+- 切 Postgres 是 1-2 天体力活,先搭好 schema 管理基础设施 → 未来切的时候只剩"装驱动 + alembic upgrade + 数据迁移"
+- 现在不切,**业务运行时 0 改动**,纯增量
+
+### 脚手架内容
+1. **`requirements.txt`** — alembic 1.18 + SQLAlchemy 2.0
+2. **`backend/alembic/env.py`** — `DATABASE_URL` 优先(切 Postgres)/ `DATABASE_PATH` fallback(继续 SQLite)/ `render_as_batch=True`(SQLite ALTER 限制)
+3. **第一份 migration `24bf7cbb36fb_initial_schema_mirror.py`** — 14 表 + 13 索引,完全镜像 `app/database.py:init_db()`,用 `sa.text("0")` 而非 `"0"` 防 Postgres 字符串化
+4. **现有 dev.db**(本地 + 生产)`alembic stamp head` 标已迁
+5. **`docs/POSTGRES-MIGRATION.md`** — 完整路径文档(现状 / 日常加列 / 切 Postgres 步骤 / 回滚 / TODO)
+6. **`init_db()`** docstring 加双轨说明
+
+### 验证
+fresh DB `alembic upgrade head` 与 `init_db()` schema **功能等价**(FLOAT/REAL 同 affinity / 默认值引号 cosmetic / PK 隐含 NOT NULL — type behavior 完全一致)。
+
+backend pytest 298/298 全过。
+
+### 不在 scope(留切 Postgres 那天)
+- 不引入 SQLAlchemy ORM,业务继续 sqlite3 直连
+- 不写 SQLite→Postgres 数据迁移脚本
+- tests 仍用 init_db()(快 + 隔离)
+- `init_db()` 不改成 `alembic upgrade head`(避免 init/alembic 死循环 + 测试开销)
+
+### 已 deploy 进生产
+(脚手架是后端代码 + alembic_version 表多 1 行,无运行时影响。stamp 已对生产 dev.db 跑过)
+
 ## 2026-04-28 四十六续(exhaustive-deps 6→0 + alt-text 8→0)
 
 ### 收尾扫
