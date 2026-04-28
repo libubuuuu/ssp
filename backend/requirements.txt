@@ -6,7 +6,10 @@ pydantic==2.6.1
 pydantic-settings==2.1.0
 
 # 数据库
-# 直接使用 sqlite3，跳过 SQLAlchemy
+# 业务代码继续直接用 sqlite3(快、简单);alembic 仅用于 schema 迁移管理(脚手架)
+# 迁 Postgres 时切 DATABASE_URL + 安装 psycopg2-binary 即可,业务代码无需改
+alembic==1.18.4
+SQLAlchemy==2.0.49
 
 # Redis / 任务队列
 redis==5.0.1

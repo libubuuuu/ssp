@@ -24,6 +24,7 @@
 |---|---|
 | [P8-COOKIE-MIGRATION.md](P8-COOKIE-MIGRATION.md) | httpOnly Cookie 阶段 3 清理路线图(30 天后) |
 | [COVERAGE-2026-04-27.md](COVERAGE-2026-04-27.md) | 测试覆盖率快照 + 后续补齐建议(整体 46%,核心 auth/billing 89-91%) |
+| [POSTGRES-MIGRATION.md](POSTGRES-MIGRATION.md) | Phase 2 Postgres 迁移路径(alembic 脚手架已就位,业务仍 SQLite) |
 
 ## 按场景导航
 

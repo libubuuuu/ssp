@@ -54,7 +54,14 @@ def _patch_users_columns(cursor):
 
 
 def init_db():
-    """初始化数据库表"""
+    """初始化数据库表
+
+    ⚠ 与 alembic 的关系:
+    - 测试 / fresh 部署直接调本函数(快、隔离)
+    - 生产 schema 演进走 alembic upgrade head(`backend/alembic/versions/`)
+    - 改 schema 时**两边都要改**,保持等价。详见 docs/POSTGRES-MIGRATION.md
+    - 现有 dev.db 已 stamp 到 head 24bf7cbb36fb;新加列 → 写新 alembic migration + 同步本函数
+    """
     with get_db() as conn:
         cursor = conn.cursor()
 
