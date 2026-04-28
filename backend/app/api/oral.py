@@ -842,6 +842,11 @@ async def get_session_status(session_id: str, current_user: dict = Depends(get_c
     if session["user_id"] != user_id:
         raise HTTPException(403, "无权限")
 
+    # 原视频公网 URL(给前端 canvas 抽首帧用)
+    # /opt/ssp/uploads/oral/<uid>/<sid>/orig.mp4 → /uploads/oral/<uid>/<sid>/orig.mp4
+    orig_path = session.get("original_video_path") or ""
+    original_video_url = orig_path[orig_path.index("/uploads/"):] if "/uploads/" in orig_path else None
+
     return {
         "session_id": session_id,
         "status": session["status"],
@@ -851,11 +856,13 @@ async def get_session_status(session_id: str, current_user: dict = Depends(get_c
         "credits_refunded": session["credits_refunded"],
         "step_progress": _step_progress(session["status"], session),
         "products": {
+            "original_video_url": original_video_url,
             "asr_transcript": session.get("asr_transcript"),
             "edited_transcript": session.get("edited_transcript"),
             "new_audio_url": session.get("new_audio_url"),
             "swapped_video_url": session.get("swapped_video_url"),
             "final_video_url": session.get("final_video_url"),
+            "mask_uploaded": bool(session.get("mask_image_path")),
         },
         "error": session.get("error_message") if session["status"].startswith("failed_") else None,
     }

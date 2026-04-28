@@ -3,6 +3,7 @@ import { useLang } from "@/lib/i18n/LanguageContext";
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
+import MaskEditor from "@/components/MaskEditor";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -17,11 +18,13 @@ interface SessionStatus {
   credits_refunded: number;
   step_progress: { step1: string; step2: string; step3: string; step4: string; step5: string };
   products: {
+    original_video_url: string | null;
     asr_transcript: string | null;
     edited_transcript: string | null;
     new_audio_url: string | null;
     swapped_video_url: string | null;
     final_video_url: string | null;
+    mask_uploaded: boolean;
   };
   error: string | null;
 }
@@ -45,10 +48,6 @@ export default function OralBroadcastWorkbench() {
   // Step 1 输入
   const [tier, setTier] = useState<Tier>("standard");
   const [legalConsent, setLegalConsent] = useState(false);
-
-  // Step 1.5 mask 上传
-  const [maskUploading, setMaskUploading] = useState(false);
-  const [maskUploaded, setMaskUploaded] = useState(false);
 
   // Step 1 模特/产品(MVP 简化为 URL 输入,P4b 接素材库)
   const [modelName, setModelName] = useState("");
@@ -90,38 +89,11 @@ export default function OralBroadcastWorkbench() {
     return () => clearInterval(i);
   }, [loadStatus]);
 
-  const uploadMask = async (file: File) => {
-    if (!file.type.startsWith("image/")) {
-      setError(t("oral.errMaskImageOnly"));
-      return;
-    }
-    setMaskUploading(true);
-    setError("");
-    try {
-      const fd = new FormData();
-      fd.append("session_id", sessionId);
-      fd.append("file", file);
-      const res = await fetch(`${API_BASE}/api/oral/upload-mask`, {
-        method: "POST",
-        body: fd,
-        headers: { Authorization: `Bearer ${token()}` },
-        credentials: "include",
-      });
-      const data = await res.json();
-      if (!res.ok) { setError(data.detail || t("oral.errMaskFail")); return; }
-      setMaskUploaded(true);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : t("oral.errMaskFail"));
-    } finally {
-      setMaskUploading(false);
-    }
-  };
-
   const startPipeline = async () => {
     setError("");
     if (!legalConsent) { setError(t("oral.errLegal")); return; }
     if (!modelName || !modelUrl) { setError(t("oral.errModel")); return; }
-    if (!maskUploaded && !sess?.products.asr_transcript) { /* mask 可后传,但必须传 */ }
+    if (!sess?.products.mask_uploaded) { setError(t("oral.errMaskRequired")); return; }
 
     setStarting(true);
     try {
@@ -295,20 +267,20 @@ export default function OralBroadcastWorkbench() {
               <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>
                 {t("oral.maskTitle")}
               </div>
-              <div style={{ fontSize: "0.75rem", color: "#999", marginBottom: "0.5rem" }}>
-                {t("oral.maskHint")}
+              <div style={{ fontSize: "0.75rem", color: "#999", marginBottom: "0.8rem" }}>
+                {t("oral.mask.canvasHint")}
               </div>
-              <label style={{
-                display: "inline-block", padding: "0.6rem 1rem",
-                background: maskUploaded ? "#0a8" : maskUploading ? "#ddd" : "#f0f0f0",
-                color: maskUploaded ? "#fff" : "#333",
-                borderRadius: 8, cursor: maskUploading ? "not-allowed" : "pointer", fontSize: "0.85rem",
-              }}>
-                {maskUploaded ? `✓ ${t("oral.maskDone")}` : maskUploading ? t("oral.maskUploading") : t("oral.maskUpload")}
-                <input type="file" accept="image/*" disabled={maskUploading}
-                  onChange={e => { const f = e.target.files?.[0]; if (f) uploadMask(f); }}
-                  style={{ display: "none" }} />
-              </label>
+              {sess.products.original_video_url ? (
+                <MaskEditor
+                  videoUrl={sess.products.original_video_url}
+                  sessionId={sessionId}
+                  onUploaded={() => loadStatus()}
+                />
+              ) : (
+                <div style={{ padding: "1rem", color: "#888", background: "#f9f7f2", borderRadius: 8 }}>
+                  {t("oral.mask.loading")}
+                </div>
+              )}
             </div>
 
             <label style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", marginBottom: "1rem", padding: "0.8rem", background: "#fffaeb", borderRadius: 8 }}>
@@ -320,12 +292,12 @@ export default function OralBroadcastWorkbench() {
             </label>
 
             <button onClick={startPipeline}
-              disabled={starting || !legalConsent || !modelName || !modelUrl || !maskUploaded}
+              disabled={starting || !legalConsent || !modelName || !modelUrl || !sess.products.mask_uploaded}
               style={{
                 padding: "0.8rem 1.5rem",
-                background: (starting || !legalConsent || !modelName || !modelUrl || !maskUploaded) ? "#ccc" : "#0d0d0d",
+                background: (starting || !legalConsent || !modelName || !modelUrl || !sess.products.mask_uploaded) ? "#ccc" : "#0d0d0d",
                 color: "#fff", border: "none", borderRadius: 10,
-                cursor: (starting || !legalConsent || !modelName || !modelUrl || !maskUploaded) ? "not-allowed" : "pointer",
+                cursor: (starting || !legalConsent || !modelName || !modelUrl || !sess.products.mask_uploaded) ? "not-allowed" : "pointer",
                 fontSize: "1rem", fontWeight: 500,
               }}>
               {starting ? t("oral.starting") : t("oral.startBtn")}
