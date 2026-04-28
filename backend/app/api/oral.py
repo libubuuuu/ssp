@@ -20,6 +20,7 @@ import asyncio
 import json
 import math
 import os
+import re
 import shutil
 import sys
 import uuid
@@ -43,6 +44,8 @@ router = APIRouter()
 
 # 用户上传根目录:/opt/ssp/uploads/oral/<user_id>/<sid>/
 ORAL_UPLOAD_ROOT = Path(os.getenv("UPLOADS_ROOT", "/opt/ssp/uploads")) / "oral"
+# 分片上传临时目录(_uploading/<user_id>_<upload_id>/<chunk_idx>)
+ORAL_UPLOAD_TMP = ORAL_UPLOAD_ROOT / "_uploading"
 
 # 视频时长硬上限(MVP 60 秒,详见规划文档 Q2)
 MAX_DURATION_SECONDS = 60
@@ -599,6 +602,122 @@ async def upload_video(
     _create_session(session_id, user_id, str(video_path), duration)
 
     return {
+        "session_id": session_id,
+        "duration_seconds": round(duration, 2),
+        "size_mb": round(size_bytes / 1024 / 1024, 2),
+    }
+
+
+# ==================== 端点 1b:POST /upload-chunk(七十七续 P5)====================
+#
+# Bug 修:用户反馈"上传特别慢"。诊断:服务器出口 27 Mbps,用户上行通常 5-20 Mbps,
+# 60s 视频 50-100MB 走单次 multipart 上传 30-300s,且无进度反馈。
+# 解:仿 video_studio /upload-chunk 模式 — 5MB 分片 + 失败补传 + 前端进度条。
+
+
+@router.post("/upload-chunk")
+async def upload_chunk(
+    chunk: UploadFile = File(...),
+    upload_id: str = Form(...),
+    chunk_idx: int = Form(...),
+    total_chunks: int = Form(...),
+    filename: str = Form(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """分片上传:前端 5MB 块顺序调本端点,最后一片合并 + 创建 oral_session。
+
+    复用 video_studio 同名端点的安全策略:
+    - upload_id 16 位 hex 防路径穿越
+    - 单 chunk ≤ 10MB
+    - 每用户并行上传 ≤ 5
+    - 累计 ≤ 200MB(60s 视频上限)
+    """
+    if not re.fullmatch(r"[a-f0-9]{16}", upload_id):
+        raise HTTPException(400, "invalid upload_id")
+    if chunk_idx < 0 or total_chunks < 1 or chunk_idx >= total_chunks:
+        raise HTTPException(400, "invalid chunk_idx/total_chunks")
+    if total_chunks > 1000:  # 60s 视频 ≤ 200MB,每片 5MB ≤ 40 片,留 25x 余量
+        raise HTTPException(400, "too many chunks")
+
+    user_id = str(current_user["id"])
+    upload_dir = ORAL_UPLOAD_TMP / f"{user_id}_{upload_id}"
+
+    # 同 user 并行 upload_id ≤ 5
+    if not upload_dir.exists():
+        ORAL_UPLOAD_TMP.mkdir(parents=True, exist_ok=True)
+        existing = [p for p in ORAL_UPLOAD_TMP.glob(f"{user_id}_*") if p.is_dir()]
+        if len(existing) >= 5:
+            raise HTTPException(429, f"并行上传任务过多({len(existing)}/5)")
+
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    # 流式写本片,单片 ≤ 10MB
+    chunk_path = upload_dir / f"{chunk_idx:06d}"
+    MAX_CHUNK_BYTES = 10 * 1024 * 1024
+    written = 0
+    try:
+        with open(chunk_path, "wb") as f:
+            while True:
+                data = await chunk.read(1024 * 1024)
+                if not data:
+                    break
+                written += len(data)
+                if written > MAX_CHUNK_BYTES:
+                    f.close()
+                    chunk_path.unlink(missing_ok=True)
+                    raise HTTPException(413, f"单 chunk 不得超过 {MAX_CHUNK_BYTES // (1024 * 1024)}MB")
+                f.write(data)
+    except HTTPException:
+        raise
+    except Exception:
+        chunk_path.unlink(missing_ok=True)
+        raise
+
+    # 累计 200MB(60s 视频上限)
+    MAX_UPLOAD_TOTAL = 200 * 1024 * 1024
+    total_so_far = sum(p.stat().st_size for p in upload_dir.iterdir() if p.is_file())
+    if total_so_far > MAX_UPLOAD_TOTAL:
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        raise HTTPException(413, f"上传累计超过 {MAX_UPLOAD_TOTAL // (1024 * 1024)}MB")
+
+    # 不是最后一片:回执
+    if chunk_idx + 1 < total_chunks:
+        return {"status": "chunk_received", "chunk_idx": chunk_idx, "received_bytes": chunk_path.stat().st_size}
+
+    # 最后一片到达:校验所有 chunks 都在
+    missing = [i for i in range(total_chunks) if not (upload_dir / f"{i:06d}").exists()]
+    if missing:
+        raise HTTPException(400, f"missing chunks: {missing[:5]}{'...' if len(missing) > 5 else ''}")
+
+    # 合并到 session_dir
+    session_id = str(uuid.uuid4())[:12]
+    session_dir = ORAL_UPLOAD_ROOT / user_id / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    raw_ext = os.path.splitext(filename)[1] or ".mp4"
+    ext = re.sub(r"[^a-zA-Z0-9.]", "", raw_ext)[:8] or ".mp4"
+    video_path = session_dir / f"orig{ext}"
+
+    with open(video_path, "wb") as out:
+        for i in range(total_chunks):
+            cp = upload_dir / f"{i:06d}"
+            with open(cp, "rb") as f:
+                shutil.copyfileobj(f, out, 1024 * 1024)
+
+    shutil.rmtree(upload_dir, ignore_errors=True)
+
+    size_bytes = video_path.stat().st_size
+    from app.api.video_studio import _get_video_duration
+    duration = _get_video_duration(str(video_path))
+
+    if duration > MAX_DURATION_SECONDS:
+        shutil.rmtree(session_dir, ignore_errors=True)
+        raise HTTPException(413, f"视频时长 {duration:.1f}s 超过 {MAX_DURATION_SECONDS} 秒上限")
+
+    _create_session(session_id, user_id, str(video_path), duration)
+
+    return {
+        "status": "completed",
         "session_id": session_id,
         "duration_seconds": round(duration, 2),
         "size_mb": round(size_bytes / 1024 / 1024, 2),

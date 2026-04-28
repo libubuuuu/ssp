@@ -601,6 +601,8 @@ export const zh = {
     subtitle: "上传口播视频 → 换音色 + 改文案 + 换人物 + 换产品 → 一键生成新口播",
     newSession: "新建任务",
     uploading: "上传中...",
+    eta: "剩余约",
+    processing: "处理中...",
     loading: "加载中...",
     empty: "还没有任务,点上方「新建任务」开始",
     maxDuration: "MVP 阶段限制 60 秒视频",

@@ -601,6 +601,8 @@ export const en = {
     subtitle: "Upload oral video → swap voice + script + person + product → AI-generated new ad",
     newSession: "New task",
     uploading: "Uploading...",
+    eta: "ETA",
+    processing: "Processing...",
     loading: "Loading...",
     empty: "No tasks yet. Click + above to start.",
     maxDuration: "MVP limit: 60s video",
