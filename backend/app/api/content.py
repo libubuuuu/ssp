@@ -165,11 +165,17 @@ def _generate_tags(prompt: str, style: str) -> list[str]:
 
 from fastapi import UploadFile, File, Depends
 from app.api.auth import get_current_user
+from app.services.upload_guard import read_bounded, IMAGE_MIMES
 import fal_client, tempfile, os
 
 @router.post("/upload")
 async def upload_content(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
-    contents = await file.read()
+    """通用图片上传(传给 fal storage 拿 URL)。
+
+    五十六续:加 upload_guard 守卫(原 await file.read() 无 size 限制,
+    nginx 给 500MB 上限,一次读到内存 = OOM 攻击面)。
+    """
+    contents = await read_bounded(file, 10 * 1024 * 1024, IMAGE_MIMES, "content 上传图")
     suffix = os.path.splitext(file.filename)[1] or ".jpg"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(contents)
