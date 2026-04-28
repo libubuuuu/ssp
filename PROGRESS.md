@@ -1,5 +1,24 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 五十三续(ad-video upload 接 upload_guard — 收 OOM 攻击面 + 模式统一)
+
+### 47 续遗留
+`/api/ad-video/upload/image` 完全无 size/MIME 守卫,`await file.read()` 直接读
+500MB(nginx 上限)到内存 → backend OOM。另一处 /analyze 已有 inline 10MB + MIME
+检查但模式跟其他端点不一致(48 续 upload_guard 没扫到这边)。
+
+### 修
+两处统一接 `upload_guard.read_bounded`:
+- /analyze:删 inline `if len > 10MB raise 400`,换 read_bounded(超 → 413,错 MIME → 415)
+- /upload/image:加守卫,从此跟 video.py / studio 一致
+
+### 测试 +3(327 → 330)
+既存 oversize/MIME 测试改 status_code 期望(400 → 413/415);+3 新覆盖
+/upload/image(oversize/wrong-mime/valid-pass)。
+
+### 已 deploy 进生产 ✅
+蓝绿 green → blue ~30s。这次 chown 提前(SOP 已固化),无 spawn error。
+
 ## 2026-04-28 五十二续(refund_tracker 改 SQLite 持久化 — 收 v1 进程内存 limitation)
 
 ### 为什么
