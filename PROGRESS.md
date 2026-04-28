@@ -1,5 +1,37 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 五十七续(products CUD 加鉴权 — 🚨 OWASP 越权大洞)
+
+### 系统性 sweep 挖到的真严重 bug
+做完五十六续后扫所有 endpoint 鉴权矩阵,挖出 **products CUD 完全裸跑**:
+- `POST /api/products`:任何匿名脚本给任意 merchant 注入产品(merchant_id 自填)
+- `PUT /api/products/{id}`:任意改价格 / 上下架 / 图片
+- `DELETE /api/products/{id}`:任意删
+
+OWASP Top 10 - Broken Access Control。前端 merchant 页面是 UI shell 没接通,
+但裸跑后端就是被扫攻击面 → 库内任意写。
+
+### 修
+- `_assert_owns_merchant(merchant_id, user)` helper:admin 跨商家 OK,
+  普通 user 必须是 `merchants.user_id` 对应 owner
+- POST 校 `product.merchant_id ↔ user`
+- PUT/DELETE 先 SELECT product 拿 merchant_id 再校
+- merchant / product 不存在统一 404,不区分"非 owner"vs"不存在"防泄漏
+
+### 测试 +13(350 → 363)
+矩阵覆盖 401/403/404/200,含:owner / 非 owner / admin 跨商家 / 不存在 merchant /
+删后 GET 404 / list 仍 public。
+
+### 已 deploy 进生产 ✅
+- 蓝绿 blue → green
+- 验证生产 `curl POST /api/products`(无 token)→ 401(之前 200 注入)
+- list 仍 public 200(电商展示场景不变)
+
+### sweep 剩余低优先级
+- `/api/content/enhance` 无鉴权但纯模板 string,DoS 风险低
+- `/api/image/inpaint` 501 stub
+- 一致都加 require_login 是 cleanup,不紧急
+
 ## 2026-04-28 五十六续(/api/content/upload 接 upload_guard — 自审 sweep 收 OOM 同源)
 
 ### 自审 sweep 发现
