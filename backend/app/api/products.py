@@ -6,10 +6,40 @@ import json
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, ConfigDict
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from app.database import get_db
+from app.api.auth import get_current_user
 
 router = APIRouter()
+
+
+def _assert_owns_merchant(merchant_id: str, user: dict) -> None:
+    """校验当前用户是该 merchant 的 owner 或 admin。
+
+    五十七续:之前 products CUD 完全无鉴权 → 任何人匿名可建/改/删任何商家产品
+    (OWASP Broken Access Control)。
+
+    admin 跨商家 OK(运营场景);普通 user 必须是该 merchant 的 user_id。
+    merchant 不存在时 404(不区分"merchant 不存在"和"非 owner",防泄漏)。
+    """
+    if user.get("role") == "admin":
+        return
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id FROM merchants WHERE id = ?", (merchant_id,))
+        row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="商家不存在")
+    if str(row[0]) != str(user["id"]):
+        raise HTTPException(status_code=403, detail="非该商家产品所有者")
+
+
+def _get_product_merchant_id(product_id: str) -> Optional[str]:
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT merchant_id FROM products WHERE id = ?", (product_id,))
+        row = cursor.fetchone()
+    return row[0] if row else None
 
 
 # 请求/响应模型
@@ -152,8 +182,9 @@ async def get_product(product_id: str):
 
 
 @router.post("", response_model=ProductResponse)
-async def create_product(product: ProductCreate):
-    """创建产品"""
+async def create_product(product: ProductCreate, current_user: dict = Depends(get_current_user)):
+    """创建产品(必须是该 merchant 的 owner 或 admin)"""
+    _assert_owns_merchant(product.merchant_id, current_user)
     product_id = str(uuid.uuid4())
     now = datetime.now().isoformat()
 
@@ -193,12 +224,17 @@ async def create_product(product: ProductCreate):
 
 
 @router.put("/{product_id}", response_model=ProductResponse)
-async def update_product(product_id: str, product: ProductUpdate):
-    """更新产品"""
+async def update_product(product_id: str, product: ProductUpdate, current_user: dict = Depends(get_current_user)):
+    """更新产品(必须是该产品 merchant 的 owner 或 admin)"""
+    merchant_id = _get_product_merchant_id(product_id)
+    if not merchant_id:
+        raise HTTPException(status_code=404, detail="产品不存在")
+    _assert_owns_merchant(merchant_id, current_user)
+
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # 检查产品是否存在
+        # 检查产品是否存在(已上游 check 但保留二次防御)
         cursor.execute("SELECT id FROM products WHERE id = ?", (product_id,))
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="产品不存在")
@@ -270,18 +306,17 @@ async def update_product(product_id: str, product: ProductUpdate):
 
 
 @router.delete("/{product_id}")
-async def delete_product(product_id: str):
-    """删除产品"""
+async def delete_product(product_id: str, current_user: dict = Depends(get_current_user)):
+    """删除产品(必须是该产品 merchant 的 owner 或 admin)"""
+    merchant_id = _get_product_merchant_id(product_id)
+    if not merchant_id:
+        raise HTTPException(status_code=404, detail="产品不存在")
+    _assert_owns_merchant(merchant_id, current_user)
+
     with get_db() as conn:
         cursor = conn.cursor()
-
-        cursor.execute("SELECT id FROM products WHERE id = ?", (product_id,))
-        if not cursor.fetchone():
-            raise HTTPException(status_code=404, detail="产品不存在")
-
         cursor.execute("DELETE FROM products WHERE id = ?", (product_id,))
         conn.commit()
-
         return {"message": "产品已删除", "id": product_id}
 
 
