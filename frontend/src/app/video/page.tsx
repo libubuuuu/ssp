@@ -3,6 +3,7 @@ import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useRef, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
+import { errMsg } from "@/lib/utils/errors";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -89,8 +90,8 @@ export default function VideoPage() {
       if (typeof d.cost === "number" && d.cost > 0) adjustLocalUserCredits(-d.cost);
       updateCard(card.id, { jobId: d.job_id, status: "pending", progress: "排队中..." });
       startPolling(card.id, d.job_id);
-    } catch (e: any) {
-      updateCard(card.id, { status: "failed", error: e.message, progress: "" });
+    } catch (e) {
+      updateCard(card.id, { status: "failed", error: errMsg(e), progress: "" });
     }
   };
 

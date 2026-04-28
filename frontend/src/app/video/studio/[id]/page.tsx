@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
+import { errMsg } from "@/lib/utils/errors";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -90,7 +91,7 @@ export default function VideoStudioDetailPage() {
         } else {
           setStep(2);
         }
-      } catch (e: any) {
+      } catch (e) {
         setError(e.message || "加载项目失败");
       }
     })();
@@ -119,7 +120,7 @@ export default function VideoStudioDetailPage() {
       setDuration(data.duration);
       setMsg(`视频 ${data.duration}秒 / ${data.size_mb}MB 上传成功`);
       setStep(2);
-    } catch (e: any) { setError(e.message); }
+    } catch (e) { setError(errMsg(e)); }
     finally { setLoading(false); }
   };
 
@@ -140,7 +141,7 @@ export default function VideoStudioDetailPage() {
       setSegments(data.segments);
       setMsg(`已拆分为 ${data.total_segments} 段`);
       setStep(3);
-    } catch (e: any) { setError(e.message); }
+    } catch (e) { setError(errMsg(e)); }
     finally { setLoading(false); }
   };
 
@@ -168,7 +169,7 @@ export default function VideoStudioDetailPage() {
         copy[idx] = { ...copy[idx], main_image_url: url, main_preview: preview };
         return copy;
       });
-    } catch (e: any) { setError(e.message); }
+    } catch (e) { setError(errMsg(e)); }
     finally { setLoading(false); }
   };
 
@@ -186,7 +187,7 @@ export default function VideoStudioDetailPage() {
         };
         return copy;
       });
-    } catch (e: any) { setError(e.message); }
+    } catch (e) { setError(errMsg(e)); }
     finally { setLoading(false); }
   };
 
@@ -252,7 +253,7 @@ export default function VideoStudioDetailPage() {
       const failedNote = data.submit_failed ? `(${data.submit_failed} 段提交失败已退款)` : "";
       setMsg(`已提交 ${data.total} 个任务，等待生成...${failedNote}`);
       startPolling();
-    } catch (e: any) { setError(e.message); }
+    } catch (e) { setError(errMsg(e)); }
     finally { setLoading(false); }
   };
 
@@ -292,7 +293,7 @@ export default function VideoStudioDetailPage() {
       setFinalUrl(data.final_url);
       setMsg(`拼接完成！共 ${data.segments_merged} 段`);
       setStep(5);
-    } catch (e: any) { setError(e.message); }
+    } catch (e) { setError(errMsg(e)); }
     finally { setLoading(false); }
   };
 

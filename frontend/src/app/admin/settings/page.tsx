@@ -2,6 +2,7 @@
 import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
+import { errMsg } from "@/lib/utils/errors";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -28,7 +29,7 @@ export default function AdminSettingsPage() {
       if (!res.ok) throw new Error(data.detail || t("errors.uploadFailed"));
       setMsg(`✅ 上传成功！大小 ${(data.size/1024).toFixed(1)}KB`);
       setQrUrl(`/qr-payment.png?v=${Date.now()}`);
-    } catch (e: any) { setError(e.message); }
+    } catch (e) { setError(errMsg(e)); }
     finally { setUploading(false); if (fileRef.current) fileRef.current.value = ""; }
   };
 

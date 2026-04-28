@@ -3,6 +3,7 @@ import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
+import { errMsg } from "@/lib/utils/errors";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -57,7 +58,7 @@ export default function VoiceClonePage() {
         if (typeof data.cost === "number" && data.cost > 0) adjustLocalUserCredits(-data.cost);
         saveGallery([{ url: data.audio_url, label: text.slice(0, 30), mode: "克隆", time: Date.now() }, ...gallery]);
       } else { setError(data.detail || "克隆失败"); }
-    } catch (e: any) { setError(e.message || t("errors.networkError")); }
+    } catch (e) { setError(errMsg(e, t("errors.networkError"))); }
     finally { setLoading(false); }
   };
 
@@ -75,7 +76,7 @@ export default function VoiceClonePage() {
         if (typeof data.cost === "number" && data.cost > 0) adjustLocalUserCredits(-data.cost);
         saveGallery([{ url: data.audio_url, label: text.slice(0, 30), mode: "TTS", time: Date.now() }, ...gallery]);
       } else { setError(data.detail || t("errors.generationFailed")); }
-    } catch (e: any) { setError(e.message || t("errors.networkError")); }
+    } catch (e) { setError(errMsg(e, t("errors.networkError"))); }
     finally { setLoading(false); }
   };
 

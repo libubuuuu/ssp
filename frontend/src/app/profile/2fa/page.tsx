@@ -2,6 +2,7 @@
 import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { errMsg } from "@/lib/utils/errors";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -33,8 +34,8 @@ export default function TwoFAPage() {
       });
       const data = await res.json();
       setEnabled(!!data.enabled);
-    } catch (e: any) {
-      setErr(e.message);
+    } catch (e) {
+      setErr(errMsg(e));
     } finally {
       setLoading(false);
     }
@@ -53,8 +54,8 @@ export default function TwoFAPage() {
       setSetupQR(data.qr_code);
       setSetupSecret(data.secret);
       setShowSetup(true);
-    } catch (e: any) {
-      setErr(e.message);
+    } catch (e) {
+      setErr(errMsg(e));
     }
   };
 
@@ -77,8 +78,8 @@ export default function TwoFAPage() {
       setShowSetup(false);
       setEnabled(true);
       setCode("");
-    } catch (e: any) {
-      setErr(e.message);
+    } catch (e) {
+      setErr(errMsg(e));
     }
   };
 
@@ -100,8 +101,8 @@ export default function TwoFAPage() {
       setMsg(isEn ? "✓ 2FA disabled" : "✓ 2FA 已禁用");
       setEnabled(false);
       setCode("");
-    } catch (e: any) {
-      setErr(e.message);
+    } catch (e) {
+      setErr(errMsg(e));
     }
   };
 

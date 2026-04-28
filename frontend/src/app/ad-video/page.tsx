@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
+import { errMsg } from "@/lib/utils/errors";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -110,8 +111,8 @@ export default function AdVideoPage() {
         setProductImageUrl(d.product_image_url);
       }
       setStep(2);
-    } catch (e: any) {
-      setErr(e.message);
+    } catch (e) {
+      setErr(errMsg(e));
     } finally {
       setLoading(false);
     }
@@ -173,8 +174,8 @@ export default function AdVideoPage() {
 
       setPreviewImageUrl(d.image_url);
       setStep(3);
-    } catch (e: any) {
-      setErr(e.message);
+    } catch (e) {
+      setErr(errMsg(e));
     } finally {
       setLoading(false);
     }
@@ -208,8 +209,8 @@ export default function AdVideoPage() {
 
       setStep(4);
       startPolling(d.job_id);
-    } catch (e: any) {
-      setErr(e.message);
+    } catch (e) {
+      setErr(errMsg(e));
     } finally {
       setLoading(false);
     }
@@ -284,8 +285,8 @@ export default function AdVideoPage() {
       const newScenes = [...script.scenes];
       newScenes[idx] = d.scene;
       setScript({ ...script, scenes: newScenes });
-    } catch (e: any) {
-      setErr(e.message);
+    } catch (e) {
+      setErr(errMsg(e));
     } finally {
       setLoading(false);
     }
