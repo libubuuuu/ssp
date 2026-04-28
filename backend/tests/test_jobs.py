@@ -112,6 +112,183 @@ def test_unauthenticated_jobs_calls_rejected(client):
         assert r.status_code in (401, 403)
 
 
+# === 七十五续:long-video 虚拟 job 合并到 My Tasks ===
+
+
+def test_list_jobs_merges_studio_sessions_with_batch_results(client, register, auth_header):
+    """有 batch_results 的 studio session 应作为虚拟 job 显示在 list"""
+    token, user = register(client, "lv-merge@example.com")
+
+    from app.api import video_studio as vs
+    sid = "test_sess_001"
+    vs.STUDIO_TASKS[sid] = {
+        "session_id": sid,
+        "user_id": user["id"],
+        "video_path": "/tmp/x.mp4",
+        "duration": 50.0,
+        "segments": [{"index": i} for i in range(5)],
+        "status": "generating",
+        "batch_results": [
+            {"segment_index": 0, "status": "completed", "video_url": "u0"},
+            {"segment_index": 1, "status": "running"},
+            {"segment_index": 2, "status": "running"},
+            {"segment_index": 3, "status": "running"},
+            {"segment_index": 4, "status": "running"},
+        ],
+        "batch_cost": 75,
+    }
+
+    try:
+        r = client.get("/api/jobs/list", headers=auth_header(token))
+        assert r.status_code == 200
+        jobs = r.json()["jobs"]
+        lv = [j for j in jobs if j.get("_long_video")]
+        assert len(lv) == 1
+        j = lv[0]
+        assert j["id"] == f"studio_{sid}"
+        assert j["type"] == "long_video"
+        assert j["status"] == "running"
+        assert j["params"]["segments_total"] == 5
+        assert j["params"]["segments_completed"] == 1
+        assert j["params"]["segments_pending"] == 4
+        assert "1/5" in j["title"]
+        assert j["_route"] == f"/video/studio/{sid}"
+    finally:
+        vs.STUDIO_TASKS.pop(sid, None)
+
+
+def test_list_jobs_studio_session_completed_with_final_url(client, register, auth_header):
+    """final_url 存在 → status=completed,result 含 video_url"""
+    token, user = register(client, "lv-done@example.com")
+
+    from app.api import video_studio as vs
+    sid = "test_sess_002"
+    vs.STUDIO_TASKS[sid] = {
+        "session_id": sid, "user_id": user["id"],
+        "video_path": "/tmp/y.mp4", "duration": 30.0,
+        "segments": [], "status": "finished",
+        "batch_results": [
+            {"segment_index": 0, "status": "completed", "video_url": "u0"},
+            {"segment_index": 1, "status": "completed", "video_url": "u1"},
+        ],
+        "final_url": "https://fal.media/final.mp4",
+        "batch_cost": 30,
+    }
+
+    try:
+        r = client.get("/api/jobs/list", headers=auth_header(token))
+        jobs = r.json()["jobs"]
+        lv = [j for j in jobs if j.get("_long_video")][0]
+        assert lv["status"] == "completed"
+        assert lv["result"]["video_url"] == "https://fal.media/final.mp4"
+        assert "全部完成" in lv["title"]
+    finally:
+        vs.STUDIO_TASKS.pop(sid, None)
+
+
+def test_list_jobs_studio_session_all_failed(client, register, auth_header):
+    """全 failed → status=failed"""
+    token, user = register(client, "lv-failed@example.com")
+
+    from app.api import video_studio as vs
+    sid = "test_sess_003"
+    vs.STUDIO_TASKS[sid] = {
+        "session_id": sid, "user_id": user["id"],
+        "video_path": "/tmp/z.mp4", "duration": 20.0,
+        "segments": [], "status": "generating",
+        "batch_results": [
+            {"segment_index": 0, "status": "failed"},
+            {"segment_index": 1, "status": "failed"},
+        ],
+        "batch_cost": 0,
+    }
+
+    try:
+        r = client.get("/api/jobs/list", headers=auth_header(token))
+        jobs = r.json()["jobs"]
+        lv = [j for j in jobs if j.get("_long_video")][0]
+        assert lv["status"] == "failed"
+    finally:
+        vs.STUDIO_TASKS.pop(sid, None)
+
+
+def test_list_jobs_studio_session_user_isolation(client, register, auth_header):
+    """A 的 long-video session,B 调 list 看不到"""
+    a_token, a_user = register(client, "lv-iso-a@example.com")
+    b_token, b_user = register(client, "lv-iso-b@example.com")
+
+    from app.api import video_studio as vs
+    sid = "test_sess_iso"
+    vs.STUDIO_TASKS[sid] = {
+        "session_id": sid, "user_id": a_user["id"],
+        "video_path": "/tmp/q.mp4", "duration": 10.0,
+        "segments": [], "status": "generating",
+        "batch_results": [{"segment_index": 0, "status": "completed", "video_url": "u"}],
+    }
+
+    try:
+        r_a = client.get("/api/jobs/list", headers=auth_header(a_token))
+        r_b = client.get("/api/jobs/list", headers=auth_header(b_token))
+        a_lv = [j for j in r_a.json()["jobs"] if j.get("_long_video")]
+        b_lv = [j for j in r_b.json()["jobs"] if j.get("_long_video")]
+        assert len(a_lv) == 1
+        assert len(b_lv) == 0
+    finally:
+        vs.STUDIO_TASKS.pop(sid, None)
+
+
+def test_list_jobs_studio_no_batch_results_skipped(client, register, auth_header):
+    """只上传 / 只拆分但没 generate(无 batch_results)→ 不展示"""
+    token, user = register(client, "lv-noskip@example.com")
+
+    from app.api import video_studio as vs
+    sid = "test_sess_skip"
+    vs.STUDIO_TASKS[sid] = {
+        "session_id": sid, "user_id": user["id"],
+        "video_path": "/tmp/s.mp4", "duration": 10.0,
+        "segments": [{"index": 0}], "status": "split",
+        # 没 batch_results 字段
+    }
+
+    try:
+        r = client.get("/api/jobs/list", headers=auth_header(token))
+        lv = [j for j in r.json()["jobs"] if j.get("_long_video")]
+        assert len(lv) == 0
+    finally:
+        vs.STUDIO_TASKS.pop(sid, None)
+
+
+def test_list_jobs_studio_merged_with_regular_jobs_sorted(client, register, auth_header):
+    """常规 jobs 和 long-video 虚拟 job 合并后按 created_at 倒序"""
+    import time as _t
+    token, user = register(client, "lv-mix@example.com")
+
+    # 提交一个普通 image job
+    client.post("/api/jobs/submit",
+                json={"type": "image", "params": {"prompt": "x"}, "title": "regular"},
+                headers=auth_header(token))
+
+    from app.api import video_studio as vs
+    sid = "test_sess_mix"
+    vs.STUDIO_TASKS[sid] = {
+        "session_id": sid, "user_id": user["id"],
+        "video_path": "/tmp/m.mp4", "duration": 10.0,
+        "segments": [], "status": "generating",
+        "batch_results": [{"segment_index": 0, "status": "completed", "video_url": "u"}],
+    }
+
+    try:
+        r = client.get("/api/jobs/list", headers=auth_header(token))
+        jobs = r.json()["jobs"]
+        # 至少 2 条:1 普通 + 1 long-video
+        regular = [j for j in jobs if not j.get("_long_video")]
+        lv = [j for j in jobs if j.get("_long_video")]
+        assert len(regular) >= 1
+        assert len(lv) == 1
+    finally:
+        vs.STUDIO_TASKS.pop(sid, None)
+
+
 # === happy path 补漏 ===
 
 

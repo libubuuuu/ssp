@@ -1,6 +1,7 @@
 "use client";
 import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useLocalStorageItem } from "@/lib/hooks/useLocalStorageItem";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
@@ -13,10 +14,15 @@ interface Job {
   created_at: number;
   result?: { image_url?: string; video_url?: string; type?: string };
   error?: string;
+  // 七十五续:long-video 虚拟 job(后端从 STUDIO_TASKS 合并)
+  _long_video?: boolean;
+  _session_id?: string;
+  _route?: string;
 }
 
 export default function JobPanel() {
   const { t } = useLang();
+  const router = useRouter();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [open, setOpen] = useState(false);
   // 通过 useSyncExternalStore 订阅 localStorage["token"];
@@ -84,6 +90,7 @@ export default function JobPanel() {
     video_i2v: t("jobs.typeI2V"),
     video_edit: t("jobs.typeEdit"),
     video_clone: t("jobs.typeClone"),
+    long_video: "长视频翻拍",  // 七十五续:long-video 虚拟 job(暂中文硬编码,i18n 留下次)
   } as Record<string, string>)[typ] || typ;
 
   const deleteJob = async (id: string) => {
@@ -134,7 +141,13 @@ export default function JobPanel() {
               </div>
             )}
             {jobs.map(j => (
-              <div key={j.id} style={{ padding: "0.7rem 0.8rem", borderRadius: 10, marginBottom: 6, background: "#fafaf7", position: "relative" }}>
+              <div key={j.id} style={{
+                padding: "0.7rem 0.8rem", borderRadius: 10, marginBottom: 6,
+                background: "#fafaf7", position: "relative",
+                cursor: j._long_video ? "pointer" : "default",
+              }}
+                onClick={j._long_video && j._route ? () => { setOpen(false); router.push(j._route!); } : undefined}
+              >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div style={{ fontSize: "0.82rem", fontWeight: 500, color: "#333" }}>
                     {typeLabel(j.type)}
@@ -155,10 +168,19 @@ export default function JobPanel() {
                     {j.error.slice(0, 60)}
                   </div>
                 )}
-                <button onClick={() => deleteJob(j.id)} style={{
-                  position: "absolute", top: 4, right: 4, background: "none", border: "none",
-                  fontSize: "0.7rem", color: "#999", cursor: "pointer",
-                }}>×</button>
+                {/* 七十五续:long-video 不显删除按钮(防误删长任务,id=studio_xxx 也无法走 /api/jobs/{id} DELETE),
+                    替换成 ↗ 打开提示;点整条 card 跳转详情页 */}
+                {j._long_video ? (
+                  <span style={{
+                    position: "absolute", top: 6, right: 6,
+                    fontSize: "0.7rem", color: "#0080ff",
+                  }}>↗ 打开</span>
+                ) : (
+                  <button onClick={e => { e.stopPropagation(); deleteJob(j.id); }} style={{
+                    position: "absolute", top: 4, right: 4, background: "none", border: "none",
+                    fontSize: "0.7rem", color: "#999", cursor: "pointer",
+                  }}>×</button>
+                )}
               </div>
             ))}
           </div>

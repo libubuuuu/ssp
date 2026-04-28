@@ -265,10 +265,93 @@ async def submit_job(req: SubmitJobRequest, current_user: dict = Depends(get_cur
     return {"job_id": job_id, "status": "pending", "cost": cost}
 
 
+def _studio_sessions_as_virtual_jobs(user_id: str) -> list[dict]:
+    """七十五续:把当前用户的 long-video session 转成虚拟 job 给 My Tasks 显示。
+
+    只展示有 batch_results 的 session(纯上传/拆分但没生成的不展示,避免噪音)。
+    每 session 1 条聚合 job,标题"长视频翻拍 X/Y 完成",点击跳转 /video/studio/{sid}。
+
+    不修 STUDIO_TASKS 真实结构,只在返回时合并视图。
+    Status 映射:
+      final_url 存在 → completed(merge 完成)
+      batch_results 全 failed → failed
+      任意 in pending/running → running
+      全 completed 但没 final_url → running(等待 merge)
+    """
+    try:
+        from app.api.video_studio import STUDIO_TASKS, STUDIO_DIR
+    except Exception:
+        return []
+
+    out = []
+    for sid, task in STUDIO_TASKS.items():
+        if task.get("user_id") != user_id:
+            continue
+        batch_results = task.get("batch_results")
+        if not batch_results:
+            continue  # 没 generate 过,不展示
+
+        n = len(batch_results)
+        completed = sum(1 for r in batch_results if r.get("status") == "completed" and r.get("video_url"))
+        failed = sum(1 for r in batch_results if r.get("status") == "failed")
+        pending = n - completed - failed
+        final_url = task.get("final_url")
+
+        # status 推导
+        if final_url:
+            v_status = "completed"
+        elif failed == n:
+            v_status = "failed"
+        else:
+            v_status = "running"  # 含等待 merge / 部分完成 / 仍在跑
+
+        # 标题:状态 + 进度
+        if final_url:
+            title = f"长视频翻拍 · 全部完成({n} 段)"
+        elif pending > 0:
+            title = f"长视频翻拍 · {completed}/{n} 完成,{pending} 生成中"
+        else:
+            title = f"长视频翻拍 · {n} 段已完成,等待合并"
+
+        # created_at 用 session_dir mtime(STUDIO_TASKS 无 created_at 字段)
+        try:
+            mtime = (STUDIO_DIR / sid).stat().st_mtime
+        except (OSError, ValueError):
+            mtime = 0.0
+
+        out.append({
+            "id": f"studio_{sid}",
+            "user_id": user_id,
+            "user_numeric_id": user_id,
+            "type": "long_video",                     # 新类型,前端识别可加图标
+            "title": title,
+            "params": {
+                "session_id": sid,
+                "segments_total": n,
+                "segments_completed": completed,
+                "segments_failed": failed,
+                "segments_pending": pending,
+            },
+            "module": "video/replace/element",
+            "cost": task.get("batch_cost", 0),
+            "status": v_status,
+            "created_at": mtime,
+            "result": {"video_url": final_url} if final_url else None,
+            # 给前端标识 + 跳转用
+            "_long_video": True,
+            "_session_id": sid,
+            "_route": f"/video/studio/{sid}",
+        })
+    return out
+
+
 @router.get("/list")
 async def list_jobs(current_user: dict = Depends(get_current_user)):
+    """七十五续:My Tasks 列表合并 long-video sessions(虚拟 job 视图)"""
     user_id = str(current_user.get("id") or current_user.get("email", "unknown"))
     mine = [j for j in JOBS.values() if j.get("user_id") == user_id]
+    # 追加 long-video 虚拟 jobs
+    mine.extend(_studio_sessions_as_virtual_jobs(user_id))
     mine.sort(key=lambda x: x.get("created_at", 0), reverse=True)
     return {"jobs": mine[:50]}
 
