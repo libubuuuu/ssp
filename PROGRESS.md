@@ -1,5 +1,41 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 五十九续(e2e 鉴权矩阵守门 +8 — 防回滚无意打开洞)
+
+### 发现
+扩 e2e 时确认前端基础已就位:`@playwright/test` 装好,`playwright.config.ts`
+已配,`e2e/smoke.spec.ts` 9 条 baseline 在跑(打生产 https://ailixiao.com)。
+之前 PROGRESS 标 "前端 e2e 0→1" 其实是"扩 0→**多**"。
+
+### 扩 +8 条鉴权矩阵守门
+直接守住五十+续做的 6 个真生产洞,401/200 断言:
+| Test | 守的 bug |
+|---|---|
+| POST /api/products → 401 | 五十七续 OWASP 越权 |
+| PUT /api/products/{id} → 401 | 五十七续 |
+| DELETE /api/products/{id} → 401 | 五十七续 |
+| GET /api/products → 200 | 反向:别一刀切关掉 public 列表 |
+| GET /api/video/status/{id} → 401 | 五十四续 归属窥探 |
+| POST /api/content/upload → 401 | 五十六续 OOM 守卫 |
+| POST /api/content/enhance → 401 | 五十八续 |
+| POST /api/image/inpaint → 401 | 五十八续 stub 防扫 |
+
+### 18 全过
+打生产环境 read-only(无 side effect)直接 4.6s 跑完。回滚或重 deploy
+任何一条洞被无意打开 → 这个矩阵立刻 fail。
+
+### 用法
+```
+cd frontend
+PLAYWRIGHT_BASE_URL=https://ailixiao.com npm run e2e
+# 或 npm run e2e:prod 同义
+```
+
+### 不本地跑
+playwright 浏览器引擎已装(node_modules),但本地后端 dev mode 跑 form / auth flow
+e2e 留下次专项(需要 backend mock email + sqlite 隔离)。本次只扩 read-only smoke,
+零脏数据写到生产。
+
 ## 2026-04-28 五十八续(content/enhance + image/inpaint 加鉴权 — sweep 收尾)
 
 ### 收尾
