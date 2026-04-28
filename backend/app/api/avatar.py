@@ -70,6 +70,10 @@ async def generate_avatar(req: AvatarGenerateRequest, current_user: dict = Depen
         task_id = result.get("task_id", str(uuid.uuid4()))
         from app.services import task_ownership
         task_ownership.register(task_id, current_user["id"])
+        # 异步任务 → 登记退款备案,失败 polling 时由 refund_tracker 退
+        if result.get("task_id"):
+            from app.services.refund_tracker import register as register_refund
+            register_refund(task_id, current_user["id"], cost)
         create_consumption_record(
             user_id=current_user["id"],
             task_id=task_id,

@@ -48,18 +48,14 @@ async def get_task_status(task_id: str, endpoint: Optional[str] = None, prompt: 
             print(f"保存历史记录失败: {e}")
 
     if result.get("status") == "failed":
-        try:
-            from app.database import get_db
-            from app.services.billing import add_credits
-            with get_db() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT cost FROM generation_history WHERE id = ? AND user_id = ?", (task_id, current_user["id"]))
-                row = cursor.fetchone()
-                if row:
-                    add_credits(current_user["id"], row[0])
-                    result["refunded"] = row[0]
-        except Exception:
-            pass
+        # refund_tracker.try_refund 原子 pop + add_credits,多 tab / HTTP+WS 双轨触发都只退一次
+        from app.services.refund_tracker import try_refund
+        refunded = try_refund(task_id)
+        if refunded > 0:
+            result["refunded"] = refunded
+        # 终态,unregister(WS 路径也会调,幂等)
+        from app.services import task_ownership
+        task_ownership.unregister(task_id)
 
     return {
         "task_id": task_id,
@@ -162,6 +158,14 @@ async def _poll_fal_task(task_id: str, endpoint_hint: Optional[str]) -> None:
             await _broadcast(task_id, payload)
 
             if status in ("completed", "failed"):
+                # 失败要退款 — refund_tracker.try_refund 跟 HTTP /status 端点同源,
+                # pop 原子保证只退一次。put 在 broadcast 之后,推 final 时 status 已含本次退款 hint
+                if status == "failed":
+                    from app.services.refund_tracker import try_refund
+                    refunded = try_refund(task_id)
+                    if refunded > 0:
+                        # 顺手再推一次告诉前端 refunded 数,前端 sidebar 可据此涨回
+                        await _broadcast(task_id, {**payload, "refunded": refunded})
                 conns = active_connections.pop(task_id, set())
                 for ws in list(conns):
                     try:

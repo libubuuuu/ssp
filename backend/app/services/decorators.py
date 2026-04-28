@@ -74,6 +74,12 @@ def require_credits(module: str):
                     description=description,
                 )
 
+                # 异步任务:登记 fal task_id 备退款,polling 检测到 failed 时由 refund_tracker.try_refund 退
+                # 同步任务(result 无 task_id)走原 except 路径,这里 noop
+                if isinstance(result, dict) and result.get("task_id"):
+                    from .refund_tracker import register as register_refund
+                    register_refund(result["task_id"], user_id, cost)
+
                 # 附加 cost 字段
                 if isinstance(result, dict):
                     result["cost"] = cost
