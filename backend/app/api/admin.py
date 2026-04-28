@@ -54,6 +54,65 @@ async def get_model_status(model_name: str, _admin: dict = Depends(require_admin
     return circuit_breaker.get_state(model_name)
 
 
+@router.get("/studio-model-status")
+async def get_studio_model_status(_admin: dict = Depends(require_admin)):
+    """七十六续:长视频工作台模型切换可观测性。
+    返回:
+    - config:三个 env 当前值(空 = 未配置,走默认)
+    - resolved:每个 mode 实际解析出的 endpoint + source
+    - batch_stats:STUDIO_TASKS 内 batch_results 聚合(GC 24h,自然是近 24h 视图)
+    - top_errors:失败原因 top 3
+    """
+    from collections import Counter
+    from ..config import get_settings
+    from ..services.fal_service import FalVideoService
+    from .video_studio import STUDIO_TASKS
+
+    settings = get_settings()
+    config = {
+        "STUDIO_VIDEO_MODEL_EDIT": settings.STUDIO_VIDEO_MODEL_EDIT,
+        "STUDIO_VIDEO_MODEL_EDIT_O3": settings.STUDIO_VIDEO_MODEL_EDIT_O3,
+        "STUDIO_VIDEO_MODEL_OVERRIDE": settings.STUDIO_VIDEO_MODEL_OVERRIDE,
+    }
+
+    # 直接用类实例,_resolve_endpoint 不依赖 fal_key,避免 get_video_service() 在某些
+    # 启动路径(测试 fixture)未 init 时返 None。
+    svc = FalVideoService(fal_key=settings.FAL_KEY or "")
+    resolved = {}
+    for model_key in ("kling/edit", "kling/edit-o3"):
+        endpoint, source = svc._resolve_endpoint(model_key)
+        resolved[model_key] = {"endpoint": endpoint, "source": source}
+
+    total = completed = failed = other = 0
+    err_counter: Counter = Counter()
+    for task in STUDIO_TASKS.values():
+        for r in (task.get("batch_results") or []):
+            total += 1
+            st = r.get("status")
+            if st == "completed":
+                completed += 1
+            elif st == "failed":
+                failed += 1
+                err = (r.get("error") or "unknown")[:120]
+                err_counter[err] += 1
+            else:
+                other += 1
+    top_errors = [{"error": e, "count": c} for e, c in err_counter.most_common(3)]
+
+    return {
+        "config": config,
+        "resolved": resolved,
+        "batch_stats": {
+            "total_segments": total,
+            "completed": completed,
+            "failed": failed,
+            "pending_or_running": other,
+            "success_rate": (round(completed / total, 4) if total else None),
+        },
+        "top_errors": top_errors,
+    }
+
+
 @router.post("/models/{model_name}/reset")
 async def reset_model(model_name: str, request: Request, admin: dict = Depends(require_admin)):
     """重置模型状态（手动恢复）"""

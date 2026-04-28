@@ -59,15 +59,51 @@ class FalImageService:
 
 
 class FalVideoService:
-    MODELS = {
-        "kling/image-to-video": {"endpoint": "fal-ai/kling-video/o3/standard/image-to-video", "label": "图生视频"},
-        "kling/edit": {"endpoint": "fal-ai/kling-video/o1/video-to-video/edit", "label": "元素替换(快速)"},
-        "kling/edit-o3": {"endpoint": "fal-ai/kling-video/o3/pro/video-to-video/edit", "label": "翻拍复刻(高质量+中文口播)"},
-        "kling/reference": {"endpoint": "fal-ai/kling-video/o1/video-to-video/reference", "label": "最强复刻"},
+    # 默认 endpoints — 七十六续后改为 env 可覆盖,但默认值锁死老模型,空 env = 行为不变
+    DEFAULT_ENDPOINTS = {
+        "kling/image-to-video": "fal-ai/kling-video/o3/standard/image-to-video",
+        "kling/edit": "fal-ai/kling-video/o1/video-to-video/edit",
+        "kling/edit-o3": "fal-ai/kling-video/o3/pro/video-to-video/edit",
+        "kling/reference": "fal-ai/kling-video/o1/video-to-video/reference",
     }
+
+    LABELS = {
+        "kling/image-to-video": "图生视频",
+        "kling/edit": "元素替换(快速)",
+        "kling/edit-o3": "翻拍复刻(高质量+中文口播)",
+        "kling/reference": "最强复刻",
+    }
+
+    # 兼容老代码:有些地方可能仍引用 .MODELS,提供属性 fallback
+    @property
+    def MODELS(self) -> Dict[str, Dict[str, str]]:
+        return {k: {"endpoint": self.DEFAULT_ENDPOINTS[k], "label": self.LABELS[k]} for k in self.DEFAULT_ENDPOINTS}
 
     def __init__(self, fal_key: str):
         self.fal_key = fal_key
+
+    def _resolve_endpoint(self, model_key: str) -> tuple:
+        """七十六续:解析 model_key → (endpoint, source)。
+        优先级:OVERRIDE > 单 mode env > DEFAULT_ENDPOINTS。
+        source ∈ {"override", "env_edit", "env_edit_o3", "default"} — 给日志用。
+        """
+        from ..config import get_settings
+        settings = get_settings()
+        # 1. OVERRIDE 最高(灰度/全量切换开关)
+        override = (settings.STUDIO_VIDEO_MODEL_OVERRIDE or "").strip()
+        if override and model_key in ("kling/edit", "kling/edit-o3"):
+            return override, "override"
+        # 2. 单 mode env 覆盖(只覆盖对应 mode,另一个不动)
+        if model_key == "kling/edit":
+            env_val = (settings.STUDIO_VIDEO_MODEL_EDIT or "").strip()
+            if env_val:
+                return env_val, "env_edit"
+        if model_key == "kling/edit-o3":
+            env_val = (settings.STUDIO_VIDEO_MODEL_EDIT_O3 or "").strip()
+            if env_val:
+                return env_val, "env_edit_o3"
+        # 3. 兜底:代码默认值
+        return self.DEFAULT_ENDPOINTS.get(model_key), "default"
 
     async def generate_from_image(self, image_url: str, prompt: str = "", tail_image_url=None) -> dict:
         args = {"image_url": image_url, "prompt": prompt, "generate_audio": True}
@@ -102,23 +138,65 @@ class FalVideoService:
         return await self._generate_video("kling/edit-o3", args)
 
     async def _generate_video(self, model_key: str, arguments: Dict[str, Any]) -> dict:
+        """七十六续:env override 路径 + 失败 3 次自动回退默认 endpoint。
+        - 默认路径熔断 key 仍是 model_key("kling/edit"),不动现有 admin /models/{name}/* 接口
+        - override 路径熔断 key 是 f"override:{endpoint}",独立统计,endpoint 变了重新计
+        - 任何回退动作都打日志
+        """
+        if model_key not in self.DEFAULT_ENDPOINTS:
+            return {"error": f"未知模型：{model_key}"}
+
+        endpoint, source = self._resolve_endpoint(model_key)
         circuit_breaker = get_circuit_breaker()
+        import sys
+
+        # source != default 时:先试 override/env 路径,失败/熔断回退默认
+        if source != "default":
+            cb_key = f"override:{endpoint}" if source == "override" else endpoint
+            if circuit_breaker.is_available(cb_key):
+                try:
+                    print(f"FAL_SUBMIT[{source}] endpoint={endpoint} args={arguments}", file=sys.stderr, flush=True)
+                    handler = await fal_client.submit_async(endpoint, arguments=arguments)
+                    await circuit_breaker.record_success(cb_key)
+                    return self._fmt_submit_result(handler.request_id, endpoint, source)
+                except Exception as e:
+                    triggered = await circuit_breaker.record_failure(cb_key)
+                    print(f"FAL_OVERRIDE_FAIL[{source}] endpoint={endpoint} err={e!r} triggered_circuit={triggered}", file=sys.stderr, flush=True)
+                    # 落到下面 default 路径继续
+            else:
+                print(f"FAL_OVERRIDE_CIRCUIT_OPEN[{source}] endpoint={endpoint} → 自动回退默认 model_key={model_key}", file=sys.stderr, flush=True)
+            # 回退默认:重新解析 endpoint
+            endpoint = self.DEFAULT_ENDPOINTS[model_key]
+            source = "default_after_fallback"
+
+        # 默认路径(或 fallback 后)
         if not circuit_breaker.is_available(model_key):
             return {"error": f"模型 {model_key} 已熔断"}
         try:
-            model_info = self.MODELS.get(model_key)
-            if not model_info:
-                return {"error": f"未知模型：{model_key}"}
-            endpoint = model_info["endpoint"]
-            import sys
-            print(f"FAL_SUBMIT endpoint={endpoint} args={arguments}", file=sys.stderr, flush=True)
+            print(f"FAL_SUBMIT[{source}] endpoint={endpoint} args={arguments}", file=sys.stderr, flush=True)
             handler = await fal_client.submit_async(endpoint, arguments=arguments)
             await circuit_breaker.record_success(model_key)
-            endpoint_tag = "edit-o3" if "o3/pro/video-to-video" in endpoint else "edit" if "edit" in endpoint else "reference" if "reference" in endpoint else "i2v"
-            return {"task_id": handler.request_id, "endpoint_tag": endpoint_tag, "status": "pending", "message": "视频生成任务已提交，预计需要 1 分钟", "model": endpoint}
+            return self._fmt_submit_result(handler.request_id, endpoint, source)
         except Exception as e:
             await circuit_breaker.record_failure(model_key)
             return {"error": str(e)}
+
+    @staticmethod
+    def _fmt_submit_result(request_id: str, endpoint: str, source: str) -> dict:
+        endpoint_tag = (
+            "edit-o3" if "o3/pro/video-to-video" in endpoint else
+            "edit" if "edit" in endpoint else
+            "reference" if "reference" in endpoint else
+            "i2v"
+        )
+        return {
+            "task_id": request_id,
+            "endpoint_tag": endpoint_tag,
+            "status": "pending",
+            "message": "视频生成任务已提交，预计需要 1 分钟",
+            "model": endpoint,
+            "model_source": source,
+        }
 
     async def get_task_status(self, task_id: str, endpoint_hint: Optional[str] = None) -> dict:
         try:

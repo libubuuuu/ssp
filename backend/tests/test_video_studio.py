@@ -21,9 +21,14 @@ import pytest
 
 @pytest.fixture()
 def app_with_studio(app):
-    """在共用 app 上注册 video_studio 路由"""
+    """在共用 app 上注册 video_studio 路由
+
+    用 startswith 精确匹配前缀:之前用 "studio" in path 子串检测,会被
+    /api/admin/studio-model-status 误触当成"已注册",导致 video_studio
+    路由没挂 → 404。
+    """
     from app.api import video_studio as studio_module
-    if not any("studio" in str(r.path) for r in app.routes):
+    if not any(str(r.path).startswith("/api/studio/") for r in app.routes):
         app.include_router(studio_module.router, prefix="/api/studio")
     return app
 

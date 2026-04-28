@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     FAL_IMAGE_MODEL: str = "fal-ai/nano-banana-2"
     FAL_VIDEO_MODEL: str = "fal-ai/kling-video/o3/standard/image-to-video"
 
+    # 七十六续:长视频工作台模型可切换(env 留空 = 用代码默认值,行为不变)
+    # OVERRIDE 非空时,无视 mode 全部用 OVERRIDE(灰度/全量切换的开关);失败 3 次自动回退对应 mode 默认值
+    STUDIO_VIDEO_MODEL_EDIT: str = ""           # 默认 fal-ai/kling-video/o1/video-to-video/edit
+    STUDIO_VIDEO_MODEL_EDIT_O3: str = ""        # 默认 fal-ai/kling-video/o3/pro/video-to-video/edit
+    STUDIO_VIDEO_MODEL_OVERRIDE: str = ""       # 灰度/全量开关,非空时所有 mode 都走它
+
     # 阿里云短信
     ALIYUN_ACCESS_KEY_ID: str = ""
     ALIYUN_ACCESS_KEY_SECRET: str = ""
