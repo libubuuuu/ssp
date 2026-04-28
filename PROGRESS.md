@@ -1,5 +1,35 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 四十六续(exhaustive-deps 6→0 + alt-text 8→0)
+
+### 收尾扫
+四十五续后 lint 残留 79 个问题,挑高 ROI 的两类:
+- **exhaustive-deps(6)** — stale closure 风险藏身处。函数定义在组件内每渲染重生,effect deps 不带它意味着 effect 永远拿首次 render 的 closure。当前没观察到真 stale bug,但 useCallback 包是定式
+- **alt-text(8)** — a11y 真 win,屏幕阅读器无 alt 时读 src URL 给视障用户
+
+### exhaustive-deps 6 → 0
+| 文件 | 修法 |
+|---|---|
+| admin/audit | `load` → useCallback([actionFilter, isEn, router]) |
+| admin/diagnose | `load` → useCallback([isEn, router]) |
+| admin/orders | `loadOrders` → useCallback([filter, lang, router]) |
+| admin/users | `load` → useCallback([isEn, router]) + me state 改 useLocalStorageItem |
+| video/studio | `loadSessions` → useCallback([]) |
+| video/studio/[id] | startPolling 引用早于声明,显式 eslint-disable + 注释说明(1 处) |
+
+### alt-text 8 → 0(给 user-uploaded preview img 加描述性 alt)
+ad-video ×3 / image ×1 / video ×1 / studio/[id] ×2 / JobPanel ×1(用任务 title 作 alt 最精准)
+
+### 数字
+- lint: 79 → **65** problems(-14;session 起 117 → 65,-44%)
+- exhaustive-deps: 6 → **0**
+- alt-text: 8 → **0**
+- warnings: 35 → **21**
+- 剩余: 44 个 explicit-any error(纯类型噪音)+ 21 个 no-img-element warning(需迁 Next/Image,scope 大,留独立 PR)
+
+### 已 deploy 进生产
+(待执行)
+
 ## 2026-04-28 四十五续(死代码扫除 + Sidebar 收口 + image loading 真接)
 
 ### 顺手扫 lint 残留挖出 2 个真 bug
