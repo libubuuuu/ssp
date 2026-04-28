@@ -16,7 +16,7 @@ redis==5.0.1
 
 # HTTP 客户端
 httpx==0.26.0
-aiofiles==23.2.1
+aiofiles==25.1.0
 
 # 环境变量
 python-dotenv==1.2.2
