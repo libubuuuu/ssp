@@ -1,5 +1,53 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 四十一续(自审清理 + sidebar credits 扣费路径接通)
+
+### 自审发现
+跑 `npm run lint` 看到 117 problems(61 errors,56 warnings),里面夹着真 bug:
+- `useTaskPolling.ts`(0 消费者孤儿,8 天前一次性 commit 进来从没人引用)
+- `admin/dashboard/page.tsx` immutability error:`loadData` 在 useEffect 之后声明,deps `[]` 把首次实例锁住
+- `detail/page.tsx` 真显示 bug:JSX text 写了 `\"复制文案\"`,backslash 不会被吃,用户实际看到字面量
+
+### 修(commit 1: 自审清理)
+1. 删 useTaskPolling.ts(-2 refs error -1 any error)
+2. dashboard loadData 用 useCallback 包 + 进 deps
+3. detail 引号 → 中文「」+ a → Link + AuthFetchInterceptor `let response` → const
+
+lint: 61 errors → 54 errors(-7)
+
+### 接 sidebar credits(commit 2: 完成上次 commit 留的 TODO)
+上一个 commit `623ceac` 明确说"扣费路径不在 ad_video deploy 范围内,留独立 commit"。现在补完闭环。
+
+后端所有扣费端点都已返 cost(@require_credits 装饰器 + jobs.py submit + ad_video/generate),前端拿来用即可。
+
+5 文件 / 7 个扣费触点统一:
+| 页面 | 触点 |
+|---|---|
+| /image | jobs/submit |
+| /video | jobs/submit (video_i2v) |
+| /ad-video | analyze + preview + generate + scene/regenerate(共 4) |
+| /avatar | avatar/generate |
+| /voice-clone | voice/clone + voice/tts(共 2) |
+
+模式:`if (typeof data.cost === "number" && data.cost > 0) adjustLocalUserCredits(-data.cost);`
+
+效果:扣费成功 → sidebar 立刻减(无需刷页);跨 tab 也同步(storage 事件 + 自定义 user-updated)
+
+### 决策记录
+- **不修 5 个 set-state-in-effect** — 都是 localStorage 同步初始化,正确写法需 `useSyncExternalStore` + SSR snapshot,改 5 个挂载流程(auth/lang/mobile/job/sidebar)风险大于收益。lint 非阻塞,留下次专项重构
+- **不收紧 48 个 explicit-any** — 纯类型噪音,不是 bug,改了不影响行为,ROI 低
+- **不修 21 个 unused-vars 警告** — 同上,纯清理,留专项
+- **digital-human 不接 adjust** — 当前 503 stub 不扣费;接通时同步加
+
+### 未覆盖(留下次)
+- 5 个 set-state-in-effect 重构(localStorage hydration 用 useSyncExternalStore)
+- 48 个 explicit-any 类型收紧
+- studio (长视频) 扣费接口未明确返 cost,留独立调研后再接 adjust
+
+### 已 deploy 进生产
+- frontend rsync + restart blue/green
+- 实测:充值后 sidebar 立刻刷新 ✓ / 生成图片后 sidebar credits 减少 ✓
+
 ## 2026-04-27 四十续(`/forgot-password` dead code 410 化 — P0 同 pattern)
 
 ### 自审发现
