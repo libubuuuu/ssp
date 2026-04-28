@@ -51,7 +51,7 @@ export default function MultiReferencePage() {
   };
 
   // 拖拽结束
-  const handleDragOver = (e: React.DragEvent, index: number) => {
+  const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
   };
 
@@ -166,7 +166,7 @@ export default function MultiReferencePage() {
                   key={img.id}
                   draggable
                   onDragStart={() => handleDragStart(index)}
-                  onDragOver={(e) => handleDragOver(e, index)}
+                  onDragOver={handleDragOver}
                   onDrop={(e) => handleDrop(e, index)}
                   className={`flex items-center gap-3 p-2 rounded-lg border ${
                     draggedIndex === index

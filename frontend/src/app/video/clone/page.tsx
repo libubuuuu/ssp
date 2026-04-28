@@ -69,7 +69,7 @@ export default function VideoClonePage() {
       const data = await res.json();
       if (data.url) setReferenceVideoUrl(data.url);
       else setError("视频上传失败: " + (data.detail || "未知错误"));
-    } catch (err) {
+    } catch {
       setError("视频上传失败");
     } finally {
       setVideoUploading(false);

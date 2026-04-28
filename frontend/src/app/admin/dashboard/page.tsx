@@ -77,7 +77,7 @@ export default function AdminDashboard() {
       });
       alert(t("alerts.modelReset"));
       loadData();
-    } catch (err) {
+    } catch {
       alert("重置失败");
     }
   };

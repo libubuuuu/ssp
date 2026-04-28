@@ -22,7 +22,7 @@ interface DashboardUser {
 
 export default function Dashboard() {
   const router = useRouter();
-  const { t, lang } = useLang();
+  const { t } = useLang();
   const token = useLocalStorageItem("token");
   const userJson = useLocalStorageItem("user");
   const user: DashboardUser | null = useMemo(() => {

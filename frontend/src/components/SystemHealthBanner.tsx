@@ -7,7 +7,6 @@
  * - 后台 tab 不 poll(visibilitychange)
  */
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -20,7 +19,6 @@ interface WatchdogData {
 }
 
 export default function SystemHealthBanner() {
-  const router = useRouter();
   const [data, setData] = useState<WatchdogData | null>(null);
   const [expanded, setExpanded] = useState(false);
 

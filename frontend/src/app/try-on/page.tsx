@@ -1,16 +1,16 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { OrbitControls, PerspectiveCamera, Environment, Html } from "@react-three/drei";
-import { Suspense, useEffect } from "react";
-import * as THREE from "three";
+import { Canvas, useFrame } from "@react-three/fiber";
+import { OrbitControls, PerspectiveCamera } from "@react-three/drei";
+import { Suspense } from "react";
+import type * as THREE from "three";
 
 // 服装模型组件
-function ClothingModel({ url, position = [0, 0, 0] }: { url: string; position?: [number, number, number] }) {
+function ClothingModel({ position = [0, 0, 0] }: { position?: [number, number, number] }) {
   const groupRef = useRef<THREE.Group>(null);
 
-  useFrame((state) => {
+  useFrame(() => {
     if (groupRef.current) {
       groupRef.current.rotation.y += 0.005;
     }
@@ -28,7 +28,7 @@ function ClothingModel({ url, position = [0, 0, 0] }: { url: string; position?: 
 }
 
 // 人体模型组件
-function BodyModel({ url, position = [0, 0, 0] }: { url: string; position?: [number, number, number] }) {
+function BodyModel({ position = [0, 0, 0] }: { position?: [number, number, number] }) {
   const groupRef = useRef<THREE.Group>(null);
 
   return (
@@ -63,8 +63,8 @@ function BodyModel({ url, position = [0, 0, 0] }: { url: string; position?: [num
   );
 }
 
-// 试穿场景组件
-function TryOnScene({ bodyModelUrl, clothingModelUrl }: { bodyModelUrl: string; clothingModelUrl: string }) {
+// 试穿场景组件 — 当前是 stub,bodyModelUrl/clothingModelUrl 接入真 GLB 加载后再用
+function TryOnScene() {
   return (
     <>
       <PerspectiveCamera makeDefault position={[0, 0.5, 4]} fov={50} />
@@ -73,8 +73,8 @@ function TryOnScene({ bodyModelUrl, clothingModelUrl }: { bodyModelUrl: string; 
       <directionalLight position={[-5, 3, -5]} intensity={0.5} />
 
       <Suspense fallback={null}>
-        <BodyModel url={bodyModelUrl} />
-        <ClothingModel url={clothingModelUrl} />
+        <BodyModel />
+        <ClothingModel />
       </Suspense>
 
       <OrbitControls
@@ -135,7 +135,7 @@ const sampleClothingItems: ClothingItem[] = [
 ];
 
 export default function TryOnPage() {
-  const [bodyModel, setBodyModel] = useState<string | null>(null);
+  const [bodyModel] = useState<string | null>(null);
   const [selectedClothing, setSelectedClothing] = useState<ClothingItem | null>(null);
   const [activeCategory, setActiveCategory] = useState<string>("全部");
 
@@ -161,7 +161,7 @@ export default function TryOnPage() {
           <div className="w-full h-[600px] rounded-xl border border-zinc-800 bg-zinc-900/50 overflow-hidden">
             {bodyModel || selectedClothing ? (
               <Canvas shadows>
-                <TryOnScene bodyModelUrl={bodyModel || ""} clothingModelUrl={selectedClothing?.model3DUrl || ""} />
+                <TryOnScene />
               </Canvas>
             ) : (
               <div className="w-full h-full flex items-center justify-center">

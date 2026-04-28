@@ -20,8 +20,6 @@ export default function VoiceClonePage() {
   const [text, setText] = useState("");
   const [selectedVoice, setSelectedVoice] = useState("default");
   const [voicePresets, setVoicePresets] = useState<VoicePreset[]>([]);
-  const [resultAudioUrl, setResultAudioUrl] = useState<string | null>(null);
-  const [clonedVoiceId, setClonedVoiceId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [gallery, setGallery] = useState<any[]>([]);
@@ -47,7 +45,7 @@ export default function VoiceClonePage() {
 
   const handleClone = async () => {
     if (!referenceAudio || !text) { setError("请上传参考音频并输入文案"); return; }
-    setError(""); setLoading(true); setResultAudioUrl(null);
+    setError(""); setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/avatar/voice/clone`, {
         method: "POST",
@@ -57,8 +55,6 @@ export default function VoiceClonePage() {
       const data = await res.json();
       if (data.voice_id) {
         if (typeof data.cost === "number" && data.cost > 0) adjustLocalUserCredits(-data.cost);
-        setClonedVoiceId(data.voice_id);
-        setResultAudioUrl(data.audio_url);
         saveGallery([{ url: data.audio_url, label: text.slice(0, 30), mode: "克隆", time: Date.now() }, ...gallery]);
       } else { setError(data.detail || "克隆失败"); }
     } catch (e: any) { setError(e.message || t("errors.networkError")); }
@@ -67,7 +63,7 @@ export default function VoiceClonePage() {
 
   const handleTTS = async () => {
     if (!text) { setError("请输入文案"); return; }
-    setError(""); setLoading(true); setResultAudioUrl(null);
+    setError(""); setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/avatar/voice/tts`, {
         method: "POST",
@@ -77,7 +73,6 @@ export default function VoiceClonePage() {
       const data = await res.json();
       if (data.audio_url) {
         if (typeof data.cost === "number" && data.cost > 0) adjustLocalUserCredits(-data.cost);
-        setResultAudioUrl(data.audio_url);
         saveGallery([{ url: data.audio_url, label: text.slice(0, 30), mode: "TTS", time: Date.now() }, ...gallery]);
       } else { setError(data.detail || t("errors.generationFailed")); }
     } catch (e: any) { setError(e.message || t("errors.networkError")); }

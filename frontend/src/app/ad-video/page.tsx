@@ -1,5 +1,4 @@
 "use client";
-import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
@@ -40,8 +39,6 @@ type Step = 1 | 2 | 3 | 4;
 // ============== Page ==============
 
 export default function AdVideoPage() {
-  const { t } = useLang();
-
   const [step, setStep] = useState<Step>(1);
 
   // Step 1: 上传
@@ -60,7 +57,6 @@ export default function AdVideoPage() {
   const [previewImageUrl, setPreviewImageUrl] = useState("");
 
   // Step 4: 视频
-  const [jobId, setJobId] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
   const [jobProgress, setJobProgress] = useState("");
 
@@ -210,7 +206,6 @@ export default function AdVideoPage() {
       if (!r.ok) throw new Error(d.detail || "提交失败");
       if (typeof d.cost === "number" && d.cost > 0) adjustLocalUserCredits(-d.cost);
 
-      setJobId(d.job_id);
       setStep(4);
       startPolling(d.job_id);
     } catch (e: any) {
@@ -307,7 +302,6 @@ export default function AdVideoPage() {
     setProductImageUrl("");
     setBgImageUrl("");
     setPreviewImageUrl("");
-    setJobId("");
     setVideoUrl("");
     setJobProgress("");
     setErr("");

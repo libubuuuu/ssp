@@ -1,29 +1,26 @@
 "use client";
 import LanguageSwitcher from "@/lib/i18n/LanguageSwitcher";
 import { useLang } from "@/lib/i18n/LanguageContext";
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import { useRouter } from "next/navigation";
+import { useLocalStorageItem } from "@/lib/hooks/useLocalStorageItem";
+
+interface SidebarUser {
+  name?: string;
+  email?: string;
+  credits?: number;
+}
 
 export default function Sidebar() {
   const router = useRouter();
-  const [user, setUser] = useState<any>(null);
   const { t } = useLang();
-
-  useEffect(() => {
-    const sync = () => {
-      const u = localStorage.getItem("user");
-      if (u) try { setUser(JSON.parse(u)); } catch {}
-    };
-    sync();
-    // 监听 user-updated(同 tab,自定义事件)+ storage(跨 tab,浏览器原生)
-    // 任何 updateLocalUser / adjustLocalUserCredits 调用都会触发,sidebar 自动刷新
-    window.addEventListener("user-updated", sync);
-    window.addEventListener("storage", sync);
-    return () => {
-      window.removeEventListener("user-updated", sync);
-      window.removeEventListener("storage", sync);
-    };
-  }, []);
+  // useSyncExternalStore 订阅 localStorage["user"] — 自动跨 tab + 同 tab 同步,
+  // 不再 useEffect + 手挂 listener(原 623ceac 的修法,这一版统一收口)
+  const userJson = useLocalStorageItem("user");
+  const user: SidebarUser | null = useMemo(() => {
+    if (!userJson) return null;
+    try { return JSON.parse(userJson) as SidebarUser; } catch { return null; }
+  }, [userJson]);
 
   if (!user) return null;
 

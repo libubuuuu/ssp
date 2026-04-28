@@ -69,7 +69,7 @@ export default function ImagePage(){
   };
   const generate=async()=>{
     if(!prompt.trim()){setError(t("errors.inputPrompt"));return;}
-    setError("");
+    setError("");setLoading(true);
     try{
       const token=localStorage.getItem("token")||"";
       // 投递到全局任务队列
@@ -95,6 +95,7 @@ export default function ImagePage(){
       setTimeout(()=>setMsg(""),3000);
       pollJob(data.job_id,prompt);
     }catch(e:any){setError(e.message);}
+    finally{setLoading(false);}
   };
 
   const pollJob=async(jobId:string,jobPrompt:string)=>{

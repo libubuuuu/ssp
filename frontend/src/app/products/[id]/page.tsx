@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useParams } from "next/navigation";
 import Link from "next/link";
 
 // 模拟产品数据
@@ -23,7 +22,6 @@ const productDetails = {
 };
 
 export default function ProductDetailPage() {
-  const params = useParams();
   const [selectedSize, setSelectedSize] = useState<string>("M");
   const [selectedColor, setSelectedColor] = useState<string>("白色");
   const [quantity, setQuantity] = useState<number>(1);

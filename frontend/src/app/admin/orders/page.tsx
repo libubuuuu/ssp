@@ -18,7 +18,7 @@ interface Order {
 }
 
 export default function AdminOrdersPage() {
-  const { t, lang } = useLang();
+  const { lang } = useLang();
   const router = useRouter();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);

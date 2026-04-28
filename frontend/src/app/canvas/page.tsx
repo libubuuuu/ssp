@@ -4,7 +4,6 @@ import { useState, useCallback, Suspense } from "react";
 import { Canvas, useLoader } from "@react-three/fiber";
 import { OrbitControls, Stage, PerspectiveCamera } from "@react-three/drei";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import * as THREE from "three";
 
 const RPM_API = process.env.NEXT_PUBLIC_READY_PLAYER_ME_API || "https://api.readyplayer.me";
 
