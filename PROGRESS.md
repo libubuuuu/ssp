@@ -1,5 +1,46 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 四十三续(studio /batch-status async 退款 — 收漏第二刀)
+
+### 上轮(四十二续)留下的 TODO
+> 只 cover fal submit 失败的退款。async 任务后续失败的返还(fal 接了任务但跑挂)留下次。
+
+四十三续就是这个跟进。
+
+### 修
+**后端 `app/api/video_studio.py`**:
+- `batch_results` 每段加 `refunded` 标记
+  - submit 失败的段:`refunded: True`(/batch-generate 时已 add_credits)
+  - submit 成功的段:`refunded: False`
+- `/batch-status` 检测段 status 翻 `failed` 时:
+  - `refunded == True` → 跳过(防双退)
+  - `refunded == False` → `add_credits(seg["cost"])` + 置 True
+- 返 `refunded_this_call` 给前端
+
+**前端 `studio/[id]/page.tsx`** poll 里:
+- `if (data.refunded_this_call > 0) adjustLocalUserCredits(+data.refunded_this_call)`
+- 用户看 sidebar credits 涨回去,知道退款已到账
+
+### 幂等性(关键)
+- `refunded` 标记保证同一段只退一次,无论 poll 多少轮 / 进程是否重启
+- `batch_results` 持久化(`_save_tasks` 写 sessions.json)
+
+### 测试 +3(8 → 11)
+| 用例 | 验证 |
+|---|---|
+| async_failure_refunds | poll 检测到 1 段 async failed → 退 15 + sidebar 涨 |
+| no_double_refund_on_repoll | 重复 poll 同失败段,第二次 refunded_this_call=0 |
+| submit_failed_segments_not_double_refunded | submit 已退的段,batch-status 不重复退 |
+
+总测试 295 → **298**
+
+### 不在 scope(留下次)
+- /merge 阶段的失败处理 — merge 是 ffmpeg + fal 上传,不涉及计费,但 merge 失败用户 retry 时要确保不重复扣费(待审视)
+- circuit breaker 触发的批量失败告警 — 监控层的事,不在 studio 内
+
+### 已 deploy 进生产
+(待执行)
+
 ## 2026-04-28 四十二续(studio /batch-generate 收漏 — 真扣费上线)
 
 ### 自审发现
