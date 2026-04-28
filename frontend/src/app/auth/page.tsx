@@ -23,6 +23,8 @@ export default function AuthPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
+  // 六十六续:注册必须勾选同意条款(法务合规要求)
+  const [agreed, setAgreed] = useState(false);
 
   useEffect(() => {
     if (countdown <= 0) return;
@@ -65,6 +67,13 @@ export default function AuthPage() {
   };
 
   const handleSubmit = async () => {
+    // 注册必须勾选同意条款(六十六续 法务合规)
+    if (mode === "register" && !agreed) {
+      setError(lang === "en"
+        ? "Please read and agree to Terms of Service and Privacy Policy"
+        : "请阅读并同意《用户协议》和《隐私政策》");
+      return;
+    }
     setError(""); setLoading(true);
     try {
       if (mode === "email_code") {
@@ -234,6 +243,25 @@ export default function AuthPage() {
         )}
 
         {error && <div style={{color:"#ff4444",background:"#2a1a1a",padding:"0.75rem",borderRadius:"8px",marginBottom:"1rem",border:"1px solid #ff4444"}}>{error}</div>}
+
+        {mode === "register" && (
+          <div style={{marginBottom:"1rem",fontSize:"0.82rem",color:"#aaa",lineHeight:"1.5"}}>
+            <label style={{display:"flex",alignItems:"flex-start",gap:"0.5rem",cursor:"pointer"}}>
+              <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)}
+                style={{marginTop:"0.2rem",accentColor:"#f59e0b"}} />
+              <span>
+                {lang === "en" ? "I have read and agree to the " : "我已阅读并同意"}
+                <a href="/terms" target="_blank" rel="noopener noreferrer" style={{color:"#f59e0b",textDecoration:"underline"}}>
+                  {lang === "en" ? "Terms of Service" : "《用户协议》"}
+                </a>
+                {lang === "en" ? " and " : "和"}
+                <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{color:"#f59e0b",textDecoration:"underline"}}>
+                  {lang === "en" ? "Privacy Policy" : "《隐私政策》"}
+                </a>
+              </span>
+            </label>
+          </div>
+        )}
 
         <button onClick={handleSubmit} disabled={loading}
           style={{width:"100%",padding:"0.75rem",background:"#f59e0b",border:"none",borderRadius:"8px",color:"#000",fontWeight:"bold",cursor:"pointer",fontSize:"1rem"}}>

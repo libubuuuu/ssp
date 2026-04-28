@@ -147,3 +147,23 @@ test.describe("五十+续 鉴权矩阵守门(本轮修过的真生产 bug)", () 
     expect(response.status()).toBe(401);
   });
 });
+
+test.describe("六十六续 法务文档页", () => {
+  test("/privacy 200 + 隐私政策标题渲染", async ({ page }) => {
+    const response = await page.goto("/privacy");
+    expect(response?.status()).toBe(200);
+    await expect(page.locator("h1").first()).toContainText("隐私政策");
+  });
+
+  test("/terms 200 + 用户协议标题渲染", async ({ page }) => {
+    const response = await page.goto("/terms");
+    expect(response?.status()).toBe(200);
+    await expect(page.locator("h1").first()).toContainText("用户协议");
+  });
+
+  test("/cookie 200 + Cookie 政策标题渲染", async ({ page }) => {
+    const response = await page.goto("/cookie");
+    expect(response?.status()).toBe(200);
+    await expect(page.locator("h1").first()).toContainText("Cookie");
+  });
+});

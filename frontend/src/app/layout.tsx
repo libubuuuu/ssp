@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import JobPanel from "@/components/JobPanel";
 import AuthFetchInterceptor from "@/components/AuthFetchInterceptor";
+import CookieConsent from "@/components/CookieConsent";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
 
 const geistSans = Geist({
@@ -32,6 +33,7 @@ export default function RootLayout({
           <AuthFetchInterceptor />
           {children}
           <JobPanel />
+          <CookieConsent />
         </LanguageProvider>
       </body>
     </html>
