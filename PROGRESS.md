@@ -1,5 +1,44 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 四十九续(管理员强制 2FA — scaffolding 就位,默认关)
+
+### 为什么
+- 管理员密码失守 = 全平台沦陷(改余额 / 踢人 / 看 audit / 全设备登出)
+- 行业标准:GitHub / AWS root / Google Workspace 都强制管理员 2FA
+- 现状:基础设施已有(`/2fa/setup`/`enable`),admin 可选不启 = 等于没用
+- 合规要求:Phase 4 ICP 网安审查通常要管理后台必须 2FA,提前备好
+
+### 设计(与 Sentry/CF/Redis 同 scaffolding pattern)
+- 代码就位,环境开关 `ADMIN_2FA_REQUIRED` **默认 false**(用户 enroll 后再翻开)
+- 顺手简化:17 处 inline `if role != admin` 收口到 `_check_admin_role`
+
+### 后端
+- `services/auth.py:get_user_by_id` 加 `totp_enabled` 字段
+- `api/admin.py`:`_check_admin_role` 校验 role + (可选)2FA;`require_admin` Dep 走它;17 处 inline 替换
+- `api/auth.py`:login 响应 user dict 加 totp_enabled(前端可读)
+- 强制开时:无 2FA admin 拿 **403 + 结构化 detail** `{code, message, redirect}`
+
+### 前端 admin/layout.tsx
+- 顺手切 useLocalStorageItem + useIsMobile(消残存 set-state-in-effect)
+- 加**琥珀色 2FA 引导横幅**:admin && !totp_enabled 时显示,"去启用 →" 直达 `/profile/2fa`
+- 文案告知"未来 env 启用时会硬墙"
+
+### 测试 +4(307 → 311)
+| 用例 | 验证 |
+|---|---|
+| enforce_off_admin_without_2fa_passes | 默认关,无 2FA admin 通行 |
+| enforce_on_admin_without_2fa_blocked | 开关,403 + 结构化 detail |
+| enforce_on_admin_with_2fa_passes | 开关,已 enroll 通行 |
+| doesnt_affect_non_admin | 普通用户仍普通 403(detail 是 str 不是 2FA dict) |
+
+### 文档 `docs/ADMIN-2FA.md`
+- 启用 SOP(enroll → 改 env → 重启 → 验证)
+- **紧急救援**:锁外时 env 临时关 / SQL 直清 totp_secret
+- 不要做的事:不存仓库 / 不强制全用户 / TOTP secret 必入密码管理器
+
+### 已 deploy 进生产
+(待执行 — 默认关,不影响现有 admin 访问)
+
 ## 2026-04-28 四十八续(/upload 端点加 size + MIME 守卫 — 防 OOM 攻击)
 
 ### 自审挖出的真生产风险
