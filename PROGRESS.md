@@ -1,5 +1,29 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 六十二续(catch any 19→0 + errMsg helper)
+
+Phase 1 lint 残余 cleanup,真 TS 类型加固(不是绕规则):
+- tsconfig strict 开了 useUnknownInCatchVariables,catch 默认 unknown
+- 之前 19 处用 `catch (e: any)` 绕过失去类型检查
+- 抽 `src/lib/utils/errors.ts::errMsg(e, fallback)` 统一 narrow
+
+数字:lint problems 66 → **47**(-19),errors 45 → 26,build 0 error,
+不需 deploy(纯 type 改动,运行时零变化)。
+
+## 2026-04-28 六十一续(SQLite→Postgres 数据迁移脚本 ready — Phase 2 切瓶颈解开)
+
+47 续 alembic 脚手架就位后,Phase 2 切 Postgres 关键工具就绪:
+`backend/scripts/sqlite_to_postgres.py` + 测试 +6(367 → 373)。
+
+设计:
+- SQLAlchemy Core 跨方言通用,反射目标库 schema(无需手维护字段映射)
+- 表迁移按 FK 依赖排好(users → merchants → products → ...)
+- 每表 row count 校验 + 单表事务隔离(失败仅 rollback 该表)
+- --dry-run 模式 + --tables 单表重迁
+
+Phase 2 进度从 10% → ~50%(alembic + 数据迁移脚本就位,
+只剩 SQLAlchemy 切代码体力活)。
+
 ## 2026-04-28 六十续(e2e 接进 GitHub Actions CI — CF 挡 IP 已知问题)
 
 ### 加 frontend-e2e job
