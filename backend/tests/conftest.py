@@ -107,7 +107,7 @@ def reset_database(app):
                       "merchants", "products", "orders", "order_items",
                       "body_models", "body_measurements", "model_health",
                       "audit_log", "register_ip_log", "register_ip_failure_log",
-                      "pending_refunds"):
+                      "pending_refunds", "oral_sessions"):
             c.execute(f"DELETE FROM {table}")
         conn.commit()
     yield

@@ -287,6 +287,46 @@ def init_db():
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_pending_refunds_registered_at ON pending_refunds(registered_at)")
 
+        # 七十七续:口播带货工作台 oral_sessions 表(MVP 经济档先行)
+        # 详见 docs/ORAL-BROADCAST-PLAN.md §4.1。SQLite hand-written,Phase 2 切 PG 时统一走 alembic。
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS oral_sessions (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            tier TEXT NOT NULL,
+            status TEXT NOT NULL,
+            original_video_path TEXT NOT NULL,
+            duration_seconds REAL NOT NULL,
+            selected_models TEXT,
+            selected_products TEXT,
+            mask_image_path TEXT,
+            extracted_audio_path TEXT,
+            voice_ref_audio_path TEXT,
+            asr_transcript TEXT,
+            asr_word_timestamps TEXT,
+            edited_transcript TEXT,
+            voice_provider TEXT,
+            voice_id TEXT,
+            voice_id_created_at TEXT,
+            new_audio_url TEXT,
+            swap_fal_request_id TEXT,
+            swapped_video_url TEXT,
+            lipsync_fal_request_id TEXT,
+            final_video_url TEXT,
+            final_video_archived TEXT,
+            credits_charged INTEGER NOT NULL,
+            credits_refunded INTEGER NOT NULL DEFAULT 0,
+            error_step TEXT,
+            error_message TEXT,
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            completed_at TEXT
+        )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_oral_user ON oral_sessions(user_id, created_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_oral_status ON oral_sessions(status)")
+
         # 创建索引优化查询性能
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
