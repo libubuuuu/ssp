@@ -3,7 +3,7 @@ import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
-import { clearAuthSession } from "@/lib/userState";
+import { clearAuthSession, updateLocalUser } from "@/lib/userState";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -43,7 +43,8 @@ export default function ProfilePage(){
       if(!res.ok)throw new Error(data.detail||t("errors.saveFailed"));
       const newUser={...user,name};
       setUser(newUser);
-      localStorage.setItem("user",JSON.stringify(newUser));
+      // dispatch user-updated → sidebar/admin layout 立刻刷新昵称
+      updateLocalUser({name});
       setNameMsg("✓ 昵称已更新");
       setTimeout(()=>setNameMsg(""),2000);
     }catch(e:any){setNameErr(e.message);}

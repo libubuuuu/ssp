@@ -46,7 +46,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     return <div style={{ padding: "3rem", textAlign: "center", color: "#999" }}>Loading...</div>;
   }
 
-  const needs2FA = user.totp_enabled === false;
+  // 既覆盖 totp_enabled === false,也覆盖 undefined(老 session 缓存里没这字段)
+  // 老 session 显示横幅 = 提示 enroll,正确;新登录已 enroll → totp_enabled=true → 隐藏
+  const needs2FA = !user.totp_enabled;
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "#f5f3ed" }}>
