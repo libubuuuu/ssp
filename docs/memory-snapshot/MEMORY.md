@@ -2,3 +2,4 @@
 - [SSP 编码约定与禁忌](feedback_ssp_conventions.md) — `??` 不用 `||`、i18n、不改 main、不提交敏感文件
 - [SSP 生产 bug 立即修复约定](feedback_ssp_bug_fix.md) — 用户报 bug 时立刻动手改代码,不只是诊断/指引
 - [SSP 前端改动必须独立复核](feedback_ssp_frontend_verify.md) — Edit 工具返"成功"不算数,必须 grep 看真值 + npm run build 才能 commit/deploy
+- [SSP 用户时间 > 算力](feedback_ssp_user_time.md) — 别列选项菜单让用户挑,自己想清楚直接干
