@@ -36,6 +36,32 @@ STUDIO_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_TMP_DIR = STUDIO_DIR / "_uploading"
 UPLOAD_TMP_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def clean_stale_uploads(hours: int = 24) -> dict:
+    """GC _uploading/ 下超 N 小时没动的目录(用户上传一半放弃 / 网络断,垃圾累积)
+
+    判定:目录 mtime 超期(目录的 mtime 在文件添加 / 删除时更新,正在上传的目录不会触发)
+    返回 {scanned, deleted, freed_bytes}
+    """
+    import time
+    cutoff = time.time() - hours * 3600
+    scanned = deleted = freed = 0
+    if not UPLOAD_TMP_DIR.exists():
+        return {"scanned": 0, "deleted": 0, "freed_bytes": 0}
+    for d in UPLOAD_TMP_DIR.iterdir():
+        if not d.is_dir():
+            continue
+        scanned += 1
+        try:
+            if d.stat().st_mtime < cutoff:
+                size = sum(p.stat().st_size for p in d.iterdir() if p.is_file())
+                shutil.rmtree(d, ignore_errors=True)
+                deleted += 1
+                freed += size
+        except OSError:
+            pass
+    return {"scanned": scanned, "deleted": deleted, "freed_bytes": freed}
+
 # 持久化存储
 SESSIONS_FILE = STUDIO_DIR / "sessions.json"
 
@@ -157,6 +183,15 @@ async def upload_chunk(
 
     user_id = str(current_user.get("id", "unknown"))
     upload_dir = UPLOAD_TMP_DIR / f"{user_id}_{upload_id}"
+
+    # 同 user 并行 upload_id 数限 5(防发起 1000 个 upload_id 各塞 5MB = 5GB 攻击)
+    # 已存在的 upload_id 不算新建(continuation 续传 OK)
+    if not upload_dir.exists():
+        existing = [p for p in UPLOAD_TMP_DIR.glob(f"{user_id}_*") if p.is_dir()]
+        MAX_PARALLEL = 5
+        if len(existing) >= MAX_PARALLEL:
+            raise HTTPException(429, f"并行上传任务过多,请等已有上传完成({len(existing)}/{MAX_PARALLEL})")
+
     upload_dir.mkdir(parents=True, exist_ok=True)
 
     # 流式写入这一片;单 chunk 限 10MB(前端约定切 5MB,buffer 一倍防边界)
@@ -181,6 +216,14 @@ async def upload_chunk(
     except Exception:
         chunk_path.unlink(missing_ok=True)
         raise
+
+    # 累计 size 限 2GB(与 /upload 对齐;5MB × 10000 chunks 的隐式 50GB 太宽)
+    # 写完本片后 sum 整个 upload_dir,超限清整个上传 + 拒绝
+    MAX_UPLOAD_TOTAL = 2 * 1024 * 1024 * 1024
+    total_so_far = sum(p.stat().st_size for p in upload_dir.iterdir() if p.is_file())
+    if total_so_far > MAX_UPLOAD_TOTAL:
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        raise HTTPException(413, f"上传累计超过 {MAX_UPLOAD_TOTAL // (1024 * 1024 * 1024)}GB")
 
     # 不是最后一片:回执
     if chunk_idx + 1 < total_chunks:

@@ -14,6 +14,7 @@
 - async 任务后续失败的返还(那是 batch-status / merge 阶段的事,留下次)
 - /upload /split /merge 路径(本次只关心计费收口)
 """
+import os
 from unittest.mock import patch, AsyncMock
 import pytest
 
@@ -416,3 +417,97 @@ def test_upload_chunk_at_size_limit_ok(client_st, register, auth_header):
     )
     assert r.status_code == 200, r.text
     assert r.json()["received_bytes"] == 10 * 1024 * 1024
+
+
+def test_upload_chunk_parallel_uploads_429(client_st, register, auth_header):
+    """同 user 并行 upload_id > 5 → 429"""
+    token, user = register(client_st, "chunk-parallel@example.com")
+    user_id = str(user["id"])
+
+    # 手动塞 5 个 upload_dir(模拟已发起 5 个 upload),不用真上传
+    from app.api.video_studio import UPLOAD_TMP_DIR
+    for i in range(5):
+        (UPLOAD_TMP_DIR / f"{user_id}_{i:016x}").mkdir(parents=True, exist_ok=True)
+
+    # 第 6 个 upload_id 应被拒
+    r = client_st.post(
+        "/api/studio/upload-chunk",
+        headers=auth_header(token),
+        files={"chunk": ("part.bin", b"x" * 1024, "application/octet-stream")},
+        data={
+            "upload_id": "ffffffffffffffff",
+            "chunk_idx": "0",
+            "total_chunks": "5",
+            "filename": "x.mp4",
+        },
+    )
+    assert r.status_code == 429
+    assert "并行" in r.json()["detail"]
+
+    # 清理:手动收尾防污染下一个测试
+    import shutil
+    for i in range(5):
+        shutil.rmtree(UPLOAD_TMP_DIR / f"{user_id}_{i:016x}", ignore_errors=True)
+
+
+def test_upload_chunk_continuation_doesnt_count_as_new(client_st, register, auth_header):
+    """已存在的 upload_dir 续传不算新建,即使已有 5 个仍能续"""
+    token, user = register(client_st, "chunk-continue@example.com")
+    user_id = str(user["id"])
+
+    from app.api.video_studio import UPLOAD_TMP_DIR
+    same_id = "abcdef0123456789"
+    target = UPLOAD_TMP_DIR / f"{user_id}_{same_id}"
+    target.mkdir(parents=True, exist_ok=True)
+    # 再塞 4 个 dummy upload(凑满 5)
+    for i in range(4):
+        (UPLOAD_TMP_DIR / f"{user_id}_{i:016x}").mkdir(parents=True, exist_ok=True)
+
+    # 续传同 upload_id 应通过(不算新建)
+    r = client_st.post(
+        "/api/studio/upload-chunk",
+        headers=auth_header(token),
+        files={"chunk": ("part.bin", b"x" * 1024, "application/octet-stream")},
+        data={
+            "upload_id": same_id,
+            "chunk_idx": "1",
+            "total_chunks": "5",
+            "filename": "x.mp4",
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    # 清理
+    import shutil
+    shutil.rmtree(target, ignore_errors=True)
+    for i in range(4):
+        shutil.rmtree(UPLOAD_TMP_DIR / f"{user_id}_{i:016x}", ignore_errors=True)
+
+
+def test_clean_stale_uploads_removes_old_dirs(tmp_path, monkeypatch):
+    """GC: 超 24h 的老目录被删,新目录保留"""
+    import time
+    from app.api import video_studio as studio_mod
+
+    # 用临时 UPLOAD_TMP_DIR 隔离测试
+    fake_tmp = tmp_path / "_uploading"
+    fake_tmp.mkdir()
+    monkeypatch.setattr(studio_mod, "UPLOAD_TMP_DIR", fake_tmp)
+
+    old = fake_tmp / "1_oldupload"
+    old.mkdir()
+    (old / "000000").write_bytes(b"x" * 1024)
+    # 设 mtime 到 25h 前
+    old_ts = time.time() - 25 * 3600
+    os.utime(old, (old_ts, old_ts))
+
+    fresh = fake_tmp / "2_freshupload"
+    fresh.mkdir()
+    (fresh / "000000").write_bytes(b"x" * 512)
+
+    res = studio_mod.clean_stale_uploads(hours=24)
+    assert res["scanned"] == 2
+    assert res["deleted"] == 1
+    assert res["freed_bytes"] >= 1024
+    assert not old.exists()
+    assert fresh.exists()

@@ -1,0 +1,14 @@
+# studio _uploading/ GC cron
+#
+# 清 studio_workspace/_uploading/ 下超 24h 没动的目录(用户上传一半弃 / 网断)
+#
+# 安装:
+#   crontab -l > /tmp/cron.bak 2>/dev/null || true
+#   cat /tmp/cron.bak /opt/ssp/deploy/studio-uploading-gc.cron.example | sort -u | crontab -
+#   crontab -l                                       # 验证
+#   tail -f /var/log/ssp-studio-uploading-gc.log     # 看输出
+#
+# 时间:每 6 小时一次(避开 03:00 备份 / 04:00 uploads-gc)
+# 默认保留 24h;改环境变量 SSP_UPLOADING_RETENTION_HOURS 调
+
+30 5,11,17,23 * * * /usr/bin/bash /opt/ssp/deploy/studio-uploading-gc.sh
