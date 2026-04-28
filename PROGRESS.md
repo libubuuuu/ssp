@@ -1,5 +1,29 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 五十五续(jobs.py / payment.py 测试覆盖率补漏 +11)
+
+Phase 1 明确 TODO:覆盖率到 70%。挑了既存测试文件里漏掉的明显分支补。
+
+**jobs.py +7:**
+- get_job owner happy(含 type/cost/status/title 字段断言)+ 不存在 404
+- delete_job owner happy(删后 GET 404 验证)+ 不存在 404
+- list_jobs 空数组 + 按 created_at 倒序
+- submit cost==0 路径(monkeypatch 免费 type)
+
+**payment.py +4:**
+- admin_list_orders status=all(paid + pending 都返)
+- admin_list_orders 空数组
+- admin_list_orders LEFT JOIN user_email + user_name 字段断言
+- confirm_order 写 audit_log(合规重点端到端验证)
+
+**测试统计:** 335 → **346**(+11)
+
+### 不 deploy
+纯测试改动,业务代码零改动。commit + push + main fast-forward 收尾。
+
+### Git 4-ref 对齐
+HEAD = origin/feat = main = origin/main = `d5543b3`
+
 ## 2026-04-28 五十四续(/api/video/status 加鉴权 — 收匿名归属窥探洞)
 
 ### 真隐私洞
