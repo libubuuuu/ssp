@@ -242,3 +242,131 @@ def test_batch_generate_writes_generation_history(client_st, register, auth_head
     assert len(rows) == 1
     assert rows[0][0] == "video/replace/element"
     assert rows[0][1] == 30  # 2 × 15
+
+
+# ==================== /batch-status async 退款 ====================
+
+
+def _seed_after_submit(client_st, register_fn, auth_header_fn, set_credits_fn, email: str, n: int = 3):
+    """登录 + 充值 + submit 一次,留下 batch_results,后续测试拿来跑 batch-status"""
+    token, user = register_fn(client_st, email)
+    set_credits_fn(user["id"], 1000)
+    sid = _seed_session(user["id"], n)
+    fake_ok = {"task_id": "fal-x", "endpoint_tag": "edit-o3", "status": "pending"}
+    with patch("app.api.video_studio.get_video_service") as mock_svc_factory:
+        mock_svc = mock_svc_factory.return_value
+        mock_svc._generate_video = AsyncMock(return_value=fake_ok)
+        r = client_st.post(
+            "/api/studio/batch-generate",
+            json=_payload(sid),
+            headers=auth_header_fn(token),
+        )
+    assert r.status_code == 200
+    return token, user, sid
+
+
+def test_batch_status_async_failure_refunds(client_st, register, auth_header, set_credits):
+    """fal 接了 3 段,async 阶段 1 段挂掉 → /batch-status 应自动退 15"""
+    token, user, sid = _seed_after_submit(client_st, register, auth_header, set_credits, "studio-async-a@example.com", 3)
+
+    me_after_submit = client_st.get("/api/auth/me", headers=auth_header(token)).json()
+    assert me_after_submit["credits"] == 1000 - 45  # 3 × 15 已扣
+
+    # 模拟 poll:第一段 completed,第二段 failed (async 挂),第三段 still processing
+    call_count = {"n": 0}
+    async def fake_status(task_id, endpoint_hint=None):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return {"status": "completed", "video_url": "https://fal.media/done.mp4"}
+        if call_count["n"] == 2:
+            return {"status": "failed", "error": "fal internal"}
+        return {"status": "processing"}
+
+    with patch("app.api.video_studio.get_video_service") as mock_svc_factory:
+        mock_svc = mock_svc_factory.return_value
+        mock_svc.get_task_status = AsyncMock(side_effect=fake_status)
+        r = client_st.get(f"/api/studio/batch-status/{sid}", headers=auth_header(token))
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["completed"] == 1
+    assert body["failed"] == 1
+    assert body["processing"] == 1
+    assert body["refunded_this_call"] == 15
+
+    me = client_st.get("/api/auth/me", headers=auth_header(token)).json()
+    assert me["credits"] == 1000 - 45 + 15  # 退一段
+
+
+def test_batch_status_no_double_refund_on_repoll(client_st, register, auth_header, set_credits):
+    """同一段连续 poll 两次都 failed,只退一次"""
+    token, user, sid = _seed_after_submit(client_st, register, auth_header, set_credits, "studio-async-b@example.com", 2)
+
+    async def always_failed(task_id, endpoint_hint=None):
+        return {"status": "failed", "error": "x"}
+
+    # 第一次 poll
+    with patch("app.api.video_studio.get_video_service") as mock_svc_factory:
+        mock_svc = mock_svc_factory.return_value
+        mock_svc.get_task_status = AsyncMock(side_effect=always_failed)
+        r1 = client_st.get(f"/api/studio/batch-status/{sid}", headers=auth_header(token))
+    assert r1.status_code == 200
+    assert r1.json()["refunded_this_call"] == 30  # 2 段 × 15
+
+    me1 = client_st.get("/api/auth/me", headers=auth_header(token)).json()
+    assert me1["credits"] == 1000 - 30 + 30  # 全退 = 没扣
+
+    # 第二次 poll 同 session — 不应再退
+    with patch("app.api.video_studio.get_video_service") as mock_svc_factory:
+        mock_svc = mock_svc_factory.return_value
+        mock_svc.get_task_status = AsyncMock(side_effect=always_failed)
+        r2 = client_st.get(f"/api/studio/batch-status/{sid}", headers=auth_header(token))
+    assert r2.status_code == 200
+    assert r2.json()["refunded_this_call"] == 0  # 已退过
+
+    me2 = client_st.get("/api/auth/me", headers=auth_header(token)).json()
+    assert me2["credits"] == me1["credits"]  # 不变
+
+
+def test_batch_status_submit_failed_segments_not_double_refunded(client_st, register, auth_header, set_credits):
+    """/batch-generate 时 submit 失败的段,/batch-status 不应再退一次(refunded 标记保护)"""
+    token, user = register(client_st, "studio-async-c@example.com")
+    set_credits(user["id"], 1000)
+    sid = _seed_session(user["id"], 3)
+
+    # submit 时 1 段失败 — 这段在 batch-generate 里已经退过
+    call_count = {"n": 0}
+    async def fake_generate(model_key, args):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return {"error": "fal down at submit"}
+        return {"task_id": f"t{call_count['n']}", "endpoint_tag": "edit-o3", "status": "pending"}
+
+    with patch("app.api.video_studio.get_video_service") as mock_svc_factory:
+        mock_svc = mock_svc_factory.return_value
+        mock_svc._generate_video = AsyncMock(side_effect=fake_generate)
+        r_gen = client_st.post(
+            "/api/studio/batch-generate",
+            json=_payload(sid),
+            headers=auth_header(token),
+        )
+    assert r_gen.json()["cost"] == 30  # 2 × 15 (1 段已退)
+    me_after_submit = client_st.get("/api/auth/me", headers=auth_header(token)).json()
+    assert me_after_submit["credits"] == 1000 - 30  # 已退过 1 段
+
+    # poll:剩下 2 段都 completed
+    async def fake_status(task_id, endpoint_hint=None):
+        return {"status": "completed", "video_url": "https://fal.media/x.mp4"}
+
+    with patch("app.api.video_studio.get_video_service") as mock_svc_factory:
+        mock_svc = mock_svc_factory.return_value
+        mock_svc.get_task_status = AsyncMock(side_effect=fake_status)
+        r_poll = client_st.get(f"/api/studio/batch-status/{sid}", headers=auth_header(token))
+
+    body = r_poll.json()
+    assert body["completed"] == 2
+    assert body["failed"] == 1  # submit 失败那段还是 failed
+    assert body["refunded_this_call"] == 0  # 关键:不应重复退
+
+    me = client_st.get("/api/auth/me", headers=auth_header(token)).json()
+    assert me["credits"] == 1000 - 30  # 不变,没多退

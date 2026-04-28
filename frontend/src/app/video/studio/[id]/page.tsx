@@ -263,6 +263,9 @@ export default function VideoStudioDetailPage() {
         const data = await res.json();
         if (res.ok) {
           setBatchTasks(data.tasks);
+          if (typeof data.refunded_this_call === "number" && data.refunded_this_call > 0) {
+            adjustLocalUserCredits(+data.refunded_this_call);
+          }
           setMsg(`进度: ${data.completed}/${data.total} 完成, ${data.processing} 生成中, ${data.failed} 失败`);
           if (data.completed + data.failed === data.total) {
             if (pollRef.current) clearInterval(pollRef.current);

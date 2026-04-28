@@ -344,7 +344,9 @@ async def batch_generate(
         }
         result = await service._generate_video(model_key, args)
         status = result.get("status", "failed")
-        if status != "pending":
+        # submit 失败 → 这段会在循环结束 add_credits 退款,标记 refunded 防止 /batch-status 双退
+        is_submit_fail = status != "pending"
+        if is_submit_fail:
             submit_failed += 1
         batch_results.append({
             "segment_index": seg["index"],
@@ -353,6 +355,7 @@ async def batch_generate(
             "status": status,
             "error": result.get("error"),
             "cost": per_seg_cost,
+            "refunded": is_submit_fail,
         })
 
     # 失败段返还(只覆盖 fal submit 失败;async 失败由 batch-status / merge 阶段后续补)
@@ -405,6 +408,18 @@ async def batch_status(
     completed = 0
     failed = 0
     results = []
+    refunded_this_call = 0  # 本次 poll 新退的钱(给前端 sidebar adjustLocalUserCredits(+))
+    user_id = current_user["id"]
+
+    def _refund_if_needed(seg: dict) -> int:
+        """async 失败时退该段(幂等:refunded 标记防止双退)。返回本次实退积分"""
+        if seg.get("refunded"):
+            return 0
+        seg_cost = seg.get("cost", 0)
+        if seg_cost > 0:
+            add_credits(user_id, seg_cost)
+        seg["refunded"] = True
+        return seg_cost
 
     for r in task["batch_results"]:
         if r.get("status") == "completed" and r.get("video_url"):
@@ -412,6 +427,8 @@ async def batch_status(
             results.append(r)
             continue
         if r.get("status") == "failed":
+            # 历史失败 — submit 时已退或上轮 poll 已退,refunded 标记保证不重复
+            refunded_this_call += _refund_if_needed(r)
             failed += 1
             results.append(r)
             continue
@@ -423,6 +440,8 @@ async def batch_status(
                 r["video_url"] = status["video_url"]
                 completed += 1
             elif status.get("status") == "failed":
+                # **新发现的 async 失败 — fal 接了任务但跑挂,这里退款**
+                refunded_this_call += _refund_if_needed(r)
                 failed += 1
         results.append(r)
 
@@ -438,6 +457,7 @@ async def batch_status(
         "failed": failed,
         "processing": total - completed - failed,
         "tasks": results,
+        "refunded_this_call": refunded_this_call,  # 前端拿这个 +adjustLocalUserCredits 让 sidebar 涨回去
     }
 
 
