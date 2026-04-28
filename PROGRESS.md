@@ -1,5 +1,27 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 五十六续(/api/content/upload 接 upload_guard — 自审 sweep 收 OOM 同源)
+
+### 自审 sweep 发现
+做完五十三续 ad-video upload guard 后,扫了一遍 `app/api/` 看还有没有同源:
+- ✅ video.py / studio / ad-video — 已接 upload_guard
+- 🔴 **content.py /upload** — 有 `Depends(get_current_user)` 但无 size guard,
+  `await file.read()` 直接读到内存。**登录用户**传 500MB(nginx 上限)→ OOM
+- 🟡 content.py /enhance:无鉴权但纯模板 string replacement 不调外部 API,优先级低留下次
+- 🟡 image.py /inpaint:501 stub(P0 紧扫已 503 化空壳),优先级低
+
+### 修
+接 `upload_guard.read_bounded(10MB IMAGE_MIMES)`,模式跟其他 upload 端点完全一致。
+
+### 测试 +4(346 → 350)
+- 401 匿名拒
+- 413 oversize 拒
+- 415 错 MIME 拒
+- 合规通过(fal_client mock)
+
+### 已 deploy 进生产 ✅
+蓝绿 green → blue。生产 `curl POST /api/content/upload`(无 token)→ 401,符合预期。
+
 ## 2026-04-28 五十五续(jobs.py / payment.py 测试覆盖率补漏 +11)
 
 Phase 1 明确 TODO:覆盖率到 70%。挑了既存测试文件里漏掉的明显分支补。
