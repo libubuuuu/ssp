@@ -370,3 +370,49 @@ def test_batch_status_submit_failed_segments_not_double_refunded(client_st, regi
 
     me = client_st.get("/api/auth/me", headers=auth_header(token)).json()
     assert me["credits"] == 1000 - 30  # 不变,没多退
+
+
+# ==================== /upload-chunk size 守卫 ====================
+
+
+def test_upload_chunk_oversized_chunk_413(client_st, register, auth_header):
+    """单 chunk > 10MB → 413,且部分文件被清掉(不留磁盘垃圾)"""
+    token, _ = register(client_st, "chunk-oversized@example.com")
+    big = b"x" * (11 * 1024 * 1024)  # 11MB,超 10MB 上限
+    r = client_st.post(
+        "/api/studio/upload-chunk",
+        headers=auth_header(token),
+        files={"chunk": ("part.bin", big, "application/octet-stream")},
+        data={
+            "upload_id": "0123456789abcdef",
+            "chunk_idx": "0",
+            "total_chunks": "5",
+            "filename": "x.mp4",
+        },
+    )
+    assert r.status_code == 413
+    assert "10MB" in r.json()["detail"]
+
+    # 部分文件应已清:_uploading/{user}_{upload_id}/000000 不应存在
+    from app.api.video_studio import UPLOAD_TMP_DIR
+    found = list(UPLOAD_TMP_DIR.glob("*_0123456789abcdef/000000"))
+    assert not found, f"残留垃圾文件:{found}"
+
+
+def test_upload_chunk_at_size_limit_ok(client_st, register, auth_header):
+    """正好 10MB 应该通过(只有 > 才挡)"""
+    token, _ = register(client_st, "chunk-limit@example.com")
+    exact = b"x" * (10 * 1024 * 1024)
+    r = client_st.post(
+        "/api/studio/upload-chunk",
+        headers=auth_header(token),
+        files={"chunk": ("part.bin", exact, "application/octet-stream")},
+        data={
+            "upload_id": "fedcba9876543210",
+            "chunk_idx": "0",
+            "total_chunks": "5",
+            "filename": "x.mp4",
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["received_bytes"] == 10 * 1024 * 1024

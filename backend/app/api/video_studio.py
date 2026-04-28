@@ -159,14 +159,28 @@ async def upload_chunk(
     upload_dir = UPLOAD_TMP_DIR / f"{user_id}_{upload_id}"
     upload_dir.mkdir(parents=True, exist_ok=True)
 
-    # 流式写入这一片(1MB sub-chunk 节内存)
+    # 流式写入这一片;单 chunk 限 10MB(前端约定切 5MB,buffer 一倍防边界)
+    # 攻击场景:单次调用塞 500MB(nginx body 上限内),不限 chunk 大小 → 磁盘爆
     chunk_path = upload_dir / f"{chunk_idx:06d}"
-    with open(chunk_path, "wb") as f:
-        while True:
-            data = await chunk.read(1024 * 1024)
-            if not data:
-                break
-            f.write(data)
+    MAX_CHUNK_BYTES = 10 * 1024 * 1024
+    written = 0
+    try:
+        with open(chunk_path, "wb") as f:
+            while True:
+                data = await chunk.read(1024 * 1024)
+                if not data:
+                    break
+                written += len(data)
+                if written > MAX_CHUNK_BYTES:
+                    f.close()
+                    chunk_path.unlink(missing_ok=True)
+                    raise HTTPException(413, f"单 chunk 不得超过 {MAX_CHUNK_BYTES // (1024 * 1024)}MB")
+                f.write(data)
+    except HTTPException:
+        raise
+    except Exception:
+        chunk_path.unlink(missing_ok=True)
+        raise
 
     # 不是最后一片:回执
     if chunk_idx + 1 < total_chunks:
