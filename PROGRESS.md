@@ -1,5 +1,40 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 四十八续(/upload 端点加 size + MIME 守卫 — 防 OOM 攻击)
+
+### 自审挖出的真生产风险
+讨论"还差什么"时,我列了一份待补,用户点继续。我先核实发现"异地备份"已经做了(GitHub 私有仓库 + cron 03:15 加密推),那条不算 gap。
+
+换一件真存在的 🔴 — `/upload/*` 端点 OOM 攻击隐患:
+- nginx `client_max_body_size = 500MB`,后端无二次校验
+- `/api/video/upload/image` 和 `/upload/video`:`await file.read()` 一次读到内存 → Pillow 加载 → 后端 OOM
+- `/api/studio/upload`:流式落盘但**无 size 上限**,可写满磁盘
+- 三个端点都没 MIME 校验,允许任意伪装
+
+### 新增 `app/services/upload_guard.py`
+- `read_bounded()` — 边读边累加字节,超限 raise 413
+- `stream_bounded_to_path()` — 大文件流式落盘,超限**立刻终止 + 清部分文件**
+- `_check_mime()` — 415 拦截非白名单 Content-Type
+- IMAGE_MIMES / SHORT_VIDEO_MIMES / LONG_VIDEO_MIMES 集合(后者含 octet-stream 兼容 iOS Safari)
+
+### 应用到 3 个端点
+| 端点 | 限制 | MIME |
+|---|---|---|
+| /api/video/upload/image | 10MB | image/jpeg/png/webp/gif |
+| /api/video/upload/video | 100MB | video/mp4/quicktime/webm/x-matroska |
+| /api/studio/upload | 2GB | + octet-stream |
+
+### 测试 +9(298 → 307)
+read_bounded: 小 / 超限 413 / 错 MIME 415 / 空 / 边界等于
+stream_bounded_to_path: 小 / 超限 413 + 清文件 / 错 MIME 415 / octet-stream OK
+
+### 未覆盖
+- `/api/studio/upload-chunk` 分片上传(已有 upload_id 格式校验 + 50GB 总上限,单 chunk 不紧急)
+- `/api/ad-video/upload/image`(已有手动 10MB + MIME 但模式不一致,下次统一)
+
+### 已 deploy 进生产
+(待执行)
+
 ## 2026-04-28 四十七续(Phase 2 alembic 脚手架就位)
 
 ### 用户拍板
