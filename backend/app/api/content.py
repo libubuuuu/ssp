@@ -3,9 +3,10 @@
 - 根据提示词生成卖点和场景描述
 - 为生成的图片/视频提供商业文案
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional
+from app.api.auth import get_current_user
 
 router = APIRouter()
 
@@ -64,10 +65,15 @@ SCENE_TEMPLATES = {
 
 
 @router.post("/enhance")
-async def generate_content_enhancement(req: ContentEnhanceRequest):
+async def generate_content_enhancement(
+    req: ContentEnhanceRequest,
+    current_user: dict = Depends(get_current_user),
+):
     """
     根据提示词生成卖点和场景描述
     用于生成结果详情页展示
+
+    五十八续:加鉴权防匿名扫(纯模板返回但仍是 attack surface)。
     """
     style = req.style or "default"
     template = SCENE_TEMPLATES.get(style, SCENE_TEMPLATES["default"])

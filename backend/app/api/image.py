@@ -118,8 +118,14 @@ async def generate_realistic_image(req: ImageRealisticRequest, current_user: dic
 
 
 @router.post("/inpaint")
-async def inpaint_image(req: ImageInpaintRequest):
-    """局部编辑 (inpainting)"""
+async def inpaint_image(
+    req: ImageInpaintRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """局部编辑 (inpainting)
+
+    五十八续:stub 也加鉴权防匿名扫(本端点 501 不真做事,但 attack surface)。
+    """
     raise HTTPException(status_code=501, detail="Inpainting 功能尚未实现")
 
 
