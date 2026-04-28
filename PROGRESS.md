@@ -1,5 +1,58 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-28 六十六续(法务文档接前端 — /privacy /terms /cookie 上线)
+
+### 三页就位
+六十五续起草的草案接 Next.js 前端,server component fs.readFileSync + react-markdown 渲染:
+
+| 路由 | 源 | scope |
+|---|---|---|
+| /privacy | privacy-policy.md | 11 章 |
+| /terms | terms-of-service.md | 12 章 |
+| /cookie | cookie-consent.md | 4 类 Cookie |
+
+`src/components/LegalPage.tsx` 共享 wrapper:
+- markdown 拷贝到 `src/legal/`(build 时打进 bundle)
+- remark-gfm 渲染 GFM table / 链接 / 列表
+- 自带样式(h1-h4 / blockquote / code / table)
+- 占位符 `{{XXX}}` 原样显示提醒上线前替换
+
+### 注册同意勾选
+- `auth/page.tsx` 新增 agreed state
+- handleSubmit 守卫:`mode=register && !agreed → 拦截 + i18n 错误提示`
+- UI 勾选框 + 双链接(/terms /privacy 新窗口)
+- 双语(zh / en)
+
+### Cookie 同意横幅
+`src/components/CookieConsent.tsx`(client):
+- 首次访问底部横幅(localStorage `cookie_consent` 三态)
+- 接受全部 / 仅必要 两选项 + /cookie 链接
+- 挂 layout.tsx,所有页面共用
+- PIPL §13 严格必要 Cookie 注释化
+
+### 数字
+- 依赖:react-markdown + remark-gfm(npm audit 0 high)
+- 40 个 static page(新增 3),build 0 error,lint 0 problems
+- e2e 18 → 21(+3 验证 /privacy /terms /cookie)
+- 生产 21 全过(对 ailixiao.com)
+
+### 已 deploy 进生产 ✅
+蓝绿 blue → green,带 frontend build。验证:
+- `curl https://ailixiao.com/privacy → 200`
+- `curl https://ailixiao.com/terms → 200`
+- `curl https://ailixiao.com/cookie → 200`
+
+### Phase 4 合规进度
+之前:0% 全等用户。现在:
+- ✅ 法务草案就位(六十五续)
+- ✅ 前端三页 + 注册同意 + Cookie 横幅(本续)
+- ⏸ 法务审阅 + 占位符替换(用户主导)
+- ⏸ ICP / 公安备案(用户主导)
+- ⏸ AIGC 水印模块(等用户拍版式)
+- ⏸ 内容审核云服务接入(等用户开账号)
+
+技术层面 Phase 4 准备度从 0% → ~30%。
+
 ## 2026-04-28 六十五续(法务文档草案就绪 — ICP 备案为用户解锁)
 
 ### 为用户主导项降本
