@@ -32,6 +32,20 @@ _DEFAULT_STUDIO = Path(__file__).resolve().parents[3] / "studio_workspace"
 STUDIO_DIR = Path(os.environ.get("SSP_STUDIO_DIR", str(_DEFAULT_STUDIO)))
 STUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
+# 七十一续:CPU 密集任务串行化 — 2核4G 服务器跑两个 ffmpeg 直接卡死
+# Semaphore(1) 保证全局只一个 ffmpeg 任务同时跑,其他 await 排队
+# 监控 _ffmpeg_queue_depth 用于"队列里有多少任务"的友好提示
+_FFMPEG_SEMAPHORE = asyncio.Semaphore(1)
+_ffmpeg_queue_depth = 0  # 当前 await 等待中的协程数(粗估)
+
+
+def _queue_status() -> dict:
+    """给 UI 显示当前 ffmpeg 队列状态"""
+    return {
+        "queue_depth": _ffmpeg_queue_depth,
+        "estimated_wait_sec": _ffmpeg_queue_depth * 30,  # 拍脑袋:每任务 30 秒
+    }
+
 # 分片上传临时目录(完成后立刻清理)
 UPLOAD_TMP_DIR = STUDIO_DIR / "_uploading"
 UPLOAD_TMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -55,6 +69,37 @@ def clean_stale_uploads(hours: int = 24) -> dict:
         try:
             if d.stat().st_mtime < cutoff:
                 size = sum(p.stat().st_size for p in d.iterdir() if p.is_file())
+                shutil.rmtree(d, ignore_errors=True)
+                deleted += 1
+                freed += size
+        except OSError:
+            pass
+    return {"scanned": scanned, "deleted": deleted, "freed_bytes": freed}
+
+
+def clean_stale_sessions(hours: int = 24) -> dict:
+    """七十一续:GC studio_workspace/ 下超 24h 的 session 目录(原视频 + 拆分 segments + 成品)
+
+    本服务器 2核4G + 系统盘 42.7%,长视频拆分后 segments 累积会撑爆磁盘。
+    判定:session_dir mtime 超期(用户用完 24h 后删全部本地文件,fal CDN URL 仍保留)
+    保留 STUDIO_TASKS dict 里的 metadata(session_id / fal_url 等)
+    返回 {scanned, deleted, freed_bytes}
+    """
+    import time
+    cutoff = time.time() - hours * 3600
+    scanned = deleted = freed = 0
+    if not STUDIO_DIR.exists():
+        return {"scanned": 0, "deleted": 0, "freed_bytes": 0}
+    for d in STUDIO_DIR.iterdir():
+        if not d.is_dir():
+            continue
+        # 跳过 _uploading/(上面 clean_stale_uploads 管)和 sessions.json
+        if d.name.startswith("_") or d == UPLOAD_TMP_DIR:
+            continue
+        scanned += 1
+        try:
+            if d.stat().st_mtime < cutoff:
+                size = sum(p.stat().st_size for p in d.rglob("*") if p.is_file())
                 shutil.rmtree(d, ignore_errors=True)
                 deleted += 1
                 freed += size
@@ -142,17 +187,27 @@ async def upload_video(
     session_dir = STUDIO_DIR / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
 
-    # 保存原视频(流式 1MB 块写入,超 2GB 立刻终止 + 清掉部分文件)
+    # 保存原视频(七十一续:2核4G 服务器降到 500MB 上限,防 ffmpeg 拆分 OOM)
     ext = os.path.splitext(file.filename)[1] or ".mp4"
     video_path = session_dir / f"source{ext}"
     size_bytes = await stream_bounded_to_path(
         file,
         target_path=video_path,
-        max_bytes=2 * 1024 * 1024 * 1024,  # 2GB,长视频工作台是核心场景
+        max_bytes=500 * 1024 * 1024,  # 500MB,2核4G 实测可承受上限
         allowed_mimes=LONG_VIDEO_MIMES,
         label="长视频",
     )
     duration = _get_video_duration(str(video_path))
+
+    # 七十一续:时长上限 10 分钟(600 秒) — 拆分 + 批量翻拍按段计费,
+    # 超长视频 fal API 成本爆 + ffmpeg 拆分 keyframe 不齐风险大
+    if duration > 600:
+        # 立刻清,防磁盘累积
+        shutil.rmtree(session_dir, ignore_errors=True)
+        raise HTTPException(
+            status_code=413,
+            detail=f"视频时长 {duration:.1f}s 超过 10 分钟上限,请裁剪后重传",
+        )
 
     STUDIO_TASKS[session_id] = {
         "session_id": session_id,
@@ -294,6 +349,8 @@ async def split_video(
     current_user: dict = Depends(get_current_user)
 ):
     """按时长拆分视频"""
+    global _ffmpeg_queue_depth
+
     if session_id not in STUDIO_TASKS:
         raise HTTPException(404, "session not found")
 
@@ -304,21 +361,40 @@ async def split_video(
     duration = task["duration"]
     session_dir = STUDIO_DIR / session_id
 
+    # 七十一续:CPU 密集 ffmpeg 串行化 — 当前队列深度告诉用户排队信息
+    # 进入 await 前先 +1 计数(更准的"在等"近似)
+    _ffmpeg_queue_depth += 1
+    try:
+        async with _FFMPEG_SEMAPHORE:
+            return await _do_split(session_id, segment_duration, task, video_path, duration, session_dir)
+    finally:
+        _ffmpeg_queue_depth -= 1
+
+
+async def _do_split(session_id, segment_duration, task, video_path, duration, session_dir):
+    """split 真实工作 — 已在 Semaphore 内,CPU 串行"""
+
     # 计算需要拆几段（每段最长 segment_duration 秒，但保证不小于 3 秒）
     total_segments = max(1, int(duration // segment_duration))
     if duration % segment_duration >= 3:
         total_segments += 1
 
-    # 用 ffmpeg 切分，强制 re-encode 保证切点精准
+    # 七十一续:用 ffmpeg 切分 — 改 stream copy(-c copy)避免重编码,
+    # 2核4G 服务器 libx264 跑会 CPU 100% 卡死整站。
+    # 切点对齐到最近 keyframe(可能差 1-2 秒),业务可接受;-ss 放 -i 前
+    # 让 ffmpeg 用 demuxer seek(快但稍不准),够大多数带货素材用。
     segments = []
     for i in range(total_segments):
         start = i * segment_duration
         output = session_dir / f"segment_{i:03d}.mp4"
         cmd = [
-            "ffmpeg", "-y", "-ss", str(start), "-i", video_path,
+            "ffmpeg", "-y",
+            "-ss", str(start), "-i", video_path,
             "-t", str(segment_duration),
-            "-c:v", "libx264", "-c:a", "aac",
-            "-preset", "fast", str(output)
+            "-c", "copy",                       # 流复制不重编码,CPU 极低
+            "-avoid_negative_ts", "make_zero",  # 防 timestamp 负值
+            "-loglevel", "error",
+            str(output)
         ]
         ok, err = _run_ffmpeg(cmd)
         if ok and output.exists() and output.stat().st_size > 1000:
@@ -583,9 +659,17 @@ async def merge_segments(
             f.write(f"file '{p}'\n")
 
     output = session_dir / "final.mp4"
+    # 七十一续:concat demuxer + -c copy 流复制(同源编码段拼接零损失)
+    # ffmpeg 调用进 Semaphore 保护 — 跟 split 串行
     cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_file),
-           "-c:v", "libx264", "-c:a", "aac", "-preset", "fast", str(output)]
-    ok, err = _run_ffmpeg(cmd)
+           "-c", "copy", "-loglevel", "error", str(output)]
+    global _ffmpeg_queue_depth
+    _ffmpeg_queue_depth += 1
+    try:
+        async with _FFMPEG_SEMAPHORE:
+            ok, err = _run_ffmpeg(cmd)
+    finally:
+        _ffmpeg_queue_depth -= 1
 
     if not ok:
         raise HTTPException(500, f"merge failed: {err[:200]}")
@@ -602,6 +686,44 @@ async def merge_segments(
         "session_id": session_id,
         "final_url": final_url,
         "segments_merged": len(local_files),
+    }
+
+
+@router.get("/queue-status")
+async def queue_status(current_user: dict = Depends(get_current_user)):
+    """七十一续:返回当前 ffmpeg 串行队列状态,前端做友好排队提示用。
+
+    返回:
+      {
+        "queue_depth": 3,                # 当前等待 + 正在跑的任务数
+        "estimated_wait_sec": 90,        # 粗估等待秒数(每任务 30s)
+        "message": "排队中:前面还有 2 个任务,预计 60 秒"
+      }
+    """
+    s = _queue_status()
+    if s["queue_depth"] == 0:
+        s["message"] = "服务空闲,可立即处理"
+    else:
+        s["message"] = (
+            f"排队中:前面还有 {s['queue_depth'] - 1} 个任务,"
+            f"预计 {s['estimated_wait_sec']} 秒后处理"
+        )
+    return s
+
+
+@router.post("/admin/gc")
+async def admin_gc(hours: int = 24, current_user: dict = Depends(get_current_user)):
+    """七十一续:管理员触发 GC(清 24h+ 老 session 目录 + uploads 临时分片)。
+    cron 自动跑,但管理员可手动触发应急。
+    """
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可调")
+    uploads = clean_stale_uploads(hours)
+    sessions = clean_stale_sessions(hours)
+    return {
+        "uploads_cleanup": uploads,
+        "sessions_cleanup": sessions,
+        "total_freed_mb": round((uploads["freed_bytes"] + sessions["freed_bytes"]) / (1024 * 1024), 2),
     }
 
 

@@ -50,6 +50,7 @@ export const en = {
     adminDashboard: "Monitor",
     adminSettings: "Admin",
     adVideo: "AI Product Video",
+    quickAd: "Quick Ad (Image → Video)",
   },
   dashboard: {
     todayCreate: "What do you want to create today?",

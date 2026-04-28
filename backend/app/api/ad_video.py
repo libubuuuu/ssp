@@ -181,6 +181,80 @@ async def analyze_product(
     }
 
 
+@router.post("/quick-prompt")
+@require_credits("ad_video/analyze")
+async def quick_prompt(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """七十续:简化版 — 上传产品图,直接吐一个完整带货视频提示词字符串。
+
+    跟 /analyze 4 步重流程不同:
+    - 输出单字符串 prompt(150-300 字),用户在前端 textarea 直接编辑
+    - 编辑后送 /api/video/image-to-video 生成视频
+    - 跳过审核 + 3 镜头脚本结构(用户决定怎么用)
+
+    用 /api/ad-video/analyze 同等定价(1 积分)。
+    """
+    import fal_client
+    import tempfile
+    import os
+    from PIL import Image
+    import io
+    from app.services.upload_guard import read_bounded, IMAGE_MIMES
+
+    contents = await read_bounded(file, 10 * 1024 * 1024, IMAGE_MIMES, "quick-prompt 产品图")
+
+    try:
+        img = Image.open(io.BytesIO(contents))
+        if img.mode in ("RGBA", "P", "LA"):
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            if img.mode in ("RGBA", "LA"):
+                bg.paste(img, mask=img.split()[-1])
+            else:
+                bg.paste(img.convert("RGBA"), mask=img.convert("RGBA").split()[-1])
+            img = bg
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+            img.save(tmp.name, "JPEG", quality=90, optimize=True)
+            tmp_path = tmp.name
+
+        try:
+            product_image_url = await fal_client.upload_file_async(tmp_path)
+        finally:
+            os.unlink(tmp_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"图片处理失败: {str(e)[:200]}")
+
+    service = get_vlm_service()
+    if service is None:
+        raise HTTPException(status_code=503, detail="VLM 视觉服务未初始化")
+
+    result = await service.generate_quick_prompt(product_image_url)
+
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+
+    # 安全过滤(防 VLM 写出违禁词)
+    try:
+        assert_safe_prompt(result["prompt"])
+    except HTTPException:
+        raise HTTPException(
+            status_code=400,
+            detail="AI 生成的提示词包含敏感词,请重新上传或联系客服",
+        )
+
+    log_info(f"ad_video/quick-prompt ok user={current_user.get('id')} len={len(result['prompt'])}")
+    return {
+        "success": True,
+        "prompt": result["prompt"],
+        "product_image_url": product_image_url,  # 前端拿这个直接 send /api/video/image-to-video
+        "description": "AI 带货提示词快速生成",
+    }
+
+
 @router.post("/preview")
 @require_credits("ad_video/preview")
 async def preview_first_frame(

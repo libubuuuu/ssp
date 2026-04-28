@@ -435,3 +435,75 @@ def test_upload_image_valid_passes_guard(client_av, register, auth_header):
     with patch("fal_client.upload_file_async", new=AsyncMock(return_value="https://fal.media/test.jpg")):
         r = client_av.post("/api/ad-video/upload/image", files=files, headers=auth_header(token))
     assert r.status_code == 200, r.text
+
+
+# ==================== /quick-prompt(七十续 简化带货 prompt 工具)====================
+
+
+def test_quick_prompt_unauthenticated_rejected(client_av, mock_fal_upload):
+    files = {"file": ("test.jpg", _fake_image_bytes(), "image/jpeg")}
+    r = client_av.post("/api/ad-video/quick-prompt", files=files)
+    assert r.status_code == 401
+
+
+def test_quick_prompt_oversize_returns_413(client_av, mock_fal_upload, register, auth_header):
+    """upload_guard >10MB 拒收"""
+    token, _ = register(client_av, "qp-big@example.com")
+    huge = b"x" * (11 * 1024 * 1024)
+    files = {"file": ("big.jpg", huge, "image/jpeg")}
+    r = client_av.post("/api/ad-video/quick-prompt", files=files, headers=auth_header(token))
+    assert r.status_code == 413
+
+
+def test_quick_prompt_success_returns_string_prompt(client_av, mock_fal_upload, register, auth_header, set_credits):
+    """快速 prompt 成功:返 prompt 字符串 + product_image_url + 扣 1 积分"""
+    token, user = register(client_av, "qp-ok@example.com")
+    set_credits(user["id"], 50)
+
+    fake_prompt = "年轻女性,长发披肩,身穿黄色背心,自拍角度,自然光,close-up shot,展示面料质感"
+    with patch("app.api.ad_video.get_vlm_service") as mock_factory:
+        mock_factory.return_value.generate_quick_prompt = AsyncMock(return_value={"prompt": fake_prompt})
+        files = {"file": ("test.jpg", _fake_image_bytes(), "image/jpeg")}
+        r = client_av.post("/api/ad-video/quick-prompt", files=files, headers=auth_header(token))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["success"] is True
+    assert body["prompt"] == fake_prompt
+    assert body["product_image_url"].startswith("https://fal.media/")
+
+    me = client_av.get("/api/auth/me", headers=auth_header(token)).json()
+    assert me["credits"] == 50 - 1  # 扣 1 积分(ad_video/analyze 定价)
+
+
+def test_quick_prompt_vlm_error_refunds(client_av, mock_fal_upload, register, auth_header, set_credits):
+    """VLM 失败 → require_credits 装饰器返还积分"""
+    token, user = register(client_av, "qp-err@example.com")
+    set_credits(user["id"], 50)
+
+    with patch("app.api.ad_video.get_vlm_service") as mock_factory:
+        mock_factory.return_value.generate_quick_prompt = AsyncMock(return_value={"error": "VLM 调用失败"})
+        files = {"file": ("test.jpg", _fake_image_bytes(), "image/jpeg")}
+        r = client_av.post("/api/ad-video/quick-prompt", files=files, headers=auth_header(token))
+    assert r.status_code == 500
+
+    me = client_av.get("/api/auth/me", headers=auth_header(token)).json()
+    assert me["credits"] == 50  # 已退
+
+
+def test_quick_prompt_unsafe_content_rejects(client_av, mock_fal_upload, register, auth_header, set_credits):
+    """VLM 返敏感词 → assert_safe_prompt 拦 + 退积分"""
+    token, user = register(client_av, "qp-unsafe@example.com")
+    set_credits(user["id"], 50)
+
+    # 用一个会被 assert_safe_prompt 拦的敏感词(从 content_filter 黑名单)
+    with patch("app.api.ad_video.get_vlm_service") as mock_factory:
+        mock_factory.return_value.generate_quick_prompt = AsyncMock(
+            return_value={"prompt": "色情内容描述测试敏感"}
+        )
+        with patch("app.api.ad_video.assert_safe_prompt", side_effect=Exception("blocked")):
+            # patch 强制让 assert_safe_prompt 抛 → 走 400 分支
+            from fastapi import HTTPException as HE
+            with patch("app.api.ad_video.assert_safe_prompt", side_effect=HE(status_code=400, detail="敏感")):
+                files = {"file": ("test.jpg", _fake_image_bytes(), "image/jpeg")}
+                r = client_av.post("/api/ad-video/quick-prompt", files=files, headers=auth_header(token))
+    assert r.status_code == 400

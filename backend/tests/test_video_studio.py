@@ -551,3 +551,91 @@ def test_clean_stale_uploads_removes_old_dirs(tmp_path, monkeypatch):
     assert res["freed_bytes"] >= 1024
     assert not old.exists()
     assert fresh.exists()
+
+
+def test_clean_stale_sessions_removes_old_session_dirs(tmp_path, monkeypatch):
+    """七十一续:24h+ 老 session_dir 被删(原视频 + segments + 成品),新的保留"""
+    import time
+    from app.api import video_studio as studio_mod
+
+    fake_studio = tmp_path / "studio_workspace"
+    fake_studio.mkdir()
+    monkeypatch.setattr(studio_mod, "STUDIO_DIR", fake_studio)
+    monkeypatch.setattr(studio_mod, "UPLOAD_TMP_DIR", fake_studio / "_uploading")
+
+    # 老 session(模拟拆分后 segments 累积)
+    old_sess = fake_studio / "abc12345"
+    old_sess.mkdir()
+    (old_sess / "source.mp4").write_bytes(b"x" * 5_000_000)  # 5MB 假视频
+    (old_sess / "segment_000.mp4").write_bytes(b"x" * 2_000_000)  # 2MB segment
+    (old_sess / "segment_001.mp4").write_bytes(b"x" * 2_000_000)
+    (old_sess / "final.mp4").write_bytes(b"x" * 1_000_000)
+    old_ts = time.time() - 25 * 3600
+    os.utime(old_sess, (old_ts, old_ts))
+
+    # 新 session
+    fresh_sess = fake_studio / "def67890"
+    fresh_sess.mkdir()
+    (fresh_sess / "source.mp4").write_bytes(b"x" * 1_000_000)
+
+    # _uploading 跳过(交给 clean_stale_uploads)
+    upload_tmp = fake_studio / "_uploading"
+    upload_tmp.mkdir()
+
+    res = studio_mod.clean_stale_sessions(hours=24)
+    assert res["scanned"] == 2  # 不含 _uploading
+    assert res["deleted"] == 1  # 只老的被删
+    assert res["freed_bytes"] >= 10_000_000  # ~10MB 累积
+    assert not old_sess.exists()
+    assert fresh_sess.exists()
+    assert upload_tmp.exists()
+
+
+def test_upload_rejects_video_over_10min(client_st, register, auth_header, monkeypatch):
+    """七十一续:视频时长 > 600s 拒收 413,session_dir 立即清"""
+    from app.api import video_studio as studio_mod
+    # mock _get_video_duration 返 700s(超 600s)
+    monkeypatch.setattr(studio_mod, "_get_video_duration", lambda p: 700.0)
+
+    token, _ = register(client_st, "studio-toolong@example.com")
+    # 200KB 假 mp4(过 size 但被时长拒)
+    files = {"file": ("long.mp4", b"\x00" * 200_000, "video/mp4")}
+    r = client_st.post("/api/studio/upload", files=files, headers=auth_header(token))
+    assert r.status_code == 413
+    assert "10 分钟" in r.json()["detail"]
+
+
+def test_queue_status_endpoint_unauth_401(client_st):
+    r = client_st.get("/api/studio/queue-status")
+    assert r.status_code == 401
+
+
+def test_queue_status_endpoint_returns_depth(client_st, register, auth_header):
+    """队列状态端点:返 queue_depth + 友好 message"""
+    token, _ = register(client_st, "studio-q@example.com")
+    r = client_st.get("/api/studio/queue-status", headers=auth_header(token))
+    assert r.status_code == 200
+    body = r.json()
+    assert "queue_depth" in body
+    assert "estimated_wait_sec" in body
+    assert "message" in body
+    # 测试中无任务排队 → 服务空闲
+    assert body["queue_depth"] == 0
+    assert "空闲" in body["message"]
+
+
+def test_admin_gc_endpoint_403_for_non_admin(client_st, register, auth_header):
+    token, _ = register(client_st, "studio-gc-403@example.com")
+    r = client_st.post("/api/studio/admin/gc", headers=auth_header(token))
+    assert r.status_code == 403
+
+
+def test_admin_gc_endpoint_admin_passes(client_st, register, auth_header, set_role):
+    token, user = register(client_st, "studio-gc-admin@example.com")
+    set_role(user["id"], "admin")
+    r = client_st.post("/api/studio/admin/gc", headers=auth_header(token))
+    assert r.status_code == 200
+    body = r.json()
+    assert "uploads_cleanup" in body
+    assert "sessions_cleanup" in body
+    assert "total_freed_mb" in body

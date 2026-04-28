@@ -100,6 +100,27 @@ _SYSTEM_PROMPT = (
 )
 
 
+# 七十续:简化 quick-prompt 模板 — 只生成一个完整的带货视频提示词字符串
+_QUICK_PROMPT_INSTRUCTION = """你是带货视频提示词专家。看这张产品图,直接生成一个**完整的视频生成提示词**,150 字以内。
+
+要求:
+1. 描述拍摄场景:模特特征(性别/年龄/外貌)、构图、角度、光线、动作
+2. 突出产品卖点:展示动作 / 互动 / 产品在画面中的位置
+3. 风格定位:UGC 自拍 / 影棚专业 / 户外生活 / 时尚高级 等
+4. 中文输出,但混入英文提示词术语(如 "close-up shot" / "natural lighting" / "selfie angle")便于视频模型理解
+
+直接输出提示词正文,**不要任何解释、引号、markdown 标记**。
+
+示例输出格式:
+年轻女性,长发披肩,身穿芒果黄运动背心,前置自拍角度,自然光照射,close-up shot 展示面料质感,UGC 风格,手指轻抚领口,微笑看向镜头,展现轻盈舒适感
+"""
+
+_QUICK_PROMPT_SYSTEM = (
+    "You output a single line plain-text prompt for a video generation model. "
+    "No JSON, no markdown, no quotes, no preamble. Just the prompt body in Chinese with English term mixins."
+)
+
+
 class VLMService:
     """VLM 视觉服务 - 单例,通过 fal OpenRouter 端点调用"""
 
@@ -195,6 +216,75 @@ class VLMService:
             f"valid={data['audit'].get('is_valid')}"
         )
         return data
+
+    async def generate_quick_prompt(
+        self,
+        image_url: str,
+        model: Optional[str] = None,
+    ) -> dict:
+        """七十续:简化版 — 看产品图直接吐一个完整带货视频提示词字符串。
+
+        相比 analyze_product 的 4 步重流程(audit + 3 镜头脚本),这个返一个
+        即用即改的 prompt,用户可在前端 textarea 里编辑,然后送给视频生成模型。
+
+        返回:
+            {"prompt": "..."} 成功
+            {"error": "..."} 失败
+        """
+        circuit_breaker = get_circuit_breaker()
+        if not circuit_breaker.is_available(self.SERVICE_KEY):
+            return {"error": "VLM 视觉服务暂时不可用,请稍后再试"}
+
+        chosen_model = model or DEFAULT_MODEL
+
+        try:
+            result = await fal_client.run_async(
+                VISION_ENDPOINT,
+                arguments={
+                    "image_urls": [image_url],
+                    "prompt": _QUICK_PROMPT_INSTRUCTION,
+                    "system_prompt": _QUICK_PROMPT_SYSTEM,
+                    "model": chosen_model,
+                },
+            )
+        except Exception as e:
+            await circuit_breaker.record_failure(self.SERVICE_KEY)
+            log_error(f"VLM quick-prompt 失败 (model={chosen_model}): {e}")
+            if chosen_model != FALLBACK_MODEL:
+                try:
+                    result = await fal_client.run_async(
+                        VISION_ENDPOINT,
+                        arguments={
+                            "image_urls": [image_url],
+                            "prompt": _QUICK_PROMPT_INSTRUCTION,
+                            "system_prompt": _QUICK_PROMPT_SYSTEM,
+                            "model": FALLBACK_MODEL,
+                        },
+                    )
+                except Exception as e2:
+                    return {"error": f"VLM 主备模型均失败: {str(e2)[:200]}"}
+            else:
+                return {"error": f"VLM 调用失败: {str(e)[:200]}"}
+
+        text = (result.get("output") or "").strip()
+        if not text:
+            await circuit_breaker.record_failure(self.SERVICE_KEY)
+            return {"error": "VLM 返回为空"}
+
+        # 模型偶尔加引号 / 多余前缀,简单清洗
+        cleaned = text.strip().strip('"').strip("'")
+        # 去 markdown / 多余换行
+        cleaned = re.sub(r"^```.*?\n", "", cleaned)
+        cleaned = re.sub(r"\n```$", "", cleaned)
+        cleaned = cleaned.strip()
+
+        # 限长(保护:VLM 偶尔超 prompt 限制返大段)
+        if len(cleaned) > 500:
+            cleaned = cleaned[:500].rstrip("。.,, ") + "..."
+
+        await circuit_breaker.record_success(self.SERVICE_KEY)
+        log_info(f"VLM quick-prompt 完成: model={chosen_model} len={len(cleaned)}")
+        return {"prompt": cleaned}
 
     async def regenerate_scene(
         self,
