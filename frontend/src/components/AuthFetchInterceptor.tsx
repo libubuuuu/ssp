@@ -26,6 +26,7 @@
  *   - 模块级单 patch(防 React strict mode 双重渲染重复装)
  */
 import { useEffect } from "react";
+import { setAuthToken, clearAuthSession } from "@/lib/userState";
 
 const PUBLIC_AUTH_PATHS = [
   "/api/auth/login",
@@ -79,8 +80,8 @@ export default function AuthFetchInterceptor() {
         const data = await r.json();
         const newAccess = data.access_token ?? data.token;
         if (newAccess) {
-          // 同步写 localStorage(过渡期);新 access cookie 服务端已经 set
-          localStorage.setItem("token", newAccess);
+          // 同步写 localStorage(过渡期);新 access cookie 服务端已经 set。dispatch 让 useSyncExternalStore 订阅者刷新
+          setAuthToken(newAccess);
           return newAccess;
         }
       } catch {
@@ -91,9 +92,7 @@ export default function AuthFetchInterceptor() {
 
     function redirectToLogin() {
       try {
-        localStorage.removeItem("token");
-        localStorage.removeItem("refresh_token");
-        localStorage.removeItem("user");
+        clearAuthSession();
       } catch {}
       const path = window.location.pathname;
       // 已经在登录页 / 注册页就不跳,避免循环
@@ -192,7 +191,7 @@ export default function AuthFetchInterceptor() {
           if (r.ok) {
             const data = await r.json();
             const newAccess = data.access_token ?? data.token;
-            if (newAccess) localStorage.setItem("token", newAccess);
+            if (newAccess) setAuthToken(newAccess);
           }
           // refresh 失败:不主动跳登录,等用户下次实际请求触发 401 再让 fetch 拦截器处理
         } catch {

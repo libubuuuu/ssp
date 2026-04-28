@@ -60,6 +60,9 @@ export default function AdminDashboard() {
   }, []);
 
   useEffect(() => {
+    // loadData 是 async,setState 发生在微任务里不算 sync-in-effect;但 lint 规则
+    // 不分辨 — 显式 disable 这一行,理由就在注释里
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadData();
     const interval = setInterval(loadData, 5000);
     return () => clearInterval(interval);

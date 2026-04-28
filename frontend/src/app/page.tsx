@@ -1,36 +1,36 @@
 "use client";
 import { useLang } from "@/lib/i18n/LanguageContext";
 import LanguageSwitcher from "@/lib/i18n/LanguageSwitcher";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useLocalStorageItem } from "@/lib/hooks/useLocalStorageItem";
+import { clearAuthSession } from "@/lib/userState";
+
+interface CachedUser {
+  name?: string;
+  email?: string;
+  credits?: number;
+}
 
 export default function Home() {
   const { t } = useLang();
   const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [userName, setUserName] = useState("");
-  const [credits, setCredits] = useState(0);
+  // 订阅 token + user;clearAuthSession 后自动 isLoggedIn=false,无需 setState
+  const token = useLocalStorageItem("token");
+  const userJson = useLocalStorageItem("user");
+  const isLoggedIn = !!token && !!userJson;
+  const cachedUser: CachedUser | null = useMemo(() => {
+    if (!userJson) return null;
+    try { return JSON.parse(userJson) as CachedUser; } catch { return null; }
+  }, [userJson]);
+  const userName = cachedUser?.name || cachedUser?.email || "";
+  const credits = cachedUser?.credits ?? 0;
   const [showMenu, setShowMenu] = useState(false);
 
-  useEffect(() => {
-    const token = localStorage.getItem("token");
-    const user = localStorage.getItem("user");
-    if (token && user) {
-      setIsLoggedIn(true);
-      try {
-        const u = JSON.parse(user);
-        setUserName(u.name || u.email || "");
-        setCredits(u.credits || 0);
-      } catch {}
-    }
-  }, []);
-
   const logout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
-    setIsLoggedIn(false);
+    clearAuthSession();
     setShowMenu(false);
   };
 

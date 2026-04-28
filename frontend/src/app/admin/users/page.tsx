@@ -2,6 +2,7 @@
 import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { clearAuthSession } from "@/lib/userState";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -108,9 +109,7 @@ export default function AdminUsersPage() {
         alert(isEn ? "✅ Logged out" : "✅ 已踢出");
         if (me && me.id === user.id) {
           // 踢自己 → 拦截器会把当前页面跳登录,但保险起见手动跳
-          localStorage.removeItem("token");
-          localStorage.removeItem("refresh_token");
-          localStorage.removeItem("user");
+          clearAuthSession();
           router.push("/auth?expired=1");
           return;
         }

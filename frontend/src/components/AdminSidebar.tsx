@@ -1,7 +1,17 @@
 "use client";
 import { useLang } from "@/lib/i18n/LanguageContext";
 import { useRouter, usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
+import { useLocalStorageItem } from "@/lib/hooks/useLocalStorageItem";
+import { useIsMobile } from "@/lib/hooks/useIsMobile";
+import { clearAuthSession } from "@/lib/userState";
+
+interface AdminUser {
+  id?: string | number;
+  name?: string;
+  email?: string;
+  role?: string;
+}
 
 interface Props {
   isOpen?: boolean;
@@ -12,27 +22,16 @@ export default function AdminSidebar({ isOpen = true, onClose }: Props) {
   const { lang } = useLang();
   const router = useRouter();
   const pathname = usePathname();
-  const [user, setUser] = useState<any>(null);
-  const [isMobile, setIsMobile] = useState(false);
+  const userJson = useLocalStorageItem("user");
+  const user: AdminUser | null = useMemo(() => {
+    if (!userJson) return null;
+    try { return JSON.parse(userJson) as AdminUser; } catch { return null; }
+  }, [userJson]);
+  const isMobile = useIsMobile();
   const isEn = lang === "en";
 
-  useEffect(() => {
-    const u = localStorage.getItem("user");
-    if (u) try { setUser(JSON.parse(u)); } catch {}
-  }, []);
-
-  // 监听视口大小,< 768px 走移动端模式
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const check = () => setIsMobile(window.innerWidth < 768);
-    check();
-    window.addEventListener("resize", check);
-    return () => window.removeEventListener("resize", check);
-  }, []);
-
   const logout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
+    clearAuthSession();
     router.push("/auth");
   };
 

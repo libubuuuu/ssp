@@ -3,6 +3,7 @@ import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
+import { clearAuthSession } from "@/lib/userState";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -67,8 +68,7 @@ export default function ProfilePage(){
   };
 
   const logout=()=>{
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
+    clearAuthSession();
     router.push("/");
   };
 
@@ -85,9 +85,7 @@ export default function ProfilePage(){
       });
     } catch {}
     // 无论成功失败都清本地 + 跳登录(后端 token 已被吊销,继续待在页面也无意义)
-    localStorage.removeItem("token");
-    localStorage.removeItem("refresh_token");
-    localStorage.removeItem("user");
+    clearAuthSession();
     router.push("/auth?expired=1");
   };
 

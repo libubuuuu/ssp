@@ -63,3 +63,19 @@ export function adjustLocalUserCredits(delta: number): void {
   u.credits = cur + delta;
   _writeUser(u);
 }
+
+/** 写入 access token + dispatch user-updated → 让订阅了 token 的组件(JobPanel/Sidebar 等)立刻刷新登录态 */
+export function setAuthToken(token: string): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem("token", token);
+  window.dispatchEvent(new Event(EVENT_NAME));
+}
+
+/** 清登录态:删 token + user + refresh_token 并 dispatch — 用于登出/换号/401 强踢 */
+export function clearAuthSession(): void {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem("token");
+  localStorage.removeItem("user");
+  localStorage.removeItem("refresh_token");
+  window.dispatchEvent(new Event(EVENT_NAME));
+}

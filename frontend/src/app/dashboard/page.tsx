@@ -1,8 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import { useLang } from "@/lib/i18n/LanguageContext";
+import { useLocalStorageItem } from "@/lib/hooks/useLocalStorageItem";
 
 const FEATURE_KEYS = [
   { key:"image", i18nKey:"image", icon:"◧", color:"#f0e8d5" },
@@ -14,22 +15,30 @@ const FEATURE_KEYS = [
   { key:"pricing", i18nKey:"pricing", icon:"✦", color:"#ebe5d5" },
 ];
 
+interface DashboardUser {
+  name?: string;
+  email?: string;
+}
+
 export default function Dashboard() {
   const router = useRouter();
-  const [user, setUser] = useState<any>(null);
   const { t, lang } = useLang();
+  const token = useLocalStorageItem("token");
+  const userJson = useLocalStorageItem("user");
+  const user: DashboardUser | null = useMemo(() => {
+    if (!userJson) return null;
+    try { return JSON.parse(userJson) as DashboardUser; } catch { return null; }
+  }, [userJson]);
   const FEATURES = FEATURE_KEYS.map(f => ({
     ...f,
     label: t(`dashboard.features.${f.i18nKey}.label`),
     desc: t(`dashboard.features.${f.i18nKey}.desc`),
   }));
 
+  // 未登录 → 跳 /auth(用 effect 因为 router.push 在 render 期不允许)
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    const u = localStorage.getItem("user");
-    if (!token || !u) { router.push("/auth"); return; }
-    try { setUser(JSON.parse(u)); } catch {}
-  }, [router]);
+    if (!token || !userJson) router.push("/auth");
+  }, [token, userJson, router]);
 
   if (!user) return <div style={{minHeight:"100vh",background:"#edeae4"}}/>;
 

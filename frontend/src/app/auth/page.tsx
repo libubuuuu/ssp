@@ -1,5 +1,6 @@
 "use client";
 import { useLang } from "@/lib/i18n/LanguageContext";
+import { setAuthToken } from "@/lib/userState";
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -43,11 +44,12 @@ export default function AuthPage() {
 
   const goAfterLogin = (data: { token: string; access_token?: string; refresh_token?: string; user: unknown }) => {
     // 后端同时返 access_token + refresh_token + 兼容字段 token;优先用 access_token
-    localStorage.setItem("token", data.access_token ?? data.token);
     if (data.refresh_token) {
       localStorage.setItem("refresh_token", data.refresh_token);
     }
     localStorage.setItem("user", JSON.stringify(data.user));
+    // 最后写 token 并 dispatch user-updated:JobPanel/AdminSidebar 等订阅组件立刻感知登录
+    setAuthToken(data.access_token ?? data.token);
     // 登录后清掉过期回跳标记 + 优先去之前被中断的页面
     const redirect = typeof window !== "undefined" ? sessionStorage.getItem("post_login_redirect") : null;
     if (redirect) {

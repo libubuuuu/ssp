@@ -1,6 +1,7 @@
 "use client";
 import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
+import { useLocalStorageItem } from "@/lib/hooks/useLocalStorageItem";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -18,40 +19,26 @@ export default function JobPanel() {
   const { t } = useLang();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [open, setOpen] = useState(false);
-  const [loggedIn, setLoggedIn] = useState(false);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    setLoggedIn(!!localStorage.getItem("token"));
-    const t = setInterval(() => setLoggedIn(!!localStorage.getItem("token")), 2000);
-    return () => clearInterval(t);
-  }, []);
+  // 通过 useSyncExternalStore 订阅 localStorage["token"];
+  // 登录页的 setAuthToken / 登出的 clearAuthSession 都 dispatch user-updated → 自动刷新
+  const token = useLocalStorageItem("token");
+  const loggedIn = !!token;
 
   useEffect(() => {
     if (!loggedIn) return;
     if (typeof document === "undefined") return;
 
-    let consecutiveAuthFailures = 0;
-
     const poll = async () => {
       // tab 隐藏时不 poll(避免多 tab 累积请求触发 nginx 限流)
       if (document.hidden) return;
+      const t = localStorage.getItem("token") ?? "";
+      if (!t) return;
       try {
-        const token = localStorage.getItem("token") ?? "";
-        if (!token) return;  // 没 token 不发请求,等 setLoggedIn(false) 触发清理
         const res = await fetch(`${API_BASE}/api/jobs/list`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${t}` },
         });
-        // 401 累计 3 次 → 拦截器没救活,停 polling(让 setLoggedIn(false) 兜底)
-        if (res.status === 401) {
-          consecutiveAuthFailures += 1;
-          if (consecutiveAuthFailures >= 3) {
-            setLoggedIn(false);
-          }
-          return;
-        }
-        consecutiveAuthFailures = 0;
-        if (!res.ok) return;  // 429 / 5xx 等暂时性错误,跳过这一轮,下次再试
+        // 401 → AuthFetchInterceptor 会处理 refresh 或清 session,这里跳过本轮即可
+        if (!res.ok) return;
         const data = await res.json();
         setJobs(data.jobs ?? []);
       } catch {}
