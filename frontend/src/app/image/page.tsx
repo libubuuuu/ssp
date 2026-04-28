@@ -5,6 +5,7 @@ import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
 import { GalleryItem } from "@/lib/types/gallery";
 import { errMsg } from "@/lib/utils/errors";
+import { compressImage } from "@/lib/utils/imageCompress";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 const STYLES = [
   { key:"advertising", labelKey:"advertising" },
@@ -49,9 +50,13 @@ export default function ImagePage(){
     if(refImages.length>=5){setError(t("errors.maxRefImages"));return;}
     setError("");setUploading(true);
     try{
+      // 七十三续:前端压缩,5MB → 500KB,上传 30s → 3s
+      setMsg("正在压缩图片...");
+      const compressed = await compressImage(file);
+      setMsg("");
       const token=localStorage.getItem("token")||"";
       const fd=new FormData();
-      fd.append("file",file);
+      fd.append("file",compressed);
       const res=await fetch(`${API_BASE}/api/video/upload/image`,{
         method:"POST",
         headers:{"Authorization":`Bearer ${token}`},

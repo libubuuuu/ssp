@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
 import { errMsg } from "@/lib/utils/errors";
+import { compressImage } from "@/lib/utils/imageCompress";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -90,11 +91,14 @@ export default function AdVideoPage() {
     }
     setErr("");
     setLoading(true);
-    setLoadingMsg("Claude 正在审核图片并生成脚本...");
+    setLoadingMsg("正在压缩图片...");
 
     try {
+      // 七十三续:前端压缩,5MB → 500KB
+      const compressed = await compressImage(productFile);
+      setLoadingMsg("Claude 正在审核图片并生成脚本...");
       const fd = new FormData();
-      fd.append("file", productFile);
+      fd.append("file", compressed);
       const r = await fetch(`${API_BASE}/api/ad-video/analyze`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token()}` },
@@ -119,8 +123,10 @@ export default function AdVideoPage() {
   };
 
   const uploadImage = async (file: File): Promise<string> => {
+    // 七十三续:前端压缩
+    const compressed = await compressImage(file);
     const fd = new FormData();
-    fd.append("file", file);
+    fd.append("file", compressed);
     const r = await fetch(`${API_BASE}/api/ad-video/upload/image`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token()}` },

@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
 import { errMsg } from "@/lib/utils/errors";
+import { compressImage } from "@/lib/utils/imageCompress";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -53,9 +54,11 @@ export default function VideoPage() {
   };
 
   const uploadImage = async (file: File): Promise<string> => {
+    // 七十三续:前端压缩,5MB → 500KB(useWebWorker 不阻塞 UI)
+    const compressed = await compressImage(file);
     const token = localStorage.getItem("token") || "";
     const fd = new FormData();
-    fd.append("file", file);
+    fd.append("file", compressed);
     const r = await fetch(`${API_BASE}/api/video/upload/image`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
@@ -71,9 +74,10 @@ export default function VideoPage() {
       updateCard(card.id, { error: "请上传图片" });
       return;
     }
-    updateCard(card.id, { error: "", status: "uploading", progress: "上传图片中..." });
+    updateCard(card.id, { error: "", status: "uploading", progress: "正在压缩图片..." });
     try {
       const imgUrl = await uploadImage(card.imageFile);
+      updateCard(card.id, { progress: "上传完成..." });
       updateCard(card.id, { progress: "提交任务中..." });
       const token = localStorage.getItem("token") || "";
       const res = await fetch(`${API_BASE}/api/jobs/submit`, {

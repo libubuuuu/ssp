@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { compressImage } from "@/lib/utils/imageCompress";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -40,8 +41,10 @@ export default function VideoClonePage() {
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    // 七十三续:前端压缩,5MB → 500KB
+    const compressed = await compressImage(file);
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append("file", compressed);
     const res = await fetch(`${API_BASE}/api/video/upload/image`, {
       method: "POST",
       headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },

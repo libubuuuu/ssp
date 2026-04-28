@@ -3,6 +3,7 @@ import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import { errMsg } from "@/lib/utils/errors";
+import { compressImage } from "@/lib/utils/imageCompress";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -17,9 +18,13 @@ export default function AdminSettingsPage() {
   const handleUpload = async (file: File) => {
     setError(""); setMsg(""); setUploading(true);
     try {
+      // 七十三续:前端压缩,收款码图通常不大,但走统一 helper 一致化
+      setMsg("正在压缩图片...");
+      const compressed = await compressImage(file);
+      setMsg("");
       const token = localStorage.getItem("token") || "";
       const fd = new FormData();
-      fd.append("file", file);
+      fd.append("file", compressed);
       const res = await fetch(`${API_BASE}/api/admin/upload-qr`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },

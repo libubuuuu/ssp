@@ -5,6 +5,7 @@ import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
 import { GalleryItem } from "@/lib/types/gallery";
 import { errMsg } from "@/lib/utils/errors";
+import { compressImage } from "@/lib/utils/imageCompress";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -36,8 +37,9 @@ export default function AvatarPage(){
       const token=localStorage.getItem("token")||"";
       const auth={"Authorization":`Bearer ${token}`};
 
-      // 1. 上传图片拿 URL
-      const fdImg=new FormData();fdImg.append("file",image);
+      // 1. 上传图片拿 URL(七十三续:前端压缩,5MB → 500KB)
+      const compressedImg = await compressImage(image);
+      const fdImg=new FormData();fdImg.append("file",compressedImg);
       const rImg=await fetch(`${API_BASE}/api/video/upload/image`,{method:"POST",headers:auth,body:fdImg});
       const dImg=await rImg.json();
       if(!rImg.ok||!dImg.url)throw new Error(dImg.detail||"图片上传失败");

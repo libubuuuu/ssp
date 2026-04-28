@@ -14,6 +14,7 @@ import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
 import { errMsg } from "@/lib/utils/errors";
+import { compressImage } from "@/lib/utils/imageCompress";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -51,10 +52,13 @@ export default function QuickAdPage() {
       setError("请先上传产品图");
       return;
     }
-    setError(""); setLoading(true); setStatusMsg("AI 正在分析图片生成提示词...");
+    setError(""); setLoading(true); setStatusMsg("正在压缩图片...");
     try {
+      // 七十三续:前端压缩,5MB → 500KB
+      const compressed = await compressImage(imageFile);
+      setStatusMsg("AI 正在分析图片生成提示词...");
       const fd = new FormData();
-      fd.append("file", imageFile);
+      fd.append("file", compressed);
       const token = localStorage.getItem("token") || "";
       const r = await fetch(`${API_BASE}/api/ad-video/quick-prompt`, {
         method: "POST",

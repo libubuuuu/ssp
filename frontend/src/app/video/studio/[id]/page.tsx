@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
 import { errMsg } from "@/lib/utils/errors";
+import { compressImage } from "@/lib/utils/imageCompress";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -147,8 +148,10 @@ export default function VideoStudioDetailPage() {
 
   // 上传单张图片到 fal（通过后端代理）
   const uploadImage = async (file: File): Promise<string> => {
+    // 七十三续:前端压缩
+    const compressed = await compressImage(file);
     const fd = new FormData();
-    fd.append("file", file);
+    fd.append("file", compressed);
     const res = await fetch(`${API_BASE}/api/video/upload/image`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token()}` },
