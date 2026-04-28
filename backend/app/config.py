@@ -57,6 +57,15 @@ class Settings(BaseSettings):
     COOKIE_DOMAIN: str = ""        # 空字符串 = 不设 Domain 属性(浏览器默认 exact host)
     COOKIE_SECURE: bool = True     # production 必 True;dev http 设 False
 
+    # 六十八续:微信支付 V3(默认关,等用户开商户号 + 配 cert 后启用)
+    WECHAT_PAY_ENABLED: bool = False
+    WECHAT_PAY_MCH_ID: str = ""                  # 商户号(10 位数字)
+    WECHAT_PAY_APP_ID: str = ""                  # 公众号 / 小程序 / 开放平台 AppID
+    WECHAT_PAY_API_V3_KEY: str = ""              # APIv3 密钥(32 位,商户后台设置)
+    WECHAT_PAY_CERT_SERIAL: str = ""             # 商户 API 证书序列号
+    WECHAT_PAY_PRIVATE_KEY_PATH: str = ""        # 商户 API 私钥 PEM 文件路径
+    WECHAT_PAY_NOTIFY_URL: str = ""              # 异步回调 URL,如 https://ailixiao.com/api/wechat-pay/notify
+
     class Config:
         env_file = str(_ENV_PATH)
         extra = "ignore"

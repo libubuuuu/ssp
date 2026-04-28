@@ -88,9 +88,10 @@ init_task_queue()
 from app.services.vlm_service import init_vlm_service
 init_vlm_service()
 
-from app.api import image, video, digital_human, tasks, content, products, admin, avatar, auth, payment, video_studio, jobs, ad_video
+from app.api import image, video, digital_human, tasks, content, products, admin, avatar, auth, payment, video_studio, jobs, ad_video, wechat_pay
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(payment.router, prefix="/api/payment", tags=["支付"])
+app.include_router(wechat_pay.router, prefix="/api/wechat-pay", tags=["微信支付"])
 app.include_router(image.router, prefix="/api/image", tags=["图片"])
 app.include_router(video.router, prefix="/api/video", tags=["视频"])
 app.include_router(video_studio.router, prefix="/api/studio", tags=["长视频工作台"])
