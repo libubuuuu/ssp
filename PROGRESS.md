@@ -1,5 +1,57 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-30 八十一(/start 500 — ffprobe N/A duration 链)
+
+### 现象
+用户传 60s 视频后,涂完 mask 点开始,前端报 "扣费失败,请重试" 500。
+实测余额 1326 积分够付,500 是误导。
+
+### 真根因(完整链)
+1. 前端 `videoCompress`(七十七 P5,MediaRecorder 输出 WebM,commit `ed46cc6`
+   接入到 oral / studio / clone)缺 EBML duration metadata — Chrome
+   MediaRecorder API 已知坑
+2. 后端 ffprobe 对该 WebM 输出字面量 **"N/A"**(不是空字符串!)
+3. `video_studio.py:175` `bare except: return 0.0` 静默吞 ValueError → duration=0 写库
+4. `_create_session(...,duration=0)` 没下限校验过去
+5. `/start` → `compute_charge("economy", 0) = 0`
+6. `deduct_credits(uid, 0)` → `if amount<=0: return False`
+7. `raise HTTPException(500, "扣费失败,请重试")` → 用户看到的误导 500
+
+### 实测复现(在生产服务器对真文件)
+```
+ffprobe -show_entries format=duration ... orig.webm  →  N/A
+完整 format:  TAG:encoder=Chrome  duration=N/A  bit_rate=N/A
+```
+
+### 修法(B + C + 部分 A)
+- **C 根因 — `video_studio.py`**:`_get_video_duration` 修 bare except,
+  rc != 0 / 输出 N/A / 输出非数字三种情况都明确 raise + stderr log
+- **C 根因 — `oral.py /upload + /upload-chunk`**:捕获 ValueError → 400 +
+  原文案传给前端;加 `duration <= 0` → 400 下限校验;原 `duration > MAX` 413 保留
+- **B 止血 — `oral.py /start`**:`deduct_credits` 之前加 `duration <= 0`
+  → 400 早 raise("session 视频时长无效"),不再误导成 500;原 500 兜底保留
+  (`deduct_credits` 真失败时仍可触发)
+- **A 部分 — SQL 清理**:删 3 个 duration=0 的废 session(13518935-be4 /
+  e50f2bb9-2d5 / 3762954a-ed7)+ 对应文件目录。**未尝试 ffmpeg 重封装**
+  因为 Chrome MediaRecorder WebM 缺 EBML duration 是不可恢复的(packet
+  PTS 也未必准)
+
+### 教训
+**`bare except: return <默认值>` 是反模式** — 错误被吞掉后,下游用
+`0` / `None` 当正常值跑完整个链路,最后炸在最末端,排查必须从最末端
+追溯到原始失败点(本次追了 6+ 轮才到源头)。
+
+永远不要 `except: pass` 或 `except: return <fallback>`,要么 raise,
+要么至少 log + raise 自定义异常。
+
+### Backlog(D 方案,本次不做)
+**前端 videoCompress 输出 WebM 后用 ts-ebml 修补 EBML duration header**,
+或改用 ffmpeg.wasm 转码确保 duration metadata 完整。工程量较大,等 C
+修复上线观察用户行为后再决定是否需要 — 如果生产里"视频缺时长元数据"
+400 报错频繁出现,再上 D。
+
+---
+
 ## 2026-04-30 八十(口播视频时长上限 60s → 180s + nginx timeout 跟进)
 
 ### 现象

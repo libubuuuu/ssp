@@ -3,6 +3,7 @@
 上传长视频 → 拆分 → 批量翻拍 → 拼接
 """
 import os
+import sys
 import json
 import re
 import shutil
@@ -164,16 +165,36 @@ def _run_ffmpeg(cmd: List[str]) -> tuple:
 
 
 def _get_video_duration(path: str) -> float:
-    """获取视频时长（秒）"""
+    """用 ffprobe 拿视频时长(秒)。失败明确 raise,不静默返 0。
+
+    历史 bug:bare except 静默吞 ValueError 返 0,下游 compute_charge 算 0,
+    deduct_credits 拒 amount<=0,最后误导成 500 "扣费失败"。链路太长,
+    必须从源头明确 raise。
+    """
     cmd = [
-        "ffprobe", "-v", "error", "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1", path
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        path,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"ffprobe FAIL rc={result.returncode} path={path} stderr={result.stderr[:200]}",
+              file=sys.stderr, flush=True)
+        raise ValueError(f"ffprobe 失败: {result.stderr[:100]}")
+    stdout = result.stdout.strip()
+    if not stdout or stdout == "N/A":
+        # Chrome MediaRecorder WebM 缺 EBML duration metadata 时 ffprobe 输出 "N/A",
+        # 此时无法可靠拿到时长,必须明确报错让用户重传
+        print(f"ffprobe duration N/A path={path} stdout={stdout!r}",
+              file=sys.stderr, flush=True)
+        raise ValueError("视频缺少时长元数据(可能是浏览器录制的 WebM 未写 EBML duration),请用相机录制或重新转码后上传")
     try:
-        return float(result.stdout.strip())
-    except:
-        return 0.0
+        return float(stdout)
+    except ValueError:
+        print(f"ffprobe stdout not number path={path} stdout={stdout!r}",
+              file=sys.stderr, flush=True)
+        raise ValueError(f"ffprobe 输出无法解析为时长: {stdout!r}")
 
 
 @router.post("/upload")

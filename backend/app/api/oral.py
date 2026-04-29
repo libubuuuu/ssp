@@ -762,8 +762,14 @@ async def upload_video(
 
     # 复用 video_studio._get_video_duration 思路(ffprobe)
     from app.api.video_studio import _get_video_duration
-    duration = _get_video_duration(str(video_path))
-
+    try:
+        duration = _get_video_duration(str(video_path))
+    except ValueError as e:
+        shutil.rmtree(session_dir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail=str(e))
+    if duration <= 0:
+        shutil.rmtree(session_dir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail=f"视频时长无效({duration}s),请重新上传")
     if duration > MAX_DURATION_SECONDS:
         shutil.rmtree(session_dir, ignore_errors=True)
         raise HTTPException(
@@ -880,8 +886,14 @@ async def upload_chunk(
 
     size_bytes = video_path.stat().st_size
     from app.api.video_studio import _get_video_duration
-    duration = _get_video_duration(str(video_path))
-
+    try:
+        duration = _get_video_duration(str(video_path))
+    except ValueError as e:
+        shutil.rmtree(session_dir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail=str(e))
+    if duration <= 0:
+        shutil.rmtree(session_dir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail=f"视频时长无效({duration}s),请重新上传")
     if duration > MAX_DURATION_SECONDS:
         shutil.rmtree(session_dir, ignore_errors=True)
         raise HTTPException(413, f"视频时长 {duration:.1f}s 超过 {MAX_DURATION_SECONDS} 秒上限")
@@ -984,6 +996,15 @@ async def start_pipeline(
         raise HTTPException(403, "无权限")
     if session["status"] != STATUS_INITIAL:
         raise HTTPException(400, f"session 状态 {session['status']},不能再 start")
+
+    # 防御兜底:历史 duration=0 脏 session(C 修复前已写库)走到这一步会让
+    # compute_charge=0 → deduct_credits 拒 amount<=0 → 误导成 500"扣费失败"。
+    # 早 raise 4xx 让前端能展示明确文案。
+    if session["duration_seconds"] <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="session 视频时长无效(可能是历史脏数据),请删除该任务后重新上传",
+        )
 
     # 计费
     charge = compute_charge(req.tier, session["duration_seconds"])
