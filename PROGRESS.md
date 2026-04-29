@@ -1,5 +1,68 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-29 七十七续 P11(终态邮件通知 — 用户离开页面也能跟进)
+
+P10 解了"在页面看进度",本续解"离开页面也能跟进":任务完成或失败时
+Resend 发邮件给用户,告知结果 / 失败原因 / 已退积分。
+
+### services/notify_email.py(新文件,commit `a8fb0c8`)
+
+- `_send_resend(to, subject, html)` 通用 wrapper(无 RESEND_API_KEY
+  print warning 跳过 — 开发模式不破任务流程)
+- `send_oral_completion(email, sid, tier, duration, final_url)`:中文
+  模板 + 工作台直链 + 档位 zh 映射(经济 / 标准 / 顶级)
+- `send_oral_failure(email, sid, error_step, error_message, refunded_credits)`:
+  失败步骤 zh 映射(Step 1 提取/转写音频 / ... / Step 5 口型对齐 + 水印)
+  + 已退积分(0 时不渲染该行)+ 错误消息 truncate 300
+
+### oral.py 加 hook
+
+`_update_session` commit 后 fire-and-forget 第二个 hook(跟 P10 broadcast
+同位置同模式,5 步状态机所有完成 / 失败路径自动覆盖):
+
+- `status == "completed"` → `send_oral_completion`
+- `status.startswith("failed_")` → `send_oral_failure`(refunded 来自字段)
+- `cancelled` 不发(用户主动取消不打扰)
+- in-memory `_oral_notified_terminal` set 去重防重发
+- 不在 event loop(sync 测试路径)静默跳过
+
+### 测试 +4(501 → 505 全过)
+
+- send_oral_completion 调 _send_resend(subject 含"已完成" / "顶级档" / "42 秒")
+- send_oral_failure 含失败步骤 zh + 已退积分渲染
+- _send_oral_terminal_email completed → send_oral_completion(email 来自 DB)
+- _send_oral_terminal_email failed_step3 + refunded=60 → send_oral_failure
+  含正确 refunded_credits
+
+### 已 deploy 进生产 ✅(2026-04-29 蓝绿 green → blue)
+
+- ailixiao.com / 200 / /video/oral-broadcast 200
+- /api/payment/packages 200 / /api/oral/list 401
+- WS 升级(HTTP/1.1)/api/oral/ws/test → backend 4403(鉴权生效)
+
+### 决策记录
+
+- **抽 services/notify_email.py 不写进 auth.py**:auth 验证码邮件跟任务
+  通知不同语义,新模块也能给以后其他长任务通知复用(image-studio batch /
+  digital_human / video-studio 等)
+- **hook 进 _update_session 不改 5 处**:跟 P10 broadcast hook 同位置同
+  模式;cancelled 在条件里直接排除;in-memory 去重防重发(backend 重启
+  set 清空但 _run_*_step 是 orphan task 重启后不会重跑,无重发风险)
+- **没 RESEND_API_KEY 跳过不报错**:开发 / 临时停 Resend 时任务流程不
+  受影响,打 [WARN] 留 log
+- **失败邮件含 refunded_credits**:用户最关心"花的钱退了吗",直接告诉;
+  0 时不渲染该行避免噪音
+
+### 下一步候选
+
+- (等用户)真实视频 PoC + ElevenLabs key
+- 我能继续干的:
+  - oral_sessions GC(60 天清 final.mp4)
+  - lint errors 58 个清理(setState in effect 等)
+  - profile 页加"邮件通知开关"(可选 — 当前默认所有人开)
+
+---
+
 ## 2026-04-29 七十七续 P10(WS 实时进度替 4s 轮询 + nginx WS 头修)
 
 PoC 阶段用户起任务后 5 步进度条卡 4s 才动一下,体验最差的工程拦路虎。
