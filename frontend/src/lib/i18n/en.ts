@@ -601,6 +601,8 @@ export const en = {
     subtitle: "Upload oral video → swap voice + script + person + product → AI-generated new ad",
     newSession: "New task",
     uploading: "Uploading...",
+    compressing: "Compressing video...",
+    compressDone: "Compression done",
     eta: "ETA",
     processing: "Processing...",
     loading: "Loading...",

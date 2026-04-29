@@ -601,6 +601,8 @@ export const zh = {
     subtitle: "上传口播视频 → 换音色 + 改文案 + 换人物 + 换产品 → 一键生成新口播",
     newSession: "新建任务",
     uploading: "上传中...",
+    compressing: "压缩视频中...",
+    compressDone: "压缩完成",
     eta: "剩余约",
     processing: "处理中...",
     loading: "加载中...",

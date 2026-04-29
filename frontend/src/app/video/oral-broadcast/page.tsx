@@ -3,6 +3,7 @@ import { useLang } from "@/lib/i18n/LanguageContext";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
+import { compressVideo } from "@/lib/utils/videoCompress";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -22,7 +23,9 @@ export default function OralBroadcastListPage() {
   const [sessions, setSessions] = useState<OralSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "compress" | "upload">("idle");
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [compressProgress, setCompressProgress] = useState(0);
   const [uploadSpeed, setUploadSpeed] = useState("");
   const [error, setError] = useState("");
 
@@ -46,15 +49,35 @@ export default function OralBroadcastListPage() {
     return () => clearInterval(i);
   }, [loadSessions]);
 
-  const createNew = async (file: File) => {
+  const createNew = async (originalFile: File) => {
     setError("");
-    if (!file.type.startsWith("video/")) {
+    if (!originalFile.type.startsWith("video/")) {
       setError(t("oral.errVideoOnly"));
       return;
     }
     setUploading(true);
     setUploadProgress(0);
+    setCompressProgress(0);
     setUploadSpeed("");
+
+    // 七十七续 P5 续:浏览器侧 MediaRecorder 压缩(降到 1280px / 1.5Mbps)。
+    // 60s 1080p 视频 50-100MB → 10-20MB,即便走分片也节省 80% 流量。
+    // MediaRecorder 不支持 / 压缩失败 → fallback 走原文件,不阻断上传。
+    setPhase("compress");
+    let file = originalFile;
+    try {
+      const result = await compressVideo(originalFile, {
+        onProgress: (pct) => setCompressProgress(pct),
+      });
+      // ratio < 0.9 才用压缩版本(< 10% 收益不值得换 webm,部分老设备解码 webm 慢)
+      if (result.compressed && result.ratio < 0.9) {
+        file = result.file;
+      }
+    } catch {
+      // 压缩本身已 try/catch fallback,这里仅防御
+    }
+    setCompressProgress(100);
+    setPhase("upload");
 
     // 七十七续 P5:分片上传(YouTube/OSS 标配)
     // 单片 5MB 远小于 nginx client_max_body_size,带宽再差也只是慢一点不会失败
@@ -126,6 +149,7 @@ export default function OralBroadcastListPage() {
       setError(e instanceof Error ? e.message : t("oral.errUploadFail"));
     } finally {
       setUploading(false);
+      setPhase("idle");
     }
   };
 
@@ -155,7 +179,9 @@ export default function OralBroadcastListPage() {
               background: uploading ? "#ddd" : "#0d0d0d", color: "#fff",
               borderRadius: 10, cursor: uploading ? "not-allowed" : "pointer", fontWeight: 500,
             }}>
-              {uploading ? t("oral.uploading") : `+ ${t("oral.newSession")}`}
+              {uploading
+                ? (phase === "compress" ? t("oral.compressing") : t("oral.uploading"))
+                : `+ ${t("oral.newSession")}`}
               <input type="file" accept="video/*" disabled={uploading}
                 onChange={e => { const f = e.target.files?.[0]; if (f) createNew(f); }}
                 style={{ display: "none" }} />
@@ -167,12 +193,17 @@ export default function OralBroadcastListPage() {
             <div>
               <div style={{ height: 8, background: "#eee", borderRadius: 4, overflow: "hidden" }}>
                 <div style={{
-                  width: `${uploadProgress}%`, height: "100%",
+                  width: `${phase === "compress" ? compressProgress : uploadProgress}%`,
+                  height: "100%",
                   background: "#0d0d0d", transition: "width 0.2s",
                 }} />
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", color: "#666", marginTop: 4 }}>
-                <span>{uploadProgress.toFixed(1)}%</span>
+                <span>
+                  {phase === "compress"
+                    ? `${t("oral.compressing")} ${compressProgress.toFixed(0)}%`
+                    : `${uploadProgress.toFixed(1)}%`}
+                </span>
                 <span>{uploadSpeed}</span>
               </div>
             </div>
