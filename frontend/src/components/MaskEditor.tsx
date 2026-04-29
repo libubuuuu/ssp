@@ -82,43 +82,40 @@ export default function MaskEditor({ videoUrl, sessionId, kind = "person", initi
     const video = videoRef.current;
     if (!video) return;
 
-    let unmounted = false;
     let captured = false;
 
-    const onLoaded = () => {
-      if (captured || unmounted) return;
+    const tryCapture = () => {
+      if (captured) return;
+      if (video.readyState < 2) return;
       if (!video.videoWidth || !video.videoHeight) return;
       captured = true;
       captureFirstFrame();
     };
 
-    const onMetadata = () => {
+    // 关键:video 可能在 listener 挂上之前已经加载完了(浏览器缓存 / nginx
+    // 快速响应 / Cloudflare 边缘命中),必须先 readyState 检查一次,不只
+    // 依赖事件 — 否则事件早 fire 过 listener 漏接 → 永远卡 ready=false
+    tryCapture();
+
+    video.addEventListener("loadeddata", tryCapture);
+    video.addEventListener("canplay", tryCapture);
+    video.addEventListener("canplaythrough", tryCapture);
+    video.addEventListener("seeked", tryCapture);
+    video.addEventListener("loadedmetadata", () => {
       // metadata 拿到后,seek 0.001 强制 decode 第一帧(部分 WebM 不会自动 decode)
       try { if (video.readyState < 2) video.currentTime = 0.001; } catch {}
-    };
-
-    // 多事件兜底:不同浏览器 / 不同视频格式触发的事件不同
-    video.addEventListener("loadeddata", onLoaded);
-    video.addEventListener("canplay", onLoaded);
-    video.addEventListener("seeked", onLoaded);
-    video.addEventListener("loadedmetadata", onMetadata);
-
-    // 部分浏览器在 src 已经设了的情况下不会自动 load,显式触发一次
-    try { if (video.readyState === 0) video.load(); } catch {}
+    });
 
     const timeoutId = window.setTimeout(() => {
-      if (!captured && !unmounted) {
-        setError(tRef.current("oral.mask.errVideoLoad"));
-      }
+      if (!captured) setError(tRef.current("oral.mask.errVideoLoad"));
     }, 30000);
 
     return () => {
-      unmounted = true;
       window.clearTimeout(timeoutId);
-      video.removeEventListener("loadeddata", onLoaded);
-      video.removeEventListener("canplay", onLoaded);
-      video.removeEventListener("seeked", onLoaded);
-      video.removeEventListener("loadedmetadata", onMetadata);
+      video.removeEventListener("loadeddata", tryCapture);
+      video.removeEventListener("canplay", tryCapture);
+      video.removeEventListener("canplaythrough", tryCapture);
+      video.removeEventListener("seeked", tryCapture);
     };
   }, [captureFirstFrame, videoUrl]);
 
@@ -258,11 +255,12 @@ export default function MaskEditor({ videoUrl, sessionId, kind = "person", initi
 
   return (
     <div>
-      {/* 不可见 video 用于抽首帧。preload="metadata" 只下 metadata + 首帧
-          decode 必需的最小字节,不下整文件。muted + playsInline 是 mobile
-          Safari 自动下载首帧的必要条件。display:none 在 iOS 会被优化掉,
-          改 absolute + 1px + visibility:hidden 让浏览器认为可见。 */}
-      <video ref={videoRef} src={videoUrl} preload="metadata" muted playsInline
+      {/* 不可见 video 用于抽首帧。preload="auto" 让浏览器尽快下完整视频
+          (用户主动选用,流量代价换确定性 — metadata + seek 0.001 在某些
+          WebM 上不可靠)。muted + playsInline 是 mobile Safari 自动下载
+          的必要条件。display:none 在 iOS 会被优化掉,改 absolute + 1px
+          + visibility:hidden 让浏览器认为可见。 */}
+      <video ref={videoRef} src={videoUrl} preload="auto" muted playsInline
         style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none", visibility: "hidden" }} />
 
       {!ready && (

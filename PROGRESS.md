@@ -1,5 +1,65 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-30 七十九(MaskEditor 卡死 — 7 轮调试完整复盘)
+
+### 症状(贯穿七轮)
+口播 mask 编辑器永远卡 "视频加载中..."。
+
+### 真根因(双 bug 叠加,前 6 轮全没找对)
+
+**根因 A — 后端**(commit `dc34692`,七十八已修):
+`RateLimitMiddleware._get_client_ip` 漏认 `CF-Connecting-IP`,所有走同一
+CF 边缘的用户共用 60/min 桶 → `/api/oral/status` 反复 429 → 前端进度
+推送中断 → MaskEditor 拿不到 `videoUrl` 状态。但这只是触发。
+
+**根因 B — 前端**(commit `6668ff0`):
+JSX `{ready && (<div>...<canvas ref={bgCanvasRef}/>...</div>)}` 让
+canvas 元素只在 `ready=true` 时才渲染。但 `setReady(true)` 在
+`captureFirstFrame` 末尾调用 — 而 captureFirstFrame 第一行 `if (!bg
+|| !mask) return`,因为 ready=false 时 canvas 不在 DOM,refs 是 null。
+**死循环:ready=false → canvas 不渲染 → refs=null → captureFirstFrame
+return → setReady 永不调用 → ready=false 永久。**
+
+### 7 轮调试链路(全部记录给后人)
+
+| 轮 | commit | 方向 | 评价 |
+|---|---|---|---|
+| 1 | `5612e7` | 上传图后 mask 卡死无限 loading 首报 | 误诊起点 |
+| 2 | `5e63f92` | preload="auto" + WebM W/H 守卫 | 没必要但没坏处 |
+| 3 | `b11b83a` | display:none 隐藏雷 + load() 强推 + 30s 兜底 | 没必要 |
+| 4 | `33d1221` | useLang.t 不稳定让 effect remount → tRef 锁住 | **真修复**(保留) |
+| 5 | `4139c24` | fetch+Blob 绕 WebM duration 缺失 | **引入新 bug**:fetch 在 React 协调路径下被 abort,网络层完全没请求发出 |
+| 6 | `0f34535` | 回滚 fetch+Blob 到朴素 `<video src>` + 多事件兜底 | 部分修复(回退到第 5 轮前的状态) |
+| 7 | `6668ff0` | **canvas 始终渲染**,用 `display: ready ? "block" : "none"` | **真根因修复** |
+| 7+ | (本 commit) | 加 `tryCapture()` readyState 早检 + `canplaythrough` + `preload="auto"` | 防御性补强 |
+
+### 用户实测铁证(锁定 7 轮真根因的 smoking gun)
+- `video.readyState = 4`(完全加载完成)
+- `document.querySelectorAll("canvas").length = 0`(canvas 不在 DOM)
+- 手动 dispatchEvent loadeddata/canplay/canplaythrough/seeked 全失败 mask 仍不出
+- 浏览器新标签页直接打开 webm URL 能播放
+
+= 视频元素工作正常、事件能 fire,但 captureFirstFrame **进入了第一行
+就 return**(canvas refs 为 null),setReady 永远不调用。前 6 轮所有人
+都默认是"视频加载有问题",从未怀疑过 canvas 元素本身没在 DOM。
+
+### 本 commit 的防御性补强(commit 7+,叠在 6668ff0 之上)
+- `useEffect` 进入时先 `tryCapture()` 一次,防 listener 挂之前事件已 fire
+- 加 `canplaythrough` listener(部分浏览器只 fire 这个,不 fire 其他)
+- `preload="metadata"` → `"auto"`(metadata + seek 在某些 WebM 不可靠,
+  流量代价换确定性)
+
+### 教训
+**调试症状是"X 卡住"时,先验证 X 的前置条件是否真的满足**。这次卡住
+症状是"视频加载中",所有人都假设 X="视频加载完成 → setReady",
+追了 6 轮"为什么视频没加载完",真相是 X="视频已加载 + canvas refs 可用 →
+setReady",canvas refs 这个前置完全没人怀疑。
+
+下次遇到 setState 不被调用,**第一步在那个 setState 紧前面的代码逐行
+console.log**,而不是去追"为什么事件没 fire / 为什么 fetch 卡住"。
+
+---
+
 ## 2026-04-29 七十八(rate-limit 二修 — CF-Connecting-IP + polling 独立桶)
 
 线上现象:用户反映 oral mask 编辑器卡死无限"加载中"。前面 6 轮全在前端
