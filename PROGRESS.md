@@ -1,5 +1,70 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-29 七十七续 P6(L2 AIGC 水印 + 模特/产品选择器)
+
+P5 续解了上传慢,本续补两块"用户上线测试前最后的拦路虎":
+- L2 合规:AIGC 水印必须烧录(深度合成规定 §16),P1 只做了 L1 用户责任声明
+- UX:模特/产品 URL 手输不可用 — 用户哪有现成 https URL,得能从平台库选
+
+### L2 AIGC 水印(commit `f681619`,后端)
+
+`oral.py` 加 `_apply_aigc_watermark(fal_video_url, user_id, sid)`:
+- httpx 流式下载 fal final → `ORAL_UPLOAD_ROOT/<uid>/<sid>/_lipsync_raw.mp4`
+- ffmpeg `drawtext` 烧录 "AI 生成内容"(WenQuanYi Zen Hei 中文字体,
+  右下角白字 @0.85 + 黑底 @0.55 半透明,字号 h*0.04 即 1080p ~43px) → `final.mp4`
+- 一举两得:水印 + 替代原 archive_url 落本地防 fal.media 30 天过期
+- **失败 raise**(深度合成规定要求显著标识 + 不可移除,无水印不算合格产物)
+
+`_run_lipsync_step` 替换原 archive_url 调用为 _apply_aigc_watermark。水印失败
+走原 except,按 lipsync 失败逻辑退 30%。
+
+服务器字体已确认:`/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc`(文泉驿正黑)。
+
+### 模特/产品选择器(commit `f681619`,前端)
+
+`frontend/src/components/MediaPicker.tsx`(新文件,~140 行):
+- `source="products"` → GET /api/products?limit=24 取 thumbnail_url + name
+- `source="history"`  → GET /api/tasks/history 展开 images 数组,每张独立 item
+- modal grid(auto-fill 140px)+ 点中 onPick → 自动 close
+- 标准 React + fetch,无第三方依赖
+
+`/video/oral-broadcast/[id]`:
+- modelTitle / productTitle 旁加按钮 "📂 从生成历史选" / "🛒 从产品库选"
+- URL 输入框下方加 60px 缩略图实时预览(贴 URL 立即看到预览)
+- pickerOpen state 单值,复用同一 MediaPicker 实例
+
+i18n zh + en 各加 oral.picker namespace(7 双语 key)。
+
+### 测试 +4(462 → 466 oral / 481 全套全过)
+- _apply_aigc_watermark happy path:落 final.mp4 + 返 public URL + raw 删除
+- download 404 / ffmpeg 失败 → raise
+- _run_lipsync_step 水印失败 → status=failed_step5 + 退 30% + 错误信息含 watermark
+
+frontend npm run build 0 error 0 warning(40 静态 + 8 动态路由不变)。
+
+### 已 deploy 进生产 ✅(2026-04-29 13:51)
+蓝绿 blue → green。验证:
+- ailixiao.com / 200 / /video/oral-broadcast 200
+- /api/products 200(picker products 数据源)
+- /api/tasks/history 401(picker history 数据源,鉴权 OK)
+
+### 决策记录
+- **水印失败 raise(严格)而非 fallback 无水印**:合规硬性,无水印=废产物,30% 退款
+  比"用户拿到无水印视频出去用"风险低
+- **复用 products + history 不新建模特库**:products 公开已上架(全平台),history
+  是用户自己生成历史 — 两个数据源覆盖大多数场景,新建一个"模特库"模型 + 表 +
+  CRUD 是过度设计,先看真实使用反馈再说
+- **MediaPicker 不引第三方**:Material UI / Ant 类大库装包慢且 SSR 兼容麻烦,
+  140 行原生 JSX 够用
+- **缩略图实时预览**:URL 输入对错只能贴完才知,加 60px <img> 预览让"贴错"立刻
+  暴露,不用等 start 后第 4 步换装才发现
+
+### 下一步
+- 真实视频 PoC(等用户) — 现在水印 + picker 都有了,用户可以贴一段真视频跑端到端
+- ElevenLabs key(等用户)— 解锁 standard/premium 档
+
+---
+
 ## 2026-04-29 七十七续(口播带货工作台 P1~P5 续 — 经济档完整端到端)
 
 完整规划见 `docs/ORAL-BROADCAST-PLAN.md`(1002 行,3 档定价 + 5 步 pipeline +
