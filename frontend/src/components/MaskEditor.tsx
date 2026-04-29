@@ -83,7 +83,10 @@ export default function MaskEditor({ videoUrl, sessionId, kind = "person", initi
     // 不等完整下载) — 秒出首帧。
     //
     // 多事件 fallback(loadeddata / seeked / canplay 任一触发都尝试 capture)
-    // + W/H == 0 必检 + 15s timeout 报错 — 多重保险防卡死。
+    // + W/H == 0 必检 + 30s timeout 报错 — 多重保险防卡死。
+    //
+    // 注意 video 不能用 display:none(Safari/iOS Chrome 会优化为不下载),
+    // 改用 visibility:hidden + 0 尺寸(JSX 里),layout 保留但视觉无感。
 
     let captured = false;
     let timedOut = false;
@@ -107,7 +110,11 @@ export default function MaskEditor({ videoUrl, sessionId, kind = "person", initi
     video.addEventListener("loadeddata", tryCapture);
     video.addEventListener("seeked", tryCapture);
     video.addEventListener("canplay", tryCapture);
+    video.addEventListener("canplaythrough", tryCapture);
     video.addEventListener("error", onErr);
+
+    // 强制启动下载(部分浏览器 video.src 设置后不会自动 load,要手动触发)
+    try { video.load(); } catch {}
 
     if (video.readyState >= 1) onMeta();
     if (video.readyState >= 2) tryCapture();
@@ -117,7 +124,7 @@ export default function MaskEditor({ videoUrl, sessionId, kind = "person", initi
         timedOut = true;
         setError(t("oral.mask.errVideoLoad"));
       }
-    }, 15000);
+    }, 30000);
 
     return () => {
       timedOut = true;
@@ -126,6 +133,7 @@ export default function MaskEditor({ videoUrl, sessionId, kind = "person", initi
       video.removeEventListener("loadeddata", tryCapture);
       video.removeEventListener("seeked", tryCapture);
       video.removeEventListener("canplay", tryCapture);
+      video.removeEventListener("canplaythrough", tryCapture);
       video.removeEventListener("error", onErr);
     };
   }, [captureFirstFrame, t, videoUrl]);
@@ -266,9 +274,13 @@ export default function MaskEditor({ videoUrl, sessionId, kind = "person", initi
 
   return (
     <div>
-      {/* 隐藏 video 用于抽首帧。preload="metadata":只下 metadata,
-          metadata 加载好后 seek 触发首帧 decode,不需要整个视频下完 */}
-      <video ref={videoRef} src={videoUrl} preload="metadata" muted playsInline style={{ display: "none" }} />
+      {/* 不可见 video 用于抽首帧。preload="metadata":只下 metadata,
+          metadata 加载好后 seek 触发首帧 decode,不需要整个视频下完。
+          注意:不能用 display:none — Safari/iOS 与部分 Chrome 版本会优化
+          为完全不下载,导致首帧永远抽不到。改 visibility:hidden + 0 尺寸 +
+          绝对定位,既不占 layout 空间也不影响下载行为。 */}
+      <video ref={videoRef} src={videoUrl} preload="metadata" muted playsInline
+        style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none", visibility: "hidden" }} />
 
       {!ready && (
         <div style={{ padding: "1rem", background: "#f9f7f2", borderRadius: 8, color: "#888" }}>
