@@ -1,5 +1,54 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-29 七十八(rate-limit 二修 — CF-Connecting-IP + polling 独立桶)
+
+线上现象:用户反映 oral mask 编辑器卡死无限"加载中"。前面 6 轮全在前端
+追 video/Blob/effect deps,真根因在后端:`/api/oral/status` 与
+`/api/jobs/list` 反复 429。
+
+两个独立 bug 叠加:
+
+1. **CF 边缘 IP 共桶**:`RateLimitMiddleware._get_client_ip` 自己写了一份,
+   只看 `X-Forwarded-For / X-Real-IP / client.host`,漏 `CF-Connecting-IP`。
+   日志里限流 key 是 `172.71.110.x`(CF 边缘节点),意味着所有走同一 CF 边缘
+   的用户共用同一个 60/min 桶 — 高峰必崩。
+   同模块上面 L36-57 已经有正确的 `get_client_ip()`,中间件没复用。
+2. **轮询接口跟常规接口共桶**:状态查询 4s/次轮询 + dashboard + 普通点击,
+   单用户单页就能吃到 60/min 上限。
+
+### 修法(commit `dc34692`)
+
+- `_get_client_ip` 改为一行委托给模块级 `get_client_ip`
+- 新增 `polling_ip_limit = 300` + `POLLING_PATH_PREFIXES`(4 条:
+  `/api/oral/status/`、`/api/jobs/list`、`/api/studio/batch-status/`、
+  `/api/health`)
+- `InMemoryRateLimiter` / `RedisRateLimiter` 两后端都加 `check_ip_polling_limit`
+- `dispatch` 按路径前缀分桶,response header `X-RateLimit-Limit` 动态
+
+### 验证 ✅
+
+- `curl -sI /api/auth/me` → `X-RateLimit-Limit: 60`
+- `curl -sI /api/jobs/list` → `X-RateLimit-Limit: 300`
+- 连刷 100 次 `/api/oral/status/dummy` → 100 × 401(走完限流没被打 429)
+
+### 已 deploy 进生产 ✅(蓝绿 blue → green)
+
+注意:本次踩了一脚 — `deploy.sh` 不动代码,只切 supervisor/nginx,
+必须先 `rsync /root/ssp/backend → /opt/ssp/backend` + `chown ssp-app:ssp-app`
+才能让新代码到 prod。第一次直接 `bash deploy.sh` 验证仍 `limit=60`,
+rsync + chown 后再 deploy 才生效。
+
+### 遗留 backlog
+
+- **Redis 持久化限流(Phase 2)**:当前仍是 in-memory,单 worker 安全,
+  多 worker 时每个 worker 独立桶 → 限流失准。代码已支持(`RedisRateLimiter`),
+  配 `REDIS_URL` 即启用。
+- **POLLING_PATH_PREFIXES 用 `startswith` 前缀匹配**:目前 OK(4 条都没冲突),
+  如果以后出现 `/api/jobs/list-archived` 之类与现有前缀冲突的路径,改 `==`
+  精确匹配。
+
+---
+
 ## 2026-04-29 七十七续 P12(oral_sessions 60 天 GC)
 
 防磁盘满。uploads_gc 是按 mtime 90 天扫整 /opt/ssp/uploads/,但 oral
