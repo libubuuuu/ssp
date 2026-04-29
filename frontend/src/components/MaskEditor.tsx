@@ -76,18 +76,36 @@ export default function MaskEditor({ videoUrl, sessionId, kind = "person", initi
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    const onMeta = () => { video.currentTime = 0.01; }; // seek 到一点点位置触发 frame
-    const onSeeked = () => captureFirstFrame();
+
+    // 用 loadeddata(HAVE_CURRENT_DATA)直接画首帧 — 不需要 seek 那一跳。
+    // 之前用 loadedmetadata + 设 currentTime + 等 seeked,但 React 渲染时
+    // <video src> 已经挂载并开始 load,如果事件在 useEffect 执行前已 fire,
+    // listener 永远收不到 → ready 永远 false → 卡死无限 loading。修法:
+    //   1. 注册 listener 前先检查 readyState(已就绪直接画)
+    //   2. 用 loadeddata 不用 loadedmetadata+seek 组合(少一跳)
+    //   3. 10s timeout fallback,超时显示错误而不是无限转圈
+    const draw = () => captureFirstFrame();
     const onErr = () => setError(t("oral.mask.errVideoLoad"));
-    video.addEventListener("loadedmetadata", onMeta);
-    video.addEventListener("seeked", onSeeked);
+    video.addEventListener("loadeddata", draw);
     video.addEventListener("error", onErr);
+
+    if (video.readyState >= 2 /* HAVE_CURRENT_DATA */) {
+      draw();
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      if (!videoRef.current) return;
+      if (videoRef.current.readyState < 2) {
+        setError(t("oral.mask.errVideoLoad"));
+      }
+    }, 10000);
+
     return () => {
-      video.removeEventListener("loadedmetadata", onMeta);
-      video.removeEventListener("seeked", onSeeked);
+      window.clearTimeout(timeoutId);
+      video.removeEventListener("loadeddata", draw);
       video.removeEventListener("error", onErr);
     };
-  }, [captureFirstFrame, t]);
+  }, [captureFirstFrame, t, videoUrl]);
 
   // 屏幕坐标 → canvas 内部坐标(应对 CSS 缩放)
   const toCanvas = (e: React.PointerEvent) => {
