@@ -29,6 +29,9 @@ interface Props {
  *  - mask PNG 输出尺寸跟视频原始分辨率一致(fal salient tracking 要求 mask 跟 video 对齐)
  */
 export default function MaskEditor({ videoUrl, sessionId, kind = "person", initialDone = false, onUploaded }: Props) {
+  // [DIAG] 临时诊断埋点 — render 时打印 props
+  console.log("[DIAG-CHILD] MaskEditor render, props =", { videoUrl, sessionId, kind });
+
   const { t } = useLang();
   // useLang().t 每次重渲染都是新引用,放进 effect 依赖会让父组件 WS 推送
   // 触发 setSess → MaskEditor 重渲染 → effect cleanup/remount → video 永远
@@ -50,6 +53,13 @@ export default function MaskEditor({ videoUrl, sessionId, kind = "person", initi
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
   const rectStartRef = useRef<{ x: number; y: number } | null>(null);
   const dprRef = useRef(1);
+
+  // [DIAG] 临时诊断埋点 — 看 mount/unmount 是否反复
+  useEffect(() => {
+    console.log("[DIAG-CHILD] MaskEditor mounted, videoUrl =", videoUrl);
+    return () => console.log("[DIAG-CHILD] MaskEditor unmounted");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 把视频首帧画到背景 canvas
   const captureFirstFrame = useCallback(() => {
