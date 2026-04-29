@@ -607,7 +607,7 @@ export const zh = {
     processing: "处理中...",
     loading: "加载中...",
     empty: "还没有任务,点上方「新建任务」开始",
-    maxDuration: "MVP 阶段限制 60 秒视频",
+    maxDuration: "当前限制 180 秒(3 分钟)视频",
     backToList: "返回列表",
     overallProgress: "整体进度",
     s1: "识别",

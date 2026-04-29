@@ -47,8 +47,8 @@ ORAL_UPLOAD_ROOT = Path(os.getenv("UPLOADS_ROOT", "/opt/ssp/uploads")) / "oral"
 # 分片上传临时目录(_uploading/<user_id>_<upload_id>/<chunk_idx>)
 ORAL_UPLOAD_TMP = ORAL_UPLOAD_ROOT / "_uploading"
 
-# 视频时长硬上限(MVP 60 秒,详见规划文档 Q2)
-MAX_DURATION_SECONDS = 60
+# 视频时长硬上限(180 秒/3 分钟。Phase 2 拆段并行可彻底解除)
+MAX_DURATION_SECONDS = 180
 
 # 档位允许值
 TIERS = ("economy", "standard", "premium")

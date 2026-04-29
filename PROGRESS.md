@@ -1,5 +1,50 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-30 八十(口播视频时长上限 60s → 180s + nginx timeout 跟进)
+
+### 现象
+用户反馈口播工作台 60 秒视频限制太短不够用,要放宽。
+
+### 决策
+- **第一阶段(本次)**:简单放宽硬上限到 180 秒
+- **第二阶段(单独排期)**:拆段并行让用户感知无限制 — 见下方 backlog
+
+### 本次改动
+- `backend/app/api/oral.py`:`MAX_DURATION_SECONDS` 60 → 180,注释同步
+- `frontend/src/lib/i18n/{zh,en}.ts` L610:文案 "MVP 限制 60s" → "当前限制 180s(3 分钟)"
+- `nginx /etc/nginx/sites-enabled/default` 两个 `/api/` block 的三个 timeout:
+  `proxy_send_timeout` / `proxy_read_timeout` / `client_body_timeout`
+  120s → 300s(180s 视频 single-shot 上传估 60-120s,留 2x 余量)
+- 不动:`proxy_connect_timeout 30s`(连接超时,跟数据传输无关)
+- 不动:`auth/login|register` 那个 location block(继承默认 60s,auth 接口很快)
+- 不动:`max_bytes=200MB` / `MAX_UPLOAD_TOTAL` / chunk 数 1000 / `client_max_body_size 500m`
+  (180s 1080p 压缩后 ~35MB,200MB 留 5x 余量)
+- 不动:计费(`compute_charge` 按秒缩放)/ ETA(`duration*8+60` 自动跟着算)
+
+### 部署踩坑(供后人参考)
+nginx config 备份不能放 `sites-enabled/` 里 — `include /etc/nginx/sites-enabled/*` 通配
+会把 `default.bak.<ts>` 也当配置加载,触发 `duplicate listen options for [::]:443`。
+**正确做法:备份放 `/etc/nginx/default.bak.<ts>` 或 `/tmp/`,远离 sites-enabled。**
+
+### 未改但要观察
+- **fal `wan-vace-14b/inpainting` 端点的 duration 上限不在代码里**,需线上观察
+- 如果 inpaint 阶段因 wan-vace 拒收,后端 log 会记录 fal error code + duration
+- **一周后评估**:普遍失败 → 回滚 120s + 启动 Phase 2;偶发 → 加重试机制
+
+### Phase 2 backlog(暂定 Phase 3 排期)
+**长视频拆段并行处理 — 用户感知无限制**
+- 触发条件:`duration > 90s`
+- 实现:ffmpeg split → N 段并行 fal → ffmpeg concat
+- 关键设计点:
+  1. **切片处视觉连贯性** — salient tracking 跨段身份保持,wan-vace 每段独立 inpaint 时人物/产品 ID 漂移
+  2. **计费策略** — 总时长 vs 按段(失败段是否退款?)
+  3. **失败重试粒度** — 段级而不是整视频级,1 段失败重跑该段不重跑全部
+  4. **进度条加权平均** — 各段进度按时长加权显示
+  5. **任务队列 fal 配额管理** — N 段并行可能撞 fal 速率限制,需要队列调度
+- 需单独产品规划讨论后再具体排期
+
+---
+
 ## 2026-04-30 七十九(MaskEditor 卡死 — 7 轮调试完整复盘)
 
 ### 症状(贯穿七轮)

@@ -607,7 +607,7 @@ export const en = {
     processing: "Processing...",
     loading: "Loading...",
     empty: "No tasks yet. Click + above to start.",
-    maxDuration: "MVP limit: 60s video",
+    maxDuration: "Current limit: 180s (3 min) video",
     backToList: "Back to list",
     overallProgress: "Overall",
     s1: "ASR",
