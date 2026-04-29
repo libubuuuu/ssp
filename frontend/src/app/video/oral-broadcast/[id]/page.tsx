@@ -56,6 +56,7 @@ export default function OralBroadcastWorkbench() {
   const [productName, setProductName] = useState("");
   const [productUrl, setProductUrl] = useState("");
   const [pickerOpen, setPickerOpen] = useState<null | "model" | "product">(null);
+  const [uploadingKind, setUploadingKind] = useState<null | "model" | "product">(null);
 
   // Step 2 文案编辑
   const [editedText, setEditedText] = useState("");
@@ -135,6 +136,36 @@ export default function OralBroadcastWorkbench() {
       setError(e instanceof Error ? e.message : t("oral.errEditFail"));
     } finally {
       setEditingSubmitting(false);
+    }
+  };
+
+  const handleImageUpload = async (kind: "model" | "product", file: File) => {
+    if (!file.type.startsWith("image/")) { setError(t("oral.errVideoOnly")); return; }
+    setUploadingKind(kind);
+    setError("");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`${API_BASE}/api/video/upload/image`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token()}` },
+        credentials: "include",
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok || !data.url) { setError(data.detail ?? t("oral.picker.uploadFail")); return; }
+      const baseName = file.name.replace(/\.[^.]+$/, "").slice(0, 32);
+      if (kind === "model") {
+        if (!modelName) setModelName(baseName);
+        setModelUrl(data.url);
+      } else {
+        if (!productName) setProductName(baseName);
+        setProductUrl(data.url);
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : t("oral.picker.uploadFail"));
+    } finally {
+      setUploadingKind(null);
     }
   };
 
@@ -248,10 +279,24 @@ export default function OralBroadcastWorkbench() {
             <div style={{ marginBottom: "1.5rem" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
                 <div style={{ fontSize: "0.85rem", color: "#666" }}>{t("oral.modelTitle")}</div>
-                <button type="button" onClick={() => setPickerOpen("model")}
-                  style={{ background: "none", border: "1px solid #ddd", borderRadius: 6, padding: "0.3rem 0.7rem", fontSize: "0.75rem", cursor: "pointer", color: "#0d0d0d" }}>
-                  {t("oral.picker.fromHistoryBtn")}
-                </button>
+                <div style={{ display: "flex", gap: "0.4rem" }}>
+                  <label style={{
+                    background: "none", border: "1px solid #ddd", borderRadius: 6,
+                    padding: "0.3rem 0.7rem", fontSize: "0.75rem",
+                    cursor: uploadingKind ? "not-allowed" : "pointer",
+                    color: uploadingKind === "model" ? "#888" : "#0d0d0d",
+                    opacity: uploadingKind && uploadingKind !== "model" ? 0.5 : 1,
+                  }}>
+                    {uploadingKind === "model" ? t("oral.picker.uploading") : t("oral.picker.uploadBtn")}
+                    <input type="file" accept="image/*" disabled={uploadingKind !== null}
+                      onChange={e => { const f = e.target.files?.[0]; if (f) handleImageUpload("model", f); e.target.value = ""; }}
+                      style={{ display: "none" }} />
+                  </label>
+                  <button type="button" onClick={() => setPickerOpen("model")}
+                    style={{ background: "none", border: "1px solid #ddd", borderRadius: 6, padding: "0.3rem 0.7rem", fontSize: "0.75rem", cursor: "pointer", color: "#0d0d0d" }}>
+                    {t("oral.picker.fromHistoryBtn")}
+                  </button>
+                </div>
               </div>
               <input type="text" placeholder={t("oral.modelNamePh")} value={modelName}
                 onChange={e => setModelName(e.target.value)}
@@ -269,10 +314,24 @@ export default function OralBroadcastWorkbench() {
             <div style={{ marginBottom: "1.5rem" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
                 <div style={{ fontSize: "0.85rem", color: "#666" }}>{t("oral.productTitle")}</div>
-                <button type="button" onClick={() => setPickerOpen("product")}
-                  style={{ background: "none", border: "1px solid #ddd", borderRadius: 6, padding: "0.3rem 0.7rem", fontSize: "0.75rem", cursor: "pointer", color: "#0d0d0d" }}>
-                  {t("oral.picker.fromProductsBtn")}
-                </button>
+                <div style={{ display: "flex", gap: "0.4rem" }}>
+                  <label style={{
+                    background: "none", border: "1px solid #ddd", borderRadius: 6,
+                    padding: "0.3rem 0.7rem", fontSize: "0.75rem",
+                    cursor: uploadingKind ? "not-allowed" : "pointer",
+                    color: uploadingKind === "product" ? "#888" : "#0d0d0d",
+                    opacity: uploadingKind && uploadingKind !== "product" ? 0.5 : 1,
+                  }}>
+                    {uploadingKind === "product" ? t("oral.picker.uploading") : t("oral.picker.uploadBtn")}
+                    <input type="file" accept="image/*" disabled={uploadingKind !== null}
+                      onChange={e => { const f = e.target.files?.[0]; if (f) handleImageUpload("product", f); e.target.value = ""; }}
+                      style={{ display: "none" }} />
+                  </label>
+                  <button type="button" onClick={() => setPickerOpen("product")}
+                    style={{ background: "none", border: "1px solid #ddd", borderRadius: 6, padding: "0.3rem 0.7rem", fontSize: "0.75rem", cursor: "pointer", color: "#0d0d0d" }}>
+                    {t("oral.picker.fromProductsBtn")}
+                  </button>
+                </div>
               </div>
               <input type="text" placeholder={t("oral.productNamePh")} value={productName}
                 onChange={e => setProductName(e.target.value)}
