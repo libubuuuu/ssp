@@ -208,35 +208,24 @@ export async function compressVideo(
 }
 
 /**
- * 八十一 D 方案:用 ts-ebml 给 MediaRecorder 输出的 WebM 注入 EBML duration
- * 元数据(原始输出缺这一字段,ffprobe / 多数解码器拿不到时长)。
+ * 八十一 D-1.5 方案:用 webm-duration-fix 给 MediaRecorder 输出的 WebM 注入
+ * EBML duration 元数据(原始输出缺这一字段,ffprobe / 多数解码器拿不到时长)。
+ *
+ * D-1 用 ts-ebml 在 Next.js 16 打包下 module evaluation 阶段抛
+ * `Cannot read properties of undefined (reading 'readVInt')`,实测失败。
+ * D-1.5 用 webm-duration-fix(内部自带 ts-ebml fork + buffer polyfill,
+ * 单参数 API,自己从 EBML 元素推算 duration),已知 Chrome/Firefox 可用。
  *
  * 失败时返回原 blob(不抛错),让调用方无感降级。后端 ffprobe N/A 会再
  * 拒收 + 引导用户。
  */
 async function patchWebmDuration(blob: Blob): Promise<Blob> {
   try {
-    // 动态 import:ts-ebml 用了 Node Buffer,SSR 阶段不要触发模块求值
-    const ebml = await import("ts-ebml");
-    const decoder = new ebml.Decoder();
-    const reader = new ebml.Reader();
-    reader.logging = false;
-    reader.drop_default_duration = false;
-
-    const buf = await blob.arrayBuffer();
-    const elms = decoder.decode(buf);
-    elms.forEach(el => reader.read(el));
-    reader.stop();
-
-    const refinedMetadataBuf = ebml.tools.makeMetadataSeekable(
-      reader.metadatas,
-      reader.duration,
-      reader.cues,
-    );
-    const body = buf.slice(reader.metadataSize);
-    return new Blob([refinedMetadataBuf, body], { type: blob.type });
+    // 动态 import:模块自带 buffer polyfill,但 SSR 阶段没必要求值
+    const fixWebmDuration = (await import("webm-duration-fix")).default;
+    return await fixWebmDuration(blob);
   } catch (err) {
-    console.warn("[videoCompress] EBML duration patch 失败,走原 Blob:", err);
+    console.warn("[videoCompress] WebM duration patch 失败,走原 Blob:", err);
     return blob;
   }
 }
