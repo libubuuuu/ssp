@@ -82,20 +82,8 @@ export default function MaskEditor({ videoUrl, sessionId, kind = "person", initi
     const video = videoRef.current;
     if (!video) return;
 
-    // 浏览器 MediaRecorder 录的 WebM 缺 duration 元数据(EBML header 不写)。
-    // 直接给 video src=URL 时,seek/loadeddata/canplay 行为在不同浏览器都
-    // 不可靠 — 之前 4 轮 fix 全卡这。
-    //
-    // 改方案:fetch 完整文件 → Blob → object URL 给 video。Blob 对浏览器是
-    // 完全 in-memory 已知大小的源,seekable 起点稳定,loadeddata 一定 fire。
-    //
-    // 12MB WebM 在 1Mbps 下 100s 也能下完;实测主流移动 4G 5-10s。
-    // AbortController 让组件卸载时能中断 fetch,不浪费带宽。
-
-    const ac = new AbortController();
-    let blobUrl = "";
-    let captured = false;
     let unmounted = false;
+    let captured = false;
 
     const onLoaded = () => {
       if (captured || unmounted) return;
@@ -104,38 +92,33 @@ export default function MaskEditor({ videoUrl, sessionId, kind = "person", initi
       captureFirstFrame();
     };
 
-    (async () => {
-      try {
-        setError("");
-        const res = await fetch(videoUrl, { signal: ac.signal, credentials: "same-origin" });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const blob = await res.blob();
-        if (unmounted) return;
-        blobUrl = URL.createObjectURL(blob);
-        video.addEventListener("loadeddata", onLoaded);
-        video.addEventListener("canplay", onLoaded);
-        video.src = blobUrl;
-        try { video.load(); } catch {}
-      } catch (e) {
-        if (unmounted) return;
-        if ((e as Error).name === "AbortError") return;
-        setError(tRef.current("oral.mask.errVideoLoad"));
-      }
-    })();
+    const onMetadata = () => {
+      // metadata 拿到后,seek 0.001 强制 decode 第一帧(部分 WebM 不会自动 decode)
+      try { if (video.readyState < 2) video.currentTime = 0.001; } catch {}
+    };
+
+    // 多事件兜底:不同浏览器 / 不同视频格式触发的事件不同
+    video.addEventListener("loadeddata", onLoaded);
+    video.addEventListener("canplay", onLoaded);
+    video.addEventListener("seeked", onLoaded);
+    video.addEventListener("loadedmetadata", onMetadata);
+
+    // 部分浏览器在 src 已经设了的情况下不会自动 load,显式触发一次
+    try { if (video.readyState === 0) video.load(); } catch {}
 
     const timeoutId = window.setTimeout(() => {
-      if (!captured) {
+      if (!captured && !unmounted) {
         setError(tRef.current("oral.mask.errVideoLoad"));
       }
-    }, 60000);
+    }, 30000);
 
     return () => {
       unmounted = true;
-      ac.abort();
       window.clearTimeout(timeoutId);
       video.removeEventListener("loadeddata", onLoaded);
       video.removeEventListener("canplay", onLoaded);
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      video.removeEventListener("seeked", onLoaded);
+      video.removeEventListener("loadedmetadata", onMetadata);
     };
   }, [captureFirstFrame, videoUrl]);
 
@@ -275,11 +258,11 @@ export default function MaskEditor({ videoUrl, sessionId, kind = "person", initi
 
   return (
     <div>
-      {/* 不可见 video 用于抽首帧。src 在 useEffect 里通过 fetch 拿到的
-          Blob URL 设置(绕过浏览器 streaming preload 在 MediaRecorder WebM
-          上 duration 缺失导致的 seek 失败)。display:none 在 Safari/iOS 会
-          被优化掉,改 absolute + 0 尺寸 + visibility:hidden。 */}
-      <video ref={videoRef} muted playsInline
+      {/* 不可见 video 用于抽首帧。preload="metadata" 只下 metadata + 首帧
+          decode 必需的最小字节,不下整文件。muted + playsInline 是 mobile
+          Safari 自动下载首帧的必要条件。display:none 在 iOS 会被优化掉,
+          改 absolute + 1px + visibility:hidden 让浏览器认为可见。 */}
+      <video ref={videoRef} src={videoUrl} preload="metadata" muted playsInline
         style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none", visibility: "hidden" }} />
 
       {!ready && (
