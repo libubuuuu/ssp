@@ -64,6 +64,8 @@ def _patch_oral_columns(cursor):
         ("product_mask_image_path", "ALTER TABLE oral_sessions ADD COLUMN product_mask_image_path TEXT"),
         ("swap1_video_url", "ALTER TABLE oral_sessions ADD COLUMN swap1_video_url TEXT"),
         ("swap1_fal_request_id", "ALTER TABLE oral_sessions ADD COLUMN swap1_fal_request_id TEXT"),
+        # 七十七续 P12 — oral_sessions GC,60 天后清目录,DB row 保留(账单/审计),archived_at 标记已清
+        ("archived_at", "ALTER TABLE oral_sessions ADD COLUMN archived_at TIMESTAMP"),
     ]
     for col_name, sql in patches:
         try:

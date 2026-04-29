@@ -1,0 +1,15 @@
+# 口播带货 session 60 天 GC cron(七十七续 P12)
+#
+# 安装:
+#   crontab -l > /tmp/cron.bak 2>/dev/null || true
+#   cat /tmp/cron.bak /opt/ssp/deploy/oral-gc.cron.example | sort -u | crontab -
+#   crontab -l                                     # 验证
+#   tail -f /var/log/ssp-oral-gc.log               # 看输出
+#
+# 时间:每天 05:00(避开 03:00 备份 + 04:00 uploads-gc)
+# 默认保留 60 天;改环境变量 SSP_ORAL_RETENTION_DAYS 调
+#
+# 删的是 /opt/ssp/uploads/oral/<uid>/<sid>/ 整目录;DB row 保留(账单/审计)
+# 只标记 archived_at,admin drill-down 仍能看历史
+
+0 5 * * * /usr/bin/bash /opt/ssp/deploy/oral-gc.sh

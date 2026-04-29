@@ -1286,3 +1286,95 @@ def test_oral_email_terminal_hook_failed_with_refund(client_oral, register, auth
     assert kw["error_step"] == "step3"
     assert "voice-clone" in kw["error_message"]
     assert kw["refunded_credits"] == 60
+
+
+# ==================== oral_sessions GC(P12) ====================
+
+
+def _seed_session_with_dir(user_id: str, status: str, days_old: int, tmp_oral_root):
+    """创建一条 oral_sessions row 并在 tmp_oral_root 下建对应 session 目录"""
+    import uuid
+    from app.database import get_db
+    sid = uuid.uuid4().hex[:12]
+    sess_dir = tmp_oral_root / str(user_id) / sid
+    sess_dir.mkdir(parents=True, exist_ok=True)
+    (sess_dir / "orig.mp4").write_bytes(b"x" * 1024)
+    (sess_dir / "final.mp4").write_bytes(b"y" * 2048)
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO oral_sessions (id, user_id, tier, status, original_video_path, duration_seconds, credits_charged, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', ?))",
+            (sid, str(user_id), "economy", status, str(sess_dir / "orig.mp4"), 30.0, 0, f"-{int(days_old)} days"),
+        )
+        conn.commit()
+    return sid, sess_dir
+
+
+def test_oral_gc_archives_old_completed(client_oral, register, monkeypatch, tmp_path):
+    """60 天前已完成 session → 目录删除 + archived_at 标记。"""
+    from app.services import oral_gc
+    monkeypatch.setattr(oral_gc, "ORAL_UPLOAD_ROOT", tmp_path)
+
+    _, user = register(client_oral, "oral-gc-old@x.com")
+    sid, sess_dir = _seed_session_with_dir(user["id"], "completed", days_old=70, tmp_oral_root=tmp_path)
+
+    result = oral_gc.clean_old_oral_sessions(days=60, dry_run=False)
+
+    assert result["scanned"] == 1
+    assert result["archived"] == 1
+    assert result["freed_bytes"] >= 1024 + 2048
+    assert not sess_dir.exists()
+
+    from app.database import get_db
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT archived_at FROM oral_sessions WHERE id = ?", (sid,))
+        row = c.fetchone()
+        archived_at = row["archived_at"] if hasattr(row, "keys") else row[0]
+        assert archived_at is not None
+
+
+def test_oral_gc_skips_in_flight(client_oral, register, monkeypatch, tmp_path):
+    """in-flight session(asr_running 等)即使 70 天前也不动 — 数据完整性。"""
+    from app.services import oral_gc
+    monkeypatch.setattr(oral_gc, "ORAL_UPLOAD_ROOT", tmp_path)
+
+    _, user = register(client_oral, "oral-gc-running@x.com")
+    sid, sess_dir = _seed_session_with_dir(user["id"], "asr_running", days_old=70, tmp_oral_root=tmp_path)
+
+    result = oral_gc.clean_old_oral_sessions(days=60, dry_run=False)
+
+    assert result["scanned"] == 0
+    assert result["archived"] == 0
+    assert sess_dir.exists()
+
+
+def test_oral_gc_skips_recent_completed(client_oral, register, monkeypatch, tmp_path):
+    """30 天前完成 < 60 天阈值 → 不动。"""
+    from app.services import oral_gc
+    monkeypatch.setattr(oral_gc, "ORAL_UPLOAD_ROOT", tmp_path)
+
+    _, user = register(client_oral, "oral-gc-recent@x.com")
+    sid, sess_dir = _seed_session_with_dir(user["id"], "completed", days_old=30, tmp_oral_root=tmp_path)
+
+    result = oral_gc.clean_old_oral_sessions(days=60, dry_run=False)
+
+    assert result["scanned"] == 0
+    assert sess_dir.exists()
+
+
+def test_oral_gc_idempotent_already_archived(client_oral, register, monkeypatch, tmp_path):
+    """archived_at 非 NULL 的 row 不再处理(防重复)。"""
+    from app.services import oral_gc
+    from app.database import get_db
+    monkeypatch.setattr(oral_gc, "ORAL_UPLOAD_ROOT", tmp_path)
+
+    _, user = register(client_oral, "oral-gc-twice@x.com")
+    sid, _ = _seed_session_with_dir(user["id"], "completed", days_old=70, tmp_oral_root=tmp_path)
+
+    oral_gc.clean_old_oral_sessions(days=60, dry_run=False)
+    second = oral_gc.clean_old_oral_sessions(days=60, dry_run=False)
+
+    assert second["scanned"] == 0
+    assert second["archived"] == 0
