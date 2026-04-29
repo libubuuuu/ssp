@@ -30,6 +30,11 @@ interface Props {
  */
 export default function MaskEditor({ videoUrl, sessionId, kind = "person", initialDone = false, onUploaded }: Props) {
   const { t } = useLang();
+  // useLang().t 每次重渲染都是新引用,放进 effect 依赖会让父组件 WS 推送
+  // 触发 setSess → MaskEditor 重渲染 → effect cleanup/remount → video 永远
+  // 无法 fire loadeddata。用 ref 锁住 t,让 effect 依赖只剩 videoUrl 自身。
+  const tRef = useRef(t);
+  tRef.current = t;
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const bgCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -104,7 +109,7 @@ export default function MaskEditor({ videoUrl, sessionId, kind = "person", initi
         video.currentTime = 0.001;
       } catch {}
     };
-    const onErr = () => setError(t("oral.mask.errVideoLoad"));
+    const onErr = () => setError(tRef.current("oral.mask.errVideoLoad"));
 
     video.addEventListener("loadedmetadata", onMeta);
     video.addEventListener("loadeddata", tryCapture);
@@ -122,7 +127,7 @@ export default function MaskEditor({ videoUrl, sessionId, kind = "person", initi
     const timeoutId = window.setTimeout(() => {
       if (!captured) {
         timedOut = true;
-        setError(t("oral.mask.errVideoLoad"));
+        setError(tRef.current("oral.mask.errVideoLoad"));
       }
     }, 30000);
 
@@ -136,7 +141,7 @@ export default function MaskEditor({ videoUrl, sessionId, kind = "person", initi
       video.removeEventListener("canplaythrough", tryCapture);
       video.removeEventListener("error", onErr);
     };
-  }, [captureFirstFrame, t, videoUrl]);
+  }, [captureFirstFrame, videoUrl]);
 
   // 屏幕坐标 → canvas 内部坐标(应对 CSS 缩放)
   const toCanvas = (e: React.PointerEvent) => {

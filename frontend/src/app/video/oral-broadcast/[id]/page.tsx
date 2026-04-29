@@ -1,6 +1,6 @@
 "use client";
 import { useLang } from "@/lib/i18n/LanguageContext";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import MaskEditor from "@/components/MaskEditor";
@@ -71,6 +71,11 @@ export default function OralBroadcastWorkbench() {
 
   const token = () => (typeof window !== "undefined" ? localStorage.getItem("token") || "" : "");
 
+  // useLang().t 每次渲染都是新引用,塞进 useCallback 依赖会让 loadStatus 引用每次都变 →
+  // 下面的 WS effect 反复重连 + 反复 setSess → 父重渲染又触发新一轮。用 ref 锁 t。
+  const tRef = useRef(t);
+  tRef.current = t;
+
   const loadStatus = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/api/oral/status/${sessionId}`, {
@@ -78,13 +83,13 @@ export default function OralBroadcastWorkbench() {
         credentials: "include",
       });
       if (!res.ok) {
-        setError(t("oral.errStatus"));
+        setError(tRef.current("oral.errStatus"));
         return;
       }
       const data: SessionStatus = await res.json();
       setSess(data);
     } catch {} finally { setLoading(false); }
-  }, [sessionId, t]);
+  }, [sessionId]);
 
   // ASR 完成后自动把原文案灌进编辑框(从 loadStatus / WS handler 抽出,
   // 避免 editedText 进 loadStatus 闭包导致 WS effect 频繁重连)
