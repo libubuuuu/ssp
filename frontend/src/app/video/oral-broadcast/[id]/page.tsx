@@ -51,8 +51,9 @@ export default function OralBroadcastWorkbench() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Step 1 输入
-  const [tier, setTier] = useState<Tier>("standard");
+  // Step 1 输入。standard / premium 走 ElevenLabs(P6 待接入),目前不可选,
+  // 默认 economy 是当前唯一全链路可用的档位。
+  const [tier, setTier] = useState<Tier>("economy");
   const [legalConsent, setLegalConsent] = useState(false);
 
   // Step 1 模特/产品(URL 输入 + 从库选两种来源)
@@ -307,24 +308,37 @@ export default function OralBroadcastWorkbench() {
 
             <div style={{ marginBottom: "1.5rem" }}>
               <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>{t("oral.tierTitle")}</div>
-              {(["economy", "standard", "premium"] as Tier[]).map(opt => (
-                <label key={opt} style={{
-                  display: "block", padding: "0.8rem 1rem",
-                  border: tier === opt ? "2px solid #0d0d0d" : "1px solid #ddd",
-                  background: tier === opt ? "#f9f7f2" : "#fff",
-                  borderRadius: 10, marginBottom: "0.5rem", cursor: "pointer",
-                }}>
-                  <input type="radio" name="tier" value={opt} checked={tier === opt}
-                    onChange={() => setTier(opt)} style={{ marginRight: "0.5rem" }} />
-                  <strong>{t(`oral.tier.${opt}`)}</strong>
-                  <span style={{ marginLeft: "0.8rem", color: "#888", fontSize: "0.85rem" }}>
-                    ¥{TIER_PRICE[opt].yuan}/分钟 · {Math.ceil(TIER_PRICE[opt].credits / 60 * sess.duration_seconds)} 积分
-                  </span>
-                  <div style={{ fontSize: "0.75rem", color: "#999", marginTop: 4 }}>
-                    {t(`oral.tierDesc.${opt}`)}
-                  </div>
-                </label>
-              ))}
+              {(["economy", "standard", "premium"] as Tier[]).map(opt => {
+                // standard / premium 走 ElevenLabs,P6 接入前不可选(防止用户
+                // 跑到 audio swap 阶段才发现挂掉,前置 disabled 避免 fail-late)
+                const disabled = opt !== "economy";
+                return (
+                  <label key={opt} style={{
+                    display: "block", padding: "0.8rem 1rem",
+                    border: tier === opt ? "2px solid #0d0d0d" : "1px solid #ddd",
+                    background: tier === opt ? "#f9f7f2" : "#fff",
+                    borderRadius: 10, marginBottom: "0.5rem",
+                    cursor: disabled ? "not-allowed" : "pointer",
+                    opacity: disabled ? 0.5 : 1,
+                  }}>
+                    <input type="radio" name="tier" value={opt} checked={tier === opt}
+                      disabled={disabled}
+                      onChange={() => setTier(opt)} style={{ marginRight: "0.5rem" }} />
+                    <strong>{t(`oral.tier.${opt}`)}</strong>
+                    {disabled && (
+                      <span style={{ marginLeft: "0.5rem", color: "#c33", fontSize: "0.75rem" }}>
+                        {t("oral.tierComingSoon")}
+                      </span>
+                    )}
+                    <span style={{ marginLeft: "0.8rem", color: "#888", fontSize: "0.85rem" }}>
+                      ¥{TIER_PRICE[opt].yuan}/分钟 · {Math.ceil(TIER_PRICE[opt].credits / 60 * sess.duration_seconds)} 积分
+                    </span>
+                    <div style={{ fontSize: "0.75rem", color: "#999", marginTop: 4 }}>
+                      {t(`oral.tierDesc.${opt}`)}
+                    </div>
+                  </label>
+                );
+              })}
             </div>
 
             <div style={{ marginBottom: "1.5rem" }}>

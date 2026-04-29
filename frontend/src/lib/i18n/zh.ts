@@ -623,6 +623,7 @@ export const zh = {
     waitHint: "约 5-8 分钟,可关闭页面稍后回来查看",
     tierTitle: "选档位",
     tier: { economy: "经济档", standard: "标准档 ⭐", premium: "顶级档" },
+    tierComingSoon: "(即将上线)",
     tierDesc: {
       economy: "MiniMax 音色 + 480p 换装 + veed 口型",
       standard: "ElevenLabs Turbo + 580p + latentsync(等 EL key 接入)",

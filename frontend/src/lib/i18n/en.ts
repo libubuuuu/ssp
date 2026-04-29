@@ -623,6 +623,7 @@ export const en = {
     waitHint: "Takes ~5-8 minutes. You can close this page and come back later.",
     tierTitle: "Tier",
     tier: { economy: "Economy", standard: "Standard ⭐", premium: "Premium" },
+    tierComingSoon: "(Coming soon)",
     tierDesc: {
       economy: "MiniMax voice + 480p swap + veed lipsync",
       standard: "ElevenLabs Turbo + 580p + latentsync (waiting EL key)",

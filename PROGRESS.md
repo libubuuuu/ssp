@@ -44,6 +44,27 @@ ffprobe -show_entries format=duration ... orig.webm  →  N/A
 永远不要 `except: pass` 或 `except: return <fallback>`,要么 raise,
 要么至少 log + raise 自定义异常。
 
+### D-1.5 实测成功(2026-04-30)
+用户硬刷无痕窗口实测:
+- session `fde80e86...` 上传通过,`duration_seconds=75.4`(真实秒数,不再 0.0)
+- 标准档 ¥180/min 计费 = 453 积分,扣费成功
+- 流程走通 ASR → 编辑 → 扣费链路,跑到第 3 步 audio swap 才挂
+- 挂的根因 = `tier=standard` 走 ElevenLabs,**API key 未接入**(P6 待办,跟本
+  次 D 修复无关),已自动退款 430 积分(扣 23 已用阶段费用)
+
+教训(选包):
+- D-1 `ts-ebml` 在 Next.js 16 打包下 module evaluation 阶段抛
+  `Cannot read properties of undefined (reading 'readVInt')`,实测失败
+- D-1.5 `webm-duration-fix` 内部自带 ts-ebml fork(避开了原版那个雷)
+  + 显式 `buffer ^6.0.3` 依赖自带 polyfill,实测成功
+- 选包优先看:实际生效证据 > 理论体积 > star 数。3774 行 EBML 实现在
+  打包下能不能跑,只有实测能定
+
+后续衍生工作(独立排期,本 backlog 不混):
+- **P6 ElevenLabs API 接入** — 用户已在标准档触发 fail-late,UX 差,
+  接入前需把档位 radio 前置 disabled
+- **上传速度优化** — 用户反馈 0.1 MB/s ETA 79s(独立网络/IO 问题)
+
 ### Backlog(D 方案,数据驱动决定)
 **前端 videoCompress 输出 WebM 后用 ts-ebml 修补 EBML duration header**,
 或改用 ffmpeg.wasm 转码确保 duration metadata 完整。
