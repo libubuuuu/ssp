@@ -178,9 +178,15 @@ export async function compressVideo(
 
     URL.revokeObjectURL(videoUrl);
 
+    // 八十一 D 方案:MediaRecorder 输出 WebM 不写 EBML duration metadata,
+    // 后端 ffprobe 拿不到时长会拒收。用 ts-ebml 在客户端 patch EBML header
+    // 把 duration 注进去。失败 fallback 原 blob(不阻塞上传,后端会再拒收
+    // 引导用户用相机录的 mp4)。
+    const patchedBlob = await patchWebmDuration(compressedBlob);
+
     const baseName = file.name.replace(/\.[^.]+$/, "");
     const compressedFile = new File(
-      [compressedBlob],
+      [patchedBlob],
       `${baseName}.webm`,
       { type: "video/webm", lastModified: Date.now() },
     );
@@ -198,5 +204,39 @@ export async function compressVideo(
     URL.revokeObjectURL(videoUrl);
     console.warn("[videoCompress] 压缩失败,走 fallback 上传原文件:", err);
     return { file, originalSize: file.size, compressedSize: file.size, ratio: 1, compressed: false };
+  }
+}
+
+/**
+ * 八十一 D 方案:用 ts-ebml 给 MediaRecorder 输出的 WebM 注入 EBML duration
+ * 元数据(原始输出缺这一字段,ffprobe / 多数解码器拿不到时长)。
+ *
+ * 失败时返回原 blob(不抛错),让调用方无感降级。后端 ffprobe N/A 会再
+ * 拒收 + 引导用户。
+ */
+async function patchWebmDuration(blob: Blob): Promise<Blob> {
+  try {
+    // 动态 import:ts-ebml 用了 Node Buffer,SSR 阶段不要触发模块求值
+    const ebml = await import("ts-ebml");
+    const decoder = new ebml.Decoder();
+    const reader = new ebml.Reader();
+    reader.logging = false;
+    reader.drop_default_duration = false;
+
+    const buf = await blob.arrayBuffer();
+    const elms = decoder.decode(buf);
+    elms.forEach(el => reader.read(el));
+    reader.stop();
+
+    const refinedMetadataBuf = ebml.tools.makeMetadataSeekable(
+      reader.metadatas,
+      reader.duration,
+      reader.cues,
+    );
+    const body = buf.slice(reader.metadataSize);
+    return new Blob([refinedMetadataBuf, body], { type: blob.type });
+  } catch (err) {
+    console.warn("[videoCompress] EBML duration patch 失败,走原 Blob:", err);
+    return blob;
   }
 }
