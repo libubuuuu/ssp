@@ -99,16 +99,6 @@ export default function OralBroadcastWorkbench() {
     }
   }, [sess?.products.asr_transcript, sess?.products.edited_transcript, editedText]);
 
-  // [DIAG] 临时诊断埋点 — 看 sess.products 实际拿到啥
-  useEffect(() => {
-    if (sess) {
-      console.log("[DIAG-PARENT] sess.products =", sess.products);
-      console.log("[DIAG-PARENT] original_video_url =",
-        sess.products?.original_video_url,
-        "type:", typeof sess.products?.original_video_url);
-    }
-  }, [sess]);
-
   // WS 实时进度推送(取代 4s 轮询);WS 失败 / 关闭(非终态)自动 fallback 到轮询
   useEffect(() => {
     if (!sessionId) return;
