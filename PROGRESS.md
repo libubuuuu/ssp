@@ -1,5 +1,62 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-29 七十七续 P8(oral admin drill-down — 点行展开看完整字段)
+
+P7 表格只能看任务概要,真实视频 PoC 时如果某条结果不对,需要看完整字段
+(ASR 听对没 / 编辑文案 / 中间产物 / fal request_id)定位问题。
+
+### 后端 GET /api/admin/oral-tasks/{sid}(commit `a821f23`)
+
+- 鉴权 require_admin,LEFT JOIN users 拿 user_email
+- selected_models / selected_products / asr_word_timestamps 后端 json.loads
+  解析为对象,失败保留原 string(前端能看到坏数据)
+- 派生 credits_net = charged - refunded
+- 派生 original_video_url(从 `/opt/ssp/uploads/...` 转 public `/uploads/...`)
+- 404 不存在
+
+### 前端 OralDetailModal
+
+`frontend/src/components/OralDetailModal.tsx`(~210 行):
+- 表格行 onClick → setDetailSid → modal,hover 高亮 + cursor pointer
+- 视频 ▶ 链接 e.stopPropagation() 避免跟 row click 冲突
+- modal 8 段(失败排查最关注的"错误"放最上面):
+  ① **Meta grid**(ID / 用户 / tier / 状态 / 时长 / 净扣 / 创建 / 完成)
+  ② **错误**(红框高亮,有 error_message 时优先显示,error_step 标注)
+  ③ **模特 / 产品**(parsed JSON 渲染图 + 名,JSON 失败 raw fallback)
+  ④ **ASR + 编辑文案**(pre + whitespace:pre-wrap,看清是否换行/编辑差异)
+  ⑤ **5 个产物 inline 播放**(原视频 / mask / 新音频 / 换装视频 / 最终)+ ↗ 新窗
+  ⑥ **FAL request_id**(voice_provider / swap / lipsync)— 去 fal dashboard 查
+
+### 测试 +4(487 → 491 全过)
+- 401 / 403 / 404 / 200 含完整字段
+- JSON 解析正确(selected_models[0].name == "Alice")
+- credits_net 派生 + 各 fal request_id 字段返回
+
+frontend npm run build 0 error 0 warning。
+
+### 已 deploy 进生产 ✅(2026-04-29 14:13 蓝绿 blue → green)
+- ailixiao.com / 200 / /admin/oral 200 / /api/admin/oral-tasks/anysid 401(端点 OK)
+
+### 决策记录
+- **错误段放最上面**:用户来查 drill-down 90% 是因为"这条失败了想看为啥",
+  meta info 和模特产品列表是次要 — 红框 + 醒目位置 = 第一眼就看到原因
+- **JSON parse 后端做 + 失败 fallback raw**:前端不需要 catch 解析,坏数据
+  也能展示(red 警告)— 双方各退一步,坏数据不让 UI 整个挂掉
+- **inline 播放器**:5 个产物每个都给 video/audio 标签直接看,不用全部跳新窗 —
+  排查"音频对得上换装视频吗 / 换装视频对得上 mask 区域吗"靠肉眼比对最快
+- **FAL request_id 留外链 hint**:不在产品里链 fal dashboard(单点账号绑定),
+  把 ID copyable 给运营人手贴 fal 后台查
+
+### 下一步候选
+- (等用户)真实视频 PoC + ElevenLabs key
+- 我能继续干的:
+  - oral_sessions GC(60 天后清 final.mp4 — uploads_gc 已有框架可扩)
+  - WS 实时进度替 4s 轮询
+  - 长任务用户邮件通知(完成/失败)
+  - lint errors 58 个清理(setState in effect 等)
+
+---
+
 ## 2026-04-29 七十七续 P7(口播任务运营后台 — admin 看任务卡哪一步)
 
 P6 完成水印 + picker 后,真实视频 PoC 阶段最后一个工程拦路虎:**用户测试出
