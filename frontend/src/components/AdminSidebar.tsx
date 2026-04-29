@@ -39,6 +39,7 @@ export default function AdminSidebar({ isOpen = true, onClose }: Props) {
     { path: "/admin/users", icon: "👥", zh: "用户管理", en: "Users" },
     { path: "/admin/orders", icon: "💰", zh: "订单管理", en: "Orders" },
     { path: "/admin/dashboard", icon: "📊", zh: "系统监控", en: "Monitor" },
+    { path: "/admin/oral", icon: "🎤", zh: "口播任务", en: "Oral Tasks" },
     { path: "/admin/audit", icon: "📜", zh: "审计日志", en: "Audit Log" },
     { path: "/admin/diagnose", icon: "🩺", zh: "诊断历史", en: "Diagnose" },
     { path: "/admin/settings", icon: "⚙", zh: "管理员设置", en: "Settings" },

@@ -294,3 +294,139 @@ def test_admin_2fa_enforce_doesnt_affect_non_admin(client, register, auth_header
     # detail 是字符串(普通 role 不足)而不是 2FA dict
     assert isinstance(body["detail"], str)
     assert "管理员" in body["detail"]
+
+
+# ==================== 七十七续 P7:口播任务运营 admin ====================
+
+
+def _seed_oral(user_id, status="completed", tier="economy", duration=30.0,
+               charged=160, refunded=0, error_step=None, error_message=None):
+    import uuid
+    from app.database import get_db
+    sid = uuid.uuid4().hex[:12]
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """INSERT INTO oral_sessions (id, user_id, tier, status, original_video_path,
+               duration_seconds, credits_charged, credits_refunded, error_step, error_message)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (sid, str(user_id), tier, status, "/tmp/x.mp4", duration,
+             charged, refunded, error_step, error_message),
+        )
+        conn.commit()
+    return sid
+
+
+def test_admin_oral_tasks_unauthenticated_401(client):
+    r = client.get("/api/admin/oral-tasks")
+    assert r.status_code in (401, 403)
+
+
+def test_admin_oral_tasks_non_admin_403(client, register, auth_header):
+    token, _ = register(client, "ot-non-admin@x.com")
+    r = client.get("/api/admin/oral-tasks", headers=auth_header(token))
+    assert r.status_code == 403
+
+
+def test_admin_oral_tasks_summary_and_items(client, register, auth_header, set_role):
+    """summary 各 status 计数 + failure_top 聚合 + items 含 user_email/credits_net"""
+    a_token, a_user = register(client, "ot-admin@x.com")
+    set_role(a_user["id"], "admin")
+    _, u1 = register(client, "ot-user1@x.com")
+    _, u2 = register(client, "ot-user2@x.com")
+
+    _seed_oral(u1["id"], status="completed", tier="economy",
+               duration=30.0, charged=160, refunded=0)
+    _seed_oral(u1["id"], status="failed_step5", tier="standard",
+               duration=45.0, charged=270, refunded=81,
+               error_step="step5", error_message="lipsync timeout")
+    _seed_oral(u2["id"], status="failed_step5", tier="economy",
+               duration=20.0, charged=80, refunded=24,
+               error_step="step5", error_message="lipsync timeout")
+    _seed_oral(u2["id"], status="asr_running", tier="economy",
+               duration=10.0, charged=40, refunded=0)
+
+    r = client.get("/api/admin/oral-tasks", headers=auth_header(a_token))
+    assert r.status_code == 200
+    body = r.json()
+
+    s = body["summary"]
+    assert s["total"] == 4
+    assert s["status_counts"]["completed"] == 1
+    assert s["status_counts"]["failed_step5"] == 2
+    assert s["status_counts"]["asr_running"] == 1
+
+    # failure_top:lipsync timeout 出现 2 次
+    assert body["failure_top"][0]["count"] == 2
+    assert "lipsync timeout" in body["failure_top"][0]["message"]
+
+    items = body["items"]
+    assert len(items) == 4
+    emails = {it["user_email"] for it in items}
+    assert {"ot-user1@x.com", "ot-user2@x.com"} <= emails
+    # credits_net = charged - refunded
+    failed_u1 = next(it for it in items
+                     if it["user_email"] == "ot-user1@x.com" and it["status"] == "failed_step5")
+    assert failed_u1["credits_net"] == 270 - 81  # 189
+
+
+def test_admin_oral_tasks_status_filter(client, register, auth_header, set_role):
+    a_token, a_user = register(client, "ot-fil-admin@x.com")
+    set_role(a_user["id"], "admin")
+    _, u = register(client, "ot-fil-user@x.com")
+
+    _seed_oral(u["id"], status="completed")
+    _seed_oral(u["id"], status="failed_step5", error_step="step5", error_message="x")
+    _seed_oral(u["id"], status="asr_running")
+
+    r = client.get("/api/admin/oral-tasks?status=completed", headers=auth_header(a_token))
+    assert r.status_code == 200
+    items = r.json()["items"]
+    assert len(items) == 1
+    assert items[0]["status"] == "completed"
+
+
+def test_admin_oral_tasks_tier_filter(client, register, auth_header, set_role):
+    a_token, a_user = register(client, "ot-tier-admin@x.com")
+    set_role(a_user["id"], "admin")
+    _, u = register(client, "ot-tier-user@x.com")
+
+    _seed_oral(u["id"], tier="economy")
+    _seed_oral(u["id"], tier="standard")
+    _seed_oral(u["id"], tier="premium")
+
+    r = client.get("/api/admin/oral-tasks?tier=premium", headers=auth_header(a_token))
+    assert r.status_code == 200
+    items = r.json()["items"]
+    assert len(items) == 1
+    assert items[0]["tier"] == "premium"
+
+
+def test_admin_oral_tasks_step_progress_flags(client, register, auth_header, set_role):
+    """step_progress 字段从 NULL/非 NULL 派生"""
+    a_token, a_user = register(client, "ot-sp-admin@x.com")
+    set_role(a_user["id"], "admin")
+    _, u = register(client, "ot-sp-user@x.com")
+
+    sid = _seed_oral(u["id"], status="lipsync_running")
+
+    # 模拟 step1+step2+step3 完成,step4/5 还没产物
+    from app.database import get_db
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE oral_sessions SET asr_transcript=?, edited_transcript=?, new_audio_url=? WHERE id=?",
+            ("hello", "hello edited", "https://x/a.mp3", sid),
+        )
+        conn.commit()
+
+    r = client.get("/api/admin/oral-tasks", headers=auth_header(a_token))
+    assert r.status_code == 200
+    items = r.json()["items"]
+    assert len(items) == 1
+    sp = items[0]["step_progress"]
+    assert sp["step1_asr"] is True
+    assert sp["step2_edit"] is True
+    assert sp["step3_audio"] is True
+    assert sp["step4_swap"] is False
+    assert sp["step5_final"] is False

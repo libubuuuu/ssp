@@ -615,7 +615,119 @@ async def admin_upload_qr(file: UploadFile = File(...), current_user: dict = Dep
     
     with open(target, "wb") as f:
         f.write(contents)
-    
+
     # 加个时间戳避免浏览器缓存
     import time
     return {"success": True, "url": f"/qr-payment.png?v={int(time.time())}", "size": len(contents)}
+
+
+# ==================== 七十七续 P7:口播任务运营 / 巡检 ====================
+
+
+@router.get("/oral-tasks")
+async def admin_oral_tasks(
+    status: Optional[str] = None,
+    tier: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    _admin: dict = Depends(require_admin),
+):
+    """口播任务总览 + 列表 + 失败 top 原因。
+
+    summary:总数 / 各 status 计数 / 平均时长 / 平均净扣积分 / 总净扣
+    failure_top:失败 top 5(error_step + error_message + count)
+    items:列表(每条含 user_email / step_progress / credits_net / error_message)
+    """
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # 1) 各 status 计数
+        cursor.execute("SELECT status, COUNT(*) FROM oral_sessions GROUP BY status")
+        status_counts = {r[0]: r[1] for r in cursor.fetchall()}
+
+        # 2) 总览聚合
+        cursor.execute(
+            """SELECT COUNT(*),
+                      AVG(duration_seconds),
+                      AVG(credits_charged - credits_refunded),
+                      SUM(credits_charged - credits_refunded)
+               FROM oral_sessions"""
+        )
+        agg = cursor.fetchone() or (0, 0, 0, 0)
+
+        # 3) 失败 top 5
+        cursor.execute(
+            """SELECT error_step, SUBSTR(COALESCE(error_message, ''), 1, 120) AS msg, COUNT(*) AS c
+               FROM oral_sessions
+               WHERE status LIKE 'failed_%' AND error_message IS NOT NULL
+               GROUP BY error_step, msg
+               ORDER BY c DESC
+               LIMIT 5"""
+        )
+        failure_top = [
+            {"step": r[0], "message": r[1], "count": r[2]}
+            for r in cursor.fetchall()
+        ]
+
+        # 4) 列表
+        sql = (
+            "SELECT s.id, s.user_id, u.email, s.tier, s.status, "
+            "s.duration_seconds, s.credits_charged, s.credits_refunded, "
+            "s.error_step, s.error_message, s.final_video_url, "
+            "s.created_at, s.completed_at, "
+            "(s.asr_transcript IS NOT NULL), (s.edited_transcript IS NOT NULL), "
+            "(s.new_audio_url IS NOT NULL), (s.swapped_video_url IS NOT NULL), "
+            "(s.final_video_url IS NOT NULL) "
+            "FROM oral_sessions s LEFT JOIN users u ON u.id = s.user_id WHERE 1=1"
+        )
+        params: list = []
+        if status:
+            sql += " AND s.status = ?"
+            params.append(status)
+        if tier:
+            sql += " AND s.tier = ?"
+            params.append(tier)
+        sql += " ORDER BY s.created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        cursor.execute(sql, params)
+
+        items = []
+        for r in cursor.fetchall():
+            items.append({
+                "id": r[0],
+                "user_id": r[1],
+                "user_email": r[2],
+                "tier": r[3],
+                "status": r[4],
+                "duration_seconds": r[5],
+                "credits_charged": r[6],
+                "credits_refunded": r[7],
+                "credits_net": (r[6] or 0) - (r[7] or 0),
+                "error_step": r[8],
+                "error_message": (r[9] or "")[:200] if r[9] else None,
+                "final_video_url": r[10],
+                "created_at": r[11],
+                "completed_at": r[12],
+                "step_progress": {
+                    "step1_asr": bool(r[13]),
+                    "step2_edit": bool(r[14]),
+                    "step3_audio": bool(r[15]),
+                    "step4_swap": bool(r[16]),
+                    "step5_final": bool(r[17]),
+                },
+            })
+
+    return {
+        "summary": {
+            "total": agg[0] or 0,
+            "avg_duration_seconds": round(agg[1] or 0, 1),
+            "avg_net_credits": round(agg[2] or 0, 1),
+            "total_net_credits": agg[3] or 0,
+            "status_counts": status_counts,
+        },
+        "failure_top": failure_top,
+        "items": items,
+    }
