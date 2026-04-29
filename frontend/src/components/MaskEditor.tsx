@@ -271,48 +271,48 @@ export default function MaskEditor({ videoUrl, sessionId, kind = "person", initi
         </div>
       )}
 
-      {ready && (
-        <div>
-          <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.8rem", flexWrap: "wrap", alignItems: "center" }}>
-            <button onClick={() => setTool("brush")} style={btnStyle(tool === "brush")}>🖌 {t("oral.mask.brush")}</button>
-            <button onClick={() => setTool("erase")} style={btnStyle(tool === "erase")}>🧽 {t("oral.mask.erase")}</button>
-            <button onClick={() => setTool("rect")} style={btnStyle(tool === "rect")}>▭ {t("oral.mask.rect")}</button>
-            <span style={{ marginLeft: "0.5rem", fontSize: "0.85rem", color: "#666" }}>{t("oral.mask.size")}:</span>
-            <input type="range" min={5} max={120} value={brushSize}
-              onChange={e => setBrushSize(parseInt(e.target.value))}
-              style={{ width: 100 }} />
-            <span style={{ fontSize: "0.85rem", color: "#666", width: 30 }}>{brushSize}</span>
-            <button onClick={clearMask}
-              style={{ ...btnStyle(false), color: "#c33", borderColor: "#fcc" }}>{t("oral.mask.clear")}</button>
-          </div>
-
-          <div style={{ position: "relative", lineHeight: 0, background: "#000", borderRadius: 8, overflow: "hidden", maxWidth: "100%" }}>
-            <canvas ref={bgCanvasRef} style={{ width: "100%", display: "block" }} />
-            <canvas ref={maskCanvasRef}
-              style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", opacity: 0.5, cursor: "crosshair", touchAction: "none" }}
-              onPointerDown={onPointerDown}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-              onPointerCancel={onPointerUp}
-            />
-          </div>
-
-          <div style={{ fontSize: "0.75rem", color: "#999", marginTop: "0.5rem" }}>
-            💡 {t("oral.mask.hint")}
-          </div>
-
-          {error && <div style={{ color: "#c33", marginTop: "0.5rem" }}>{error}</div>}
-
-          <button onClick={submitMask} disabled={uploading}
-            style={{
-              marginTop: "0.8rem", padding: "0.6rem 1.2rem",
-              background: uploading ? "#ccc" : "#0d0d0d", color: "#fff",
-              border: "none", borderRadius: 8, cursor: uploading ? "not-allowed" : "pointer",
-            }}>
-            {uploading ? t("oral.mask.uploading") : `✓ ${t("oral.mask.confirm")}`}
-          </button>
+      {/* canvas 必须从 mount 就在 DOM,否则 captureFirstFrame 拿不到 ref → setReady(true) 永远不调用 → ready 永远 false → "视频加载中" 永久显示。
+          ready 控制可见性,不控制是否渲染。 */}
+      <div style={{ display: ready ? "block" : "none" }}>
+        <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.8rem", flexWrap: "wrap", alignItems: "center" }}>
+          <button onClick={() => setTool("brush")} style={btnStyle(tool === "brush")}>🖌 {t("oral.mask.brush")}</button>
+          <button onClick={() => setTool("erase")} style={btnStyle(tool === "erase")}>🧽 {t("oral.mask.erase")}</button>
+          <button onClick={() => setTool("rect")} style={btnStyle(tool === "rect")}>▭ {t("oral.mask.rect")}</button>
+          <span style={{ marginLeft: "0.5rem", fontSize: "0.85rem", color: "#666" }}>{t("oral.mask.size")}:</span>
+          <input type="range" min={5} max={120} value={brushSize}
+            onChange={e => setBrushSize(parseInt(e.target.value))}
+            style={{ width: 100 }} />
+          <span style={{ fontSize: "0.85rem", color: "#666", width: 30 }}>{brushSize}</span>
+          <button onClick={clearMask}
+            style={{ ...btnStyle(false), color: "#c33", borderColor: "#fcc" }}>{t("oral.mask.clear")}</button>
         </div>
-      )}
+
+        <div style={{ position: "relative", lineHeight: 0, background: "#000", borderRadius: 8, overflow: "hidden", maxWidth: "100%" }}>
+          <canvas ref={bgCanvasRef} style={{ width: "100%", display: "block" }} />
+          <canvas ref={maskCanvasRef}
+            style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", opacity: 0.5, cursor: "crosshair", touchAction: "none" }}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+          />
+        </div>
+
+        <div style={{ fontSize: "0.75rem", color: "#999", marginTop: "0.5rem" }}>
+          💡 {t("oral.mask.hint")}
+        </div>
+
+        {error && <div style={{ color: "#c33", marginTop: "0.5rem" }}>{error}</div>}
+
+        <button onClick={submitMask} disabled={uploading}
+          style={{
+            marginTop: "0.8rem", padding: "0.6rem 1.2rem",
+            background: uploading ? "#ccc" : "#0d0d0d", color: "#fff",
+            border: "none", borderRadius: 8, cursor: uploading ? "not-allowed" : "pointer",
+          }}>
+          {uploading ? t("oral.mask.uploading") : `✓ ${t("oral.mask.confirm")}`}
+        </button>
+      </div>
     </div>
   );
 }
