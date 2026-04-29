@@ -136,7 +136,8 @@ def assert_register_ip_failure_quota(ip: str) -> None:
 
 class _LimiterCommon:
     """两个后端都用的常量"""
-    ip_limit = 60          # 每 IP 每分钟最多请求数
+    ip_limit = 60          # 每 IP 每分钟最多请求数(常规接口)
+    polling_ip_limit = 300 # 每 IP 每分钟最多轮询/状态查询数(单独桶,不和常规争)
     user_limit = 100       # 每用户每分钟最多请求数
     failure_threshold = 5  # 失败多少次触发验证码
     window_seconds = 60    # 时间窗口(秒)
@@ -147,6 +148,7 @@ class InMemoryRateLimiter(_LimiterCommon):
 
     def __init__(self):
         self.ip_requests: Dict[str, list] = defaultdict(list)
+        self.ip_polling_requests: Dict[str, list] = defaultdict(list)
         self.user_requests: Dict[str, list] = defaultdict(list)
         self.failure_count: Dict[str, int] = defaultdict(int)
 
@@ -162,6 +164,18 @@ class InMemoryRateLimiter(_LimiterCommon):
         if count >= self.ip_limit:
             return False, 0
         self.ip_requests[ip].append((current_time, count + 1))
+        return True, remaining - 1
+
+    def check_ip_polling_limit(self, ip: str) -> tuple[bool, int]:
+        current_time = time.time()
+        self.ip_polling_requests[ip] = self._clean_old_records(
+            self.ip_polling_requests[ip], current_time
+        )
+        count = len(self.ip_polling_requests[ip])
+        remaining = self.polling_ip_limit - count
+        if count >= self.polling_ip_limit:
+            return False, 0
+        self.ip_polling_requests[ip].append((current_time, count + 1))
         return True, remaining - 1
 
     def check_user_limit(self, user_id: str) -> tuple[bool, int]:
@@ -228,6 +242,9 @@ class RedisRateLimiter(_LimiterCommon):
     def check_ip_limit(self, ip: str) -> tuple[bool, int]:
         return self._check_window("ip", ip, self.ip_limit)
 
+    def check_ip_polling_limit(self, ip: str) -> tuple[bool, int]:
+        return self._check_window("ip_poll", ip, self.polling_ip_limit)
+
     def check_user_limit(self, user_id: str) -> tuple[bool, int]:
         return self._check_window("user", user_id, self.user_limit)
 
@@ -282,15 +299,33 @@ rate_limiter = _make_rate_limiter()
 RateLimiter = InMemoryRateLimiter
 
 
+# 轮询/状态查询类接口前缀:走单独的高配额桶(polling_ip_limit),
+# 不和常规接口共享 60/min。这些接口纯查询、零外部 IO,前端 4-10s/次轮询正常。
+# 注意:必须是真正的"读 + 廉价"端点,不要把写操作放进来。
+POLLING_PATH_PREFIXES = (
+    "/api/oral/status/",
+    "/api/jobs/list",
+    "/api/studio/batch-status/",
+    "/api/health",
+)
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """限流中间件"""
 
     async def dispatch(self, request: Request, call_next):
-        # 获取 IP
         ip = self._get_client_ip(request)
+        path = request.url.path
 
-        # 检查 IP 限流
-        allowed, remaining = rate_limiter.check_ip_limit(ip)
+        # 轮询接口走单独高配额桶(防 4s/次 polling 把常规桶吃光)
+        is_polling = any(path.startswith(p) for p in POLLING_PATH_PREFIXES)
+        if is_polling:
+            allowed, remaining = rate_limiter.check_ip_polling_limit(ip)
+            limit_for_header = rate_limiter.polling_ip_limit
+        else:
+            allowed, remaining = rate_limiter.check_ip_limit(ip)
+            limit_for_header = rate_limiter.ip_limit
+
         if not allowed:
             return JSONResponse(
                 status_code=429,
@@ -300,32 +335,23 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 },
             )
 
-        # 检查是否需要验证码
         if rate_limiter.should_require_captcha(ip):
-            # 可以在响应头中添加标记
             pass
 
-        # 添加限流信息到响应头
         response = await call_next(request)
         response.headers["X-RateLimit-Remaining"] = str(remaining)
-        response.headers["X-RateLimit-Limit"] = str(rate_limiter.ip_limit)
+        response.headers["X-RateLimit-Limit"] = str(limit_for_header)
 
         return response
 
     def _get_client_ip(self, request: Request) -> str:
-        """获取客户端 IP"""
-        # 优先从 X-Forwarded-For 获取（经过代理的情况）
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
+        """复用模块级 get_client_ip(支持 CF-Connecting-IP)。
 
-        # 从 X-Real-IP 获取
-        real_ip = request.headers.get("X-Real-IP")
-        if real_ip:
-            return real_ip
-
-        # 直接从连接获取
-        return request.client.host if request.client else "127.0.0.1"
+        早期版本中间件自己写了一份漏掉 CF-Connecting-IP,导致 Cloudflare
+        回源时所有用户共用 CF 边缘 IP 的同一个限流桶 (~60/min),
+        高峰期合法轮询全被打成 429。
+        """
+        return get_client_ip(request)
 
 
 # 用户限流装饰器
