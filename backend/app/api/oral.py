@@ -23,6 +23,7 @@ import os
 import re
 import shutil
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Optional, List
@@ -827,9 +828,18 @@ async def upload_chunk(
     user_id = str(current_user["id"])
     upload_dir = ORAL_UPLOAD_TMP / f"{user_id}_{upload_id}"
 
-    # 同 user 并行 upload_id ≤ 5
+    # 八十二:孤儿目录 GC — 5/5 上限基于 fs 目录数,正常合并成功才 rmtree(L879+),
+    # 任何中途失败 / 网络断 / 用户关页面 / 缺片 raise 都留孤儿。30 分钟无更新
+    # 视为孤儿,先清再判 5/5。正常分片上传单 chunk 间隔 < 几秒,不会误清。
+    ORAL_UPLOAD_TMP.mkdir(parents=True, exist_ok=True)
+    ORPHAN_GC_AGE_SEC = 30 * 60
+    _now = time.time()
+    for _d in ORAL_UPLOAD_TMP.glob(f"{user_id}_*"):
+        if _d.is_dir() and (_now - _d.stat().st_mtime) > ORPHAN_GC_AGE_SEC:
+            shutil.rmtree(_d, ignore_errors=True)
+
+    # 同 user 并行 upload_id ≤ 5(GC 后的真实在用数)
     if not upload_dir.exists():
-        ORAL_UPLOAD_TMP.mkdir(parents=True, exist_ok=True)
         existing = [p for p in ORAL_UPLOAD_TMP.glob(f"{user_id}_*") if p.is_dir()]
         if len(existing) >= 5:
             raise HTTPException(429, f"并行上传任务过多({len(existing)}/5)")

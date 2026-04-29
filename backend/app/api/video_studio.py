@@ -7,6 +7,7 @@ import sys
 import json
 import re
 import shutil
+import time
 import uuid
 import tempfile
 import subprocess
@@ -272,8 +273,17 @@ async def upload_chunk(
     user_id = str(current_user.get("id", "unknown"))
     upload_dir = UPLOAD_TMP_DIR / f"{user_id}_{upload_id}"
 
-    # 同 user 并行 upload_id 数限 5(防发起 1000 个 upload_id 各塞 5MB = 5GB 攻击)
-    # 已存在的 upload_id 不算新建(continuation 续传 OK)
+    # 八十二:孤儿目录 GC — 跟 oral.py 同 bug,5/5 上限基于 fs,中途失败留孤儿。
+    # 30 分钟无更新视为孤儿,先清再判 5/5。
+    UPLOAD_TMP_DIR.mkdir(parents=True, exist_ok=True)
+    ORPHAN_GC_AGE_SEC = 30 * 60
+    _now = time.time()
+    for _d in UPLOAD_TMP_DIR.glob(f"{user_id}_*"):
+        if _d.is_dir() and (_now - _d.stat().st_mtime) > ORPHAN_GC_AGE_SEC:
+            shutil.rmtree(_d, ignore_errors=True)
+
+    # 同 user 并行 upload_id 数限 5(GC 后的真实在用数。防发起 1000 个 upload_id
+    # 各塞 5MB = 5GB 攻击)。已存在的 upload_id 不算新建(continuation 续传 OK)
     if not upload_dir.exists():
         existing = [p for p in UPLOAD_TMP_DIR.glob(f"{user_id}_*") if p.is_dir()]
         MAX_PARALLEL = 5
