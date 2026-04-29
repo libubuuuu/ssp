@@ -1,5 +1,121 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-29 七十七续(口播带货工作台 P1~P5 续 — 经济档完整端到端)
+
+完整规划见 `docs/ORAL-BROADCAST-PLAN.md`(1002 行,3 档定价 + 5 步 pipeline +
+mask 方案研究)。本续从骨架到端到端可跑,共 7 个 commit。
+
+### P1 — 数据层 + 6 端点骨架(commit `186e8d5`,03:09)
+
+- `database.py` 新表 `oral_sessions`(32 字段)+ 2 索引;init_db 启动自动建。
+- `billing.PRICING` 加 3 档:economy 160 / standard 360 / premium 700 积分/分钟,
+  按秒 ceil(`oral.compute_charge`)。
+- `/api/oral/{upload, start, edit, status, cancel, list}` 6 端点骨架。
+- L1 用户责任声明强制勾选 + audit_log 写入(action=oral_legal_consent)。
+- 测试 +33(422 → 455 全过)。
+- ✅ 蓝绿 deploy(green → blue,03:08)。
+
+### P2 — ASR + 经济档 voice-clone + 异步状态机(commit `5e4b4bb`,03:19)
+
+- `FalASRService`(fal-ai/wizper,$0.0005/min)+ 注册到 init_fal_services。
+- `FalVoiceService.clone_voice` 修返回结构(读 result.custom_voice_id,旧版 hash
+  假造已废弃);audio.url 兼容 dict/str。
+- `_extract_audio_track`:ffmpeg 完整音轨 → audio.mp3(送 wizper),前 10 秒 →
+  voice_ref.mp3(送 minimax voice-clone)。
+- `_run_asr_step` / `_run_tts_step` 异步驱动,asyncio.create_task 在 /start /
+  /edit 末尾触发;失败按规划 §7.2 退款(ASR 100% / TTS 95%);状态被改(cancel)
+  时不覆盖。
+- 测试 +7(455 → 462 全过),fal 链路全 monkeypatch。
+- ✅ 蓝绿 deploy(blue → green,03:19)。
+
+### P3 — wan-vace inpainting + lipsync + Step 3/4 真并行(commit `925f935`,03:30)
+
+- `FalInpaintingService`(fal-ai/wan-vace-14b/inpainting):3 档分辨率
+  economy=480p / standard=580p / premium=720p,mask_image_url +
+  reference_image_urls + prompt + 熔断。
+- `FalLipsyncService`:economy=veed/lipsync / standard=fal-ai/latentsync /
+  premium=fal-ai/sync-lipsync/v2,统一 sync(video, audio, tier) 接口。
+- `/edit` 同时 create_task TTS + Inpainting 真并行(规划 §2 Step 3/4 并行)。
+- 经济档完整后端就绪,等 P4 前端 + 真实视频 PoC。
+- ✅ deploy(green → blue,03:31)。
+
+### P4a — /video/oral-broadcast 5 步 UI 基础版(commit `0e7787c`,03:40)
+
+- 列表页 + 工作台(`[id]/page.tsx`),5 步:档位/确认 → ASR 编辑 → 进度 → 预览 →
+  失败/退款。
+- 4s 轮询 /api/oral/status,localStorage token + credentials:include 双轨。
+- mask 用占位方案("用户用 Photoshop 画 PNG 上传"),canvas 编辑器留 P4b。
+- i18n zh/en `oral.*` namespace 60+ 双语 key + Sidebar 🎤 入口。
+- frontend build 0 error(40 静态 + 8 动态路由)。
+- ✅ 蓝绿 deploy(blue → green,03:40,frontend rebuild)。
+
+### P4b — canvas mask 编辑器(原生 HTML5 自实现)(commit `8a6757e`,03:47)
+
+- 不引第三方(react-konva / fabric.js),原生 HTML5 + React 自实现避免
+  依赖膨胀 + SSR 兼容问题。
+- `MaskEditor.tsx`:首帧抽取 + 双画布(背景首帧 / 前景 mask 半透叠加) +
+  brush/erase/rect 三工具 + 大小滑动条 + clear + pointerCapture +
+  CSS 缩放坐标换算 + toBlob 上传。
+- 后端 `/api/oral/status` products 加 `original_video_url`(同源资源,无 CORS)
+  + `mask_uploaded` boolean(真值来自后端,前端不靠本地 state)。
+- 删除原 maskUploading/maskUploaded 本地 state,改读 sess.products.mask_uploaded。
+- ✅ 蓝绿 deploy(green → blue,03:42,frontend rebuild)。
+- **至此 P4 完整,经济档全链路可端到端跑。**
+
+### P5 fix — 上传慢 → 5MB 分片 + 进度条 + 3 次重试(commit `030254a`,04:00)
+
+诊断:
+- 服务器实测 upload 27 Mbps 出口,用户上行典型 5-20 Mbps;60s 视频 50-100MB
+  单次 multipart 30-300s,没进度条 → 用户感觉灾难。
+- P4a 跳过了 video_studio 早就有的 /upload-chunk 模式,图省事用单次 multipart,
+  低带宽用户上完全不可用。
+
+修(仿 video_studio,5 文件):
+- `POST /api/oral/upload-chunk`:upload_id 16hex 防路径穿越 / 单 chunk ≤ 10MB /
+  累计 ≤ 200MB / 同 user 并行 ≤ 5 / 流式落盘 1MB chunks 不占内存 / 最后一片
+  自动合并 + ffprobe 时长校验 + 创建 oral_session。
+- 临时目录 `/opt/ssp/uploads/oral/_uploading/<uid>_<id>`。
+- 前端 5MB 分片循环 + 单片失败 3 次重试(1s 间隔)+ 实时显示速度 MB/s + ETA。
+- 进度条 80px 高度,#0d0d0d 黑色填充,transition 0.2s。
+- backend test_oral.py 55 全过 / frontend build 0 error。
+- ✅ 蓝绿 deploy(blue → green,04:00 切换)。
+
+### P5 续 — 浏览器侧 MediaRecorder 视频压缩(commit `d58e2fc`,13:30)
+
+诊断:P5 fix 解了"分片不会失败",但低带宽用户传 60s 1080p 原始 50-100MB 仍要
+1-3 分钟;再加一层浏览器压缩可以砍 80% 流量,不依赖后端 / 第三方 SDK / wasm。
+
+`frontend/src/lib/utils/videoCompress.ts`(新文件 202 行):
+- canvas drawImage 跟 video.currentTime 重绘,降到 1280px 宽。
+- canvas.captureStream(30) + video.captureStream() 取 audio track(后端 ASR 要从
+  音轨提音频文本,不能丢)。
+- MediaRecorder vp9+opus / 1.5Mbps 视频 + 128kbps 音频 → webm(后端
+  LONG_VIDEO_MIMES 已含)。
+- 兼容性 fallback(MediaRecorder / captureStream / 编码器 不支持)→ 返原文件
+  透明继续走分片上传。
+
+`oral-broadcast/page.tsx`:createNew 先压缩再分片;ratio < 0.9 才用压缩版本
+(< 10% 收益不值得换 webm);双阶段 UI phase ∈ {idle, compress, upload}。
+
+i18n:zh + en 各加 oral.compressing / oral.compressDone。
+frontend npm run build 0 error 0 warning,后端无改动。
+
+**⚠️ 本 commit 上次会话结束时未 deploy 也未 push,本续(2026-04-29)统一收尾。**
+
+### 总账(七十七续)
+
+- 7 个 commit,后端 +800/前端 +900 行(含测试 +40)
+- 后端测试 422 → 462(+40 全过)
+- frontend 路由 +2:`/video/oral-broadcast` 静态 + `[id]` 动态
+- 已完成:经济档(MiniMax + wan-vace + veed/lipsync)端到端
+- 待用户:
+  - **真实视频 PoC** — 跑一段验证 wan-vace salient tracking 鲁棒性(规划 §14.4)
+  - **ElevenLabs API key** — 解锁标准/顶级档(P6)
+  - **L2 AIGC 水印**(ffmpeg drawtext burn-in)留 Phase 4 合规批次
+- 下一步默认:等 PoC 反馈 → 调档位/分辨率/价格,再 P6 接 EL。
+
+---
+
 ## 2026-04-29 七十六续(长视频模型可切换架构 + admin 灰度 kling/reference)
 
 ### 诊断
