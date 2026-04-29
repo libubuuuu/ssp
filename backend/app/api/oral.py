@@ -369,13 +369,18 @@ def _try_advance_to_lipsync(session_id: str) -> bool:
 
 
 async def _run_inpainting_step(session_id: str) -> None:
-    """Step 4 视频换装:fal-ai/wan-vace-14b/inpainting + 单帧 mask + salient tracking。
+    """Step 4 视频换装(P9b 双 mask 双轮):fal-ai/wan-vace-14b/inpainting + salient tracking。
 
-    与 _run_tts_step 真并行(/edit 端点同时启 2 个 task)。
-    完成后调 _try_advance_to_lipsync 触发 Step 5。
-    失败按 §7.2 退 20%。
+    第一轮 — 必跑:用 person_mask + 模特图 → swap1_video_url(换人)
+    第二轮 — 可选:有 product_mask + 产品 → 第一轮输出 + product_mask + 产品图
+                  → swapped_video_url(换产品);否则 swapped_video_url = swap1_video_url
+
+    与 _run_tts_step 真并行(/edit 端点同时启 2 个 task),完成后调
+    _try_advance_to_lipsync 触发 Step 5。失败按 §7.2 退 20%。
     """
     import fal_client
+    from app.services.media_archiver import archive_url
+    from app.services.fal_service import get_inpainting_service
 
     session = _get_session(session_id)
     if not session:
@@ -383,67 +388,109 @@ async def _run_inpainting_step(session_id: str) -> None:
         return
 
     try:
-        if not session.get("mask_image_path"):
-            raise RuntimeError("mask_image_path 缺失 — 用户必须先上传 mask 才能换装")
+        # P9b:person_mask 必须;legacy mask_image_path 作为 fallback(老数据 / 兼容老前端)
+        person_mask = session.get("person_mask_image_path") or session.get("mask_image_path")
+        if not person_mask:
+            raise RuntimeError("person_mask 缺失 — 用户必须先上传人物 mask 才能换装")
 
         models = json.loads(session.get("selected_models") or "[]")
         products = json.loads(session.get("selected_products") or "[]")
         if not models:
             raise RuntimeError("selected_models 为空")
 
-        # 1) 上传 mask 到 fal storage
-        mask_fal_url = await fal_client.upload_file_async(session["mask_image_path"])
-
-        # 2) 上传原视频到 fal(也可以 archive_url 后用 https URL,但 fal upload 最稳)
-        video_fal_url = await fal_client.upload_file_async(session["original_video_path"])
-
-        # 3) reference_image_urls:模特 + 产品图(已经是 https URL,直接传)
-        ref_urls = [m["image_url"] for m in models if m.get("image_url")]
-        ref_urls += [p["image_url"] for p in products if p.get("image_url")]
-
-        # 4) 自动 prompt
-        names = [m.get("name", "") for m in models] + [p.get("name", "") for p in products]
-        prompt = (
-            f"Replace the person and product in the video with: {', '.join(names)}. "
-            f"Maintain camera angles and movements."
-        )
-
-        # 5) 调 wan-vace inpainting
-        from app.services.fal_service import get_inpainting_service
         inp_svc = get_inpainting_service()
         if not inp_svc:
             raise RuntimeError("FAL Inpainting service 未初始化")
 
-        result = await inp_svc.inpaint(
-            video_url=video_fal_url,
-            mask_image_url=mask_fal_url,
-            prompt=prompt,
-            reference_image_urls=ref_urls if ref_urls else None,
-            resolution=_resolution_for_tier(session["tier"]),
+        product_mask = session.get("product_mask_image_path")
+        do_swap2 = bool(product_mask and products)
+
+        resolution = _resolution_for_tier(session["tier"])
+        user_id = str(session["user_id"])
+
+        # ---------- 第一轮:换人 ----------
+        person_mask_fal_url = await fal_client.upload_file_async(person_mask)
+        video_fal_url = await fal_client.upload_file_async(session["original_video_path"])
+
+        model_refs = [m["image_url"] for m in models if m.get("image_url")]
+        model_names = [m.get("name", "") for m in models if m.get("name")]
+        prompt1 = (
+            f"Replace the person in the video with: {', '.join(model_names)}. "
+            f"Maintain camera angles, movements, and any objects the person interacts with."
         )
-        if "error" in result:
-            raise RuntimeError(f"wan-vace: {result['error']}")
 
-        swapped_url = result.get("video_url")
-        if not swapped_url:
-            raise RuntimeError("wan-vace 未返 video URL")
+        result1 = await inp_svc.inpaint(
+            video_url=video_fal_url,
+            mask_image_url=person_mask_fal_url,
+            prompt=prompt1,
+            reference_image_urls=model_refs if model_refs else None,
+            resolution=resolution,
+        )
+        if "error" in result1:
+            raise RuntimeError(f"wan-vace round-1 (person): {result1['error']}")
 
-        # 6) 归档防 fal.media 30 天过期
+        swap1_url = result1.get("video_url")
+        if not swap1_url:
+            raise RuntimeError("wan-vace round-1 未返 video URL")
+
         try:
-            from app.services.media_archiver import archive_url
-            swapped_url = await archive_url(swapped_url, str(session["user_id"]), "video")
+            swap1_url = await archive_url(swap1_url, user_id, "video")
         except Exception as arch_err:
-            _log(f"_run_inpainting_step archive failed (continuing with fal URL): {arch_err}")
+            _log(f"_run_inpainting_step round-1 archive failed (continuing): {arch_err}")
 
-        # 7) 写库
         _update_session(
             session_id,
-            swap_fal_request_id=result.get("model", ""),
-            swapped_video_url=swapped_url,
+            swap1_video_url=swap1_url,
+            swap1_fal_request_id=result1.get("model", ""),
         )
-        _log(f"_run_inpainting_step OK session={session_id} url={swapped_url[:80]}")
+        _log(f"_run_inpainting_step round-1 OK session={session_id} url={swap1_url[:80]}")
 
-        # 8) 尝试推进到 lipsync(若 TTS 也完成)
+        # ---------- 第二轮:换产品(可选)----------
+        if do_swap2:
+            product_mask_fal_url = await fal_client.upload_file_async(product_mask)
+            # swap1_url 已经是 https,wan-vace 也接受 URL 输入,无需再 fal upload
+            product_refs = [p["image_url"] for p in products if p.get("image_url")]
+            product_names = [p.get("name", "") for p in products if p.get("name")]
+            prompt2 = (
+                f"Replace the product/object in the video with: {', '.join(product_names)}. "
+                f"Maintain the person, scene, and camera movements."
+            )
+
+            result2 = await inp_svc.inpaint(
+                video_url=swap1_url,
+                mask_image_url=product_mask_fal_url,
+                prompt=prompt2,
+                reference_image_urls=product_refs if product_refs else None,
+                resolution=resolution,
+            )
+            if "error" in result2:
+                raise RuntimeError(f"wan-vace round-2 (product): {result2['error']}")
+
+            swap2_url = result2.get("video_url")
+            if not swap2_url:
+                raise RuntimeError("wan-vace round-2 未返 video URL")
+
+            try:
+                swap2_url = await archive_url(swap2_url, user_id, "video")
+            except Exception as arch_err:
+                _log(f"_run_inpainting_step round-2 archive failed (continuing): {arch_err}")
+
+            _update_session(
+                session_id,
+                swap_fal_request_id=result2.get("model", ""),
+                swapped_video_url=swap2_url,
+            )
+            _log(f"_run_inpainting_step round-2 OK session={session_id} url={swap2_url[:80]}")
+        else:
+            # 没产品 mask → 第一轮输出直接当最终 swap 产物
+            _update_session(
+                session_id,
+                swap_fal_request_id=result1.get("model", ""),
+                swapped_video_url=swap1_url,
+            )
+            _log(f"_run_inpainting_step single-round OK session={session_id}")
+
+        # 触发 lipsync(若 TTS 也完成)
         if _try_advance_to_lipsync(session_id):
             _log(f"_run_inpainting_step: 双完成,触发 lipsync session={session_id}")
             asyncio.create_task(_run_lipsync_step(session_id))
@@ -452,7 +499,6 @@ async def _run_inpainting_step(session_id: str) -> None:
         sess2 = _get_session(session_id)
         if not sess2 or sess2["status"] not in ("edit_submitted",):
             return
-        # Step 4 失败退 20%(§7.2)
         refunded = _refund(sess2, "failed_step4")
         _update_session(
             session_id,
@@ -792,9 +838,16 @@ async def upload_chunk(
 async def upload_mask(
     session_id: str = Form(...),
     file: UploadFile = File(...),
+    kind: str = Form("person"),
     current_user: dict = Depends(get_current_user),
 ):
-    """七十七续 P3:用户在前端 canvas 画完首帧 mask 后上传 PNG。
+    """七十七续 P3 + P9b:用户在前端 canvas 画完首帧 mask 后上传 PNG。
+
+    P9b 双 mask 双轮 inpaint:
+    - kind=person → 写 person_mask_image_path(必填,换人)
+    - kind=product → 写 product_mask_image_path(可选,换产品)
+    - 兼容老前端:kind 默认 "person",同时回写 mask_image_path = person_mask_path
+      让旧 status 派生 / GC 路径仍能识别
 
     fal salient tracking 沿时间轴自动传播全片(详见 docs/ORAL-BROADCAST-PLAN.md §14)。
     """
@@ -809,6 +862,9 @@ async def upload_mask(
     if session["status"] in (STATUS_TERMINAL_OK, STATUS_CANCELLED) or session["status"].startswith(STATUS_FAILED_PREFIX):
         raise HTTPException(400, f"session {session['status']},不能上传 mask")
 
+    if kind not in ("person", "product"):
+        raise HTTPException(400, "kind 必须是 person | product")
+
     # 校验 PNG / JPG / WebP
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(400, "mask 必须是图片(image/*)")
@@ -820,12 +876,17 @@ async def upload_mask(
 
     video_path = Path(session["original_video_path"])
     session_dir = video_path.parent
-    mask_path = session_dir / "mask.png"
+    filename = "mask.png" if kind == "person" else "product_mask.png"
+    mask_path = session_dir / filename
     mask_path.write_bytes(contents)
 
-    _update_session(session_id, mask_image_path=str(mask_path))
+    if kind == "person":
+        # legacy mask_image_path 同步写,兼容老派生路径
+        _update_session(session_id, person_mask_image_path=str(mask_path), mask_image_path=str(mask_path))
+    else:
+        _update_session(session_id, product_mask_image_path=str(mask_path))
 
-    return {"mask_image_path": str(mask_path), "size_bytes": len(contents)}
+    return {"kind": kind, "mask_image_path": str(mask_path), "size_bytes": len(contents)}
 
 
 # ==================== 端点 2:POST /start ====================
@@ -1040,9 +1101,13 @@ async def get_session_status(session_id: str, current_user: dict = Depends(get_c
             "asr_transcript": session.get("asr_transcript"),
             "edited_transcript": session.get("edited_transcript"),
             "new_audio_url": session.get("new_audio_url"),
+            "swap1_video_url": session.get("swap1_video_url"),
             "swapped_video_url": session.get("swapped_video_url"),
             "final_video_url": session.get("final_video_url"),
-            "mask_uploaded": bool(session.get("mask_image_path")),
+            # mask_uploaded:历史前端兼容(等价 person_mask_uploaded)
+            "mask_uploaded": bool(session.get("person_mask_image_path") or session.get("mask_image_path")),
+            "person_mask_uploaded": bool(session.get("person_mask_image_path") or session.get("mask_image_path")),
+            "product_mask_uploaded": bool(session.get("product_mask_image_path")),
         },
         "error": session.get("error_message") if session["status"].startswith("failed_") else None,
     }

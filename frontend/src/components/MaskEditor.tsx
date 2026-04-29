@@ -5,10 +5,13 @@ import { useLang } from "@/lib/i18n/LanguageContext";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 type Tool = "brush" | "erase" | "rect";
+type MaskKind = "person" | "product";
 
 interface Props {
   videoUrl: string;
   sessionId: string;
+  kind?: MaskKind;        // P9b 双 mask:默认 person
+  initialDone?: boolean;  // 父组件已知 mask 已上传(刷新时复原 done 态)
   onUploaded?: () => void;
 }
 
@@ -25,7 +28,7 @@ interface Props {
  *  - 双画布分离背景与 mask 编辑,清除时只清前景
  *  - mask PNG 输出尺寸跟视频原始分辨率一致(fal salient tracking 要求 mask 跟 video 对齐)
  */
-export default function MaskEditor({ videoUrl, sessionId, onUploaded }: Props) {
+export default function MaskEditor({ videoUrl, sessionId, kind = "person", initialDone = false, onUploaded }: Props) {
   const { t } = useLang();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const bgCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -36,7 +39,7 @@ export default function MaskEditor({ videoUrl, sessionId, onUploaded }: Props) {
   const [brushSize, setBrushSize] = useState(40);
   const [error, setError] = useState("");
   const [uploading, setUploading] = useState(false);
-  const [done, setDone] = useState(false);
+  const [done, setDone] = useState(initialDone);
 
   const drawingRef = useRef(false);
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -175,7 +178,8 @@ export default function MaskEditor({ videoUrl, sessionId, onUploaded }: Props) {
       );
       const fd = new FormData();
       fd.append("session_id", sessionId);
-      fd.append("file", new File([blob], "mask.png", { type: "image/png" }));
+      fd.append("kind", kind);
+      fd.append("file", new File([blob], `${kind}_mask.png`, { type: "image/png" }));
       const token = localStorage.getItem("token") || "";
       const res = await fetch(`${API_BASE}/api/oral/upload-mask`, {
         method: "POST",

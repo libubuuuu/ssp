@@ -23,9 +23,12 @@ interface SessionStatus {
     asr_transcript: string | null;
     edited_transcript: string | null;
     new_audio_url: string | null;
+    swap1_video_url: string | null;
     swapped_video_url: string | null;
     final_video_url: string | null;
-    mask_uploaded: boolean;
+    mask_uploaded: boolean;          // legacy:= person_mask_uploaded
+    person_mask_uploaded: boolean;
+    product_mask_uploaded: boolean;
   };
   error: string | null;
 }
@@ -96,7 +99,11 @@ export default function OralBroadcastWorkbench() {
     setError("");
     if (!legalConsent) { setError(t("oral.errLegal")); return; }
     if (!modelName || !modelUrl) { setError(t("oral.errModel")); return; }
-    if (!sess?.products.mask_uploaded) { setError(t("oral.errMaskRequired")); return; }
+    if (!sess?.products.person_mask_uploaded) { setError(t("oral.errMaskRequired")); return; }
+    if ((productName || productUrl) && !sess?.products.product_mask_uploaded) {
+      setError(t("oral.errProductMaskRequired"));
+      return;
+    }
 
     setStarting(true);
     try {
@@ -363,7 +370,7 @@ export default function OralBroadcastWorkbench() {
 
             <div style={{ marginBottom: "1.5rem" }}>
               <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>
-                {t("oral.maskTitle")}
+                {t("oral.mask.personTitle")}
               </div>
               <div style={{ fontSize: "0.75rem", color: "#999", marginBottom: "0.8rem" }}>
                 {t("oral.mask.canvasHint")}
@@ -372,6 +379,8 @@ export default function OralBroadcastWorkbench() {
                 <MaskEditor
                   videoUrl={sess.products.original_video_url}
                   sessionId={sessionId}
+                  kind="person"
+                  initialDone={sess.products.person_mask_uploaded}
                   onUploaded={() => loadStatus()}
                 />
               ) : (
@@ -381,6 +390,30 @@ export default function OralBroadcastWorkbench() {
               )}
             </div>
 
+            {(productName || productUrl) && (
+              <div style={{ marginBottom: "1.5rem" }}>
+                <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>
+                  {t("oral.mask.productTitle")}
+                </div>
+                <div style={{ fontSize: "0.75rem", color: "#999", marginBottom: "0.8rem" }}>
+                  {t("oral.mask.productHint")}
+                </div>
+                {sess.products.original_video_url ? (
+                  <MaskEditor
+                    videoUrl={sess.products.original_video_url}
+                    sessionId={sessionId}
+                    kind="product"
+                    initialDone={sess.products.product_mask_uploaded}
+                    onUploaded={() => loadStatus()}
+                  />
+                ) : (
+                  <div style={{ padding: "1rem", color: "#888", background: "#f9f7f2", borderRadius: 8 }}>
+                    {t("oral.mask.loading")}
+                  </div>
+                )}
+              </div>
+            )}
+
             <label style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", marginBottom: "1rem", padding: "0.8rem", background: "#fffaeb", borderRadius: 8 }}>
               <input type="checkbox" checked={legalConsent} onChange={e => setLegalConsent(e.target.checked)}
                 style={{ marginTop: 4 }} />
@@ -389,17 +422,28 @@ export default function OralBroadcastWorkbench() {
               </span>
             </label>
 
-            <button onClick={startPipeline}
-              disabled={starting || !legalConsent || !modelName || !modelUrl || !sess.products.mask_uploaded}
-              style={{
-                padding: "0.8rem 1.5rem",
-                background: (starting || !legalConsent || !modelName || !modelUrl || !sess.products.mask_uploaded) ? "#ccc" : "#0d0d0d",
-                color: "#fff", border: "none", borderRadius: 10,
-                cursor: (starting || !legalConsent || !modelName || !modelUrl || !sess.products.mask_uploaded) ? "not-allowed" : "pointer",
-                fontSize: "1rem", fontWeight: 500,
-              }}>
-              {starting ? t("oral.starting") : t("oral.startBtn")}
-            </button>
+            {(() => {
+              const hasProduct = Boolean(productName || productUrl);
+              const blocked =
+                starting ||
+                !legalConsent ||
+                !modelName ||
+                !modelUrl ||
+                !sess.products.person_mask_uploaded ||
+                (hasProduct && !sess.products.product_mask_uploaded);
+              return (
+                <button onClick={startPipeline} disabled={blocked}
+                  style={{
+                    padding: "0.8rem 1.5rem",
+                    background: blocked ? "#ccc" : "#0d0d0d",
+                    color: "#fff", border: "none", borderRadius: 10,
+                    cursor: blocked ? "not-allowed" : "pointer",
+                    fontSize: "1rem", fontWeight: 500,
+                  }}>
+                  {starting ? t("oral.starting") : t("oral.startBtn")}
+                </button>
+              );
+            })()}
           </section>
         )}
 

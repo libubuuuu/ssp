@@ -980,3 +980,158 @@ def test_upload_mask_session_completed_400(client_oral, register, auth_header):
         headers=auth_header(token),
     )
     assert r.status_code == 400
+
+
+# ==================== P9b:双 mask + 双轮 inpaint ====================
+
+
+def test_upload_mask_kind_person_writes_person_column(client_oral, register, auth_header):
+    """kind=person → person_mask_image_path 写入,legacy mask_image_path 同步写"""
+    from app.api import oral as oral_mod
+    token, user = register(client_oral, "oral-pmask@x.com")
+    sid = _seed_session(user["id"], status="asr_done")
+    r = client_oral.post(
+        "/api/oral/upload-mask",
+        data={"session_id": sid, "kind": "person"},
+        files={"file": ("mask.png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 50, "image/png")},
+        headers=auth_header(token),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "person"
+    sess = oral_mod._get_session(sid)
+    assert sess["person_mask_image_path"]
+    assert sess["mask_image_path"] == sess["person_mask_image_path"]
+    assert "mask.png" in sess["person_mask_image_path"]
+    assert not sess.get("product_mask_image_path")
+
+
+def test_upload_mask_kind_product_writes_product_column(client_oral, register, auth_header):
+    """kind=product → product_mask_image_path 写入,legacy mask_image_path 不被污染"""
+    from app.api import oral as oral_mod
+    token, user = register(client_oral, "oral-prdmask@x.com")
+    sid = _seed_session(user["id"], status="asr_done")
+    r = client_oral.post(
+        "/api/oral/upload-mask",
+        data={"session_id": sid, "kind": "product"},
+        files={"file": ("pm.png", b"\x89PNG" + b"\x00" * 50, "image/png")},
+        headers=auth_header(token),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "product"
+    sess = oral_mod._get_session(sid)
+    assert sess["product_mask_image_path"]
+    assert "product_mask.png" in sess["product_mask_image_path"]
+    assert not sess.get("person_mask_image_path")
+    assert not sess.get("mask_image_path")
+
+
+def test_upload_mask_invalid_kind_400(client_oral, register, auth_header):
+    token, user = register(client_oral, "oral-badkind@x.com")
+    sid = _seed_session(user["id"], status="asr_done")
+    r = client_oral.post(
+        "/api/oral/upload-mask",
+        data={"session_id": sid, "kind": "evil"},
+        files={"file": ("m.png", b"\x89PNG", "image/png")},
+        headers=auth_header(token),
+    )
+    assert r.status_code == 400
+
+
+def test_run_inpainting_step_dual_mask_runs_two_rounds(monkeypatch, register, client_oral, tmp_path):
+    """有 person + product mask + 产品 → 跑两轮 wan-vace,swapped_video_url=swap2 输出"""
+    import asyncio
+    from app.api import oral as oral_mod
+    from app.services import fal_service
+
+    calls = []
+
+    class DualInp:
+        async def inpaint(self, **kwargs):
+            calls.append(kwargs)
+            idx = len(calls)
+            return {"video_url": f"https://fal.media/round{idx}.mp4", "model": f"wan-vace-r{idx}"}
+
+    monkeypatch.setattr(fal_service, "_inpainting_service", DualInp())
+
+    import fal_client
+    async def fake_upload(p):
+        return f"fal://{p}"
+    monkeypatch.setattr(fal_client, "upload_file_async", fake_upload)
+    async def fake_archive(url, uid, kind):
+        return url
+    monkeypatch.setattr("app.services.media_archiver.archive_url", fake_archive)
+
+    person_mask = tmp_path / "person.png"
+    person_mask.write_bytes(b"\x89PNG")
+    product_mask = tmp_path / "product.png"
+    product_mask.write_bytes(b"\x89PNG")
+
+    token, user = register(client_oral, "oral-dual@x.com")
+    sid = _seed_session(user["id"], status="edit_submitted", credits_charged=160)
+    oral_mod._update_session(
+        sid,
+        person_mask_image_path=str(person_mask),
+        product_mask_image_path=str(product_mask),
+        edited_transcript="hi",
+        selected_models=json.dumps([{"name": "M1", "image_url": "https://x/m.jpg"}]),
+        selected_products=json.dumps([{"name": "P1", "image_url": "https://x/p.jpg"}]),
+    )
+
+    asyncio.run(oral_mod._run_inpainting_step(sid))
+
+    sess = oral_mod._get_session(sid)
+    assert len(calls) == 2, f"expected 2 wan-vace calls, got {len(calls)}"
+    assert sess["swap1_video_url"] == "https://fal.media/round1.mp4"
+    assert sess["swapped_video_url"] == "https://fal.media/round2.mp4"
+    assert sess["swap1_fal_request_id"] == "wan-vace-r1"
+    assert sess["swap_fal_request_id"] == "wan-vace-r2"
+    # 第二轮 video_url 应该是第一轮输出
+    assert calls[1]["video_url"] == "https://fal.media/round1.mp4"
+    # 第一轮 prompt 提到 person,第二轮 prompt 提到 product
+    assert "person" in calls[0]["prompt"].lower()
+    assert "product" in calls[1]["prompt"].lower()
+
+
+def test_run_inpainting_step_no_product_mask_single_round(monkeypatch, register, client_oral, tmp_path):
+    """有 person mask 无 product mask → 只跑一轮,swap1 直接当 swapped_video_url"""
+    import asyncio
+    from app.api import oral as oral_mod
+    from app.services import fal_service
+
+    calls = []
+
+    class SingleInp:
+        async def inpaint(self, **kwargs):
+            calls.append(kwargs)
+            return {"video_url": "https://fal.media/single.mp4", "model": "wan-vace-r1"}
+
+    monkeypatch.setattr(fal_service, "_inpainting_service", SingleInp())
+
+    import fal_client
+    async def fake_upload(p):
+        return f"fal://{p}"
+    monkeypatch.setattr(fal_client, "upload_file_async", fake_upload)
+    async def fake_archive(url, uid, kind):
+        return url
+    monkeypatch.setattr("app.services.media_archiver.archive_url", fake_archive)
+
+    person_mask = tmp_path / "person.png"
+    person_mask.write_bytes(b"\x89PNG")
+
+    token, user = register(client_oral, "oral-single@x.com")
+    sid = _seed_session(user["id"], status="edit_submitted", credits_charged=160)
+    oral_mod._update_session(
+        sid,
+        person_mask_image_path=str(person_mask),
+        edited_transcript="hi",
+        selected_models=json.dumps([{"name": "M1", "image_url": "https://x/m.jpg"}]),
+        selected_products=json.dumps([]),  # 没产品
+    )
+
+    asyncio.run(oral_mod._run_inpainting_step(sid))
+
+    sess = oral_mod._get_session(sid)
+    assert len(calls) == 1, f"expected single call, got {len(calls)}"
+    assert sess["swap1_video_url"] == "https://fal.media/single.mp4"
+    assert sess["swapped_video_url"] == "https://fal.media/single.mp4"  # = swap1
+    assert sess["swap_fal_request_id"] == "wan-vace-r1"

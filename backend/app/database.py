@@ -53,6 +53,26 @@ def _patch_users_columns(cursor):
                 raise
 
 
+def _patch_oral_columns(cursor):
+    """幂等地补齐 oral_sessions 表的后加列(七十七续 P9b 双 mask 双轮 inpaint)。
+
+    legacy `mask_image_path` 字段保留(读老数据兼容)。新写入走 person/product
+    分列。第二轮可选,无 product mask 时 swap1_video_url 直接写到 swapped_video_url。
+    """
+    patches = [
+        ("person_mask_image_path", "ALTER TABLE oral_sessions ADD COLUMN person_mask_image_path TEXT"),
+        ("product_mask_image_path", "ALTER TABLE oral_sessions ADD COLUMN product_mask_image_path TEXT"),
+        ("swap1_video_url", "ALTER TABLE oral_sessions ADD COLUMN swap1_video_url TEXT"),
+        ("swap1_fal_request_id", "ALTER TABLE oral_sessions ADD COLUMN swap1_fal_request_id TEXT"),
+    ]
+    for col_name, sql in patches:
+        try:
+            cursor.execute(sql)
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+
+
 def init_db():
     """初始化数据库表
 
@@ -300,6 +320,8 @@ def init_db():
             selected_models TEXT,
             selected_products TEXT,
             mask_image_path TEXT,
+            person_mask_image_path TEXT,
+            product_mask_image_path TEXT,
             extracted_audio_path TEXT,
             voice_ref_audio_path TEXT,
             asr_transcript TEXT,
@@ -309,6 +331,8 @@ def init_db():
             voice_id TEXT,
             voice_id_created_at TEXT,
             new_audio_url TEXT,
+            swap1_video_url TEXT,
+            swap1_fal_request_id TEXT,
             swap_fal_request_id TEXT,
             swapped_video_url TEXT,
             lipsync_fal_request_id TEXT,
@@ -326,6 +350,7 @@ def init_db():
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_oral_user ON oral_sessions(user_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_oral_status ON oral_sessions(status)")
+        _patch_oral_columns(cursor)
 
         # 创建索引优化查询性能
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)")
