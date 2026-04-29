@@ -27,7 +27,7 @@ import uuid
 from pathlib import Path
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from app.api.auth import get_current_user
@@ -640,7 +640,12 @@ async def _run_lipsync_step(session_id: str) -> None:
 
 
 def _update_session(session_id: str, **fields) -> None:
-    """更新指定字段,自动加 updated_at。"""
+    """更新指定字段,自动加 updated_at。
+
+    commit 后 fire-and-forget 调 _broadcast_session_status 推送 WS 订阅者
+    (5 步状态机所有切换点统一出口,自动覆盖)。不在 event loop 里调用时
+    (sync 测试路径)静默跳过。
+    """
     if not fields:
         return
     fields["updated_at"] = "CURRENT_TIMESTAMP"
@@ -658,6 +663,11 @@ def _update_session(session_id: str, **fields) -> None:
         cursor = conn.cursor()
         cursor.execute(sql, values)
         conn.commit()
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_broadcast_session_status(session_id))
+    except RuntimeError:
+        pass
 
 
 # ==================== 端点 1:POST /upload ====================
@@ -1074,22 +1084,12 @@ def _step_progress(status: str, session: Optional[dict] = None) -> dict:
     return p
 
 
-@router.get("/status/{session_id}")
-async def get_session_status(session_id: str, current_user: dict = Depends(get_current_user)):
-    user_id = str(current_user["id"])
-    session = _get_session(session_id)
-    if not session:
-        raise HTTPException(404, "session not found")
-    if session["user_id"] != user_id:
-        raise HTTPException(403, "无权限")
-
-    # 原视频公网 URL(给前端 canvas 抽首帧用)
-    # /opt/ssp/uploads/oral/<uid>/<sid>/orig.mp4 → /uploads/oral/<uid>/<sid>/orig.mp4
+def _build_status_payload(session: dict) -> dict:
+    """status 端点 + WS 推送共用 — 保证前端只看一种数据格式。"""
     orig_path = session.get("original_video_path") or ""
     original_video_url = orig_path[orig_path.index("/uploads/"):] if "/uploads/" in orig_path else None
-
     return {
-        "session_id": session_id,
+        "session_id": session["id"],
         "status": session["status"],
         "tier": session["tier"],
         "duration_seconds": session["duration_seconds"],
@@ -1104,13 +1104,23 @@ async def get_session_status(session_id: str, current_user: dict = Depends(get_c
             "swap1_video_url": session.get("swap1_video_url"),
             "swapped_video_url": session.get("swapped_video_url"),
             "final_video_url": session.get("final_video_url"),
-            # mask_uploaded:历史前端兼容(等价 person_mask_uploaded)
             "mask_uploaded": bool(session.get("person_mask_image_path") or session.get("mask_image_path")),
             "person_mask_uploaded": bool(session.get("person_mask_image_path") or session.get("mask_image_path")),
             "product_mask_uploaded": bool(session.get("product_mask_image_path")),
         },
         "error": session.get("error_message") if session["status"].startswith("failed_") else None,
     }
+
+
+@router.get("/status/{session_id}")
+async def get_session_status(session_id: str, current_user: dict = Depends(get_current_user)):
+    user_id = str(current_user["id"])
+    session = _get_session(session_id)
+    if not session:
+        raise HTTPException(404, "session not found")
+    if session["user_id"] != user_id:
+        raise HTTPException(403, "无权限")
+    return _build_status_payload(session)
 
 
 # ==================== 端点 5:POST /cancel/{session_id} ====================
@@ -1172,3 +1182,99 @@ async def list_sessions(current_user: dict = Depends(get_current_user)):
             "created_at": d["created_at"],
         })
     return {"sessions": sessions}
+
+
+# ==================== WebSocket 实时进度推送 ====================
+
+# session_id → 订阅 WS 集合(替代原 4s 轮询,_update_session 出口统一推送)
+_oral_ws_connections: dict = {}
+
+# 终态状态前缀/取值,推完 final 后关连接
+_TERMINAL_STATUSES = {STATUS_TERMINAL_OK, STATUS_CANCELLED}
+
+
+def _is_terminal(status: str) -> bool:
+    return status in _TERMINAL_STATUSES or status.startswith(STATUS_FAILED_PREFIX)
+
+
+async def _broadcast_session_status(session_id: str) -> None:
+    """从 DB 读最新 session,构造 status payload 推给所有订阅者。
+
+    终态(completed / cancelled / failed_*)推完后关闭连接清理订阅。
+    """
+    conns = _oral_ws_connections.get(session_id)
+    if not conns:
+        return
+    session = _get_session(session_id)
+    if not session:
+        return
+    payload = _build_status_payload(session)
+    dead = []
+    for ws in list(conns):
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        conns.discard(ws)
+    if not conns:
+        _oral_ws_connections.pop(session_id, None)
+        return
+    if _is_terminal(session["status"]):
+        conns = _oral_ws_connections.pop(session_id, set())
+        for ws in list(conns):
+            try:
+                await ws.close(code=1000, reason="session done")
+            except Exception:
+                pass
+
+
+@router.websocket("/ws/{session_id}")
+async def websocket_session_updates(websocket: WebSocket, session_id: str):
+    """口播 session 实时进度推送。
+
+    鉴权:JWT(?token=...)+ 直接查 oral_sessions.user_id 验归属
+    - 4401:token 缺失 / 无效 / 过期 / 类型错(refresh 不能调业务)
+    - 4403:token 有效但 user 不是该 session 的 owner / session 不存在
+    """
+    from app.services.auth import decode_jwt_token
+
+    token = websocket.query_params.get("token", "")
+    if not token:
+        await websocket.close(code=4401, reason="token required")
+        return
+    payload = decode_jwt_token(token)
+    if not payload:
+        await websocket.close(code=4401, reason="invalid or expired token")
+        return
+    user_id = payload.get("user_id") or payload.get("sub")
+    if not user_id:
+        await websocket.close(code=4401, reason="invalid token payload")
+        return
+
+    session = _get_session(session_id)
+    if not session or session["user_id"] != str(user_id):
+        await websocket.close(code=4403, reason="not your session")
+        return
+
+    await websocket.accept()
+    if session_id not in _oral_ws_connections:
+        _oral_ws_connections[session_id] = set()
+    _oral_ws_connections[session_id].add(websocket)
+
+    try:
+        await websocket.send_json(_build_status_payload(session))
+        if _is_terminal(session["status"]):
+            await websocket.close(code=1000, reason="session done")
+            _oral_ws_connections[session_id].discard(websocket)
+            if not _oral_ws_connections[session_id]:
+                _oral_ws_connections.pop(session_id, None)
+            return
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        conns = _oral_ws_connections.get(session_id)
+        if conns is not None:
+            conns.discard(websocket)
+            if not conns:
+                _oral_ws_connections.pop(session_id, None)

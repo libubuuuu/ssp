@@ -7,6 +7,7 @@ import MaskEditor from "@/components/MaskEditor";
 import MediaPicker from "@/components/MediaPicker";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
+const WS_BASE = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
 
 type Tier = "economy" | "standard" | "premium";
 
@@ -82,18 +83,53 @@ export default function OralBroadcastWorkbench() {
       }
       const data: SessionStatus = await res.json();
       setSess(data);
-      // ASR 完成后自动把原文案灌进编辑框
-      if (data.products.asr_transcript && !editedText) {
-        setEditedText(data.products.edited_transcript || data.products.asr_transcript);
-      }
     } catch {} finally { setLoading(false); }
-  }, [sessionId, editedText, t]);
+  }, [sessionId, t]);
 
+  // ASR 完成后自动把原文案灌进编辑框(从 loadStatus / WS handler 抽出,
+  // 避免 editedText 进 loadStatus 闭包导致 WS effect 频繁重连)
   useEffect(() => {
+    if (sess?.products.asr_transcript && !editedText) {
+      setEditedText(sess.products.edited_transcript ?? sess.products.asr_transcript);
+    }
+  }, [sess?.products.asr_transcript, sess?.products.edited_transcript, editedText]);
+
+  // WS 实时进度推送(取代 4s 轮询);WS 失败 / 关闭(非终态)自动 fallback 到轮询
+  useEffect(() => {
+    if (!sessionId) return;
     loadStatus();
-    const i = setInterval(loadStatus, 4000);
-    return () => clearInterval(i);
-  }, [loadStatus]);
+
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
+    let ws: WebSocket | null = null;
+    let stopped = false;
+
+    const startPolling = () => {
+      if (pollInterval || stopped) return;
+      pollInterval = setInterval(loadStatus, 4000);
+    };
+
+    try {
+      const wsToken = (typeof window !== "undefined" && localStorage.getItem("token")) ?? "";
+      ws = new WebSocket(`${WS_BASE}/api/oral/ws/${sessionId}?token=${encodeURIComponent(wsToken)}`);
+      ws.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data) as SessionStatus;
+          setSess(data);
+          setLoading(false);
+        } catch {}
+      };
+      ws.onerror = () => { startPolling(); };
+      ws.onclose = (e) => { if (e.code !== 1000) startPolling(); };
+    } catch {
+      startPolling();
+    }
+
+    return () => {
+      stopped = true;
+      if (pollInterval) clearInterval(pollInterval);
+      if (ws) try { ws.close(); } catch {}
+    };
+  }, [sessionId, loadStatus]);
 
   const startPipeline = async () => {
     setError("");

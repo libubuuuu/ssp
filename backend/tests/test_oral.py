@@ -1135,3 +1135,60 @@ def test_run_inpainting_step_no_product_mask_single_round(monkeypatch, register,
     assert sess["swap1_video_url"] == "https://fal.media/single.mp4"
     assert sess["swapped_video_url"] == "https://fal.media/single.mp4"  # = swap1
     assert sess["swap_fal_request_id"] == "wan-vace-r1"
+
+
+# ==================== WebSocket 实时进度推送 ====================
+
+
+def test_oral_ws_no_token_closes_4401(client_oral, register, auth_header):
+    token, user = register(client_oral, "oral-ws-no-token@x.com")
+    sid = _seed_session(user["id"])
+    from starlette.websockets import WebSocketDisconnect
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client_oral.websocket_connect(f"/api/oral/ws/{sid}") as ws:
+            ws.receive_json()
+    assert exc_info.value.code == 4401
+
+
+def test_oral_ws_invalid_token_closes_4401(client_oral, register, auth_header):
+    token, user = register(client_oral, "oral-ws-bad-token@x.com")
+    sid = _seed_session(user["id"])
+    from starlette.websockets import WebSocketDisconnect
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client_oral.websocket_connect(f"/api/oral/ws/{sid}?token=garbage") as ws:
+            ws.receive_json()
+    assert exc_info.value.code == 4401
+
+
+def test_oral_ws_cross_user_closes_4403(client_oral, register, auth_header):
+    token_a, ua = register(client_oral, "oral-ws-cross-a@x.com")
+    token_b, _ub = register(client_oral, "oral-ws-cross-b@x.com")
+    sid = _seed_session(ua["id"])
+    from starlette.websockets import WebSocketDisconnect
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client_oral.websocket_connect(f"/api/oral/ws/{sid}?token={token_b}") as ws:
+            ws.receive_json()
+    assert exc_info.value.code == 4403
+
+
+def test_oral_ws_happy_path_sends_initial_status(client_oral, register, auth_header):
+    token, user = register(client_oral, "oral-ws-ok@x.com")
+    sid = _seed_session(user["id"], duration=42.0, tier="standard", status="asr_running")
+    with client_oral.websocket_connect(f"/api/oral/ws/{sid}?token={token}") as ws:
+        msg = ws.receive_json()
+        assert msg["session_id"] == sid
+        assert msg["status"] == "asr_running"
+        assert msg["tier"] == "standard"
+        assert msg["duration_seconds"] == 42.0
+        assert msg["step_progress"]["step1"] == "running"
+
+
+def test_oral_ws_terminal_status_closes_after_initial(client_oral, register, auth_header):
+    token, user = register(client_oral, "oral-ws-terminal@x.com")
+    sid = _seed_session(user["id"], status="completed")
+    from starlette.websockets import WebSocketDisconnect
+    with client_oral.websocket_connect(f"/api/oral/ws/{sid}?token={token}") as ws:
+        msg = ws.receive_json()
+        assert msg["status"] == "completed"
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()
