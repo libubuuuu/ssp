@@ -1192,3 +1192,97 @@ def test_oral_ws_terminal_status_closes_after_initial(client_oral, register, aut
         assert msg["status"] == "completed"
         with pytest.raises(WebSocketDisconnect):
             ws.receive_json()
+
+
+# ==================== 终态邮件通知 ====================
+
+
+def test_oral_email_completion_invokes_resend(monkeypatch):
+    """send_oral_completion 调 _send_resend(to + subject 正确)。"""
+    captured = {}
+    def fake(to, subject, html):
+        captured["to"] = to
+        captured["subject"] = subject
+        captured["html"] = html
+        return True
+    monkeypatch.setattr("app.services.notify_email._send_resend", fake)
+
+    from app.services.notify_email import send_oral_completion
+    ok = send_oral_completion("u@x.com", "sid123", "premium", 42.0, "https://x/final.mp4")
+
+    assert ok is True
+    assert captured["to"] == "u@x.com"
+    assert "已完成" in captured["subject"]
+    assert "sid123" in captured["html"]
+    assert "顶级档" in captured["html"]
+    assert "42 秒" in captured["html"]
+
+
+def test_oral_email_failure_invokes_resend_with_refund(monkeypatch):
+    """send_oral_failure 渲染失败步骤 + 已退积分。"""
+    captured = {}
+    monkeypatch.setattr(
+        "app.services.notify_email._send_resend",
+        lambda to, subject, html: captured.update({"to": to, "subject": subject, "html": html}) or True,
+    )
+    from app.services.notify_email import send_oral_failure
+    send_oral_failure("u@x.com", "sidfail", "step4", "wan-vace timeout", refunded_credits=80)
+
+    assert "失败" in captured["subject"]
+    assert "Step 4 换装" in captured["html"]
+    assert "wan-vace timeout" in captured["html"]
+    assert "已退积分:80" in captured["html"]
+
+
+def test_oral_email_terminal_hook_completed(client_oral, register, auth_header, monkeypatch):
+    """_send_oral_terminal_email completed 路径 → 调 send_oral_completion(用户 email 来自 DB)。"""
+    import asyncio
+    from app.api import oral as oral_mod
+
+    calls = []
+    monkeypatch.setattr(
+        "app.services.notify_email.send_oral_completion",
+        lambda **kw: calls.append(("complete", kw)) or True,
+    )
+    monkeypatch.setattr(
+        "app.services.notify_email.send_oral_failure",
+        lambda **kw: calls.append(("failure", kw)) or True,
+    )
+
+    token, user = register(client_oral, "oral-mail-ok@x.com")
+    sid = _seed_session(user["id"], duration=30.0, tier="economy", status="completed")
+
+    asyncio.run(oral_mod._send_oral_terminal_email(sid, "completed", 0))
+
+    assert len(calls) == 1
+    kind, kw = calls[0]
+    assert kind == "complete"
+    assert kw["email"] == "oral-mail-ok@x.com"
+    assert kw["sid"] == sid
+    assert kw["tier"] == "economy"
+
+
+def test_oral_email_terminal_hook_failed_with_refund(client_oral, register, auth_header, monkeypatch):
+    """_send_oral_terminal_email failed_step* 路径 → 调 send_oral_failure 含 refunded_credits。"""
+    import asyncio
+    from app.api import oral as oral_mod
+
+    calls = []
+    monkeypatch.setattr(
+        "app.services.notify_email.send_oral_failure",
+        lambda **kw: calls.append(kw) or True,
+    )
+
+    token, user = register(client_oral, "oral-mail-fail@x.com")
+    sid = _seed_session(user["id"], duration=30.0, tier="standard", status="failed_step3")
+    oral_mod._update_session(sid, error_step="step3", error_message="voice-clone API down")
+
+    asyncio.run(oral_mod._send_oral_terminal_email(sid, "failed_step3", 60))
+
+    assert len(calls) == 1
+    kw = calls[0]
+    assert kw["email"] == "oral-mail-fail@x.com"
+    assert kw["sid"] == sid
+    assert kw["error_step"] == "step3"
+    assert "voice-clone" in kw["error_message"]
+    assert kw["refunded_credits"] == 60

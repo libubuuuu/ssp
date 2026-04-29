@@ -639,12 +639,57 @@ async def _run_lipsync_step(session_id: str) -> None:
         )
 
 
+# 终态邮件去重(in-memory) — 防 _update_session 重复进入终态分支重发
+# backend 重启后清空,但 5 个 _run_*_step 在重启后是 orphan task 不会重跑,无重发风险
+_oral_notified_terminal: set = set()
+
+
+async def _send_oral_terminal_email(session_id: str, status: str, refunded: int) -> None:
+    """fire-and-forget 邮件通知 — 失败不影响主流程,异常吞掉。"""
+    try:
+        session = _get_session(session_id)
+        if not session:
+            return
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT email FROM users WHERE id = ?", (session["user_id"],))
+            row = cursor.fetchone()
+        if not row:
+            return
+        email = row["email"] if isinstance(row, dict) or hasattr(row, "keys") else row[0]
+        if not email:
+            return
+
+        from app.services.notify_email import send_oral_completion, send_oral_failure
+        if status == STATUS_TERMINAL_OK:
+            send_oral_completion(
+                email=email,
+                sid=session_id,
+                tier=session.get("tier") or "",
+                duration_seconds=float(session.get("duration_seconds") or 0),
+                final_url=session.get("final_video_url") or "",
+            )
+        elif status.startswith(STATUS_FAILED_PREFIX):
+            send_oral_failure(
+                email=email,
+                sid=session_id,
+                error_step=session.get("error_step") or status,
+                error_message=session.get("error_message") or "",
+                refunded_credits=int(refunded or 0),
+            )
+    except Exception as e:
+        _log(f"_send_oral_terminal_email FAIL session={session_id} status={status} err={e}")
+
+
 def _update_session(session_id: str, **fields) -> None:
     """更新指定字段,自动加 updated_at。
 
-    commit 后 fire-and-forget 调 _broadcast_session_status 推送 WS 订阅者
-    (5 步状态机所有切换点统一出口,自动覆盖)。不在 event loop 里调用时
-    (sync 测试路径)静默跳过。
+    commit 后 fire-and-forget 两个 hook:
+    1) _broadcast_session_status — WS 推送(P10)
+    2) _send_oral_terminal_email — 终态(completed / failed_*)邮件通知;
+       cancelled 不发(用户主动取消不需要打扰),重复进入用 in-memory set 去重
+
+    不在 event loop 里调用(sync 测试路径)静默跳过。
     """
     if not fields:
         return
@@ -665,9 +710,19 @@ def _update_session(session_id: str, **fields) -> None:
         conn.commit()
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(_broadcast_session_status(session_id))
     except RuntimeError:
-        pass
+        return
+    loop.create_task(_broadcast_session_status(session_id))
+
+    new_status = fields.get("status")
+    if not new_status:
+        return
+    is_complete = new_status == STATUS_TERMINAL_OK
+    is_failed = new_status.startswith(STATUS_FAILED_PREFIX)
+    if (is_complete or is_failed) and session_id not in _oral_notified_terminal:
+        _oral_notified_terminal.add(session_id)
+        refunded = int(fields.get("credits_refunded") or 0)
+        loop.create_task(_send_oral_terminal_email(session_id, new_status, refunded))
 
 
 # ==================== 端点 1:POST /upload ====================
