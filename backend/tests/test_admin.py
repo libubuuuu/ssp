@@ -402,6 +402,87 @@ def test_admin_oral_tasks_tier_filter(client, register, auth_header, set_role):
     assert items[0]["tier"] == "premium"
 
 
+def test_admin_oral_task_detail_unauthenticated_401(client):
+    r = client.get("/api/admin/oral-tasks/anysid")
+    assert r.status_code in (401, 403)
+
+
+def test_admin_oral_task_detail_non_admin_403(client, register, auth_header):
+    token, _ = register(client, "od-non-admin@x.com")
+    r = client.get("/api/admin/oral-tasks/anysid", headers=auth_header(token))
+    assert r.status_code == 403
+
+
+def test_admin_oral_task_detail_404(client, register, auth_header, set_role):
+    a_token, a_user = register(client, "od-admin-404@x.com")
+    set_role(a_user["id"], "admin")
+    r = client.get("/api/admin/oral-tasks/nonexistent", headers=auth_header(a_token))
+    assert r.status_code == 404
+
+
+def test_admin_oral_task_detail_full_fields(client, register, auth_header, set_role):
+    """drill-down 含 user_email / 解析后的 selected_models / credits_net / 完整字段"""
+    import json
+    a_token, a_user = register(client, "od-detail@x.com")
+    set_role(a_user["id"], "admin")
+    _, u = register(client, "od-target@x.com")
+
+    sid = _seed_oral(u["id"], status="completed", tier="economy",
+                     duration=42.0, charged=160, refunded=0)
+
+    # 写一些字段进去模拟跑过端到端
+    from app.database import get_db
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """UPDATE oral_sessions SET
+               selected_models = ?,
+               selected_products = ?,
+               asr_transcript = ?,
+               edited_transcript = ?,
+               new_audio_url = ?,
+               swapped_video_url = ?,
+               final_video_url = ?,
+               swap_fal_request_id = ?,
+               lipsync_fal_request_id = ?
+               WHERE id = ?""",
+            (
+                json.dumps([{"name": "Alice", "image_url": "https://x/a.jpg"}]),
+                json.dumps([]),
+                "你好世界",
+                "你好世界 v2",
+                "https://fal.media/a.mp3",
+                "https://fal.media/swap.mp4",
+                "/uploads/oral/u1/sid/final.mp4",
+                "fal-req-swap-123",
+                "veed/lipsync-456",
+                sid,
+            ),
+        )
+        conn.commit()
+
+    r = client.get(f"/api/admin/oral-tasks/{sid}", headers=auth_header(a_token))
+    assert r.status_code == 200, r.text
+    d = r.json()
+
+    assert d["id"] == sid
+    assert d["user_email"] == "od-target@x.com"
+    assert d["status"] == "completed"
+    assert d["tier"] == "economy"
+    # JSON 字段已解析为对象
+    assert isinstance(d["selected_models"], list)
+    assert d["selected_models"][0]["name"] == "Alice"
+    assert d["selected_products"] == []
+    # 中间产物 + fal request_id
+    assert d["asr_transcript"] == "你好世界"
+    assert d["edited_transcript"] == "你好世界 v2"
+    assert d["new_audio_url"] == "https://fal.media/a.mp3"
+    assert d["swap_fal_request_id"] == "fal-req-swap-123"
+    assert d["lipsync_fal_request_id"] == "veed/lipsync-456"
+    # 派生 credits_net
+    assert d["credits_net"] == 160
+
+
 def test_admin_oral_tasks_step_progress_flags(client, register, auth_header, set_role):
     """step_progress 字段从 NULL/非 NULL 派生"""
     a_token, a_user = register(client, "ot-sp-admin@x.com")

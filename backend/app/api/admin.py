@@ -731,3 +731,51 @@ async def admin_oral_tasks(
         "failure_top": failure_top,
         "items": items,
     }
+
+
+@router.get("/oral-tasks/{session_id}")
+async def admin_oral_task_detail(session_id: str, _admin: dict = Depends(require_admin)):
+    """单条 oral session 完整字段(运营 drill-down)。
+
+    用途:用户报"这条结果不对"时,看 ASR 听对没 / 编辑文案 / 中间产物 URL /
+    fal request_id,定位是哪一步出问题。
+
+    selected_models / selected_products 后端 json.loads 解析后返,前端直接渲染。
+    """
+    import json as _json
+
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT s.*, u.email AS user_email
+               FROM oral_sessions s LEFT JOIN users u ON u.id = s.user_id
+               WHERE s.id = ?""",
+            (session_id,),
+        )
+        row = c.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="oral session 不存在")
+
+    d = dict(row)
+
+    # JSON 字段解析(失败时保留原 string,前端能看到坏数据)
+    for k in ("selected_models", "selected_products", "asr_word_timestamps"):
+        v = d.get(k)
+        if v:
+            try:
+                d[k] = _json.loads(v)
+            except Exception:
+                pass  # 保留原 string
+
+    # 派生字段:净扣 + 已耗时
+    d["credits_net"] = (d.get("credits_charged") or 0) - (d.get("credits_refunded") or 0)
+
+    # original_video_url 派生(同 /api/oral/status 逻辑)
+    orig_path = d.get("original_video_path") or ""
+    if orig_path.startswith("/opt/ssp/uploads/oral/"):
+        d["original_video_url"] = orig_path.replace("/opt/ssp/uploads", "/uploads")
+    else:
+        d["original_video_url"] = None
+
+    return d

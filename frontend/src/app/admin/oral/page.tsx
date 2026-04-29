@@ -2,6 +2,7 @@
 import { useLang } from "@/lib/i18n/LanguageContext";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import OralDetailModal from "@/components/OralDetailModal";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -81,6 +82,7 @@ export default function AdminOralPage() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("");
   const [tierFilter, setTierFilter] = useState("");
+  const [detailSid, setDetailSid] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -223,7 +225,10 @@ export default function AdminOralPage() {
                   it.step_progress.step5_final,
                 ];
                 return (
-                  <tr key={it.id} style={{ borderTop: "1px solid #eee" }}>
+                  <tr key={it.id} style={{ borderTop: "1px solid #eee", cursor: "pointer" }}
+                    onClick={() => setDetailSid(it.id)}
+                    onMouseEnter={e => (e.currentTarget.style.background = "#fafafa")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
                     <td style={td}>{fmtTime(it.created_at)}</td>
                     <td style={{ ...td, fontFamily: "monospace", fontSize: "0.75rem" }}>{it.user_email || it.user_id.slice(0, 8)}</td>
                     <td style={td}>{it.tier}</td>
@@ -239,7 +244,9 @@ export default function AdminOralPage() {
                       {it.error_message || "-"}
                     </td>
                     <td style={td}>
-                      {it.final_video_url ? <a href={it.final_video_url} target="_blank" rel="noreferrer">▶</a> : "-"}
+                      {it.final_video_url
+                        ? <a href={it.final_video_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>▶</a>
+                        : "-"}
                     </td>
                   </tr>
                 );
@@ -247,6 +254,10 @@ export default function AdminOralPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {detailSid && (
+        <OralDetailModal sessionId={detailSid} onClose={() => setDetailSid(null)} />
       )}
     </main>
   );
