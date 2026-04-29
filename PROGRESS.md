@@ -1,5 +1,78 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-29 七十七续 P12(oral_sessions 60 天 GC)
+
+防磁盘满。uploads_gc 是按 mtime 90 天扫整 /opt/ssp/uploads/,但 oral
+session 政策更紧(60 天)且要 DB 同步标记 archived_at,所以单独跑。
+
+### Schema(commit `8567361`,向后兼容)
+
+- `oral_sessions.archived_at` TIMESTAMP nullable
+- `database.py _patch_oral_columns` 幂等 ALTER + alembic migration
+  `c5d2e8f1a703_add_oral_archived_at.py`(链 `8a3f1c2d9b04`)
+- 生产 schema 已自动 patch(进程启动调 init_db)
+
+### services/oral_gc.py(新)
+
+`clean_old_oral_sessions(days=60, dry_run=False)`:
+- 选择条件:`created_at < now-N` AND `(status='completed' OR 'cancelled' OR
+  LIKE 'failed_%')` AND `archived_at IS NULL`
+- in-flight session(asr_running / tts_running / inpainting_running /
+  lipsync_running / edit_submitted / uploaded)绝不动 — 用户可能还在排队
+- 每个 session 整目录 `/opt/ssp/uploads/oral/<uid>/<sid>/` rmtree
+  (orig.mp4 / mask / swap1 / swap2 / final.mp4 等全清)
+- DB row 保留(账单/审计/admin drill-down)只 UPDATE archived_at
+- 路径穿越守卫:rmtree 前 _is_within_oral_root 验证
+
+返回 `{scanned, archived, freed_bytes, errors}`。
+
+### deploy/oral-gc.sh + oral-gc.cron.example
+
+- shell wrapper sudo -u ssp-app 跑(uploads/oral 是 ssp-app 拥有)
+- cron 模板每天 05:00(避开 03:00 备份 + 04:00 uploads-gc)
+- 留给用户装(`/opt/ssp/deploy/oral-gc.cron.example` 头部有安装步骤)
+
+### 测试 +4(505 → 509 全过)
+
+- 60 天前 completed → 目录删 + archived_at 标记 + freed_bytes 正确
+- in-flight asr_running 70 天前也不动(数据完整性)
+- 30 天前 completed < 60 天阈值不动
+- 重跑幂等:archived_at 非 NULL 的 row 不再处理
+
+### 已 deploy 进生产 ✅(2026-04-29 蓝绿 blue → green)
+
+- ailixiao.com / 200 / /api/payment/packages 200 / /api/oral/list 401
+- `PRAGMA table_info(oral_sessions)` 含 archived_at(prod schema 已 patch)
+
+### 决策记录
+
+- **DB row 保留只标记 archived_at**:整 row 删会让 admin drill-down 看
+  历史断、账单审计也丢上下文;只标一列让 UI 可显示"产物已归档(60 天)"
+- **政策 60 天比 uploads_gc 90 天紧**:口播是大文件(60s 视频 + 5 个产物
+  轻松 200MB+ / session),用户回看率比图片低,60 天磁盘节省更显著
+- **单独跑不复用 uploads_gc**:uploads_gc 是文件 mtime 维度,oral 是 DB
+  row 维度(终态判断 + archived_at 双向同步),逻辑不一样
+- **路径穿越守卫不省**:user_id / sid 来自 DB,但 defense-in-depth
+
+### 用户操作待办
+
+装 cron(代码已就位):
+```bash
+crontab -l > /tmp/cron.bak 2>/dev/null || true
+cat /tmp/cron.bak /opt/ssp/deploy/oral-gc.cron.example | sort -u | crontab -
+crontab -l                                  # 验证
+tail -f /var/log/ssp-oral-gc.log            # 看输出(05:00 后)
+```
+
+### 下一步候选
+
+- (等用户)真实视频 PoC + ElevenLabs key + 装 oral-gc cron
+- 我能继续干的:
+  - lint errors 58 个清理(setState in effect 等)
+  - profile 页"邮件通知开关"
+
+---
+
 ## 2026-04-29 七十七续 P11(终态邮件通知 — 用户离开页面也能跟进)
 
 P10 解了"在页面看进度",本续解"离开页面也能跟进":任务完成或失败时
