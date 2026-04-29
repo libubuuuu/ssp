@@ -1,5 +1,78 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-29 七十七续 P10(WS 实时进度替 4s 轮询 + nginx WS 头修)
+
+PoC 阶段用户起任务后 5 步进度条卡 4s 才动一下,体验最差的工程拦路虎。
+改 WS 推送后状态切换实时跳。复用 _update_session 统一出口 + tasks.py 已
+就绪的 WS 鉴权架构,改动局限在 oral 范围。
+
+### 后端(commit `6fa359f`)
+
+- 新增 `_build_status_payload(session)` 共用 — status 端点 + WS 推送同源,
+  保证前端只看一种数据格式
+- `_update_session` commit 后 fire-and-forget `asyncio.create_task` 调
+  `_broadcast_session_status` — 5 步状态机所有切换点统一出口,自动覆盖。
+  sync 路径 `RuntimeError` 静默跳过(测试不破)
+- `/api/oral/ws/{sid}` WebSocket:
+  - 鉴权 4401(无/坏 token)/ 4403(跨用户 / session 不存在)
+  - accept 后立即推一条当前 status,前端不需先 fetch
+  - 终态(completed / cancelled / failed_*)推完关连接 + 清订阅集
+- 测试 +5(496 → 501 全过):无 token 4401 / 错 token 4401 / 跨用户 4403 /
+  happy path 收到 initial payload / 终态 session 推完关连接
+
+### 前端(commit `6fa359f`)
+
+- 引 `WS_BASE = NEXT_PUBLIC_WS_URL || ws://localhost:8000`(同 tasks 页)
+- `loadStatus` 抽出"自动灌 editedText"逻辑到独立 effect — 防止 editedText
+  进 loadStatus 闭包导致 WS effect 频繁重连
+- useEffect:首次 loadStatus + 然后 `new WebSocket` 订阅;`onmessage` 直接
+  `setSess(JSON.parse(e.data))` (payload 跟 status 端点 schema 完全一致)
+- WS `onerror` / `onclose`(非 1000)自动 fallback 到 4s 轮询(老 token /
+  网络抖动 / 反代 WS 失败都不影响 UX)
+
+### nginx 修生产配置(commit `b0f9f89`)
+
+部署后第一次测发现 WS 升级请求 404 — 根因:`/api/` location block 缺
+`Upgrade` / `Connection "upgrade"` 头(tasks `/ws` 历史也是同样问题,只是
+没真用户撞)。两处 `location /api/` block 各加两行,nginx -t + reload。
+git 模板 `deploy/nginx.conf` 同步,下次 deploy 不丢。
+
+`$http_upgrade` 在普通请求里为空,nginx 不会真触发 upgrade,对现有 71+
+普通 API 路径无副作用。
+
+### 已 deploy 进生产 ✅(2026-04-29 蓝绿 blue → green)
+
+- ailixiao.com / 200 / /video/oral-broadcast 200
+- /api/payment/packages 200 / admin /api/products 200
+- /api/oral/list 401(端点 OK)
+- WS 升级 /api/oral/ws/test:nginx → backend → 4403(后端鉴权生效)
+
+### 决策记录
+
+- **WS 端点放在 oral.py 末尾不另开文件**:_broadcast 跟 _update_session 同
+  模块,避免循环 import + 复用 router 不用 main.py 改
+- **fire-and-forget broadcast**:_update_session 是同步,所有 5 步都在
+  event loop,`asyncio.get_running_loop().create_task` 即可;RuntimeError
+  兜底是给 sync 测试路径
+- **WS payload = status payload**:推送跟 GET /status 完全同源,前端一行
+  setSess 不需要建第二种 schema
+- **fallback 到轮询不放弃**:WS 在反代 / 老 token / 网络坏环境下偶尔挂,
+  完全砍轮询会让小部分用户看不到进度;onclose code !== 1000 自动退回 4s
+  轮询,UX 不掉级
+- **nginx WS 头加在 /api/ 顶层不开新 location**:加专门 location ~ /ws/
+  会跟 limit_req / 大文件 timeout 配置打架,Upgrade 头普通请求无副作用,
+  最小改动最稳
+
+### 下一步候选
+
+- (等用户)真实视频 PoC + ElevenLabs key
+- 我能继续干的:
+  - oral_sessions GC(60 天清 final.mp4)
+  - 长任务用户邮件通知(完成/失败)
+  - lint errors 58 个清理(setState in effect 等)
+
+---
+
 ## 2026-04-29 七十七续 P9a(模特/产品本地图片上传)
 
 P6 加了 MediaPicker(从商家产品库 / 历史任务挑图)+ URL 输入框,但用户
