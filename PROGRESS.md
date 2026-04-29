@@ -1,5 +1,62 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-29 七十七续 P7(口播任务运营后台 — admin 看任务卡哪一步)
+
+P6 完成水印 + picker 后,真实视频 PoC 阶段最后一个工程拦路虎:**用户测试出
+问题时,只能 ssh 进服务器 grep 日志才知道卡哪一步**。补 admin 后台一站式看清。
+
+### 后端 GET /api/admin/oral-tasks(commit `1086324`)
+
+- 鉴权:require_admin(沿用现有依赖)
+- 三段返回:
+  - **summary**:total / status_counts dict / avg_duration_seconds /
+    avg_net_credits / total_net_credits(净扣 = charged - refunded)
+  - **failure_top**:`status LIKE 'failed_%' AND error_message IS NOT NULL`
+    GROUP BY (error_step, message[:120]) → top 5 by count
+  - **items**:LEFT JOIN users 拿 email,过滤 ?status= / ?tier=,默认 limit=50
+    最大 200。每条 step_progress 字段 5 步 bool 从对应 column IS NOT NULL 派生
+
+### 前端 /admin/oral
+
+`frontend/src/app/admin/oral/page.tsx`(~270 行):
+- 7 张汇总 Card(总 / 完成 / 失败 / 进行中 / 平均时长 / 平均净扣 / 总净扣)
+- 失败 top 5 红框列表(`×N step5 — lipsync timeout` 这种格式)
+- status / tier 下拉过滤 + 刷新按钮
+- 表格 9 列:创建时间 / 用户 / tier / 状态(中文映射 + 颜色)/ 5 步圆点 (●○○○○) /
+  时长 / 净扣(退款独立标注)/ 错误(hover 看全文,truncated) / 产物(▶ 视频链接)
+
+`AdminSidebar.tsx`:加 🎤 口播任务 入口(在 系统监控 与 审计日志 之间)。
+
+### 测试 +6(481 → 487 全过)
+- unauthenticated 401 / 普通用户 403
+- admin summary + failure_top 聚合正确(GROUP BY error_step+message,count 正确)
+- items 含 user_email / credits_net = charged - refunded
+- ?status= / ?tier= 过滤
+- step_progress 字段从 NULL/非 NULL 派生(UPDATE 三个字段后,前 3 步 true / 后 2 false)
+
+### 已 deploy 进生产 ✅(2026-04-29 14:00 蓝绿 green → blue)
+- ailixiao.com / 200 / /admin/oral 200 / /api/admin/oral-tasks 401(端点 OK)
+- /video/oral-broadcast 200(用户工作台不变)
+
+### 决策记录
+- **complete drill-down 不做**:点行展开看 ASR / 编辑文案 / 各阶段 fal request_id
+  也有用,但不是 PoC 阶段最缺的 — 失败原因 + 卡哪一步 + 净扣已经覆盖 80% 排查需求,
+  drill-down 等真有用户报"任务跑出来不对"再加
+- **status_counts 用 dict 不固定 keys**:数据库 status 文本在演化(P1 + 后续可能加),
+  前端聚合也是按 startsWith("failed_") / endsWith("_running") 模糊匹配,前后端都不强耦合
+- **5 步 bool 派生而非加列**:数据 source-of-truth 是各产物字段(asr_transcript /
+  new_audio_url 等),派生 bool 永远跟数据真实状态一致;加 step1_done 列就要维护 +
+  容易跟产物字段脱节
+
+### 下一步候选
+- (等用户)真实视频 PoC + ElevenLabs key
+- 我能继续干的:
+  - admin 单任务 drill-down(看完整字段 + ASR 转写 + 中间产物 URL)
+  - oral_sessions GC(60 天后清 final.mp4 — 现在归档但没 GC 策略)
+  - WS 实时进度替 4s 轮询
+
+---
+
 ## 2026-04-29 七十七续 P6(L2 AIGC 水印 + 模特/产品选择器)
 
 P5 续解了上传慢,本续补两块"用户上线测试前最后的拦路虎":
