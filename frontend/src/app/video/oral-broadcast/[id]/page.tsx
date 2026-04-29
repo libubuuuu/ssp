@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import MaskEditor from "@/components/MaskEditor";
+import MediaPicker from "@/components/MediaPicker";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -49,11 +50,12 @@ export default function OralBroadcastWorkbench() {
   const [tier, setTier] = useState<Tier>("standard");
   const [legalConsent, setLegalConsent] = useState(false);
 
-  // Step 1 模特/产品(MVP 简化为 URL 输入,P4b 接素材库)
+  // Step 1 模特/产品(URL 输入 + 从库选两种来源)
   const [modelName, setModelName] = useState("");
   const [modelUrl, setModelUrl] = useState("");
   const [productName, setProductName] = useState("");
   const [productUrl, setProductUrl] = useState("");
+  const [pickerOpen, setPickerOpen] = useState<null | "model" | "product">(null);
 
   // Step 2 文案编辑
   const [editedText, setEditedText] = useState("");
@@ -244,24 +246,61 @@ export default function OralBroadcastWorkbench() {
             </div>
 
             <div style={{ marginBottom: "1.5rem" }}>
-              <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>{t("oral.modelTitle")}</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+                <div style={{ fontSize: "0.85rem", color: "#666" }}>{t("oral.modelTitle")}</div>
+                <button type="button" onClick={() => setPickerOpen("model")}
+                  style={{ background: "none", border: "1px solid #ddd", borderRadius: 6, padding: "0.3rem 0.7rem", fontSize: "0.75rem", cursor: "pointer", color: "#0d0d0d" }}>
+                  {t("oral.picker.fromHistoryBtn")}
+                </button>
+              </div>
               <input type="text" placeholder={t("oral.modelNamePh")} value={modelName}
                 onChange={e => setModelName(e.target.value)}
                 style={{ width: "100%", padding: "0.6rem", border: "1px solid #ddd", borderRadius: 8, marginBottom: "0.5rem" }} />
               <input type="url" placeholder={t("oral.modelUrlPh")} value={modelUrl}
                 onChange={e => setModelUrl(e.target.value)}
                 style={{ width: "100%", padding: "0.6rem", border: "1px solid #ddd", borderRadius: 8 }} />
+              {modelUrl && (
+                <div style={{ marginTop: "0.5rem" }}>
+                  <img src={modelUrl} alt="" style={{ height: 60, borderRadius: 6, objectFit: "cover" }} />
+                </div>
+              )}
             </div>
 
             <div style={{ marginBottom: "1.5rem" }}>
-              <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>{t("oral.productTitle")}</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+                <div style={{ fontSize: "0.85rem", color: "#666" }}>{t("oral.productTitle")}</div>
+                <button type="button" onClick={() => setPickerOpen("product")}
+                  style={{ background: "none", border: "1px solid #ddd", borderRadius: 6, padding: "0.3rem 0.7rem", fontSize: "0.75rem", cursor: "pointer", color: "#0d0d0d" }}>
+                  {t("oral.picker.fromProductsBtn")}
+                </button>
+              </div>
               <input type="text" placeholder={t("oral.productNamePh")} value={productName}
                 onChange={e => setProductName(e.target.value)}
                 style={{ width: "100%", padding: "0.6rem", border: "1px solid #ddd", borderRadius: 8, marginBottom: "0.5rem" }} />
               <input type="url" placeholder={t("oral.productUrlPh")} value={productUrl}
                 onChange={e => setProductUrl(e.target.value)}
                 style={{ width: "100%", padding: "0.6rem", border: "1px solid #ddd", borderRadius: 8 }} />
+              {productUrl && (
+                <div style={{ marginTop: "0.5rem" }}>
+                  <img src={productUrl} alt="" style={{ height: 60, borderRadius: 6, objectFit: "cover" }} />
+                </div>
+              )}
             </div>
+
+            <MediaPicker
+              source={pickerOpen === "product" ? "products" : "history"}
+              open={pickerOpen !== null}
+              onClose={() => setPickerOpen(null)}
+              onPick={(it) => {
+                if (pickerOpen === "model") {
+                  setModelName(it.name);
+                  setModelUrl(it.image_url);
+                } else if (pickerOpen === "product") {
+                  setProductName(it.name);
+                  setProductUrl(it.image_url);
+                }
+              }}
+            />
 
             <div style={{ marginBottom: "1.5rem" }}>
               <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>

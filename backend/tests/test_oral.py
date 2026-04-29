@@ -12,6 +12,7 @@
 不涉及 fal 真实调用(P2/P3 实现后再加)。
 """
 import json
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -608,9 +609,11 @@ def patch_lipsync_ok(monkeypatch):
     from app.services import fal_service
     monkeypatch.setattr(fal_service, "_lipsync_service", FakeLip())
 
-    async def fake_archive(url, uid, kind):
-        return url
-    monkeypatch.setattr("app.services.media_archiver.archive_url", fake_archive)
+    # AIGC 水印 mock — 真跑 ffmpeg drawtext 在测试环境不稳定(字体/路径/权限),mock 出固定路径
+    async def fake_watermark(url, uid, sid):
+        return f"/uploads/oral/{uid}/{sid}/final.mp4"
+    from app.api import oral as oral_mod
+    monkeypatch.setattr(oral_mod, "_apply_aigc_watermark", fake_watermark)
 
 
 def test_run_inpainting_step_happy_path(patch_inpainting_ok, register, client_oral, tmp_path):
@@ -736,7 +739,10 @@ def test_run_lipsync_step_happy_path_completes(patch_lipsync_ok, register, clien
 
     sess = oral_mod._get_session(sid)
     assert sess["status"] == "completed"
-    assert sess["final_video_url"] == "https://fal.media/final.mp4"
+    # final URL 走 _apply_aigc_watermark fixture 返的本地公网路径
+    assert sess["final_video_url"].startswith("/uploads/oral/")
+    assert sess["final_video_url"].endswith("/final.mp4")
+    assert sess["final_video_archived"] == sess["final_video_url"]
 
 
 def test_run_lipsync_step_fal_fail_refunds_30pct(monkeypatch, register, client_oral):
@@ -762,6 +768,120 @@ def test_run_lipsync_step_fal_fail_refunds_30pct(monkeypatch, register, client_o
     sess = oral_mod._get_session(sid)
     assert sess["status"] == "failed_step5"
     assert sess["credits_refunded"] == 60  # 200 * 0.30
+
+
+# ==================== L2 AIGC 水印 ====================
+
+
+class _FakeHttpxStream:
+    def __init__(self, status, body=b""):
+        self.status_code = status
+        self._body = body
+    async def __aenter__(self): return self
+    async def __aexit__(self, *a): pass
+    async def aiter_bytes(self, chunk_size=65536):
+        if self.status_code == 200:
+            yield self._body
+
+
+class _FakeHttpxClient:
+    def __init__(self, status=200, body=b"fake bytes"):
+        self._status = status
+        self._body = body
+    def __call__(self, *a, **kw): return self
+    async def __aenter__(self): return self
+    async def __aexit__(self, *a): pass
+    def stream(self, method, url):
+        return _FakeHttpxStream(self._status, self._body)
+
+
+def _patch_httpx(monkeypatch, status=200, body=b"fake video"):
+    """monkeypatch httpx.AsyncClient 返指定 status/body。"""
+    import httpx
+    fake = _FakeHttpxClient(status=status, body=body)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **kw: fake)
+
+
+def test_apply_aigc_watermark_happy_path(monkeypatch, tmp_path):
+    """下载 + ffmpeg drawtext 都成功 → 落 final.mp4 + 返 public URL + raw 删除。"""
+    from app.api import oral as oral_mod
+    from app.api import video_studio as vs_mod
+
+    monkeypatch.setattr(oral_mod, "ORAL_UPLOAD_ROOT", tmp_path / "oral")
+    _patch_httpx(monkeypatch, 200, b"fake fal final video")
+
+    def fake_ff(cmd):
+        out = Path(cmd[-1])
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"fake watermarked")
+        return True, ""
+    monkeypatch.setattr(vs_mod, "_run_ffmpeg", fake_ff)
+
+    url = asyncio.run(oral_mod._apply_aigc_watermark(
+        "https://fal.media/x.mp4", "user1", "sess1",
+    ))
+
+    assert url == "/uploads/oral/user1/sess1/final.mp4"
+    out = tmp_path / "oral" / "user1" / "sess1" / "final.mp4"
+    assert out.exists() and out.stat().st_size > 0
+    # raw 应已被清理
+    assert not (tmp_path / "oral" / "user1" / "sess1" / "_lipsync_raw.mp4").exists()
+
+
+def test_apply_aigc_watermark_download_404_raises(monkeypatch, tmp_path):
+    """fal final URL 返 404 → raise(由上层走 lipsync 失败退款)"""
+    from app.api import oral as oral_mod
+    monkeypatch.setattr(oral_mod, "ORAL_UPLOAD_ROOT", tmp_path / "oral")
+    _patch_httpx(monkeypatch, 404)
+
+    with pytest.raises(RuntimeError, match="404"):
+        asyncio.run(oral_mod._apply_aigc_watermark(
+            "https://fal.media/x.mp4", "user1", "sess2",
+        ))
+
+
+def test_apply_aigc_watermark_ffmpeg_fail_raises(monkeypatch, tmp_path):
+    """ffmpeg drawtext 失败(字体丢/磁盘满)→ raise,不返无水印产物。"""
+    from app.api import oral as oral_mod
+    from app.api import video_studio as vs_mod
+    monkeypatch.setattr(oral_mod, "ORAL_UPLOAD_ROOT", tmp_path / "oral")
+    _patch_httpx(monkeypatch, 200)
+    monkeypatch.setattr(vs_mod, "_run_ffmpeg", lambda cmd: (False, "Cannot open font"))
+
+    with pytest.raises(RuntimeError, match="watermark ffmpeg failed"):
+        asyncio.run(oral_mod._apply_aigc_watermark(
+            "https://fal.media/x.mp4", "user1", "sess3",
+        ))
+
+
+def test_run_lipsync_step_watermark_fail_refunds_30pct(monkeypatch, register, client_oral):
+    """合规硬性:水印失败 == lipsync 失败,退 30%(深度合成规定无水印不算合格)"""
+    from app.api import oral as oral_mod
+    from app.services import fal_service
+
+    class FakeLip:
+        async def sync(self, video_url, audio_url, tier):
+            return {"video_url": "https://fal.media/final.mp4", "model": "veed/lipsync"}
+    monkeypatch.setattr(fal_service, "_lipsync_service", FakeLip())
+
+    async def fail_wm(url, uid, sid):
+        raise RuntimeError("AIGC watermark ffmpeg failed: font missing")
+    monkeypatch.setattr(oral_mod, "_apply_aigc_watermark", fail_wm)
+
+    token, user = register(client_oral, "oral-wm-fail@x.com")
+    sid = _seed_session(user["id"], status="lipsync_running", credits_charged=200)
+    oral_mod._update_session(
+        sid,
+        new_audio_url="https://x/a.mp3",
+        swapped_video_url="https://x/v.mp4",
+    )
+
+    asyncio.run(oral_mod._run_lipsync_step(sid))
+
+    sess = oral_mod._get_session(sid)
+    assert sess["status"] == "failed_step5"
+    assert sess["credits_refunded"] == 60  # 200 * 0.30
+    assert "watermark" in sess["error_message"].lower()
 
 
 def test_resolution_for_tier():
