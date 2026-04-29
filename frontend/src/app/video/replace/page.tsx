@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { compressImage } from "@/lib/utils/imageCompress";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -32,11 +33,12 @@ export default function VideoReplacePage() {
     return clearPolling;
   }, []);
 
-  // 处理图片上传
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  // 处理图片上传(compressImage 后转 base64 塞 JSON,base64 比原图大 33%,
+  // 不压缩的话 5MB 图变 6.7MB JSON,跨境喂 fal 慢)
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const original = e.target.files?.[0];
+    if (!original) return;
+    const file = await compressImage(original);
     const reader = new FileReader();
     reader.onload = (e) => {
       setElementImage(e.target?.result as string);

@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import MaskEditor from "@/components/MaskEditor";
 import MediaPicker from "@/components/MediaPicker";
+import { compressImage } from "@/lib/utils/imageCompress";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 const WS_BASE = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
@@ -187,11 +188,13 @@ export default function OralBroadcastWorkbench() {
     }
   };
 
-  const handleImageUpload = async (kind: "model" | "product", file: File) => {
-    if (!file.type.startsWith("image/")) { setError(t("oral.errVideoOnly")); return; }
+  const handleImageUpload = async (kind: "model" | "product", originalFile: File) => {
+    if (!originalFile.type.startsWith("image/")) { setError(t("oral.errVideoOnly")); return; }
     setUploadingKind(kind);
     setError("");
     try {
+      // 七十三续:前端压缩,5MB → 500KB,跨境 fal 上传时间显著降
+      const file = await compressImage(originalFile);
       const fd = new FormData();
       fd.append("file", file);
       const res = await fetch(`${API_BASE}/api/video/upload/image`, {

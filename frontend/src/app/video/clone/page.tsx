@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { compressImage } from "@/lib/utils/imageCompress";
+import { compressVideo } from "@/lib/utils/videoCompress";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -57,10 +58,17 @@ export default function VideoClonePage() {
 
   // 上传参考视频
   const handleVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const originalFile = e.target.files?.[0];
+    if (!originalFile) return;
     setVideoUploading(true);
     setError(null);
+    // 浏览器侧 MediaRecorder 压缩(1280px / 1.5Mbps)。
+    // 60s 1080p 50-100MB → 10-20MB,跨境上传时间显著降。压缩失败 fallback 原文件。
+    let file = originalFile;
+    try {
+      const result = await compressVideo(originalFile);
+      if (result.compressed && result.ratio < 0.9) file = result.file;
+    } catch {}
     const formData = new FormData();
     formData.append("file", file);
     try {
@@ -71,7 +79,7 @@ export default function VideoClonePage() {
       });
       const data = await res.json();
       if (data.url) setReferenceVideoUrl(data.url);
-      else setError("视频上传失败: " + (data.detail || "未知错误"));
+      else setError("视频上传失败: " + (data.detail ?? "未知错误"));
     } catch {
       setError("视频上传失败");
     } finally {

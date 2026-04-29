@@ -3,6 +3,7 @@ import { useLang } from "@/lib/i18n/LanguageContext";
 import { useCallback, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
+import { compressVideo } from "@/lib/utils/videoCompress";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -46,10 +47,27 @@ export default function StudioListPage() {
     return () => clearInterval(t);
   }, [loadSessions]);
 
-  const createNew = async (file: File) => {
+  const createNew = async (originalFile: File) => {
     setError("");
     setCreating(true);
     setUploadProgress(0);
+    setUploadSpeed("");
+
+    // 浏览器侧 MediaRecorder 压缩(降到 1280px / 1.5Mbps)。
+    // 60s 1080p 视频 50-100MB → 10-20MB,即便走分片也节省 80% 流量。
+    // 压缩失败 / 不支持 → fallback 走原文件。
+    setUploadSpeed(t("studio.compressing") ?? "正在压缩视频...");
+    let file = originalFile;
+    try {
+      const result = await compressVideo(originalFile, {
+        onProgress: (pct) => setUploadSpeed(`${t("studio.compressing") ?? "正在压缩视频..."} ${pct.toFixed(0)}%`),
+      });
+      if (result.compressed && result.ratio < 0.9) {
+        file = result.file;
+      }
+    } catch {
+      // compressVideo 内部已 fallback,这里防御
+    }
     setUploadSpeed("");
 
     // 分片上传:任意大小都能传(YouTube/OSS 标配模式)
