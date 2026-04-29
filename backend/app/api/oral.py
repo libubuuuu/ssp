@@ -287,6 +287,36 @@ async def _run_tts_step(session_id: str) -> None:
         if not voice_ref_path or not edited_text:
             raise RuntimeError("voice_ref / edited_transcript 缺失,数据不一致")
 
+        # 八十四续:fal voice-clone 故障期 bypass 开关。
+        # 启用后跳过 voice-clone,直接用原视频完整音轨作 new_audio_url,
+        # 绕过 fal "Failed to download preview audio" 偶发故障。
+        # 代价:用户编辑的新文案不生效(原音频不变)。
+        # 用 extracted_audio_path(完整音轨)而不是 voice_ref_path(前 10s),
+        # 确保后续 lipsync 阶段音频长度跟视频对齐。
+        # 设 ORAL_BYPASS_VOICE_CLONE=true 启用,fal 服务恢复后改回 false。
+        if os.environ.get("ORAL_BYPASS_VOICE_CLONE", "").lower() == "true":
+            audio_path = session.get("extracted_audio_path")
+            if not audio_path or not os.path.exists(audio_path):
+                raise RuntimeError("extracted_audio_path 缺失或不存在,无法 bypass")
+            audio_fal_url = await fal_client.upload_file_async(audio_path)
+            log_warning(
+                "voice_clone_bypassed",
+                user=str(session.get("user_id", "")),
+                session=session_id,
+                note="fal voice-clone 故障期临时方案,直接用原音频",
+            )
+            _update_session(
+                session_id,
+                voice_provider="bypass",
+                voice_id="",
+                new_audio_url=audio_fal_url,
+            )
+            _log(f"_run_tts_step BYPASS session={session_id}")
+            if _try_advance_to_lipsync(session_id):
+                _log(f"_run_tts_step BYPASS: 双完成,触发 lipsync session={session_id}")
+                asyncio.create_task(_run_lipsync_step(session_id))
+            return
+
         # 八十三:fal-ai/minimax/voice-clone text 硬上限 1000 字符。前端编辑器已加
         # 字数计数 + 超限 disabled,这里是兜底 — 防有人绕前端直接 POST /api/oral/edit。
         # 截断而不是 raise:让用户拿到截断版本的成片,总比 fail 好。

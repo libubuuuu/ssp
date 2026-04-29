@@ -55,6 +55,33 @@ done
 联系 fal 客服报 endpoint `fal-ai/minimax/voice-clone` 24h+ 持续失败,
 附 request_id `019ddaa9-fe8c-7ab1-ab08-9bfedb122d3a`,争取 $1.50 真扣的退款。
 
+### 八十四 续:bypass 开关(用户决策 — 绕过 voice-clone 拿成品)
+fal voice-clone 即使加 retry + 100% 退款,用户体验仍差(146 秒等失败)。
+用户决定:**先绕过 voice-clone 用原音频跑后续流程,拿到换装/合成成品验证链路**,
+等 fal 服务恢复或接 ElevenLabs 再恢复 TTS。
+
+实现:
+- `oral.py _run_tts_step` 在 voice_ref / edited_text 校验之后加 bypass 分支,
+  读 `os.environ.get("ORAL_BYPASS_VOICE_CLONE")`。开启时:
+  - 用 `extracted_audio_path`(完整音轨,不是 `voice_ref_path` 前 10s — 后者
+    跟视频长度不匹配会让 lipsync 错位)
+  - 上传到 fal storage 作 `new_audio_url`
+  - `voice_provider="bypass"`,`voice_id=""`
+  - 调 `_try_advance_to_lipsync` 跟正常路径一样推进
+- `.env.enc` 加 `ORAL_BYPASS_VOICE_CLONE=true`(supervisor 解密注入到 process env)
+- 埋点 `voice_clone_bypassed`(user/session/note),跟踪 bypass 命中次数
+
+代价(用户已接受):
+- 用户编辑的新文案不生效(用原视频音频)
+- 文案编辑器仍可用,但无效 — 后续可加 UI 提示"当前 TTS 服务维护中,
+  文案编辑暂不生效"
+
+恢复方法(fal 服务正常或 ElevenLabs 接入后):
+1. 解密 .env.enc → 改 `ORAL_BYPASS_VOICE_CLONE=false` → 重新加密
+2. supervisor 蓝绿重启
+3. 监控 `voice_clone_retry` / `voice_clone_fal_fault_full_refund` 命中频率
+   决定是否长期保留 retry 机制
+
 ---
 
 ## 2026-04-30 八十三(voice-clone 字段名 + text 1000 字符 — 全链路通后暴露的两个原始 bug)
