@@ -44,11 +44,22 @@ ffprobe -show_entries format=duration ... orig.webm  →  N/A
 永远不要 `except: pass` 或 `except: return <fallback>`,要么 raise,
 要么至少 log + raise 自定义异常。
 
-### Backlog(D 方案,本次不做)
+### Backlog(D 方案,数据驱动决定)
 **前端 videoCompress 输出 WebM 后用 ts-ebml 修补 EBML duration header**,
-或改用 ffmpeg.wasm 转码确保 duration metadata 完整。工程量较大,等 C
-修复上线观察用户行为后再决定是否需要 — 如果生产里"视频缺时长元数据"
-400 报错频繁出现,再上 D。
+或改用 ffmpeg.wasm 转码确保 duration metadata 完整。
+
+监控指标已埋:`/upload` + `/upload-chunk` 命中 ValueError 时 `log_warning`
+打 `upload_no_duration_metadata`,带 `user` / `file` / `size` / `reason`,
+写到 `ai_platform.log`。
+
+**一周后(2026-05-07)人工统计一次:**
+```bash
+grep "upload_no_duration_metadata" /opt/ssp/backend/app/logs/ai_platform.log \
+  | awk '{print $1}' | sort | uniq -c | tail
+```
+- **> 10 次/天 → 上 D**(前端 ts-ebml 或 ffmpeg.wasm 修补)
+- **< 5 次/天 → 继续观察**,文档明示"建议手机/相机录的 mp4"
+- 中间值 → 看 user 分布,如果集中在少数账号让客服引导,广泛分布则上 D
 
 ---
 

@@ -189,6 +189,12 @@ export default function OralBroadcastListPage() {
             <span style={{ color: "#999", fontSize: "0.85rem" }}>{t("oral.maxDuration")}</span>
           </div>
 
+          {!uploading && (
+            <div style={{ color: "#999", fontSize: "0.8rem", marginTop: "0.5rem" }}>
+              💡 {t("oral.uploadHint")}
+            </div>
+          )}
+
           {uploading && (
             <div>
               <div style={{ height: 8, background: "#eee", borderRadius: 4, overflow: "hidden" }}>

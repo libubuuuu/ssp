@@ -608,6 +608,7 @@ export const en = {
     loading: "Loading...",
     empty: "No tasks yet. Click + above to start.",
     maxDuration: "Current limit: 180s (3 min) video",
+    uploadHint: "Tip: Use MP4 videos recorded by phone/camera. Browser-recorded WebM may lack duration metadata and will be rejected.",
     backToList: "Back to list",
     overallProgress: "Overall",
     s1: "ASR",

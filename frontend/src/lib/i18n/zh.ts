@@ -608,6 +608,7 @@ export const zh = {
     loading: "加载中...",
     empty: "还没有任务,点上方「新建任务」开始",
     maxDuration: "当前限制 180 秒(3 分钟)视频",
+    uploadHint: "建议:使用手机/相机录制的 MP4 视频。浏览器录制的 WebM 可能缺少时长信息,会被拒收。",
     backToList: "返回列表",
     overallProgress: "整体进度",
     s1: "识别",

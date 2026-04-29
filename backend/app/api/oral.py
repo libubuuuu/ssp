@@ -39,6 +39,7 @@ from app.services.billing import (
     deduct_credits,
     add_credits,
 )
+from app.services.logger import log_warning
 
 router = APIRouter()
 
@@ -765,6 +766,12 @@ async def upload_video(
     try:
         duration = _get_video_duration(str(video_path))
     except ValueError as e:
+        # 八十一 backlog D 监控:统计"视频缺时长元数据"命中频率,
+        # 一周后看是否需要上前端 ts-ebml patch
+        log_warning(
+            "upload_no_duration_metadata",
+            user=user_id, file=file.filename, size=size_bytes, reason=str(e),
+        )
         shutil.rmtree(session_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail=str(e))
     if duration <= 0:
@@ -889,6 +896,11 @@ async def upload_chunk(
     try:
         duration = _get_video_duration(str(video_path))
     except ValueError as e:
+        # 八十一 backlog D 监控:统计"视频缺时长元数据"命中频率
+        log_warning(
+            "upload_no_duration_metadata",
+            user=user_id, file=filename, size=size_bytes, reason=str(e),
+        )
         shutil.rmtree(session_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail=str(e))
     if duration <= 0:
