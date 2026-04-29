@@ -1,5 +1,58 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-29 七十七续 P9a(模特/产品本地图片上传)
+
+P6 加了 MediaPicker(从商家产品库 / 历史任务挑图)+ URL 输入框,但用户
+**电脑里的本地图片**没有入口 — 真实 PoC 时模特图很可能是用户自己临时
+拍的或网上随便存的,逼用户先传到别处再回来贴 URL,体验差。
+
+### 改动(commit `32c99c4`)
+
+- **零新后端代码**:复用现成 `/api/video/upload/image`(已带 Pillow
+  宽高比修正 + 最小 300px + JPEG 压缩 + fal_client.upload 返回 https
+  URL,IMAGE_MIMES 校验也现成)
+- **前端 `page.tsx`**:
+  - `uploadingKind` state(null | "model" | "product")
+  - `handleImageUpload(kind, file)` 异步:multipart POST → 返回 url 自动
+    填 modelUrl/productUrl;name 为空时取文件名(去后缀,32 字符截断)
+  - 模特 / 产品两块右上角各加"📁 上传图片" label-style 按钮(和原
+    "📂 从生成历史选 / 🛒 从产品库选"按钮并列)
+  - 上传中按钮显示"上传中...",**另一侧按钮 opacity 0.5 防误触**
+  - input.value="" 重置 → 同一文件可重传
+- **i18n**:`oral.picker.uploadBtn` / `uploading` / `uploadFail`(zh/en)
+
+### 已 deploy 进生产 ✅(2026-04-29 蓝绿 green → blue)
+
+- ailixiao.com / 200 / /video/oral-broadcast 200
+- /api/video/upload/image 401(端点 OK 要 token)
+
+### 决策记录
+
+- **复用 `/api/video/upload/image` 不新开端点**:image-studio 早就有这套
+  逻辑(Pillow 处理 + fal upload),长一样的代码再写一份只会增加维护面
+- **上传完自动填 URL,name 留空时取文件名**:用户最常见路径"传图片就走"
+  少一步手填名字;name 已填则不覆盖
+- **不放在 MediaPicker 里加 tab**:MediaPicker 是浏览历史/产品库的语义
+  ("挑一个已有的"),上传是新增语义,放外面按钮更清楚 + 改动小
+- **复用 video/upload 而非 oral 命名空间**:wan-vace inpainting 的 ref
+  只要个 https URL,与 oral 业务无强绑定;沉淀通用 image upload 端点
+  比按业务复制一份更健康
+
+### 下一步候选
+
+- **P9b — 人物/产品拆分**(等用户拍板架构方案):
+  - A. 双 mask + 双轮 wan-vace inpaint(2× 调用费 + 时间)
+  - B. 单 mask + 智能 prompt(改动小,效果不可控)
+  - C. 只换人不动产品(最稳,失去"换产品"卖点)
+- (等用户)真实视频 PoC + ElevenLabs key
+- 我能继续干的:
+  - oral_sessions GC(60 天后清 final.mp4)
+  - WS 实时进度替 4s 轮询
+  - 长任务用户邮件通知(完成/失败)
+  - lint errors 58 个清理
+
+---
+
 ## 2026-04-29 七十七续 P8(oral admin drill-down — 点行展开看完整字段)
 
 P7 表格只能看任务概要,真实视频 PoC 时如果某条结果不对,需要看完整字段
