@@ -77,32 +77,55 @@ export default function MaskEditor({ videoUrl, sessionId, kind = "person", initi
     const video = videoRef.current;
     if (!video) return;
 
-    // 用 loadeddata(HAVE_CURRENT_DATA)直接画首帧 — 不需要 seek 那一跳。
-    // 之前用 loadedmetadata + 设 currentTime + 等 seeked,但 React 渲染时
-    // <video src> 已经挂载并开始 load,如果事件在 useEffect 执行前已 fire,
-    // listener 永远收不到 → ready 永远 false → 卡死无限 loading。修法:
-    //   1. 注册 listener 前先检查 readyState(已就绪直接画)
-    //   2. 用 loadeddata 不用 loadedmetadata+seek 组合(少一跳)
-    //   3. 10s timeout fallback,超时显示错误而不是无限转圈
-    const draw = () => captureFirstFrame();
+    // WebM 12MB 视频 + preload="auto" 在慢网下要等整个视频下载完才 fire
+    // loadeddata,用户卡几十分钟。改 preload="metadata"(只下 metadata),
+    // loadedmetadata 后 seek 0.001 触发首帧 decode(浏览器只 decode 第一帧,
+    // 不等完整下载) — 秒出首帧。
+    //
+    // 多事件 fallback(loadeddata / seeked / canplay 任一触发都尝试 capture)
+    // + W/H == 0 必检 + 15s timeout 报错 — 多重保险防卡死。
+
+    let captured = false;
+    let timedOut = false;
+
+    const tryCapture = () => {
+      if (captured || timedOut) return;
+      if (video.readyState < 2 /* HAVE_CURRENT_DATA */) return;
+      if (!video.videoWidth || !video.videoHeight) return;
+      captured = true;
+      captureFirstFrame();
+    };
+
+    const onMeta = () => {
+      try {
+        video.currentTime = 0.001;
+      } catch {}
+    };
     const onErr = () => setError(t("oral.mask.errVideoLoad"));
-    video.addEventListener("loadeddata", draw);
+
+    video.addEventListener("loadedmetadata", onMeta);
+    video.addEventListener("loadeddata", tryCapture);
+    video.addEventListener("seeked", tryCapture);
+    video.addEventListener("canplay", tryCapture);
     video.addEventListener("error", onErr);
 
-    if (video.readyState >= 2 /* HAVE_CURRENT_DATA */) {
-      draw();
-    }
+    if (video.readyState >= 1) onMeta();
+    if (video.readyState >= 2) tryCapture();
 
     const timeoutId = window.setTimeout(() => {
-      if (!videoRef.current) return;
-      if (videoRef.current.readyState < 2) {
+      if (!captured) {
+        timedOut = true;
         setError(t("oral.mask.errVideoLoad"));
       }
-    }, 10000);
+    }, 15000);
 
     return () => {
+      timedOut = true;
       window.clearTimeout(timeoutId);
-      video.removeEventListener("loadeddata", draw);
+      video.removeEventListener("loadedmetadata", onMeta);
+      video.removeEventListener("loadeddata", tryCapture);
+      video.removeEventListener("seeked", tryCapture);
+      video.removeEventListener("canplay", tryCapture);
       video.removeEventListener("error", onErr);
     };
   }, [captureFirstFrame, t, videoUrl]);
@@ -243,8 +266,9 @@ export default function MaskEditor({ videoUrl, sessionId, kind = "person", initi
 
   return (
     <div>
-      {/* 隐藏 video 用于抽首帧 */}
-      <video ref={videoRef} src={videoUrl} preload="auto" style={{ display: "none" }} />
+      {/* 隐藏 video 用于抽首帧。preload="metadata":只下 metadata,
+          metadata 加载好后 seek 触发首帧 decode,不需要整个视频下完 */}
+      <video ref={videoRef} src={videoUrl} preload="metadata" muted playsInline style={{ display: "none" }} />
 
       {!ready && (
         <div style={{ padding: "1rem", background: "#f9f7f2", borderRadius: 8, color: "#888" }}>
