@@ -625,6 +625,7 @@ export const en = {
     tier: { economy: "Economy", standard: "Standard ⭐", premium: "Premium" },
     tierComingSoon: "(Coming soon)",
     textTooLong: "Text exceeds 1000 character limit. Please trim.",
+    voiceCloneFalFault: "AI service temporary failure, retry exhausted, full refund issued",
     tierDesc: {
       economy: "MiniMax voice + 480p swap + veed lipsync",
       standard: "ElevenLabs Turbo + 580p + latentsync (waiting EL key)",

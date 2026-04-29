@@ -1,5 +1,62 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-30 八十四(fal voice-clone 偶发故障 — 加重试 + 失败 100% 退款)
+
+### 现象
+八十三 修字段名 + 1000 字符上限后,c3f43f6 deploy。用户跑 session
+`22c8f11e-d18`(75s economy):
+- ASR ✅ → 编辑(1171→截断)→ 扣费 201 ✅ → ASR 后台跑(双线触发)
+- **inpaint round-1 OK**(`swap1_video_url` 已写库,wan-vace 接受 75s 视频)
+- **voice-clone 挂**:fal dashboard 显示 endpoint `fal-ai/minimax/voice-clone`
+  跑 146.56 秒、HTTP 400、cost $1.50 真扣、`Failed to download preview audio`
+- 24h 前同 endpoint 有持续失败记录
+
+### 真根因(非我们代码 bug)
+"preview audio" 是 **fal 内部产物**,不是我们传的 `audio_url`(实测 voice_ref.mp3
+本地完美 178KB 真 mp3、fal storage URL 可 curl 200)。fal 跑通声纹特征 + TTS
+生成,挂在最末步生成 preview。fal 端点服务端 bug。
+
+### 修法
+- **`fal_service.py FalVoiceService.clone_voice`**:加 transient error 重试(最多 3 次,
+  退避 1s/2s),只对 `Failed to download` / `preview audio` / `timeout` /
+  `5xx` 等服务端故障重试,**4xx schema 错(missing field、超长等)立刻抛不重试**
+- **`oral.py _refund`**:加 `override_ratio` 参数,允许 fal 故障场景 100% 退
+- **`oral.py _run_tts_step except`**:err 文本判断 fal 故障 → `override_ratio=1.0`
+  + 错误信息追加 "(fal 服务故障,已全额退款)" + `log_warning` 埋点
+- **用户补偿**:`22c8f11e` 净扣 11 积分(95% 退后剩的 5% 阶段费),fal 实际是
+  服务端故障,SQL 补 11 积分 + audit_log("oral_fal_fault_compensation")
+- **死 session 清理**:DB DELETE + rm -rf 文件目录(15MB)
+
+### 监控埋点累计
+1. `upload_no_duration_metadata`(八十一,WebM 缺 EBML duration)
+2. `voice_clone_text_truncated`(八十三,text 超 1000 兜底截断)
+3. `voice_clone_retry`(八十四,transient 重试)
+4. `voice_clone_fal_fault_full_refund`(八十四,fal 故障 100% 退)
+
+2026-05-07 一周后 grep 一次:
+```bash
+for k in upload_no_duration_metadata voice_clone_text_truncated \
+         voice_clone_retry voice_clone_fal_fault_full_refund; do
+  echo "=== $k ==="
+  grep "$k" /opt/ssp/backend/app/logs/ai_platform.log | wc -l
+done
+```
+
+### 教训
+**第三方服务 SLA 不是我们的 SLA**。fal endpoint 24h 持续失败,我们用户层面
+的"扣费 → 失败 → 部分退款"逻辑虽然代码层面正确,但**用户为我们选用的不稳服务买单**
+是不能接受的。区分:
+- **用户输入问题**(超长 / 损坏 / 余额不足)→ 扣阶段费(原 95% 退)
+- **服务端故障**(fal/MiniMax 跑挂 / 跨境网络)→ **100% 退,埋点跟踪**
+
+未来集成第三方 API 必须在异常分类层加这种区分,不要把所有失败统一成 95%。
+
+### 同时建议你做的(我做不了)
+联系 fal 客服报 endpoint `fal-ai/minimax/voice-clone` 24h+ 持续失败,
+附 request_id `019ddaa9-fe8c-7ab1-ab08-9bfedb122d3a`,争取 $1.50 真扣的退款。
+
+---
+
 ## 2026-04-30 八十三(voice-clone 字段名 + text 1000 字符 — 全链路通后暴露的两个原始 bug)
 
 ### 现象

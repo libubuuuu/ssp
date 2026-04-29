@@ -109,9 +109,13 @@ REFUND_RATIO = {
 }
 
 
-def _refund(session: dict, status: str) -> int:
-    """按 status 比例退款。返回实退积分。"""
-    ratio = REFUND_RATIO.get(status, 0.0)
+def _refund(session: dict, status: str, override_ratio: Optional[float] = None) -> int:
+    """按 status 比例退款。返回实退积分。
+
+    八十四:`override_ratio` 用于区分 "用户输入问题"(扣阶段费)vs "服务端故障"
+    (100% 退,不让用户为我们或第三方的故障买单)。
+    """
+    ratio = override_ratio if override_ratio is not None else REFUND_RATIO.get(status, 0.0)
     if ratio <= 0:
         return 0
     refund = int(session["credits_charged"] * ratio)
@@ -329,12 +333,32 @@ async def _run_tts_step(session_id: str) -> None:
         sess2 = _get_session(session_id)
         if not sess2 or sess2["status"] not in ("edit_submitted", "tts_running"):
             return
-        refunded = _refund(sess2, "failed_step3")
+        # 八十四:fal/MiniMax 服务端故障 100% 退款,不让用户为第三方故障买单。
+        # 用户输入问题(text 超长被截断后再失败、audio 损坏等)走原 95% 阶段费扣除。
+        err_str = str(e)
+        is_fal_fault = (
+            "Failed to download" in err_str
+            or "preview audio" in err_str
+            or "timeout" in err_str.lower()
+            or "Internal Server Error" in err_str
+            or " 502" in err_str or " 503" in err_str or " 504" in err_str
+        )
+        refunded = _refund(sess2, "failed_step3", override_ratio=1.0 if is_fal_fault else None)
+        error_message = err_str
+        if is_fal_fault:
+            error_message += " (fal 服务故障,已全额退款)"
+            log_warning(
+                "voice_clone_fal_fault_full_refund",
+                user=str(sess2.get("user_id", "")),
+                session=session_id,
+                refund=refunded,
+                err=err_str[:200],
+            )
         _update_session(
             session_id,
             status="failed_step3",
             error_step="step3",
-            error_message=str(e)[:500],
+            error_message=error_message[:500],
             credits_refunded=refunded,
         )
 

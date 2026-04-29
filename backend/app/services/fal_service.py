@@ -1,11 +1,13 @@
 """
 AI 服务封装
 """
+import asyncio
 import fal_client
 import os
 from typing import Optional, Dict, Any, List
 from .circuit_breaker import get_circuit_breaker
 from .alert import get_alert_service
+from .logger import log_warning
 
 
 class FalImageService:
@@ -294,24 +296,50 @@ class FalVoiceService:
         model_key = "minimax-voice-clone"
         if not circuit_breaker.is_available(model_key):
             return {"error": f"模型 {model_key} 已熔断"}
-        try:
-            model_info = self.MODELS.get(model_key)
-            endpoint = model_info["endpoint"]
-            # 八十三:fal-ai/minimax/voice-clone schema 字段名 reference_audio_url → audio_url。
-            # pydantic 报 missing 'audio_url' 实测确认,旧字段名完全不被识别,直接换不留双保险。
-            result = await fal_client.run_async(endpoint, arguments={"audio_url": reference_audio_url, "text": text})
-            await circuit_breaker.record_success(model_key)
-            audio_url = result.get("audio", {}).get("url") if isinstance(result.get("audio"), dict) else result.get("audio_url")
-            if not audio_url:
-                return {"error": "No audio generated"}
-            return {
-                "voice_id": result.get("custom_voice_id") or result.get("voice_id"),
-                "audio_url": audio_url,
-                "model": endpoint,
-            }
-        except Exception as e:
-            await circuit_breaker.record_failure(model_key)
-            return {"error": str(e)}
+        model_info = self.MODELS.get(model_key)
+        endpoint = model_info["endpoint"]
+
+        # 八十四:fal-ai/minimax/voice-clone 偶发 "Failed to download preview audio"
+        # 等 transient 故障(fal 内部 / MiniMax 服务跨境 / 超时)。最多重试 3 次,
+        # 退避 1s/2s。schema 4xx 错(missing field / string_too_long 等)不重试,
+        # 立刻抛让上层 100% 退款分支区分。
+        last_err = None
+        for attempt in range(3):
+            try:
+                # 八十三:字段名 audio_url(不是 reference_audio_url),fal 当前 schema 要求
+                result = await fal_client.run_async(endpoint, arguments={"audio_url": reference_audio_url, "text": text})
+                await circuit_breaker.record_success(model_key)
+                audio_url = result.get("audio", {}).get("url") if isinstance(result.get("audio"), dict) else result.get("audio_url")
+                if not audio_url:
+                    return {"error": "No audio generated"}
+                return {
+                    "voice_id": result.get("custom_voice_id") or result.get("voice_id"),
+                    "audio_url": audio_url,
+                    "model": endpoint,
+                }
+            except Exception as e:
+                last_err = e
+                err_str = str(e)
+                is_transient = (
+                    "Failed to download" in err_str
+                    or "preview audio" in err_str
+                    or "timeout" in err_str.lower()
+                    or "Internal Server Error" in err_str
+                    or " 502" in err_str or " 503" in err_str or " 504" in err_str
+                )
+                if not is_transient or attempt == 2:
+                    # 4xx schema 错 / 重试耗尽 → 抛
+                    await circuit_breaker.record_failure(model_key)
+                    return {"error": err_str}
+                wait = 2 ** attempt  # 1s, 2s
+                log_warning(
+                    "voice_clone_retry",
+                    attempt=attempt + 1, max=3, err=err_str[:200], wait=wait,
+                )
+                await asyncio.sleep(wait)
+        # 防御:理论不会到这(循环内 attempt==2 会 return)
+        await circuit_breaker.record_failure(model_key)
+        return {"error": str(last_err) if last_err else "voice-clone unknown error"}
 
     async def text_to_speech(self, text: str, voice_id: str = "default", speed: float = 1.0) -> dict:
         circuit_breaker = get_circuit_breaker()
