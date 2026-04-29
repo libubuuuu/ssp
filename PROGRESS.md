@@ -1,5 +1,54 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-30 八十三(voice-clone 字段名 + text 1000 字符 — 全链路通后暴露的两个原始 bug)
+
+### 现象
+今天 12 个修复跑完,用户全链路成功跑通到 Step 3 "音频" 才暴露这两个 bug:
+- session `f1624632`,economy 75.4s,扣 201 退 190 净扣 11
+- backend stderr: `_run_tts_step FAIL ... voice-clone: [missing audio_url, string_too_long text]`
+
+两个独立 bug 一次报错带出。**跟今天 12 个修复完全无关**,是项目原本就存在的字段名漂移 + 未校验 fal 模型上限。
+
+### Bug 1:fal voice-clone 字段名 `reference_audio_url` → `audio_url`
+fal-ai/minimax/voice-clone 当前 schema 要求 `audio_url`,代码一直传 `reference_audio_url`,
+fal pydantic 报 `{'type': 'missing', 'loc': ['body', 'audio_url']}`,
+说明旧字段完全不被识别。修法直接改字段名,无需双保险。
+- `fal_service.py:302` `arguments={"audio_url": reference_audio_url, "text": text}`
+
+### Bug 2:fal voice-clone text 硬上限 1000 字符
+fal pydantic 报 `{'type': 'string_too_long', 'ctx': {'max_length': 1000}}`,
+是 MiniMax 模型本身限制,代码绕不过。用户 ASR 75s 视频文本 1226 字符,英文典型超长。
+
+修法 e + a 双保险:
+- **前端 Step 2 文案编辑器**(`oral-broadcast/[id]/page.tsx`):
+  - 字数计数 `5000` → `1000`,超 1000 红字 + `t("oral.textTooLong")` 提示
+  - "开始生成" 按钮 disabled 条件加 `editedText.length > 1000`
+  - zh / en i18n 加 `textTooLong` 文案
+- **后端兜底**(`oral.py:_run_tts_step`):
+  - voice-clone 调用前 `if len(edited_text) > 1000: edited_text = edited_text[:1000]`
+  - **不抛错**,默默截断 + `log_warning("voice_clone_text_truncated", user/session/orig_len)`
+  - 让用户拿到截断版本的成片,总比 fail 好(fail 成本是退款 + 用户体验)
+
+### 监控埋点
+`upload_no_duration_metadata`(八十一)+ `voice_clone_text_truncated`(本次)两个
+warning 都进 `ai_platform.log`。一周后(2026-05-07)一起 grep 看命中频率:
+```bash
+for k in upload_no_duration_metadata voice_clone_text_truncated; do
+  echo "=== $k ==="
+  grep "$k" /opt/ssp/backend/app/logs/ai_platform.log | wc -l
+done
+```
+
+### 教训
+**全链路通了 ≠ 没 bug**,只是 bug 被推到下游暴露。今天 12 个修复都在前 2 步,
+第 3 步(audio swap)才显出原本就在的字段名 + 上限校验缺失。
+未来设计第三方 API 集成必查两件:
+1. 字段名 — 不能信代码注释,要看真实 spec(或 mock 调一次)
+2. 输入上限(text length / file size / duration / req/min)— 必须前端 + 后端双重校验,
+   而不是等 API 自己 reject 才发现
+
+---
+
 ## 2026-04-30 八十二(分片上传孤儿目录 → 5/5 阻塞)
 
 ### 现象

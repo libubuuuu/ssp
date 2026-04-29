@@ -297,7 +297,9 @@ class FalVoiceService:
         try:
             model_info = self.MODELS.get(model_key)
             endpoint = model_info["endpoint"]
-            result = await fal_client.run_async(endpoint, arguments={"reference_audio_url": reference_audio_url, "text": text})
+            # 八十三:fal-ai/minimax/voice-clone schema 字段名 reference_audio_url → audio_url。
+            # pydantic 报 missing 'audio_url' 实测确认,旧字段名完全不被识别,直接换不留双保险。
+            result = await fal_client.run_async(endpoint, arguments={"audio_url": reference_audio_url, "text": text})
             await circuit_breaker.record_success(model_key)
             audio_url = result.get("audio", {}).get("url") if isinstance(result.get("audio"), dict) else result.get("audio_url")
             if not audio_url:

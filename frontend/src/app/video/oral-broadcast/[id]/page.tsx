@@ -520,13 +520,20 @@ export default function OralBroadcastWorkbench() {
               <textarea value={editedText} onChange={e => setEditedText(e.target.value)}
                 rows={6}
                 style={{ width: "100%", padding: "0.8rem", border: "1px solid #ddd", borderRadius: 8, fontFamily: "inherit", resize: "vertical" }} />
-              <div style={{ fontSize: "0.75rem", color: "#999", marginTop: 4 }}>{editedText.length} / 5000</div>
+              {/* 八十三:fal-ai/minimax/voice-clone 硬上限 1000 字符 */}
+              <div style={{ fontSize: "0.75rem", color: editedText.length > 1000 ? "#c33" : "#999", marginTop: 4 }}>
+                {editedText.length} / 1000
+                {editedText.length > 1000 && <span style={{ marginLeft: "0.5rem" }}>{t("oral.textTooLong")}</span>}
+              </div>
             </div>
-            <button onClick={submitEditedText} disabled={editingSubmitting || !editedText.trim()}
+            <button onClick={submitEditedText}
+              disabled={editingSubmitting || !editedText.trim() || editedText.length > 1000}
               style={{
                 padding: "0.8rem 1.5rem",
-                background: editingSubmitting || !editedText.trim() ? "#ccc" : "#0d0d0d",
-                color: "#fff", border: "none", borderRadius: 10, cursor: "pointer", fontWeight: 500,
+                background: editingSubmitting || !editedText.trim() || editedText.length > 1000 ? "#ccc" : "#0d0d0d",
+                color: "#fff", border: "none", borderRadius: 10,
+                cursor: editingSubmitting || !editedText.trim() || editedText.length > 1000 ? "not-allowed" : "pointer",
+                fontWeight: 500,
               }}>
               {editingSubmitting ? t("oral.submitting") : t("oral.startGen")}
             </button>

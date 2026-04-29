@@ -624,6 +624,7 @@ export const zh = {
     tierTitle: "选档位",
     tier: { economy: "经济档", standard: "标准档 ⭐", premium: "顶级档" },
     tierComingSoon: "(即将上线)",
+    textTooLong: "文案超过 1000 字符上限,请删减",
     tierDesc: {
       economy: "MiniMax 音色 + 480p 换装 + veed 口型",
       standard: "ElevenLabs Turbo + 580p + latentsync(等 EL key 接入)",

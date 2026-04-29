@@ -283,6 +283,18 @@ async def _run_tts_step(session_id: str) -> None:
         if not voice_ref_path or not edited_text:
             raise RuntimeError("voice_ref / edited_transcript 缺失,数据不一致")
 
+        # 八十三:fal-ai/minimax/voice-clone text 硬上限 1000 字符。前端编辑器已加
+        # 字数计数 + 超限 disabled,这里是兜底 — 防有人绕前端直接 POST /api/oral/edit。
+        # 截断而不是 raise:让用户拿到截断版本的成片,总比 fail 好。
+        if len(edited_text) > 1000:
+            log_warning(
+                "voice_clone_text_truncated",
+                user=str(session.get("user_id", "")),
+                session=session_id,
+                orig_len=len(edited_text),
+            )
+            edited_text = edited_text[:1000]
+
         # 1) 上传 voice_ref 到 fal storage
         voice_ref_fal_url = await fal_client.upload_file_async(voice_ref_path)
 
