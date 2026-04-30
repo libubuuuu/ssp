@@ -610,29 +610,56 @@ async def _run_inpainting_step(session_id: str) -> None:
                 seg_paths.append(seg_path)
             _log(f"_run_inpainting_step Step B 拆 {n_segments} 段 duration={duration:.1f}s session={session_id}")
 
-            # 并发 3 跑 kling/reference,每段独立 submit + poll
+            # 八十四续 P11:env switch 选 v2v 引擎
+            #   ltx (默认)  → fal-ai/ltx-2.3-22b/distilled/reference-video-to-video
+            #                  蒸馏加速 + 1/10 定价,实测可能 5-15 min/段
+            #   kling        → fal-ai/kling-video/o1/video-to-video/reference
+            #                  闭源旗舰,实测 35-50 min/段(慢)
+            engine = (os.getenv("ORAL_STEP_B_ENGINE", "ltx") or "ltx").lower()
+            if engine == "ltx":
+                endpoint_default = "fal-ai/ltx-2.3-22b/distilled/reference-video-to-video"
+                seg_timeout_loops = 180  # 30 min cap (LTX 蒸馏版预期 5-15 min)
+            else:
+                endpoint_default = "fal-ai/kling-video/o1/video-to-video/reference"
+                seg_timeout_loops = 360  # 60 min cap (kling 实测 35-50 min)
+            _log(f"_run_inpainting_step Step B engine={engine} endpoint={endpoint_default} session={session_id}")
+
             sem = asyncio.Semaphore(3)
-            endpoint_default = "fal-ai/kling-video/o1/video-to-video/reference"
 
             async def _drive_one(seg_idx: int, seg_path: Path) -> str:
                 async with sem:
                     seg_fal_url = await fal_client.upload_file_async(str(seg_path))
-                    drive_result = await vid_svc.drive_with_reference(
-                        driving_video_url=seg_fal_url,
-                        reference_image_url=reference_image,
-                        prompt=prompt,
-                    )
-                    if "error" in drive_result:
-                        raise RuntimeError(f"kling/reference seg {seg_idx}: {drive_result['error']}")
-                    task_id = drive_result.get("task_id")
-                    if not task_id:
-                        # 同步返:走 video_url 兜底
-                        url = drive_result.get("video_url")
-                        if not url:
-                            raise RuntimeError(f"seg {seg_idx} 既无 task_id 也无 video URL")
-                        return url
-                    endpoint = drive_result.get("model", endpoint_default)
-                    for _ in range(360):  # 60min cap (kling 实测可能 35-50min)
+                    if engine == "ltx":
+                        # LTX-2.3 distilled reference-v2v:single image_url + match_video_length
+                        args = {
+                            "video_url": seg_fal_url,
+                            "image_url": reference_image,
+                            "prompt": prompt,
+                            "match_video_length": True,
+                        }
+                        endpoint = endpoint_default
+                        try:
+                            handler = await fal_client.submit_async(endpoint, arguments=args)
+                            task_id = handler.request_id
+                        except Exception as e:
+                            raise RuntimeError(f"LTX seg {seg_idx} submit: {e}")
+                    else:
+                        drive_result = await vid_svc.drive_with_reference(
+                            driving_video_url=seg_fal_url,
+                            reference_image_url=reference_image,
+                            prompt=prompt,
+                        )
+                        if "error" in drive_result:
+                            raise RuntimeError(f"kling/reference seg {seg_idx}: {drive_result['error']}")
+                        task_id = drive_result.get("task_id")
+                        if not task_id:
+                            url = drive_result.get("video_url")
+                            if not url:
+                                raise RuntimeError(f"seg {seg_idx} 既无 task_id 也无 video URL")
+                            return url
+                        endpoint = drive_result.get("model", endpoint_default)
+
+                    for _ in range(seg_timeout_loops):
                         await asyncio.sleep(10)
                         status_obj = await fal_client.status_async(endpoint, task_id, with_logs=False)
                         state = status_obj.status if hasattr(status_obj, "status") else None
@@ -645,9 +672,9 @@ async def _run_inpainting_step(session_id: str) -> None:
                                 else None
                             )
                             if not url:
-                                raise RuntimeError(f"seg {seg_idx} kling 未返 video URL")
+                                raise RuntimeError(f"seg {seg_idx} {engine} 未返 video URL")
                             return url
-                    raise RuntimeError(f"seg {seg_idx} kling 超时(60min)")
+                    raise RuntimeError(f"seg {seg_idx} {engine} 超时({seg_timeout_loops*10//60} min)")
 
             seg_urls = await asyncio.gather(*[_drive_one(i, p) for i, p in enumerate(seg_paths)])
             _log(f"_run_inpainting_step Step B {n_segments} 段全部完成 session={session_id}")
