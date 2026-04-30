@@ -294,10 +294,17 @@ export default function OralBroadcastWorkbench() {
       <Sidebar />
       <main style={{ flex: 1, padding: "2rem 3rem", maxWidth: 900 }}>
         <div style={{ marginBottom: "1.5rem" }}>
-          <button onClick={() => router.push("/video/oral-broadcast")}
-            style={{ background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: "0.9rem" }}>
-            ← {t("oral.backToList")}
-          </button>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <button onClick={() => router.push("/video/oral-broadcast")}
+              style={{ background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: "0.9rem" }}>
+              ← {t("oral.backToList")}
+            </button>
+            {/* P21:任何状态都显示"+ 新建",方便批量做视频 */}
+            <button onClick={() => router.push("/video/oral-broadcast")}
+              style={{ padding: "0.4rem 1rem", background: "#0d0d0d", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: "0.85rem", fontWeight: 500 }}>
+              + {t("oral.newSession")}
+            </button>
+          </div>
           <h1 style={{ fontSize: "1.8rem", fontWeight: 600, margin: "0.5rem 0 0" }}>
             🎤 {t("oral.title")}
           </h1>
