@@ -1,5 +1,83 @@
 项目进度日志,每次收工前更新
 
+## 2026-04-30 八十四续 P1-P6(口播全链路重做:VTON 路线 + 拆段 + 上传链路 + COS 直传 + 图片切 Seedream)
+
+### 起点
+P0(commit `13e05f0`):bypass 开关激活,ORAL_BYPASS_VOICE_CLONE 跳过 minimax voice-clone。
+用户实测 14c390bb-1ea(75s)管线"绿"但成品**只有 5 秒画面**(后 70s 是 lipsync 拉伸)。
+ffprobe 实证:swap1/swap2 都 5.063s = wan-vace 默认 num_frames=81 / 16fps 硬限制。
+deeper:wan-vace 是通用 inpainting,不是 garment-aware,做不出"模特真穿产品",只贴上去。
+
+### V3 路线(P1):VTON + kling/reference 替代 wan-vace
+commit `52ac427`。
+方案三阶段:
+- **Step A — fal-ai/cat-vton**:模特图 + 产品图 → "模特真实穿衣"合成静图
+  (实测对比 idm-vton:cat-vton 保留模特身份强,idm 美化身材失真)
+- **Step B — fal-ai/kling-video/o1/video-to-video/reference**:合成图(reference)
+  + 原视频(driving)→ 模特穿产品做原动作的视频(实测 10s 段衔接 + 卷尺手部细节完美)
+- **Step C — lipsync(已有)** 不动
+
+代码:
+- `fal_service.py`:加 `FalVTONService`(cat-vton)+ `FalVideoService.drive_with_reference`
+- `oral.py:_run_inpainting_step` 完全重写(删 wan-vace 双轮 → 改 VTON 单次 + Step B)
+- `database.py`:+`vton_image_url` 列
+- `oral.py:MAX_DURATION_SECONDS` 180→10(kling 单次上限 10.05s)
+- 前端 `[id]/page.tsx`:删 MaskEditor + person/product mask 校验(VTON 不需要 mask)
+- 后端 `_build_status_payload` mask_uploaded 三字段恒返 True 兼容老前端缓存
+
+### Step B 拆段并发(commit `12db784`)
+kling/reference 单次 ≤ 10.05s,长视频必拆。MAX_DURATION_SECONDS 10→60。
+- ffmpeg `-ss/-t` 切 N 段(每段 9s 留 1s 余量)到 /tmp/oral_segs_<sid>/
+- asyncio.Semaphore(3) 限并发,每段独立 fal upload + drive_with_reference + poll 30min cap
+- 全段完成后 ffmpeg concat 拼回 → /opt/ssp/uploads/oral/<uid>/<sid>/swapped.mp4
+- swapped_video_url 直接公开 URL(nginx alias 已配)
+- finally rmtree 清理 /tmp 段
+
+### 上传链路 8 轮调优(P2 → P5')
+用户多次报"上传特别慢" / `ERR_HTTP2_PROTOCOL_ERROR`。蓝绿排查:
+
+**P2 commit `fa5a7e4`** — chunk 5MB → 1MB(降低 stream timeout 概率)
+**P3 commit `11cd006`** — _get_video_duration 加 ffmpeg remux fallback(WebM EBML duration 缺时自动转 mp4 注入)
+**P4 commit `9e1ae8e`** — fetch → XHR + 串行 + 重试 5 次指数退避(规避 fetch+HTTP2 stream RST)
+**P5 commit `76ad814`** — 接腾讯云 COS 直传(STS + cos-js-sdk-v5)
+**P5.5 commit `4252608`** — cos-js-sdk script tag 加载(绕开 turbopack node polyfill)
+**P5' commit `f3c303b`** — 完全弃用 SDK,改后端预签 PUT URL,浏览器 zero-deps fetch PUT(`get_settings()` import 修复 commit `4cbb3f5`)
+
+实测过程发现的真坑:
+- frontend 进程没自动 reload(deploy.sh 只 build 不 restart 时,`next start` serve 老 chunk hash)→ supervisorctl restart frontend 后 page 引用新 chunk
+- CF cache 把老 page HTML 缓存 → ?v=164900 强制 bust 才拿新 chunk
+- 用户家 wifi 上行实测 46-660 KB/s 抖动(Chrome 自报 "Slow network detected")
+- 浏览器死缓存 = 必须无痕窗口才能拿到新 JS
+
+最终态:**COS 直传走通**(presigned PUT 200 + finalize-cos 拉同区域文件 + 建 session)。
+但用户家网客观慢,COS 也救不了 30MB 文件 PUT 中断。换 4G 才是终解。
+
+### P6 commit `4b3ee51` + `c2ecf88`:图片端点切 Seedream
+用户图片功能 "图片一换图片二" 报 fal 422 `no_media_generated`。
+实证:用户图 1 = 豹纹比基尼内衣 + "Sexy" 字样,Google nano-banana 系列 NSFW 拦截硬规则(safety_tolerance/prompt 都救不了)。
+同图喂 fal-ai/bytedance/seedream/v4/edit ✅ 完美换出红色蕾丝款。
+
+切了 3 处硬编码:
+- `jobs.py:77 _run_image_job`
+- `image.py:158`
+- `ad_video_models.py:27 NANO_BANANA_EDIT_ENDPOINT`
+
+附带修 `oral.py:1086 finalize_cos_upload` 同样的 settings import bug。
+
+### 牺牲
+deploy 切 Seedream 时中断了用户两个正在跑的 oral session(b41be74a, 48694d9e),
+状态卡 tts_running。需要手动取消(99% 退款)或标 failed_step4(20% 退款)。
+
+### 待用户操作
+- 那两个卡死 session 取消(让用户 UI 点取消按钮)
+- 真正长链路效果验证(等用户完整跑 1 个新 session 看 final 视频)
+
+### Phase 2 思路(暂未做)
+docs/PHASE2-VIDEO-CHUNKING.md(基于 wan-vace 拆段)已作废 — V3 VTON 路线
+本身就用拆段并发,Phase 2 无新做项。
+
+---
+
 ## 2026-04-30 八十四(fal voice-clone 偶发故障 — 加重试 + 失败 100% 退款)
 
 ### 现象
