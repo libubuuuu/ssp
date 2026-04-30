@@ -1101,12 +1101,16 @@ async def finalize_cos_upload(
     if body.file_size <= 0 or body.file_size > 500 * 1024 * 1024:
         raise HTTPException(413, f"file_size {body.file_size} 不合法(0 < 且 ≤ 500MB)")
 
-    # 拼公开 URL(私有 bucket 这个 URL 浏览器访问会 403,但同区域服务器拉
-    # 走 COS 内部权限可访问)
-    public_url = (
-        f"https://{settings.STORAGE_BUCKET}.cos.{settings.STORAGE_REGION}"
-        f".myqcloud.com/{body.object_key}"
+    # 私有 bucket → 用 COS SDK 主账号 SecretKey 签名 GET(同区域内网,GB/s)
+    # 八十四续 P8 fix:之前直接 httpx GET public URL 被 COS 403 拒
+    # (私有 bucket 任何 GET 都要签名,我之前误以为同区域有内部权限)
+    from qcloud_cos import CosConfig, CosS3Client
+    cos_config = CosConfig(
+        Region=settings.STORAGE_REGION,
+        SecretId=settings.STORAGE_SECRET_ID,
+        SecretKey=settings.STORAGE_SECRET_KEY,
     )
+    cos_client = CosS3Client(cos_config)
 
     # 拉到本地 session_dir
     session_id = str(uuid.uuid4())[:12]
@@ -1117,18 +1121,12 @@ async def finalize_cos_upload(
     video_path = session_dir / f"orig{ext}"
 
     try:
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            async with client.stream("GET", public_url) as resp:
-                if resp.status_code != 200:
-                    shutil.rmtree(session_dir, ignore_errors=True)
-                    raise HTTPException(
-                        502, f"COS 拉取失败 status={resp.status_code} url={public_url[:100]}"
-                    )
-                with open(video_path, "wb") as f:
-                    async for chunk in resp.aiter_bytes(64 * 1024):
-                        f.write(chunk)
-    except HTTPException:
-        raise
+        # COS SDK download_file 内部走 GetObject,带签名,流式写本地
+        cos_client.download_file(
+            Bucket=settings.STORAGE_BUCKET,
+            Key=body.object_key,
+            DestFilePath=str(video_path),
+        )
     except Exception as e:
         shutil.rmtree(session_dir, ignore_errors=True)
         raise HTTPException(502, f"COS 拉取异常: {str(e)[:200]}")
