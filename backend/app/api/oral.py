@@ -850,6 +850,137 @@ async def _archive_lipsync_final(
     return public
 
 
+# ==================== P28:长视频 lipsync 分段 + concat ====================
+#
+# veed/lipsync 等端点对长视频时长有上限(实测一两分钟以上常 timeout/失败)。
+# 长视频(> ORAL_LIPSYNC_CHUNK_THRESHOLD_S)走分段:
+#   1) 下载 swapped 视频 + 新音频
+#   2) ffmpeg 切 N 段视频 + 对应 N 段音频
+#   3) 每段独立调 lipsync(并发 ORAL_LIPSYNC_CONCURRENCY,段级 2 次重试)
+#   4) ffmpeg concat demuxer 合并(copy 优先,失败 re-encode fallback)
+#   5) 归档为 final.mp4
+# 段长按 ORAL_LIPSYNC_SEG_LEN_S(默认 30s)切。短视频继续走整段路径(P15 已验收)。
+
+
+async def _download_url_to(url: str, out_path: "Path", timeout: float = 180.0) -> None:
+    import httpx
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        async with client.stream("GET", url) as resp:
+            if resp.status_code != 200:
+                raise RuntimeError(f"download {resp.status_code} url={url[:80]}")
+            with out_path.open("wb") as f:
+                async for chunk in resp.aiter_bytes(chunk_size=64 * 1024):
+                    f.write(chunk)
+
+
+async def _run_lipsync_chunked(session_id: str, session: dict) -> str:
+    """长视频分段 lipsync → concat → 归档。返 public final URL。"""
+    import fal_client
+    import tempfile
+    from app.api.video_studio import _run_ffmpeg
+
+    seg_len = float(os.getenv("ORAL_LIPSYNC_SEG_LEN_S", "30"))
+    concurrency = max(1, int(os.getenv("ORAL_LIPSYNC_CONCURRENCY", "3")))
+    duration = float(session.get("duration_seconds") or 0)
+    if duration <= 0:
+        raise RuntimeError("duration 未知,长视频分段需要 duration_seconds")
+
+    n = max(1, math.ceil(duration / seg_len))
+    work = Path(tempfile.mkdtemp(prefix=f"oral_lip_{session_id}_"))
+    _log(f"_run_lipsync_chunked START session={session_id} duration={duration:.1f}s segs={n} seg_len={seg_len}s")
+
+    try:
+        local_video = work / "src.mp4"
+        local_audio = work / "src.mp3"
+        await _download_url_to(session["swapped_video_url"], local_video, timeout=300.0)
+        await _download_url_to(session["new_audio_url"], local_audio, timeout=300.0)
+
+        seg_videos: List[Path] = []
+        seg_audios: List[Path] = []
+        for i in range(n):
+            start = i * seg_len
+            seg_dur = seg_len if i < n - 1 else max(0.5, duration - start)
+            sv = work / f"v_{i:02d}.mp4"
+            sa = work / f"a_{i:02d}.mp3"
+            ok1, e1 = _run_ffmpeg([
+                "ffmpeg", "-y", "-ss", f"{start:.3f}", "-i", str(local_video),
+                "-t", f"{seg_dur:.3f}",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-an", str(sv),
+            ])
+            if not ok1 or not sv.exists():
+                raise RuntimeError(f"切视频段 {i} 失败: {e1[:200]}")
+            ok2, e2 = _run_ffmpeg([
+                "ffmpeg", "-y", "-ss", f"{start:.3f}", "-i", str(local_audio),
+                "-t", f"{seg_dur:.3f}", "-acodec", "libmp3lame", "-b:a", "128k", str(sa),
+            ])
+            if not ok2 or not sa.exists():
+                raise RuntimeError(f"切音频段 {i} 失败: {e2[:200]}")
+            seg_videos.append(sv)
+            seg_audios.append(sa)
+
+        from app.services.fal_service import get_lipsync_service
+        lip_svc = get_lipsync_service()
+        if not lip_svc:
+            raise RuntimeError("FAL Lipsync service 未初始化")
+
+        sem = asyncio.Semaphore(concurrency)
+        out_videos: List[Path] = [work / f"out_{i:02d}.mp4" for i in range(n)]
+
+        async def _do_seg(i: int) -> None:
+            async with sem:
+                last_err: Optional[str] = None
+                for attempt in range(1, 3):
+                    try:
+                        vurl = await fal_client.upload_file_async(str(seg_videos[i]))
+                        aurl = await fal_client.upload_file_async(str(seg_audios[i]))
+                        res = await lip_svc.sync(video_url=vurl, audio_url=aurl, tier=session["tier"])
+                        if "error" in res:
+                            last_err = str(res["error"])[:300]
+                            raise RuntimeError(f"lipsync seg {i}: {last_err}")
+                        await _download_url_to(res["video_url"], out_videos[i], timeout=300.0)
+                        return
+                    except Exception as fe:
+                        last_err = str(fe)[:300]
+                        _log(f"_run_lipsync_chunked seg={i} attempt={attempt}/2 err={last_err}")
+                        if attempt < 2:
+                            await asyncio.sleep(8)
+                raise RuntimeError(f"lipsync seg {i} 重试 2 次仍失败: {last_err}")
+
+        await asyncio.gather(*(_do_seg(i) for i in range(n)))
+
+        concat_list = work / "concat.txt"
+        with concat_list.open("w") as f:
+            for v in out_videos:
+                f.write(f"file '{v.resolve()}'\n")
+        merged = work / "merged.mp4"
+        ok, e = _run_ffmpeg([
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+            "-i", str(concat_list), "-c", "copy", str(merged),
+        ])
+        if not ok or not merged.exists():
+            _log(f"_run_lipsync_chunked concat copy 失败,转 re-encode fallback session={session_id}")
+            ok2, e2 = _run_ffmpeg([
+                "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                "-i", str(concat_list),
+                "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                "-c:a", "aac", "-b:a", "128k", str(merged),
+            ])
+            if not ok2 or not merged.exists():
+                raise RuntimeError(f"ffmpeg concat 失败(copy+reencode 都崩): {e2[:200]}")
+
+        user_id = str(session["user_id"])
+        out_dir = ORAL_UPLOAD_ROOT / user_id / session_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "final.mp4"
+        shutil.copy2(merged, out_path)
+        os.chmod(out_path, 0o644)
+        public = f"/uploads/oral/{user_id}/{session_id}/final.mp4"
+        _log(f"_run_lipsync_chunked OK session={session_id} segs={n} -> {public}")
+        return public
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 # ==================== 异步驱动:Step 5 口型对齐 ====================
 
 
@@ -870,31 +1001,40 @@ async def _run_lipsync_step(session_id: str) -> None:
         if not session.get("swapped_video_url") or not session.get("new_audio_url"):
             raise RuntimeError("Step 4/3 产物缺失,_try_advance_to_lipsync 不该已经推进")
 
-        from app.services.fal_service import get_lipsync_service
-        lip_svc = get_lipsync_service()
-        if not lip_svc:
-            raise RuntimeError("FAL Lipsync service 未初始化")
+        # P28:长视频走分段路径(下载 → 切 N 段 → 并发 lipsync → concat → 归档)
+        threshold = float(os.getenv("ORAL_LIPSYNC_CHUNK_THRESHOLD_S", "60"))
+        duration = float(session.get("duration_seconds") or 0)
+        lipsync_model_label: str
+        if duration > threshold:
+            archived_url = await _run_lipsync_chunked(session_id, session)
+            lipsync_model_label = f"chunked-{session['tier']}"
+        else:
+            from app.services.fal_service import get_lipsync_service
+            lip_svc = get_lipsync_service()
+            if not lip_svc:
+                raise RuntimeError("FAL Lipsync service 未初始化")
 
-        result = await lip_svc.sync(
-            video_url=session["swapped_video_url"],
-            audio_url=session["new_audio_url"],
-            tier=session["tier"],
-        )
-        if "error" in result:
-            raise RuntimeError(f"lipsync: {result['error']}")
+            result = await lip_svc.sync(
+                video_url=session["swapped_video_url"],
+                audio_url=session["new_audio_url"],
+                tier=session["tier"],
+            )
+            if "error" in result:
+                raise RuntimeError(f"lipsync: {result['error']}")
 
-        final_url = result.get("video_url")
-        if not final_url:
-            raise RuntimeError("lipsync 未返 video URL")
+            final_url = result.get("video_url")
+            if not final_url:
+                raise RuntimeError("lipsync 未返 video URL")
 
-        # 八十四续 P15:用户要求不加水印,只下载归档防 fal.media 30 天过期
-        archived_url = await _archive_lipsync_final(
-            final_url, str(session["user_id"]), session_id,
-        )
+            # 八十四续 P15:用户要求不加水印,只下载归档防 fal.media 30 天过期
+            archived_url = await _archive_lipsync_final(
+                final_url, str(session["user_id"]), session_id,
+            )
+            lipsync_model_label = result.get("model", "")
 
         _update_session(
             session_id,
-            lipsync_fal_request_id=result.get("model", ""),
+            lipsync_fal_request_id=lipsync_model_label,
             final_video_url=archived_url,
             final_video_archived=archived_url,
             status="completed",
