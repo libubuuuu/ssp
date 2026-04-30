@@ -96,7 +96,7 @@ export default function AdVideoPage() {
     try {
       // 七十三续:前端压缩,5MB → 500KB
       const compressed = await compressImage(productFile);
-      setLoadingMsg("Claude 正在审核图片并生成脚本...");
+      setLoadingMsg("小九正在审核图片并生成脚本...");
       const fd = new FormData();
       fd.append("file", compressed);
       const r = await fetch(`${API_BASE}/api/ad-video/analyze`, {
@@ -329,7 +329,7 @@ export default function AdVideoPage() {
             <span style={{ fontStyle: "italic" }}> 视频</span>
           </h1>
           <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
-            上传白底产品图 · Claude 自动审核与撰稿 · Seedance 2.0 生成口播视频
+            上传白底产品图 · 小九自动审核与撰稿 · Seedance 2.0 生成口播视频
           </div>
         </div>
 
@@ -369,7 +369,7 @@ export default function AdVideoPage() {
         {/* Step 2: 审核 + 脚本 */}
         {step === 2 && audit && script && (
           <>
-            <Card title="审核通过" desc="Claude 已分析图片,以下为生成的分镜脚本(可编辑)">
+            <Card title="审核通过" desc="小九已分析图片,以下为生成的分镜脚本(可编辑)">
               <AuditGrid audit={audit} />
             </Card>
 
