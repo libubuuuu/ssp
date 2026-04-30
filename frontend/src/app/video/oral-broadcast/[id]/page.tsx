@@ -3,7 +3,6 @@ import { useLang } from "@/lib/i18n/LanguageContext";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
-import MaskEditor from "@/components/MaskEditor";
 import MediaPicker from "@/components/MediaPicker";
 import { compressImage } from "@/lib/utils/imageCompress";
 
@@ -78,13 +77,20 @@ export default function OralBroadcastWorkbench() {
   const tRef = useRef(t);
   tRef.current = t;
 
+  // session 被认定不存在 / 不归属(status 404/403 或 WS 4403)→ 终态,停止轮询 + 不重连
+  const goneRef = useRef(false);
+
   const loadStatus = useCallback(async () => {
+    if (goneRef.current) return;
     try {
       const res = await fetch(`${API_BASE}/api/oral/status/${sessionId}`, {
         headers: { Authorization: `Bearer ${token()}` },
         credentials: "include",
       });
       if (!res.ok) {
+        if (res.status === 404 || res.status === 403) {
+          goneRef.current = true;
+        }
         setError(tRef.current("oral.errStatus"));
         return;
       }
@@ -111,8 +117,14 @@ export default function OralBroadcastWorkbench() {
     let stopped = false;
 
     const startPolling = () => {
-      if (pollInterval || stopped) return;
-      pollInterval = setInterval(loadStatus, 4000);
+      if (pollInterval || stopped || goneRef.current) return;
+      pollInterval = setInterval(() => {
+        if (goneRef.current) {
+          if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+          return;
+        }
+        loadStatus();
+      }, 4000);
     };
 
     try {
@@ -126,7 +138,11 @@ export default function OralBroadcastWorkbench() {
         } catch {}
       };
       ws.onerror = () => { startPolling(); };
-      ws.onclose = (e) => { if (e.code !== 1000) startPolling(); };
+      ws.onclose = (e) => {
+        // 4401 token / 4403 not your session → 终态,不再 fallback 轮询
+        if (e.code === 4401 || e.code === 4403) { goneRef.current = true; return; }
+        if (e.code !== 1000) startPolling();
+      };
     } catch {
       startPolling();
     }
@@ -142,11 +158,7 @@ export default function OralBroadcastWorkbench() {
     setError("");
     if (!legalConsent) { setError(t("oral.errLegal")); return; }
     if (!modelName || !modelUrl) { setError(t("oral.errModel")); return; }
-    if (!sess?.products.person_mask_uploaded) { setError(t("oral.errMaskRequired")); return; }
-    if ((productName || productUrl) && !sess?.products.product_mask_uploaded) {
-      setError(t("oral.errProductMaskRequired"));
-      return;
-    }
+    // 八十四续 V3:VTON 管线不需要用户涂 mask,删 person/product mask 校验
 
     setStarting(true);
     try {
@@ -426,51 +438,8 @@ export default function OralBroadcastWorkbench() {
               }}
             />
 
-            <div style={{ marginBottom: "1.5rem" }}>
-              <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>
-                {t("oral.mask.personTitle")}
-              </div>
-              <div style={{ fontSize: "0.75rem", color: "#999", marginBottom: "0.8rem" }}>
-                {t("oral.mask.canvasHint")}
-              </div>
-              {sess.products.original_video_url ? (
-                <MaskEditor
-                  videoUrl={sess.products.original_video_url}
-                  sessionId={sessionId}
-                  kind="person"
-                  initialDone={sess.products.person_mask_uploaded}
-                  onUploaded={() => loadStatus()}
-                />
-              ) : (
-                <div style={{ padding: "1rem", color: "#888", background: "#f9f7f2", borderRadius: 8 }}>
-                  {t("oral.mask.loading")}
-                </div>
-              )}
-            </div>
-
-            {(productName || productUrl) && (
-              <div style={{ marginBottom: "1.5rem" }}>
-                <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>
-                  {t("oral.mask.productTitle")}
-                </div>
-                <div style={{ fontSize: "0.75rem", color: "#999", marginBottom: "0.8rem" }}>
-                  {t("oral.mask.productHint")}
-                </div>
-                {sess.products.original_video_url ? (
-                  <MaskEditor
-                    videoUrl={sess.products.original_video_url}
-                    sessionId={sessionId}
-                    kind="product"
-                    initialDone={sess.products.product_mask_uploaded}
-                    onUploaded={() => loadStatus()}
-                  />
-                ) : (
-                  <div style={{ padding: "1rem", color: "#888", background: "#f9f7f2", borderRadius: 8 }}>
-                    {t("oral.mask.loading")}
-                  </div>
-                )}
-              </div>
-            )}
+            {/* 八十四续 V3:VTON 管线下用户无需手动涂 mask,旧 MaskEditor UI 隐藏。
+                后端 _run_inpainting_step 已切到 cat-vton + kling/reference 路径。 */}
 
             <label style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", marginBottom: "1rem", padding: "0.8rem", background: "#fffaeb", borderRadius: 8 }}>
               <input type="checkbox" checked={legalConsent} onChange={e => setLegalConsent(e.target.checked)}
@@ -481,14 +450,12 @@ export default function OralBroadcastWorkbench() {
             </label>
 
             {(() => {
-              const hasProduct = Boolean(productName || productUrl);
+              // 八十四续 V3 VTON 管线:删 mask 校验,start 只校验模特图 + 法律确认
               const blocked =
                 starting ||
                 !legalConsent ||
                 !modelName ||
-                !modelUrl ||
-                !sess.products.person_mask_uploaded ||
-                (hasProduct && !sess.products.product_mask_uploaded);
+                !modelUrl;
               return (
                 <button onClick={startPipeline} disabled={blocked}
                   style={{

@@ -607,7 +607,7 @@ export const zh = {
     processing: "处理中...",
     loading: "加载中...",
     empty: "还没有任务,点上方「新建任务」开始",
-    maxDuration: "当前限制 180 秒(3 分钟)视频",
+    maxDuration: "当前限制 10 秒视频(VTON MVP 阶段,长视频拆段版上线后解除)",
     uploadHint: "建议:使用手机/相机录制的 MP4 视频。浏览器录制的 WebM 可能缺少时长信息,会被拒收。",
     backToList: "返回列表",
     overallProgress: "整体进度",
@@ -625,7 +625,6 @@ export const zh = {
     tier: { economy: "经济档", standard: "标准档 ⭐", premium: "顶级档" },
     tierComingSoon: "(即将上线)",
     textTooLong: "文案超过 1000 字符上限,请删减",
-    voiceCloneFalFault: "AI 服务临时故障,已自动重试并退款",
     tierDesc: {
       economy: "MiniMax 音色 + 480p 换装 + veed 口型",
       standard: "ElevenLabs Turbo + 580p + latentsync(等 EL key 接入)",

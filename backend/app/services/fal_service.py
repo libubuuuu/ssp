@@ -125,6 +125,22 @@ class FalVideoService:
         }
         return await self._generate_video("kling/edit", args)
 
+    async def drive_with_reference(self, driving_video_url: str, reference_image_url: str, prompt: str = "") -> dict:
+        """口播带货 V3 Step B:用 reference image 驱动 driving video 的动作。
+
+        kling/reference 上限 10.05s/次。长视频需上层拆段。
+        """
+        elements = [{"frontal_image_url": reference_image_url, "reference_image_urls": [reference_image_url]}]
+        if not prompt:
+            prompt = "A person performing the same actions and movements as in the reference video."
+        args = {
+            "video_url": driving_video_url,
+            "prompt": prompt,
+            "elements": elements,
+            "keep_audio": True,
+        }
+        return await self._generate_video("kling/reference", args)
+
     async def clone_video(self, reference_video_url: str, model_image_url: str, product_image_url: Optional[str] = None, instruction: str = None) -> dict:
         elements = [{"frontal_image_url": model_image_url, "reference_image_urls": [model_image_url]}]
         prompt = "Based on @Video1, replace the character with @Element1, maintaining the same movements and camera angles."
@@ -448,6 +464,53 @@ class FalInpaintingService:
             return {"error": str(e)}
 
 
+class FalVTONService:
+    """口播带货 V3 Step A:虚拟试穿(VTON)。
+
+    输入模特图 + 产品图(衣服)→ 输出"模特真实穿着该衣服"的静态合成图。
+    与通用 inpainting / video-to-video edit 的区别:VTON 模型是 garment-aware,
+    懂版型、褶皱、贴合;wan-vace 和 kling edit 都做不出"真实穿衣"的物理感。
+
+    端点:fal-ai/cat-vton(轻量、保留模特身份强,实测优于 idm-vton)。
+    cloth_type:upper(上衣)/ lower(下装)/ overall(连衣裙)。
+    """
+    ENDPOINT = "fal-ai/cat-vton"
+
+    def __init__(self, fal_key: str):
+        self.fal_key = fal_key
+
+    async def try_on(
+        self,
+        human_image_url: str,
+        garment_image_url: str,
+        cloth_type: str = "upper",
+    ) -> dict:
+        circuit_breaker = get_circuit_breaker()
+        model_key = "cat-vton"
+        if not circuit_breaker.is_available(model_key):
+            return {"error": f"模型 {model_key} 已熔断"}
+        try:
+            args = {
+                "human_image_url": human_image_url,
+                "garment_image_url": garment_image_url,
+                "cloth_type": cloth_type,
+            }
+            result = await fal_client.run_async(self.ENDPOINT, arguments=args)
+            await circuit_breaker.record_success(model_key)
+            image_obj = result.get("image") if isinstance(result, dict) else None
+            image_url_out = (
+                image_obj.get("url") if isinstance(image_obj, dict)
+                else result.get("image_url") if isinstance(result, dict)
+                else None
+            )
+            if not image_url_out:
+                return {"error": "cat-vton 未返 image URL"}
+            return {"image_url": image_url_out, "model": self.ENDPOINT}
+        except Exception as e:
+            await circuit_breaker.record_failure(model_key)
+            return {"error": str(e)}
+
+
 class FalLipsyncService:
     """七十七续 P3:口型对齐(三档不同 endpoint)。
 
@@ -503,18 +566,20 @@ _avatar_service: Optional[FalAvatarService] = None
 _voice_service: Optional[FalVoiceService] = None
 _asr_service: Optional[FalASRService] = None
 _inpainting_service: Optional[FalInpaintingService] = None
+_vton_service: Optional["FalVTONService"] = None
 _lipsync_service: Optional[FalLipsyncService] = None
 
 
 def init_fal_services(fal_key: str):
     os.environ["FAL_KEY"] = fal_key
-    global _image_service, _video_service, _avatar_service, _voice_service, _asr_service, _inpainting_service, _lipsync_service
+    global _image_service, _video_service, _avatar_service, _voice_service, _asr_service, _inpainting_service, _vton_service, _lipsync_service
     _image_service = FalImageService(fal_key)
     _video_service = FalVideoService(fal_key)
     _avatar_service = FalAvatarService(fal_key)
     _voice_service = FalVoiceService(fal_key)
     _asr_service = FalASRService(fal_key)
     _inpainting_service = FalInpaintingService(fal_key)
+    _vton_service = FalVTONService(fal_key)
     _lipsync_service = FalLipsyncService(fal_key)
 
 def get_image_service() -> FalImageService:
@@ -534,6 +599,9 @@ def get_asr_service() -> FalASRService:
 
 def get_inpainting_service() -> FalInpaintingService:
     return _inpainting_service
+
+def get_vton_service() -> "FalVTONService":
+    return _vton_service
 
 def get_lipsync_service() -> FalLipsyncService:
     return _lipsync_service

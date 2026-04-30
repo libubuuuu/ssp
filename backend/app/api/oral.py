@@ -49,8 +49,9 @@ ORAL_UPLOAD_ROOT = Path(os.getenv("UPLOADS_ROOT", "/opt/ssp/uploads")) / "oral"
 # 分片上传临时目录(_uploading/<user_id>_<upload_id>/<chunk_idx>)
 ORAL_UPLOAD_TMP = ORAL_UPLOAD_ROOT / "_uploading"
 
-# 视频时长硬上限(180 秒/3 分钟。Phase 2 拆段并行可彻底解除)
-MAX_DURATION_SECONDS = 180
+# 八十四续:V3 VTON 管线 MVP — kling/reference 单次硬上限 10.05s。
+# 拆段版上线后改回 180(见 docs/ORAL-BROADCAST-PLAN.md V3 路线图)。
+MAX_DURATION_SECONDS = 10
 
 # 档位允许值
 TIERS = ("economy", "standard", "premium")
@@ -437,18 +438,22 @@ def _try_advance_to_lipsync(session_id: str) -> bool:
 
 
 async def _run_inpainting_step(session_id: str) -> None:
-    """Step 4 视频换装(P9b 双 mask 双轮):fal-ai/wan-vace-14b/inpainting + salient tracking。
+    """Step 4 视频换装(V3 VTON 管线 — 八十四续替代 wan-vace 双 mask 双轮)。
 
-    第一轮 — 必跑:用 person_mask + 模特图 → swap1_video_url(换人)
-    第二轮 — 可选:有 product_mask + 产品 → 第一轮输出 + product_mask + 产品图
-                  → swapped_video_url(换产品);否则 swapped_video_url = swap1_video_url
+    Step A — VTON 静态试穿(fal-ai/cat-vton)
+        模特图 + 产品图 → "模特真实穿着该产品"的合成静图(vton_image_url)
+    Step B — kling/reference 动作驱动(fal-ai/kling-video/o1/video-to-video/reference)
+        合成静图(reference)+ 原视频(driving)→ swapped_video_url
+
+    MVP:kling/reference 单次上限 10.05s,oral.py:53 MAX_DURATION_SECONDS 已限 ≤10s。
+    长视频拆段并发版后续做(见 docs/ORAL-BROADCAST-PLAN.md V3 路线图)。
 
     与 _run_tts_step 真并行(/edit 端点同时启 2 个 task),完成后调
     _try_advance_to_lipsync 触发 Step 5。失败按 §7.2 退 20%。
     """
     import fal_client
     from app.services.media_archiver import archive_url
-    from app.services.fal_service import get_inpainting_service
+    from app.services.fal_service import get_vton_service, get_video_service
 
     session = _get_session(session_id)
     if not session:
@@ -456,107 +461,104 @@ async def _run_inpainting_step(session_id: str) -> None:
         return
 
     try:
-        # P9b:person_mask 必须;legacy mask_image_path 作为 fallback(老数据 / 兼容老前端)
-        person_mask = session.get("person_mask_image_path") or session.get("mask_image_path")
-        if not person_mask:
-            raise RuntimeError("person_mask 缺失 — 用户必须先上传人物 mask 才能换装")
-
         models = json.loads(session.get("selected_models") or "[]")
         products = json.loads(session.get("selected_products") or "[]")
         if not models:
-            raise RuntimeError("selected_models 为空")
+            raise RuntimeError("selected_models 为空(必须有模特图)")
+        model_url = models[0].get("image_url")
+        if not model_url:
+            raise RuntimeError("模特图 image_url 缺失")
 
-        inp_svc = get_inpainting_service()
-        if not inp_svc:
-            raise RuntimeError("FAL Inpainting service 未初始化")
+        vton_svc = get_vton_service()
+        vid_svc = get_video_service()
+        if not vton_svc or not vid_svc:
+            raise RuntimeError("FAL VTON / Video service 未初始化")
 
-        product_mask = session.get("product_mask_image_path")
-        do_swap2 = bool(product_mask and products)
-
-        resolution = _resolution_for_tier(session["tier"])
         user_id = str(session["user_id"])
 
-        # ---------- 第一轮:换人 ----------
-        person_mask_fal_url = await fal_client.upload_file_async(person_mask)
+        # ---------- Step A:VTON 静态试穿 ----------
+        # 有产品图 → 模特穿产品;无产品 → 跳过 VTON,模特图直接当 reference
+        if products and products[0].get("image_url"):
+            garment_url = products[0]["image_url"]
+            cloth_type = products[0].get("cloth_type") or "upper"
+            vton_result = await vton_svc.try_on(
+                human_image_url=model_url,
+                garment_image_url=garment_url,
+                cloth_type=cloth_type,
+            )
+            if "error" in vton_result:
+                raise RuntimeError(f"VTON Step A: {vton_result['error']}")
+            vton_url = vton_result.get("image_url")
+            if not vton_url:
+                raise RuntimeError("VTON Step A 未返 image URL")
+            try:
+                vton_url = await archive_url(vton_url, user_id, "image")
+            except Exception as arch_err:
+                _log(f"_run_inpainting_step VTON archive failed (continuing): {arch_err}")
+            _update_session(session_id, vton_image_url=vton_url)
+            _log(f"_run_inpainting_step VTON OK session={session_id} url={vton_url[:80]}")
+            reference_image = vton_url
+        else:
+            reference_image = model_url
+            _log(f"_run_inpainting_step skip VTON (no product) session={session_id}")
+
+        # ---------- Step B:kling/reference 动作驱动 ----------
         video_fal_url = await fal_client.upload_file_async(session["original_video_path"])
+        product_names = [p.get("name", "") for p in products if p.get("name")]
+        if product_names:
+            prompt = (
+                f"A person wearing {', '.join(product_names)}, "
+                f"performing the same actions, gestures, and movements as in the reference video."
+            )
+        else:
+            prompt = "A person performing the same actions and movements as in the reference video."
 
-        model_refs = [m["image_url"] for m in models if m.get("image_url")]
-        model_names = [m.get("name", "") for m in models if m.get("name")]
-        prompt1 = (
-            f"Replace the person in the video with: {', '.join(model_names)}. "
-            f"Maintain camera angles, movements, and any objects the person interacts with."
+        drive_result = await vid_svc.drive_with_reference(
+            driving_video_url=video_fal_url,
+            reference_image_url=reference_image,
+            prompt=prompt,
         )
-
-        result1 = await inp_svc.inpaint(
-            video_url=video_fal_url,
-            mask_image_url=person_mask_fal_url,
-            prompt=prompt1,
-            reference_image_urls=model_refs if model_refs else None,
-            resolution=resolution,
-        )
-        if "error" in result1:
-            raise RuntimeError(f"wan-vace round-1 (person): {result1['error']}")
-
-        swap1_url = result1.get("video_url")
-        if not swap1_url:
-            raise RuntimeError("wan-vace round-1 未返 video URL")
+        if "error" in drive_result:
+            raise RuntimeError(f"kling/reference Step B: {drive_result['error']}")
+        # drive_with_reference 走 _generate_video → submit_async,返 task_id 异步等
+        # 但 oral 流程是 run_async 阻塞等;FalVideoService 现有用法是返 task_id,需异步等
+        task_id = drive_result.get("task_id")
+        if task_id:
+            # 轮询等结果(kling video 通常 5-15min)
+            endpoint = drive_result.get("model", "fal-ai/kling-video/o1/video-to-video/reference")
+            for _ in range(180):  # 最多等 30 分钟(180 × 10s)
+                await asyncio.sleep(10)
+                status_obj = await fal_client.status_async(endpoint, task_id, with_logs=False)
+                state = status_obj.status if hasattr(status_obj, "status") else None
+                if state == "COMPLETED":
+                    final = await fal_client.result_async(endpoint, task_id)
+                    video_obj = final.get("video") if isinstance(final, dict) else None
+                    swapped_url = (
+                        video_obj.get("url") if isinstance(video_obj, dict)
+                        else final.get("video_url") if isinstance(final, dict)
+                        else None
+                    )
+                    if not swapped_url:
+                        raise RuntimeError("kling/reference 未返 video URL")
+                    break
+            else:
+                raise RuntimeError("kling/reference 超时(30 分钟未完成)")
+        else:
+            swapped_url = drive_result.get("video_url")
+            if not swapped_url:
+                raise RuntimeError("kling/reference 未返 task_id 也未返 video URL")
 
         try:
-            swap1_url = await archive_url(swap1_url, user_id, "video")
+            swapped_url = await archive_url(swapped_url, user_id, "video")
         except Exception as arch_err:
-            _log(f"_run_inpainting_step round-1 archive failed (continuing): {arch_err}")
+            _log(f"_run_inpainting_step Step B archive failed (continuing): {arch_err}")
 
         _update_session(
             session_id,
-            swap1_video_url=swap1_url,
-            swap1_fal_request_id=result1.get("model", ""),
+            swap_fal_request_id=drive_result.get("model", ""),
+            swapped_video_url=swapped_url,
         )
-        _log(f"_run_inpainting_step round-1 OK session={session_id} url={swap1_url[:80]}")
-
-        # ---------- 第二轮:换产品(可选)----------
-        if do_swap2:
-            product_mask_fal_url = await fal_client.upload_file_async(product_mask)
-            # swap1_url 已经是 https,wan-vace 也接受 URL 输入,无需再 fal upload
-            product_refs = [p["image_url"] for p in products if p.get("image_url")]
-            product_names = [p.get("name", "") for p in products if p.get("name")]
-            prompt2 = (
-                f"Replace the product/object in the video with: {', '.join(product_names)}. "
-                f"Maintain the person, scene, and camera movements."
-            )
-
-            result2 = await inp_svc.inpaint(
-                video_url=swap1_url,
-                mask_image_url=product_mask_fal_url,
-                prompt=prompt2,
-                reference_image_urls=product_refs if product_refs else None,
-                resolution=resolution,
-            )
-            if "error" in result2:
-                raise RuntimeError(f"wan-vace round-2 (product): {result2['error']}")
-
-            swap2_url = result2.get("video_url")
-            if not swap2_url:
-                raise RuntimeError("wan-vace round-2 未返 video URL")
-
-            try:
-                swap2_url = await archive_url(swap2_url, user_id, "video")
-            except Exception as arch_err:
-                _log(f"_run_inpainting_step round-2 archive failed (continuing): {arch_err}")
-
-            _update_session(
-                session_id,
-                swap_fal_request_id=result2.get("model", ""),
-                swapped_video_url=swap2_url,
-            )
-            _log(f"_run_inpainting_step round-2 OK session={session_id} url={swap2_url[:80]}")
-        else:
-            # 没产品 mask → 第一轮输出直接当最终 swap 产物
-            _update_session(
-                session_id,
-                swap_fal_request_id=result1.get("model", ""),
-                swapped_video_url=swap1_url,
-            )
-            _log(f"_run_inpainting_step single-round OK session={session_id}")
+        _log(f"_run_inpainting_step Step B OK session={session_id} url={swapped_url[:80]}")
 
         # 触发 lipsync(若 TTS 也完成)
         if _try_advance_to_lipsync(session_id):
@@ -1268,9 +1270,12 @@ def _build_status_payload(session: dict) -> dict:
             "swap1_video_url": session.get("swap1_video_url"),
             "swapped_video_url": session.get("swapped_video_url"),
             "final_video_url": session.get("final_video_url"),
-            "mask_uploaded": bool(session.get("person_mask_image_path") or session.get("mask_image_path")),
-            "person_mask_uploaded": bool(session.get("person_mask_image_path") or session.get("mask_image_path")),
-            "product_mask_uploaded": bool(session.get("product_mask_image_path")),
+            # 八十四续 V3:VTON 管线无需 mask,这三个字段恒返 True 兼容老前端
+            # (新前端不再读这些字段;旧 cache 期内的浏览器也不会卡校验)
+            "mask_uploaded": True,
+            "person_mask_uploaded": True,
+            "product_mask_uploaded": True,
+            "vton_image_url": session.get("vton_image_url"),
         },
         "error": session.get("error_message") if session["status"].startswith("failed_") else None,
     }

@@ -607,7 +607,7 @@ export const en = {
     processing: "Processing...",
     loading: "Loading...",
     empty: "No tasks yet. Click + above to start.",
-    maxDuration: "Current limit: 180s (3 min) video",
+    maxDuration: "Current limit: 10s video (VTON MVP; long-video chunking coming later)",
     uploadHint: "Tip: Use MP4 videos recorded by phone/camera. Browser-recorded WebM may lack duration metadata and will be rejected.",
     backToList: "Back to list",
     overallProgress: "Overall",
@@ -625,7 +625,6 @@ export const en = {
     tier: { economy: "Economy", standard: "Standard ⭐", premium: "Premium" },
     tierComingSoon: "(Coming soon)",
     textTooLong: "Text exceeds 1000 character limit. Please trim.",
-    voiceCloneFalFault: "AI service temporary failure, retry exhausted, full refund issued",
     tierDesc: {
       economy: "MiniMax voice + 480p swap + veed lipsync",
       standard: "ElevenLabs Turbo + 580p + latentsync (waiting EL key)",
