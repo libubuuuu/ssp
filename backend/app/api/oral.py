@@ -577,7 +577,9 @@ async def _run_inpainting_step(session_id: str) -> None:
         engine = (os.getenv("ORAL_STEP_B_ENGINE", "seedance-i2v") or "seedance-i2v").lower()
         product_names = [p.get("name", "") for p in products if p.get("name")]
         if engine == "seedance-i2v":
-            endpoint_default = "fal-ai/bytedance/seedance/v2/pro/image-to-video"
+            # 八十四续 P12 修:fal 端点路径 seedance/v2/pro 已废,改 seedance-2.0/fast
+            # fast 版:lower latency + cost,带 sync audio + start/end frame 控制
+            endpoint_default = "fal-ai/bytedance/seedance-2.0/fast/image-to-video"
             seg_timeout_loops = 60   # 10 min cap (实测 1-3 min/段)
             SEG_LEN_S = 10.0         # seedance 支持 5/10/12
             if product_names:
