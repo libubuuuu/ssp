@@ -93,7 +93,22 @@ export default function OralBroadcastListPage() {
       if (stsRes.ok) {
         const sts = await stsRes.json();
         const startTime2 = Date.now();
-        const COS = (await import("cos-js-sdk-v5")).default;
+        // 用 <script> 加载 SDK(避免 turbopack node polyfill 问题)
+        // SDK 文件已放在 public/cos-js-sdk-v5.min.js
+        type COSCtor = new (opts: { getAuthorization: (o: object, cb: (d: unknown) => void) => void }) => {
+          uploadFile: (params: object, cb: (err: Error | null) => void) => void;
+        };
+        const w = window as unknown as { COS?: COSCtor };
+        if (!w.COS) {
+          await new Promise<void>((resolve, reject) => {
+            const s = document.createElement("script");
+            s.src = "/cos-js-sdk-v5.min.js";
+            s.onload = () => resolve();
+            s.onerror = () => reject(new Error("cos-js-sdk 加载失败"));
+            document.head.appendChild(s);
+          });
+        }
+        const COS = w.COS!;
         const cos = new COS({
           getAuthorization: (_options: object, callback: (data: {
             TmpSecretId: string; TmpSecretKey: string;
