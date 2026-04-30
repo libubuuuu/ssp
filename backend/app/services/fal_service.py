@@ -240,7 +240,18 @@ class FalVideoService:
                 return {"status": "failed", "error": "FAL 任务失败"}
             return {"status": "processing"}
         except Exception as e:
-            return {"status": "processing", "error": str(e)}
+            # 八十四续 P7:fal 内容审核 / 422 / 输入校验类 exception 是终态失败
+            # (无限标 processing 会让前端永远显示"处理中" + 积分不退)
+            msg = str(e)
+            terminal_keywords = (
+                "content_policy", "content checker", "content_policy_violation",
+                "did not generate", "no_media_generated",
+                "ValidationError", "422", "Unprocessable",
+                "Bad Request", "400",
+            )
+            if any(kw in msg for kw in terminal_keywords):
+                return {"status": "failed", "error": msg[:300]}
+            return {"status": "processing", "error": msg}
 
 
 class FalAvatarService:
