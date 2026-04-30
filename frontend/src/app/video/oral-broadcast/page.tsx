@@ -82,63 +82,40 @@ export default function OralBroadcastListPage() {
     setCompressProgress(100);
     setPhase("upload");
 
-    // 尝试 COS 直传,失败 fallback 老分片路径
+    // 八十四续 P5':presigned PUT URL(zero deps,绕开任何 SDK)
+    // 后端帮签好 URL,浏览器 fetch PUT 文件 → 完成后 /finalize-cos 通知后端
     try {
-      const stsRes = await fetch(`${API_BASE}/api/storage/sts`, {
+      const presignRes = await fetch(`${API_BASE}/api/storage/presigned-put`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
         credentials: "include",
         body: JSON.stringify({ filename: file.name }),
       });
-      if (stsRes.ok) {
-        const sts = await stsRes.json();
+      if (presignRes.ok) {
+        const ps = await presignRes.json();
         const startTime2 = Date.now();
-        // 用 <script> 加载 SDK(避免 turbopack node polyfill 问题)
-        // SDK 文件已放在 public/cos-js-sdk-v5.min.js
-        type COSCtor = new (opts: { getAuthorization: (o: object, cb: (d: unknown) => void) => void }) => {
-          uploadFile: (params: object, cb: (err: Error | null) => void) => void;
-        };
-        const w = window as unknown as { COS?: COSCtor };
-        if (!w.COS) {
-          await new Promise<void>((resolve, reject) => {
-            const s = document.createElement("script");
-            s.src = "/cos-js-sdk-v5.min.js";
-            s.onload = () => resolve();
-            s.onerror = () => reject(new Error("cos-js-sdk 加载失败"));
-            document.head.appendChild(s);
-          });
-        }
-        const COS = w.COS!;
-        const cos = new COS({
-          getAuthorization: (_options: object, callback: (data: {
-            TmpSecretId: string; TmpSecretKey: string;
-            SecurityToken: string; ExpiredTime: number;
-          }) => void) => {
-            callback({
-              TmpSecretId: sts.credentials.tmpSecretId,
-              TmpSecretKey: sts.credentials.tmpSecretKey,
-              SecurityToken: sts.credentials.sessionToken,
-              ExpiredTime: sts.expiredTime,
-            });
-          },
-        });
+        // XHR PUT(可拿 progress)直传 COS bucket,完全不经过 ailixiao.com / CF
         await new Promise<void>((resolve, reject) => {
-          cos.uploadFile({
-            Bucket: sts.bucket,
-            Region: sts.region,
-            Key: sts.object_key,
-            Body: file,
-            SliceSize: 1024 * 1024 * 5,  // 5MB 分片(SDK 自动并发)
-            onProgress: (info: { loaded: number; total: number; speed: number; percent: number }) => {
-              setUploadProgress(info.percent * 100);
+          const xhr = new XMLHttpRequest();
+          xhr.open("PUT", ps.upload_url);
+          xhr.timeout = 300_000;  // 5min,大文件够
+          if (xhr.upload) {
+            xhr.upload.onprogress = (ev) => {
+              if (!ev.lengthComputable) return;
+              setUploadProgress((ev.loaded / ev.total) * 100);
               const elapsed = (Date.now() - startTime2) / 1000;
               if (elapsed > 0.5) {
-                const mbps = (info.loaded / 1024 / 1024) / elapsed;
-                const remainSec = (info.total - info.loaded) / Math.max(1, info.loaded / elapsed);
+                const mbps = (ev.loaded / 1024 / 1024) / elapsed;
+                const remainSec = (ev.total - ev.loaded) / Math.max(1, ev.loaded / elapsed);
                 setUploadSpeed(`${mbps.toFixed(1)} MB/s · ${t("oral.eta")} ${Math.max(1, Math.ceil(remainSec))}s`);
               }
-            },
-          }, (err: Error | null) => err ? reject(err) : resolve());
+            };
+          }
+          xhr.onload = () => xhr.status >= 200 && xhr.status < 300
+            ? resolve() : reject(new Error(`COS PUT ${xhr.status}: ${xhr.responseText.slice(0, 200)}`));
+          xhr.onerror = () => reject(new Error("COS PUT 网络错"));
+          xhr.ontimeout = () => reject(new Error("COS PUT 超时(5min)"));
+          xhr.send(file);
         });
         // 通知后端 finalize:从 COS 拉文件 + 建 session
         const finRes = await fetch(`${API_BASE}/api/oral/finalize-cos`, {
@@ -146,7 +123,7 @@ export default function OralBroadcastListPage() {
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
           credentials: "include",
           body: JSON.stringify({
-            object_key: sts.object_key,
+            object_key: ps.object_key,
             filename: file.name,
             file_size: file.size,
           }),
@@ -158,8 +135,7 @@ export default function OralBroadcastListPage() {
         router.push(`/video/oral-broadcast/${finData.session_id}`);
         return;
       }
-      // STS 503 / 其他非 200 → 静默 fallback 到老路径
-      console.warn("[oral upload] COS 未启用,fallback 到分片上传");
+      console.warn("[oral upload] presigned PUT 未启用,fallback 到分片上传");
     } catch (e) {
       console.warn("[oral upload] COS 直传失败,fallback 到分片上传:", e);
     }

@@ -44,3 +44,49 @@ async def issue_sts(req: STSRequest, current_user: dict = Depends(get_current_us
 
     log_info(f"STS 签发: user={current_user['id']} key={result['object_key']}")
     return result
+
+
+@router.post("/presigned-put")
+async def issue_presigned_put(req: STSRequest, current_user: dict = Depends(get_current_user)):
+    """八十四续 P5:签发 COS PUT presigned URL,浏览器 zero-deps fetch PUT 直传。
+
+    比 STS + cos-js-sdk-v5 更稳:不依赖任何浏览器 SDK,绕开 turbopack
+    polyfill 问题。Presigned URL 内嵌 q-sign 签名,有效期 15 分钟。
+    """
+    from qcloud_cos import CosConfig, CosS3Client
+    from app.config import settings
+    from app.services.storage_sts import _check_enabled, _build_resource_path
+    try:
+        _check_enabled()
+    except StorageNotConfigured as e:
+        raise HTTPException(503, f"对象存储未启用: {e}")
+
+    user_id = str(current_user["id"])
+    object_key, _ = _build_resource_path(user_id, req.filename)
+
+    config = CosConfig(
+        Region=settings.STORAGE_REGION,
+        SecretId=settings.STORAGE_SECRET_ID,
+        SecretKey=settings.STORAGE_SECRET_KEY,
+    )
+    client = CosS3Client(config)
+    try:
+        # 签 PUT presigned URL,15min 有效
+        url = client.get_presigned_url(
+            Method="PUT",
+            Bucket=settings.STORAGE_BUCKET,
+            Key=object_key,
+            Expired=900,
+        )
+    except Exception as e:
+        log_error("presigned PUT 签发失败", exc_info=True, error=str(e))
+        raise HTTPException(502, f"presigned URL 签发失败: {str(e)[:200]}")
+
+    log_info(f"presigned PUT 签发: user={user_id} key={object_key}")
+    return {
+        "upload_url": url,
+        "object_key": object_key,
+        "bucket": settings.STORAGE_BUCKET,
+        "region": settings.STORAGE_REGION,
+        "expires_in": 900,
+    }
