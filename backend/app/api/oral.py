@@ -49,9 +49,10 @@ ORAL_UPLOAD_ROOT = Path(os.getenv("UPLOADS_ROOT", "/opt/ssp/uploads")) / "oral"
 # 分片上传临时目录(_uploading/<user_id>_<upload_id>/<chunk_idx>)
 ORAL_UPLOAD_TMP = ORAL_UPLOAD_ROOT / "_uploading"
 
-# 八十四续:V3 VTON 管线 MVP — kling/reference 单次硬上限 10.05s。
-# 拆段版上线后改回 180(见 docs/ORAL-BROADCAST-PLAN.md V3 路线图)。
-MAX_DURATION_SECONDS = 10
+# 八十四续:V3 VTON 管线 — Step B 单次 kling/reference 上限 10.05s,
+# 长视频走 _run_inpainting_step 内 ffmpeg 拆段 + 并发驱动 + concat。
+# 60s 上限对应 7 段并发(每段 9s),fal 排队 + 限速可控。
+MAX_DURATION_SECONDS = 60
 
 # 档位允许值
 TIERS = ("economy", "standard", "premium")
@@ -502,8 +503,10 @@ async def _run_inpainting_step(session_id: str) -> None:
             reference_image = model_url
             _log(f"_run_inpainting_step skip VTON (no product) session={session_id}")
 
-        # ---------- Step B:kling/reference 动作驱动 ----------
-        video_fal_url = await fal_client.upload_file_async(session["original_video_path"])
+        # ---------- Step B:拆段 + kling/reference 并发驱动 + concat ----------
+        # 单次 kling/reference 上限 10.05s,长视频(>10s)必拆段。
+        # 段长 9s 留 1s 余量;每段独立 reference 驱动;ffmpeg concat 硬切拼回。
+        from app.api.video_studio import _run_ffmpeg, _get_video_duration
         product_names = [p.get("name", "") for p in products if p.get("name")]
         if product_names:
             prompt = (
@@ -513,52 +516,115 @@ async def _run_inpainting_step(session_id: str) -> None:
         else:
             prompt = "A person performing the same actions and movements as in the reference video."
 
-        drive_result = await vid_svc.drive_with_reference(
-            driving_video_url=video_fal_url,
-            reference_image_url=reference_image,
-            prompt=prompt,
-        )
-        if "error" in drive_result:
-            raise RuntimeError(f"kling/reference Step B: {drive_result['error']}")
-        # drive_with_reference 走 _generate_video → submit_async,返 task_id 异步等
-        # 但 oral 流程是 run_async 阻塞等;FalVideoService 现有用法是返 task_id,需异步等
-        task_id = drive_result.get("task_id")
-        if task_id:
-            # 轮询等结果(kling video 通常 5-15min)
-            endpoint = drive_result.get("model", "fal-ai/kling-video/o1/video-to-video/reference")
-            for _ in range(180):  # 最多等 30 分钟(180 × 10s)
-                await asyncio.sleep(10)
-                status_obj = await fal_client.status_async(endpoint, task_id, with_logs=False)
-                state = status_obj.status if hasattr(status_obj, "status") else None
-                if state == "COMPLETED":
-                    final = await fal_client.result_async(endpoint, task_id)
-                    video_obj = final.get("video") if isinstance(final, dict) else None
-                    swapped_url = (
-                        video_obj.get("url") if isinstance(video_obj, dict)
-                        else final.get("video_url") if isinstance(final, dict)
-                        else None
-                    )
-                    if not swapped_url:
-                        raise RuntimeError("kling/reference 未返 video URL")
-                    break
-            else:
-                raise RuntimeError("kling/reference 超时(30 分钟未完成)")
-        else:
-            swapped_url = drive_result.get("video_url")
-            if not swapped_url:
-                raise RuntimeError("kling/reference 未返 task_id 也未返 video URL")
+        SEG_LEN_S = 9.0
+        duration = float(session.get("duration_seconds") or 0)
+        if duration <= 0:
+            duration = _get_video_duration(session["original_video_path"])
 
+        # 切段到 /tmp/oral_segs_<sid>/seg_NN.mp4(根目录上层 GC 兜底)
+        import tempfile, math
+        seg_root = Path(tempfile.mkdtemp(prefix=f"oral_segs_{session_id}_"))
         try:
-            swapped_url = await archive_url(swapped_url, user_id, "video")
-        except Exception as arch_err:
-            _log(f"_run_inpainting_step Step B archive failed (continuing): {arch_err}")
+            n_segments = max(1, math.ceil(duration / SEG_LEN_S))
+            seg_paths: List[Path] = []
+            for i in range(n_segments):
+                start = i * SEG_LEN_S
+                seg_path = seg_root / f"seg_{i:02d}.mp4"
+                # 最后一段用 -t 不限,让 ffmpeg 自己截到末尾(规避浮点边界)
+                cmd = ["ffmpeg", "-y", "-ss", f"{start:.3f}",
+                       "-i", session["original_video_path"]]
+                if i < n_segments - 1:
+                    cmd += ["-t", f"{SEG_LEN_S:.3f}"]
+                cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", "20", "-an", str(seg_path)]
+                ok, ferr = _run_ffmpeg(cmd)
+                if not ok or not seg_path.exists():
+                    raise RuntimeError(f"ffmpeg 切段 {i} 失败: {ferr[:200]}")
+                seg_paths.append(seg_path)
+            _log(f"_run_inpainting_step Step B 拆 {n_segments} 段 duration={duration:.1f}s session={session_id}")
 
-        _update_session(
-            session_id,
-            swap_fal_request_id=drive_result.get("model", ""),
-            swapped_video_url=swapped_url,
-        )
-        _log(f"_run_inpainting_step Step B OK session={session_id} url={swapped_url[:80]}")
+            # 并发 3 跑 kling/reference,每段独立 submit + poll
+            sem = asyncio.Semaphore(3)
+            endpoint_default = "fal-ai/kling-video/o1/video-to-video/reference"
+
+            async def _drive_one(seg_idx: int, seg_path: Path) -> str:
+                async with sem:
+                    seg_fal_url = await fal_client.upload_file_async(str(seg_path))
+                    drive_result = await vid_svc.drive_with_reference(
+                        driving_video_url=seg_fal_url,
+                        reference_image_url=reference_image,
+                        prompt=prompt,
+                    )
+                    if "error" in drive_result:
+                        raise RuntimeError(f"kling/reference seg {seg_idx}: {drive_result['error']}")
+                    task_id = drive_result.get("task_id")
+                    if not task_id:
+                        # 同步返:走 video_url 兜底
+                        url = drive_result.get("video_url")
+                        if not url:
+                            raise RuntimeError(f"seg {seg_idx} 既无 task_id 也无 video URL")
+                        return url
+                    endpoint = drive_result.get("model", endpoint_default)
+                    for _ in range(180):  # 30min cap
+                        await asyncio.sleep(10)
+                        status_obj = await fal_client.status_async(endpoint, task_id, with_logs=False)
+                        state = status_obj.status if hasattr(status_obj, "status") else None
+                        if state == "COMPLETED":
+                            final = await fal_client.result_async(endpoint, task_id)
+                            video_obj = final.get("video") if isinstance(final, dict) else None
+                            url = (
+                                video_obj.get("url") if isinstance(video_obj, dict)
+                                else final.get("video_url") if isinstance(final, dict)
+                                else None
+                            )
+                            if not url:
+                                raise RuntimeError(f"seg {seg_idx} kling 未返 video URL")
+                            return url
+                    raise RuntimeError(f"seg {seg_idx} kling 超时(30min)")
+
+            seg_urls = await asyncio.gather(*[_drive_one(i, p) for i, p in enumerate(seg_paths)])
+            _log(f"_run_inpainting_step Step B {n_segments} 段全部完成 session={session_id}")
+
+            # 下载所有段到本地 + ffmpeg concat
+            import httpx
+            local_seg_paths: List[Path] = []
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                for i, url in enumerate(seg_urls):
+                    out = seg_root / f"out_{i:02d}.mp4"
+                    async with client.stream("GET", url) as resp:
+                        resp.raise_for_status()
+                        with open(out, "wb") as f:
+                            async for chunk in resp.aiter_bytes(64 * 1024):
+                                f.write(chunk)
+                    local_seg_paths.append(out)
+
+            # concat list
+            concat_list = seg_root / "concat.txt"
+            with open(concat_list, "w") as f:
+                for p in local_seg_paths:
+                    f.write(f"file '{p}'\n")
+
+            # 落最终拼接产物到 oral uploads(对外可访问)
+            session_dir = ORAL_UPLOAD_ROOT / user_id / session_id
+            session_dir.mkdir(parents=True, exist_ok=True)
+            merged = session_dir / "swapped.mp4"
+            ok, ferr = _run_ffmpeg([
+                "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                "-i", str(concat_list),
+                "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-an",
+                str(merged),
+            ])
+            if not ok or not merged.exists():
+                raise RuntimeError(f"ffmpeg concat 失败: {ferr[:200]}")
+
+            swapped_url = f"https://ailixiao.com/uploads/oral/{user_id}/{session_id}/swapped.mp4"
+            _update_session(
+                session_id,
+                swap_fal_request_id=endpoint_default,
+                swapped_video_url=swapped_url,
+            )
+            _log(f"_run_inpainting_step Step B OK session={session_id} segments={n_segments} → {swapped_url}")
+        finally:
+            shutil.rmtree(seg_root, ignore_errors=True)
 
         # 触发 lipsync(若 TTS 也完成)
         if _try_advance_to_lipsync(session_id):

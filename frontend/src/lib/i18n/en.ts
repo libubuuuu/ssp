@@ -607,7 +607,7 @@ export const en = {
     processing: "Processing...",
     loading: "Loading...",
     empty: "No tasks yet. Click + above to start.",
-    maxDuration: "Current limit: 10s video (VTON MVP; long-video chunking coming later)",
+    maxDuration: "Current limit: 60s video (VTON pipeline with internal chunked Step B)",
     uploadHint: "Tip: Use MP4 videos recorded by phone/camera. Browser-recorded WebM may lack duration metadata and will be rejected.",
     backToList: "Back to list",
     overallProgress: "Overall",

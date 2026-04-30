@@ -607,7 +607,7 @@ export const zh = {
     processing: "处理中...",
     loading: "加载中...",
     empty: "还没有任务,点上方「新建任务」开始",
-    maxDuration: "当前限制 10 秒视频(VTON MVP 阶段,长视频拆段版上线后解除)",
+    maxDuration: "当前限制 60 秒视频(VTON 管线,Step B 内部拆段并发驱动)",
     uploadHint: "建议:使用手机/相机录制的 MP4 视频。浏览器录制的 WebM 可能缺少时长信息,会被拒收。",
     backToList: "返回列表",
     overallProgress: "整体进度",
