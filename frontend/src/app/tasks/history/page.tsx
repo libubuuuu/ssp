@@ -40,6 +40,7 @@ export default function HistoryPage() {
     "avatar/generate": t("tasks.mod_avatar"),
     "voice/clone": t("tasks.mod_voice_clone"),
     "voice/tts": t("tasks.mod_tts"),
+    "oral-broadcast": t("tasks.mod_oral"),
   };
 
   return (

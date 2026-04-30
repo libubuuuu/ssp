@@ -411,6 +411,7 @@ export const en = {
     mod_avatar: "Digital Human",
     mod_voice_clone: "Voice Clone",
     mod_tts: "Text to Speech",
+    mod_oral: "Oral Broadcast",
   },
   profile: {
     accountSettings: "Account Settings",
@@ -685,6 +686,7 @@ export const en = {
     confirmCancel: "Cancel? Refund will be issued by stage ratio.",
     cancelled: "Cancelled",
     download: "Download MP4",
+    makeAnother: "Make another",
     consumed: "Charged",
     failedTitle: "Generation failed",
     refunded: "Refunded",

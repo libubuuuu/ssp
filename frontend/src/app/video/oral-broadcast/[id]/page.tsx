@@ -555,10 +555,16 @@ export default function OralBroadcastWorkbench() {
             <h2 style={{ fontSize: "1.1rem", fontWeight: 600, marginTop: 0 }}>🎉 {t("oral.s5Done")}</h2>
             <video src={sess.products.final_video_url} controls
               style={{ width: "100%", borderRadius: 8, marginBottom: "1rem" }} />
-            <a href={sess.products.final_video_url} download
-              style={{ display: "inline-block", padding: "0.6rem 1.2rem", background: "#0d0d0d", color: "#fff", borderRadius: 8, textDecoration: "none" }}>
-              ↓ {t("oral.download")}
-            </a>
+            <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
+              <a href={sess.products.final_video_url} download
+                style={{ display: "inline-block", padding: "0.6rem 1.2rem", background: "#0d0d0d", color: "#fff", borderRadius: 8, textDecoration: "none" }}>
+                ↓ {t("oral.download")}
+              </a>
+              <button onClick={() => router.push("/video/oral-broadcast")}
+                style={{ padding: "0.6rem 1.2rem", background: "#fff", color: "#0d0d0d", border: "1px solid #0d0d0d", borderRadius: 8, cursor: "pointer", fontWeight: 500 }}>
+                + {t("oral.makeAnother")}
+              </button>
+            </div>
             <div style={{ fontSize: "0.8rem", color: "#888", marginTop: "1rem" }}>
               {t("oral.consumed")}: {sess.credits_charged} 积分
             </div>

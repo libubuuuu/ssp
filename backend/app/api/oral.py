@@ -885,6 +885,30 @@ async def _run_lipsync_step(session_id: str) -> None:
             status="completed",
             completed_at="CURRENT_TIMESTAMP",
         )
+        # P17:写 generation_history,让 oral 成片出现在 /tasks/history 页
+        try:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id FROM generation_history WHERE id = ?", (session_id,))
+                if not cursor.fetchone():
+                    cursor.execute(
+                        """
+                        INSERT INTO generation_history (id, user_id, module, prompt, videos, cost)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            session_id,
+                            session["user_id"],
+                            "oral-broadcast",
+                            (session.get("edited_transcript") or session.get("asr_transcript") or "")[:500],
+                            json.dumps([archived_url]),
+                            int(session.get("credits_charged") or 0) - int(session.get("credits_refunded") or 0),
+                        ),
+                    )
+                    conn.commit()
+        except Exception as he:
+            _log(f"_run_lipsync_step generation_history insert failed (continuing): {he}")
+
         _log(f"_run_lipsync_step OK session={session_id} url={archived_url[:80]}")
     except Exception as e:
         _log(f"_run_lipsync_step FAIL session={session_id} err={e}")

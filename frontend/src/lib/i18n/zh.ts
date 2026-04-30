@@ -411,6 +411,7 @@ export const zh = {
     mod_avatar: "数字人",
     mod_voice_clone: "声音克隆",
     mod_tts: "语音合成",
+    mod_oral: "口播带货",
   },
   profile: {
     accountSettings: "账户设置",
@@ -685,6 +686,7 @@ export const zh = {
     confirmCancel: "确认取消?将按当前阶段比例退款。",
     cancelled: "已取消",
     download: "下载 MP4",
+    makeAnother: "再做一个",
     consumed: "本次消耗",
     failedTitle: "生成失败",
     refunded: "已退款",
