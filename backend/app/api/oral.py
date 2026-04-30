@@ -439,22 +439,25 @@ def _try_advance_to_lipsync(session_id: str) -> bool:
 
 
 async def _run_inpainting_step(session_id: str) -> None:
-    """Step 4 视频换装(V3 VTON 管线 — 八十四续替代 wan-vace 双 mask 双轮)。
+    """Step 4 视频换装(V3 + 八十四续 P10:Seedream 多图融合 reference 路线)。
 
-    Step A — VTON 静态试穿(fal-ai/cat-vton)
-        模特图 + 产品图 → "模特真实穿着该产品"的合成静图(vton_image_url)
+    Step A — Seedream v4 edit 多图融合(fal-ai/bytedance/seedream/v4/edit)
+        [原视频首帧, 模特图, 产品图(可选)] + 中文 prompt → 合成静图(vton_image_url)
+        关键:reference 图自带原视频背景 → 防止 Step B kling 把视频场景漂走
+        (P9 仅靠 BG_LOCK 英文 prompt 是软提示,kling/reference 端点没有
+         主体 mask / 背景锁定字段,治标不治根)
     Step B — kling/reference 动作驱动(fal-ai/kling-video/o1/video-to-video/reference)
         合成静图(reference)+ 原视频(driving)→ swapped_video_url
-
-    MVP:kling/reference 单次上限 10.05s,oral.py:53 MAX_DURATION_SECONDS 已限 ≤10s。
-    长视频拆段并发版后续做(见 docs/ORAL-BROADCAST-PLAN.md V3 路线图)。
+        单次 ≤10.05s,长视频走拆段并发 + ffmpeg concat。
 
     与 _run_tts_step 真并行(/edit 端点同时启 2 个 task),完成后调
     _try_advance_to_lipsync 触发 Step 5。失败按 §7.2 退 20%。
     """
     import fal_client
+    import subprocess
+    import tempfile
     from app.services.media_archiver import archive_url
-    from app.services.fal_service import get_vton_service, get_video_service
+    from app.services.fal_service import get_video_service
 
     session = _get_session(session_id)
     if not session:
@@ -470,43 +473,99 @@ async def _run_inpainting_step(session_id: str) -> None:
         if not model_url:
             raise RuntimeError("模特图 image_url 缺失")
 
-        vton_svc = get_vton_service()
         vid_svc = get_video_service()
-        if not vton_svc or not vid_svc:
-            raise RuntimeError("FAL VTON / Video service 未初始化")
+        if not vid_svc:
+            raise RuntimeError("FAL Video service 未初始化")
 
         user_id = str(session["user_id"])
+        original_video_path = session["original_video_path"]
 
-        # ---------- Step A:VTON 静态试穿 ----------
-        # 有产品图 → 模特穿产品;无产品 → 跳过 VTON,模特图直接当 reference
-        if products and products[0].get("image_url"):
-            garment_url = products[0]["image_url"]
-            cloth_type = products[0].get("cloth_type") or "upper"
-            vton_result = await vton_svc.try_on(
-                human_image_url=model_url,
-                garment_image_url=garment_url,
-                cloth_type=cloth_type,
-            )
-            if "error" in vton_result:
-                raise RuntimeError(f"VTON Step A: {vton_result['error']}")
-            vton_url = vton_result.get("image_url")
-            if not vton_url:
-                raise RuntimeError("VTON Step A 未返 image URL")
+        # ---------- Step A:Seedream v4 edit 多图融合 ----------
+        from app.api.video_studio import _run_ffmpeg, _get_video_duration
+        # 1. 抽原视频首帧
+        frame_fd, frame_path_str = tempfile.mkstemp(
+            prefix=f"oral_frame_{session_id}_", suffix=".jpg"
+        )
+        os.close(frame_fd)
+        frame_path = Path(frame_path_str)
+        try:
+            ok_f, ferr = _run_ffmpeg([
+                "ffmpeg", "-y", "-i", original_video_path,
+                "-vframes", "1", "-q:v", "2", str(frame_path),
+            ])
+            if not ok_f or not frame_path.exists() or frame_path.stat().st_size == 0:
+                raise RuntimeError(f"抽首帧失败: {ferr[:200]}")
+            frame_fal_url = await fal_client.upload_file_async(str(frame_path))
+
+            # 2. 探测原视频宽高 → Seedream 输出按同比例(避免 reference 与 driving aspect 错位)
+            seed_size = "portrait_16_9"  # 兜底:竖屏短视频
             try:
-                vton_url = await archive_url(vton_url, user_id, "image")
+                probe = subprocess.run(
+                    ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                     "-show_entries", "stream=width,height",
+                     "-of", "csv=s=x:p=0", original_video_path],
+                    capture_output=True, text=True, timeout=10,
+                )
+                w_str, h_str = probe.stdout.strip().split("x")
+                w_i, h_i = int(w_str), int(h_str)
+                scale = min(1.0, 2048 / max(w_i, h_i))
+                seed_size = {"width": int(w_i * scale), "height": int(h_i * scale)}
+            except Exception as probe_err:
+                _log(f"_run_inpainting_step probe size 失败,用 portrait_16_9 兜底: {probe_err}")
+
+            # 3. 拼中文 prompt(Seedream 是字节模型,中文准)
+            image_urls = [frame_fal_url, model_url]
+            prompt_parts = [
+                "保留第 1 张图作为画面的整体背景、光线、构图与相机角度,",
+                "把画面里的人物替换为第 2 张图中的模特(完整保留模特的面部特征、发型、肤色),",
+            ]
+            if products and products[0].get("image_url"):
+                garment_url = products[0]["image_url"]
+                image_urls.append(garment_url)
+                garment_name = (products[0].get("name") or "").strip()
+                garment_desc = f"({garment_name})" if garment_name else ""
+                prompt_parts.append(
+                    f"让模特身穿第 3 张图所示的服装{garment_desc},"
+                    "服装款式、颜色、细节与图 3 完全一致,"
+                )
+            prompt_parts.append(
+                "整体风格与第 1 张图保持一致(同一场景、同一采光、同一镜头距离),"
+                "禁止改成白底、棚景、纯色背景或其他场景。"
+            )
+            full_prompt = "".join(prompt_parts)
+
+            # 4. 调 Seedream v4 edit
+            seed_result = await fal_client.run_async(
+                "fal-ai/bytedance/seedream/v4/edit",
+                arguments={
+                    "prompt": full_prompt,
+                    "image_urls": image_urls,
+                    "image_size": seed_size,
+                },
+            )
+            images = seed_result.get("images") if isinstance(seed_result, dict) else None
+            if not images or not images[0].get("url"):
+                raise RuntimeError("Seedream Step A 未返图")
+            seed_url = images[0]["url"]
+
+            # 5. 归档防 fal.media 30 天过期,失败不阻塞
+            try:
+                seed_url = await archive_url(seed_url, user_id, "image")
             except Exception as arch_err:
-                _log(f"_run_inpainting_step VTON archive failed (continuing): {arch_err}")
-            _update_session(session_id, vton_image_url=vton_url)
-            _log(f"_run_inpainting_step VTON OK session={session_id} url={vton_url[:80]}")
-            reference_image = vton_url
-        else:
-            reference_image = model_url
-            _log(f"_run_inpainting_step skip VTON (no product) session={session_id}")
+                _log(f"_run_inpainting_step Seedream archive failed (continuing): {arch_err}")
+
+            _update_session(session_id, vton_image_url=seed_url)
+            _log(f"_run_inpainting_step Seedream Step A OK session={session_id} url={seed_url[:80]}")
+            reference_image = seed_url
+        finally:
+            try:
+                frame_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
         # ---------- Step B:拆段 + kling/reference 并发驱动 + concat ----------
         # 单次 kling/reference 上限 10.05s,长视频(>10s)必拆段。
         # 段长 9s 留 1s 余量;每段独立 reference 驱动;ffmpeg concat 硬切拼回。
-        from app.api.video_studio import _run_ffmpeg, _get_video_duration
         # 八十四续 P9:prompt 加"保留背景"防 kling 自由发挥改背景
         product_names = [p.get("name", "") for p in products if p.get("name")]
         BG_LOCK = (
@@ -531,7 +590,7 @@ async def _run_inpainting_step(session_id: str) -> None:
             duration = _get_video_duration(session["original_video_path"])
 
         # 切段到 /tmp/oral_segs_<sid>/seg_NN.mp4(根目录上层 GC 兜底)
-        import tempfile, math
+        import math
         seg_root = Path(tempfile.mkdtemp(prefix=f"oral_segs_{session_id}_"))
         try:
             n_segments = max(1, math.ceil(duration / SEG_LEN_S))
