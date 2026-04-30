@@ -72,10 +72,17 @@ class SubmitJobRequest(BaseModel):
 async def _run_image_job(params: dict):
     service = get_image_service()
     if params.get("reference_images"):
+        # 八十四续 P6:nano-banana-2/edit 是 Google 系列对内衣/塑身/紧身衣等
+        # NSFW 拦截极严(实测豹纹比基尼直接拒,和 prompt 无关)。
+        # 切字节 Seedream 4 edit:国产对带货类宽容,实测同图能成,且支持多图合成。
         import fal_client
         result = await fal_client.run_async(
-            "fal-ai/nano-banana-2/edit",
-            arguments={"prompt": params["prompt"], "image_urls": params["reference_images"]}
+            "fal-ai/bytedance/seedream/v4/edit",
+            arguments={
+                "prompt": params["prompt"],
+                "image_urls": params["reference_images"],
+                "image_size": "square_hd",
+            }
         )
         images = result.get("images", [])
         if not images:

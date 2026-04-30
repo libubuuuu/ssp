@@ -1083,7 +1083,8 @@ async def finalize_cos_upload(
     """浏览器 COS 直传完成后调用 — 后端从 COS 同区域拉文件到本地 + 建 session。"""
     import httpx
     from app.services.storage_sts import _check_enabled
-    from app.config import settings
+    from app.config import get_settings
+    settings = get_settings()
 
     try:
         _check_enabled()
