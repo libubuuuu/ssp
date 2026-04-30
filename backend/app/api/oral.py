@@ -1279,7 +1279,14 @@ async def finalize_cos_upload(
         )
     except Exception as e:
         shutil.rmtree(session_dir, ignore_errors=True)
-        raise HTTPException(502, f"COS 拉取异常: {str(e)[:200]}")
+        # P20:把 COS download_file 的真实异常 + stack 打出来定位 502 根因
+        from app.services.logger import log_error as _log_err
+        _log_err(
+            f"finalize_cos download_file FAILED user={user_id} key={body.object_key} "
+            f"err_type={type(e).__name__} err={str(e)[:500]}",
+            exc_info=True,
+        )
+        raise HTTPException(502, f"COS 拉取异常 [{type(e).__name__}]: {str(e)[:200]}")
 
     actual_size = video_path.stat().st_size
     if actual_size == 0:
