@@ -87,64 +87,87 @@ export default function OralBroadcastListPage() {
       .map(b => b.toString(16).padStart(2, "0")).join("");
     const startTime = Date.now();
 
-    try {
-      for (let i = 0; i < totalChunks; i++) {
-        const start = i * CHUNK_SIZE;
-        const end = Math.min(start + CHUNK_SIZE, file.size);
-        const chunkBlob = file.slice(start, end);
+    // 八十四续:并发上传(限 3),家用上行 3-5x 提速。
+    // 后端在"最后一片"到达时合并,所以 0..N-2 并发,最后一片串行触发合并。
+    const CONCURRENCY = 3;
+    let sentBytesAtomic = 0;
+    const updateProgress = (delta: number) => {
+      sentBytesAtomic += delta;
+      setUploadProgress((sentBytesAtomic / file.size) * 100);
+      const elapsed = (Date.now() - startTime) / 1000;
+      if (elapsed > 0.5) {
+        const mbps = (sentBytesAtomic / 1024 / 1024) / elapsed;
+        const remainSec = (file.size - sentBytesAtomic) / Math.max(1, sentBytesAtomic / elapsed);
+        setUploadSpeed(`${mbps.toFixed(1)} MB/s · ${t("oral.eta")} ${Math.max(1, Math.ceil(remainSec))}s`);
+      }
+    };
 
-        const fd = new FormData();
-        fd.append("chunk", chunkBlob, "chunk");
-        fd.append("upload_id", uploadId);
-        fd.append("chunk_idx", String(i));
-        fd.append("total_chunks", String(totalChunks));
-        fd.append("filename", file.name);
+    const sendOneChunk = async (i: number): Promise<{ status: string; session_id?: string }> => {
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, file.size);
+      const chunkBlob = file.slice(start, end);
+      const fd = new FormData();
+      fd.append("chunk", chunkBlob, "chunk");
+      fd.append("upload_id", uploadId);
+      fd.append("chunk_idx", String(i));
+      fd.append("total_chunks", String(totalChunks));
+      fd.append("filename", file.name);
 
-        let attempt = 0;
-        let succeeded = false;
-        let lastErr = "";
-        while (attempt < 3 && !succeeded) {
-          try {
-            const res = await fetch(`${API_BASE}/api/oral/upload-chunk`, {
-              method: "POST",
-              headers: { Authorization: `Bearer ${token()}` },
-              credentials: "include",
-              body: fd,
-            });
-            if (!res.ok) {
-              const body = await res.json().catch(() => ({}));
-              lastErr = body.detail ?? `分片 ${i + 1}/${totalChunks} HTTP ${res.status}`;
-              throw new Error(lastErr);
-            }
-            const data = await res.json();
-            succeeded = true;
-
-            // 进度按已发送字节
-            const sentBytes = end;
-            setUploadProgress((sentBytes / file.size) * 100);
-            const elapsed = (Date.now() - startTime) / 1000;
-            if (elapsed > 0.5) {
-              const mbps = (sentBytes / 1024 / 1024) / elapsed;
-              const remainSec = (file.size - sentBytes) / Math.max(1, sentBytes / elapsed);
-              setUploadSpeed(`${mbps.toFixed(1)} MB/s · ${t("oral.eta")} ${Math.max(1, Math.ceil(remainSec))}s`);
-            }
-
-            // 最后一片 → 后端合并 + 创建 session
-            if (data.status === "completed") {
-              setUploadProgress(100);
-              setUploadSpeed(t("oral.processing"));
-              router.push(`/video/oral-broadcast/${data.session_id}`);
-              return;
-            }
-          } catch (e: unknown) {
-            attempt++;
-            lastErr = e instanceof Error ? e.message : String(e);
-            if (attempt >= 3) throw new Error(lastErr);
-            // 重试前等 1s
-            await new Promise(r => setTimeout(r, 1000));
+      let attempt = 0;
+      let lastErr = "";
+      while (attempt < 3) {
+        try {
+          const res = await fetch(`${API_BASE}/api/oral/upload-chunk`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token()}` },
+            credentials: "include",
+            body: fd,
+          });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            lastErr = body.detail ?? `分片 ${i + 1}/${totalChunks} HTTP ${res.status}`;
+            // 4xx 不重试(413/400 重试也没用),5xx / 网络错继续
+            if (res.status >= 400 && res.status < 500) throw new Error(lastErr);
+            throw new Error(lastErr);
           }
+          const data = await res.json();
+          updateProgress(end - start);
+          return data;
+        } catch (e: unknown) {
+          attempt++;
+          lastErr = e instanceof Error ? e.message : String(e);
+          if (attempt >= 3) throw new Error(lastErr);
+          await new Promise(r => setTimeout(r, 1000));
         }
       }
+      throw new Error(lastErr);
+    };
+
+    try {
+      // 0..N-2 并发(限 3);N-1 最后一片留到所有其他片完成后单独发(触发后端合并)
+      const idxList = Array.from({ length: totalChunks - 1 }, (_, i) => i);
+      // 简单 semaphore:每次起 CONCURRENCY 个,等任一完成立即派下一个
+      const runConcurrent = async () => {
+        let cursor = 0;
+        const workers = Array.from({ length: Math.min(CONCURRENCY, idxList.length) }, async () => {
+          while (cursor < idxList.length) {
+            const my = cursor++;
+            await sendOneChunk(idxList[my]);
+          }
+        });
+        await Promise.all(workers);
+      };
+      await runConcurrent();
+
+      // 最后一片单独发 — 后端在此片合并 + 创建 session
+      const finalData = await sendOneChunk(totalChunks - 1);
+      if (finalData.status === "completed" && finalData.session_id) {
+        setUploadProgress(100);
+        setUploadSpeed(t("oral.processing"));
+        router.push(`/video/oral-broadcast/${finalData.session_id}`);
+        return;
+      }
+      throw new Error("最后一片返回异常,请重试");
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : t("oral.errUploadFail"));
     } finally {
