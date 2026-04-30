@@ -564,24 +564,29 @@ async def _run_inpainting_step(session_id: str) -> None:
                 pass
 
         # ---------- Step B:拆段 + 并发驱动 + concat ----------
-        # 八十四续 P12:三引擎可切换(ORAL_STEP_B_ENGINE env)
-        #   seedance-i2v (默认) → fal-ai/bytedance/seedance/v2/pro/image-to-video
-        #                          首帧锁死产品(用 vton 图)→ 产品 100% 严格保留
-        #                          单次 5/10/12s,长视频拆段(每段都用 vton 首帧)
-        #                          缺点:动作不复刻原视频,自由发挥
-        #                          实测 1-3 min/段,wallclock 3-7 min
-        #   ltx                 → fal-ai/ltx-2.3-22b/distilled/reference-video-to-video
-        #                          v2v reference,复刻原动作但产品会漂
-        #   kling               → fal-ai/kling-video/o1/video-to-video/reference
-        #                          v2v reference,产品稍稳但 35-50 min/段
-        engine = (os.getenv("ORAL_STEP_B_ENGINE", "seedance-i2v") or "seedance-i2v").lower()
-        product_names = [p.get("name", "") for p in products if p.get("name")]
+        # 八十四续 P15:i2v 引擎从 seedance 切 kling/o3/standard
+        # 字节家 seedance-2.0 fast 对内衣类硬拒 NSFW(content_policy_violation),
+        # 实测 5 个 fal i2v/v2v 端点对同一 vton 图,只有 seedance 拒,kling/luma/LTX 全过。
+        # 选 kling/o3/standard/image-to-video:quick-ad 实证可跑 + 产品首帧锁死。
+        #
+        # ORAL_STEP_B_ENGINE env 三选:
+        #   i2v (默认) → fal-ai/kling-video/o3/standard/image-to-video
+        #                首帧锁死产品(vton 图),NSFW 容忍内衣,实测 3-8 min/段
+        #   ltx        → fal-ai/ltx-2.3-22b/distilled/reference-video-to-video
+        #                v2v reference,复刻原动作但产品会漂
+        #   kling-v2v  → fal-ai/kling-video/o1/video-to-video/reference
+        #                v2v reference 老路,35-50 min/段
+        engine = (os.getenv("ORAL_STEP_B_ENGINE", "i2v") or "i2v").lower()
+        # 兼容老配置:seedance-i2v 别名归一
         if engine == "seedance-i2v":
-            # 八十四续 P12 修:fal seedance-2.0 系列路径不带 fal-ai/ 前缀(实测同
-            # endpoint 加前缀返 'Path /seedance-2.0/... not found',去前缀 OK)
-            endpoint_default = "bytedance/seedance-2.0/fast/image-to-video"
-            seg_timeout_loops = 60   # 10 min cap (实测 1-3 min/段)
-            SEG_LEN_S = 10.0         # seedance 支持 5/10/12
+            engine = "i2v"
+        if engine == "kling":  # 老 ltx fallback 名归一
+            engine = "kling-v2v"
+        product_names = [p.get("name", "") for p in products if p.get("name")]
+        if engine == "i2v":
+            endpoint_default = "fal-ai/kling-video/o3/standard/image-to-video"
+            seg_timeout_loops = 90   # 15 min cap (kling i2v o3 standard 实测 3-8 min)
+            SEG_LEN_S = 5.0          # kling i2v 单次默认 5s
             if product_names:
                 prompt = (
                     f"A young woman wearing the {', '.join(product_names)} from the reference image, "
@@ -615,7 +620,7 @@ async def _run_inpainting_step(session_id: str) -> None:
                 endpoint_default = "fal-ai/ltx-2.3-22b/distilled/reference-video-to-video"
                 seg_timeout_loops = 180   # 30 min cap
                 SEG_LEN_S = 9.0
-            else:  # kling
+            else:  # kling-v2v
                 endpoint_default = "fal-ai/kling-video/o1/video-to-video/reference"
                 seg_timeout_loops = 360   # 60 min cap
                 SEG_LEN_S = 9.0
@@ -637,7 +642,7 @@ async def _run_inpainting_step(session_id: str) -> None:
 
             # i2v 路线不切原视频段(不用 driving video);v2v 才切
             seg_paths: List[Optional[Path]] = []
-            if engine in ("ltx", "kling"):
+            if engine in ("ltx", "kling-v2v"):
                 for i in range(n_segments):
                     start = i * SEG_LEN_S
                     seg_path = seg_root / f"seg_{i:02d}.mp4"
@@ -658,23 +663,20 @@ async def _run_inpainting_step(session_id: str) -> None:
 
             async def _drive_one(seg_idx: int, seg_path: Optional[Path]) -> str:
                 async with sem:
-                    if engine == "seedance-i2v":
-                        # i2v:vton 图首帧 + duration + prompt,每段独立(不依赖 driving video)
-                        seg_dur_int = max(5, min(12, int(round(seg_durations[seg_idx]))))
+                    if engine == "i2v":
+                        # i2v(kling/o3/standard):vton 图首帧 + prompt,每段独立(不依赖 driving video)
+                        # kling i2v schema 简单:image_url + prompt + generate_audio
                         args = {
                             "image_url": reference_image,
                             "prompt": prompt,
-                            "duration": str(seg_dur_int),
-                            "aspect_ratio": "9:16",
-                            "resolution": "720p",
-                            "enable_audio": False,
+                            "generate_audio": False,
                         }
                         endpoint = endpoint_default
                         try:
                             handler = await fal_client.submit_async(endpoint, arguments=args)
                             task_id = handler.request_id
                         except Exception as e:
-                            raise RuntimeError(f"seedance-i2v seg {seg_idx} submit: {e}")
+                            raise RuntimeError(f"i2v seg {seg_idx} submit: {e}")
                     elif engine == "ltx":
                         seg_fal_url = await fal_client.upload_file_async(str(seg_path))
                         args = {
@@ -689,7 +691,7 @@ async def _run_inpainting_step(session_id: str) -> None:
                             task_id = handler.request_id
                         except Exception as e:
                             raise RuntimeError(f"LTX seg {seg_idx} submit: {e}")
-                    else:  # kling
+                    else:  # kling-v2v
                         seg_fal_url = await fal_client.upload_file_async(str(seg_path))
                         drive_result = await vid_svc.drive_with_reference(
                             driving_video_url=seg_fal_url,
