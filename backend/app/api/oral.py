@@ -507,14 +507,23 @@ async def _run_inpainting_step(session_id: str) -> None:
         # 单次 kling/reference 上限 10.05s,长视频(>10s)必拆段。
         # 段长 9s 留 1s 余量;每段独立 reference 驱动;ffmpeg concat 硬切拼回。
         from app.api.video_studio import _run_ffmpeg, _get_video_duration
+        # 八十四续 P9:prompt 加"保留背景"防 kling 自由发挥改背景
         product_names = [p.get("name", "") for p in products if p.get("name")]
+        BG_LOCK = (
+            "Preserve the original background, scene, lighting, camera angle, and composition "
+            "exactly as in the reference video — do not change the environment."
+        )
         if product_names:
             prompt = (
                 f"A person wearing {', '.join(product_names)}, "
-                f"performing the same actions, gestures, and movements as in the reference video."
+                f"performing the same actions, gestures, and movements as in the reference video. "
+                f"{BG_LOCK}"
             )
         else:
-            prompt = "A person performing the same actions and movements as in the reference video."
+            prompt = (
+                f"A person performing the same actions and movements as in the reference video. "
+                f"{BG_LOCK}"
+            )
 
         SEG_LEN_S = 9.0
         duration = float(session.get("duration_seconds") or 0)
