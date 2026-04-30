@@ -4,6 +4,13 @@
 >
 > **最后大更:2026-04-27** — 历经多轮(降权 / Phase 1 完成 / P0-P9 + BUG-1/2 + 隐藏雷 1-3 + P8 阶段 1+2)后重写。
 > 详细历史在 `PROGRESS.md`(1500+ 行,按"X 续"日记格式归档)。
+>
+> **小更:2026-05-01 凌晨** — 八十四续 P10-P29 完成(口播工作台 V3 全闭环):
+> Step A 用 Seedream 多图融合 + 候选帧池 [0.5/0.25/0.75/0.1/0.9] 自动避 NSFW 静图(P29)
+> Step B 切 kling i2v 路线避 v2v 漂产品 + 16 段并发 5(P12-P15, P24)
+> Step 5 lipsync 长视频分段并发 + ffmpeg concat(P28,75s/11min 实测一次过)
+> 配套:无水印归档 / 选成片比例 / 历史同步 / 多文件并发上传 / 大文件预压缩 / ASR retry / step4 guard 修 bug
+> 详见 `memory/project_ssp_oral_v3.md`。
 
 ## 一句话定位
 
@@ -145,7 +152,7 @@
 - **memory**:`/root/.claude/projects/-root/memory/` 已存项目目标、偏好、运营路径,新会话务必读。
 - **deploy 流程**:不要 git pull(那是老脚本)。改完代码 commit + push,然后 rsync `/root/ssp/{backend,frontend}` → `/opt/ssp/...` + `bash /root/deploy.sh` 蓝绿切换 30 秒。详见 RUNBOOK。
 
-## 当前状态(2026-04-27)
+## 当前状态(2026-05-01)
 
 **生产环境**:ailixiao.com,腾讯云轻量服务器,supervisor 蓝绿部署。
 - 业务进程跑 `ssp-app` 用户(UID 998),不再 root
@@ -153,6 +160,11 @@
 - 数据库 SQLite WAL,新表 register_ip_log + register_ip_failure_log + audit_log 全在 prod
 - nginx /uploads/ alias 已就位(BUG-2 媒体本地服务)
 - supervisor stopasgroup/killasgroup 已生效
+
+**口播工作台 V3 状态(2026-05-01 凌晨,P29 后)**:
+- 短视频(≤60s)+ 长视频(≤300s)全闭环跑通,75s 视频 11 分钟出片
+- Step A 候选帧池防 NSFW 静图 / Step B kling i2v 16 段并发 / Step 5 长视频分段 lipsync + concat 已实测
+- 待挂的:P22 永久修法(用户去腾讯云给子账号 ssp-sts-signer 加 cos:GetObject 权限,然后删 storage.py 里 P22 的 raise 503);P28 段边界嘴型 artifact 等用户实听确认
 
 **Git 状态**:见 PROGRESS.md 末尾的"4-ref 对齐"。每轮重要 commit 后必同步 main + feat。
 
