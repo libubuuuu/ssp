@@ -792,66 +792,35 @@ async def _run_inpainting_step(session_id: str) -> None:
         )
 
 
-# ==================== L2 合规:AIGC 水印烧录 ====================
+# ==================== Lipsync 成片归档 ====================
 
-# 深度合成规定 (2023-01-10) §16:AI 生成内容显著标识 + 不可移除。
-# burn-in drawtext 满足"显著"+"不可移除";SVG 角标 / 文本注释都不达标。
-_AIGC_FONT_FAMILY = "WenQuanYi Zen Hei"  # 服务器装的中文字体(/usr/share/fonts/truetype/wqy/)
-_AIGC_TEXT = "AI 生成内容"
+# 八十四续 P15:用户明确要求不加水印 → 仅下载 fal final 落本地,
+# 防 fal.media 30 天过期。合规深度合成水印责任移交用户决定(Phase 4)。
 
 
-async def _apply_aigc_watermark(
+async def _archive_lipsync_final(
     fal_video_url: str,
     user_id: str,
     session_id: str,
 ) -> str:
-    """L2 合规:下载 fal final → ffmpeg drawtext 烧录 AIGC 水印 → 落本地归档。
-
-    一举两得:水印烧录 + 替代 archive_url 防 fal.media 30 天过期。
-    水印失败 raise — 无水印不算合格产物(深度合成规定),上层按 lipsync 失败处理。
-
-    返:public URL `/uploads/oral/<uid>/<sid>/final.mp4`。
-    """
+    """下载 fal final → 落本地归档(无水印)。返 public URL。"""
     import httpx
-    from app.api.video_studio import _run_ffmpeg
 
     out_dir = ORAL_UPLOAD_ROOT / user_id / session_id
     out_dir.mkdir(parents=True, exist_ok=True)
-    raw_path = out_dir / "_lipsync_raw.mp4"
     out_path = out_dir / "final.mp4"
 
-    # 1) 下载 fal final
     async with httpx.AsyncClient(timeout=180.0, follow_redirects=True) as client:
         async with client.stream("GET", fal_video_url) as resp:
             if resp.status_code != 200:
                 raise RuntimeError(f"download fal final {resp.status_code}")
-            with raw_path.open("wb") as f:
+            with out_path.open("wb") as f:
                 async for chunk in resp.aiter_bytes(chunk_size=64 * 1024):
                     f.write(chunk)
 
-    # 2) ffmpeg drawtext(右下角白字 + 黑底半透明,字号随高度,1080p ≈ 43 像素)
-    vf = (
-        f"drawtext=font='{_AIGC_FONT_FAMILY}':text='{_AIGC_TEXT}':"
-        f"fontcolor=white@0.85:fontsize=h*0.04:"
-        f"box=1:boxcolor=black@0.55:boxborderw=10:"
-        f"x=w-tw-24:y=h-th-24"
-    )
-    ok, err = _run_ffmpeg([
-        "ffmpeg", "-y", "-i", str(raw_path),
-        "-vf", vf,
-        "-c:a", "copy",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-        "-movflags", "+faststart",
-        str(out_path),
-    ])
-    if not ok:
-        raise RuntimeError(f"AIGC watermark ffmpeg failed: {err[:200]}")
-
-    raw_path.unlink(missing_ok=True)
     os.chmod(out_path, 0o644)
-
     public = f"/uploads/oral/{user_id}/{session_id}/final.mp4"
-    _log(f"_apply_aigc_watermark OK session={session_id} -> {public}")
+    _log(f"_archive_lipsync_final OK session={session_id} -> {public}")
     return public
 
 
@@ -892,21 +861,20 @@ async def _run_lipsync_step(session_id: str) -> None:
         if not final_url:
             raise RuntimeError("lipsync 未返 video URL")
 
-        # L2 合规:AIGC 水印烧录 + 落本地归档(替代原 archive_url 一步到位)
-        # 失败 raise → 走下面 except,按 lipsync 失败退 30%(深度合成规定要求显著标识)
-        watermarked_url = await _apply_aigc_watermark(
+        # 八十四续 P15:用户要求不加水印,只下载归档防 fal.media 30 天过期
+        archived_url = await _archive_lipsync_final(
             final_url, str(session["user_id"]), session_id,
         )
 
         _update_session(
             session_id,
             lipsync_fal_request_id=result.get("model", ""),
-            final_video_url=watermarked_url,
-            final_video_archived=watermarked_url,
+            final_video_url=archived_url,
+            final_video_archived=archived_url,
             status="completed",
             completed_at="CURRENT_TIMESTAMP",
         )
-        _log(f"_run_lipsync_step OK session={session_id} url={watermarked_url[:80]}")
+        _log(f"_run_lipsync_step OK session={session_id} url={archived_url[:80]}")
     except Exception as e:
         _log(f"_run_lipsync_step FAIL session={session_id} err={e}")
         sess2 = _get_session(session_id)
