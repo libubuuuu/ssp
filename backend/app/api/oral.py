@@ -49,10 +49,12 @@ ORAL_UPLOAD_ROOT = Path(os.getenv("UPLOADS_ROOT", "/opt/ssp/uploads")) / "oral"
 # 分片上传临时目录(_uploading/<user_id>_<upload_id>/<chunk_idx>)
 ORAL_UPLOAD_TMP = ORAL_UPLOAD_ROOT / "_uploading"
 
-# 八十四续:V3 VTON 管线 — Step B 单次 kling/reference 上限 10.05s,
-# 长视频走 _run_inpainting_step 内 ffmpeg 拆段 + 并发驱动 + concat。
-# 60s 上限对应 7 段并发(每段 9s),fal 排队 + 限速可控。
-MAX_DURATION_SECONDS = 60
+# 八十四续 P24:长视频支持 — 上限 60s → 300s(5 分钟)
+# Step B i2v 拆 5s/段 + sem(5) 并发,5 分钟视频 = 60 段并发跑,wallclock ≈ 8-15 分钟
+# (单段 1-3 min × 60 段 ÷ 并发 5 = 12-36 min wallclock,实际看 fal 限速)
+# Lipsync 端点(veed/sync-v2/latentsync)对长视频时长上限未实测,3-5 分钟视频可能成功,
+# 失败则后续做"拆 N 段 → N 个独立 oral session 并发 → concat"
+MAX_DURATION_SECONDS = 300
 
 # 档位允许值
 TIERS = ("economy", "standard", "premium")
@@ -670,7 +672,7 @@ async def _run_inpainting_step(session_id: str) -> None:
                 seg_paths = [None] * n_segments
             _log(f"_run_inpainting_step Step B engine={engine} endpoint={endpoint_default} segs={n_segments} duration={duration:.1f}s session={session_id}")
 
-            sem = asyncio.Semaphore(3)
+            sem = asyncio.Semaphore(5)  # P24:并发 3→5,长视频(60s+)拆段时摊平
 
             async def _drive_one(seg_idx: int, seg_path: Optional[Path]) -> str:
                 async with sem:
