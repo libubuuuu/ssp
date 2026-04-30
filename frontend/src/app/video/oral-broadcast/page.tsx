@@ -22,7 +22,10 @@ export default function OralBroadcastListPage() {
   const router = useRouter();
   const [sessions, setSessions] = useState<OralSession[]>([]);
   const [loading, setLoading] = useState(true);
-  const [uploading, setUploading] = useState(false);
+  // P23:并发计数,任意时刻同时上传文件数。0 = idle, 1-5 = 跑中, >=5 = 满
+  const MAX_CONCURRENT = 5;
+  const [activeUploads, setActiveUploads] = useState(0);
+  const uploading = activeUploads > 0;
   const [phase, setPhase] = useState<"idle" | "compress" | "upload">("idle");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [compressProgress, setCompressProgress] = useState(0);
@@ -49,19 +52,13 @@ export default function OralBroadcastListPage() {
     return () => clearInterval(i);
   }, [loadSessions]);
 
-  // P19 批量:N/5 进度文字。空字符串 = 不在批量上传中
-  const [batchInfo, setBatchInfo] = useState("");
-
   const createNew = async (originalFile: File, navigate: boolean = true) => {
     setError("");
     if (!originalFile.type.startsWith("video/")) {
       setError(t("oral.errVideoOnly"));
       return;
     }
-    setUploading(true);
-    setUploadProgress(0);
-    setCompressProgress(0);
-    setUploadSpeed("");
+    setActiveUploads(c => c + 1);
 
     // 八十四续 P5:浏览器直传腾讯云 COS,完全绕过 ailixiao.com / CF。
     // 流程:STS 拿临时凭证 → cos-js-sdk-v5 PUT 到 bucket → 调 /finalize-cos 后端拉文件
@@ -241,34 +238,26 @@ export default function OralBroadcastListPage() {
       // P18:外层兜底所有路径(压缩 / COS 直传 / chunk fallback)
       setError(e instanceof Error ? e.message : t("oral.errUploadFail"));
     } finally {
-      setUploading(false);
+      setActiveUploads(c => Math.max(0, c - 1));
       setPhase("idle");
     }
   };
 
-  // P19:批量上传(最多 5 个,串行避免争抢服务器)
-  const batchUpload = async (files: File[]) => {
+  // P23:并发上传(最多 5 个同时跑)。File input multiple + 用户连续点击新建都用这个。
+  const enqueueUploads = (files: File[]) => {
     setError("");
-    if (files.length === 0) return;
-    if (files.length > 5) {
+    const slotsLeft = MAX_CONCURRENT - activeUploads;
+    if (slotsLeft <= 0) {
       setError(t("oral.batchMax"));
       return;
     }
-    if (files.length === 1) {
-      // 单文件直接走老 createNew 体验,导航到详情页
-      await createNew(files[0]);
-      return;
+    const toUpload = files.slice(0, slotsLeft);
+    if (files.length > slotsLeft) {
+      setError(`${t("oral.batchMax")}(${files.length} → ${slotsLeft})`);
     }
-    for (let i = 0; i < files.length; i++) {
-      setBatchInfo(`${i + 1}/${files.length}`);
-      try {
-        await createNew(files[i], false);
-      } catch {
-        // 单个失败不阻塞后续(setError 已在 createNew finally 处理)
-      }
-    }
-    setBatchInfo("");
-    loadSessions();
+    // 真并发:单文件不导航(避免 5 个一起 push 路由乱),最后由 list polling 自动展示
+    const navigate = toUpload.length === 1 && activeUploads === 0;
+    Promise.all(toUpload.map(f => createNew(f, navigate))).finally(loadSessions);
   };
 
   return (
@@ -292,21 +281,23 @@ export default function OralBroadcastListPage() {
 
         <div style={{ marginBottom: "2rem" }}>
           <div style={{ display: "flex", gap: "1rem", alignItems: "center", marginBottom: uploading ? "1rem" : 0 }}>
+            {/* P23:按钮永远可点(只要并发未满 5),用户连续点击 = 队列扩充 */}
             <label style={{
               display: "inline-block", padding: "0.8rem 1.5rem",
-              background: uploading ? "#ddd" : "#0d0d0d", color: "#fff",
-              borderRadius: 10, cursor: uploading ? "not-allowed" : "pointer", fontWeight: 500,
+              background: activeUploads >= MAX_CONCURRENT ? "#ddd" : "#0d0d0d",
+              color: "#fff",
+              borderRadius: 10,
+              cursor: activeUploads >= MAX_CONCURRENT ? "not-allowed" : "pointer",
+              fontWeight: 500,
             }}>
-              {batchInfo
-                ? `${t("oral.batchUploading")} ${batchInfo}`
-                : uploading
-                ? (phase === "compress" ? t("oral.compressing") : t("oral.uploading"))
+              {activeUploads > 0
+                ? `+ ${t("oral.newSession")}（${t("oral.uploading")} ${activeUploads}/${MAX_CONCURRENT}）`
                 : `+ ${t("oral.newSession")}`}
-              <input type="file" accept="video/*" multiple disabled={uploading || !!batchInfo}
+              <input type="file" accept="video/*" multiple disabled={activeUploads >= MAX_CONCURRENT}
                 onChange={e => {
                   const fs = Array.from(e.target.files || []);
                   if (fs.length === 0) return;
-                  if (fs.length === 1) createNew(fs[0]); else batchUpload(fs);
+                  enqueueUploads(fs);
                   e.target.value = "";
                 }}
                 style={{ display: "none" }} />
