@@ -63,6 +63,9 @@ export default function OralBroadcastListPage() {
     // 八十四续 P5:浏览器直传腾讯云 COS,完全绕过 ailixiao.com / CF。
     // 流程:STS 拿临时凭证 → cos-js-sdk-v5 PUT 到 bucket → 调 /finalize-cos 后端拉文件
     // 兜底:STS 失败(COS 未启用 / 503) → fallback 走老 /upload-chunk 路径。
+    // P18 修:外层 try/finally 兜底,任何路径都保 setUploading(false)
+    // (老代码 COS 成功路径 return 后丢失 finally → UI 卡"上传中")
+    try {
     setPhase("compress");
     let file = originalFile;
     const lower = (originalFile.name || "").toLowerCase();
@@ -218,21 +221,21 @@ export default function OralBroadcastListPage() {
       return runWithRetry();
     };
 
-    try {
-      // 串行单连接,最稳,降低 CF 多 stream RST 概率
-      for (let i = 0; i < totalChunks; i++) {
-        const data = await sendOneChunk(i);
-        if (i === totalChunks - 1) {
-          if (data.status === "completed" && data.session_id) {
-            setUploadProgress(100);
-            setUploadSpeed(t("oral.processing"));
-            router.push(`/video/oral-broadcast/${data.session_id}`);
-            return;
-          }
-          throw new Error("最后一片返回异常,请重试");
+    // 串行单连接,最稳,降低 CF 多 stream RST 概率
+    for (let i = 0; i < totalChunks; i++) {
+      const data = await sendOneChunk(i);
+      if (i === totalChunks - 1) {
+        if (data.status === "completed" && data.session_id) {
+          setUploadProgress(100);
+          setUploadSpeed(t("oral.processing"));
+          router.push(`/video/oral-broadcast/${data.session_id}`);
+          return;
         }
+        throw new Error("最后一片返回异常,请重试");
       }
+    }
     } catch (e: unknown) {
+      // P18:外层兜底所有路径(压缩 / COS 直传 / chunk fallback)
       setError(e instanceof Error ? e.message : t("oral.errUploadFail"));
     } finally {
       setUploading(false);
