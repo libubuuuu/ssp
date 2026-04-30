@@ -60,37 +60,36 @@ export default function OralBroadcastListPage() {
     setCompressProgress(0);
     setUploadSpeed("");
 
-    // 七十七续 P5 续:浏览器侧 MediaRecorder 压缩(降到 1280px / 1.5Mbps)。
-    // 60s 1080p 视频 50-100MB → 10-20MB,即便走分片也节省 80% 流量。
-    // MediaRecorder 不支持 / 压缩失败 → fallback 走原文件,不阻断上传。
+    // 八十四续 P4:mp4/mov 跳过 webm 压缩(避免 MediaRecorder webm duration 烂)。
+    // 只对 webm/avi/未知格式做压缩(它们不直接被 fal/ffmpeg 友好处理)。
     setPhase("compress");
     let file = originalFile;
-    try {
-      const result = await compressVideo(originalFile, {
-        onProgress: (pct) => setCompressProgress(pct),
-      });
-      // ratio < 0.9 才用压缩版本(< 10% 收益不值得换 webm,部分老设备解码 webm 慢)
-      if (result.compressed && result.ratio < 0.9) {
-        file = result.file;
+    const lower = (originalFile.name || "").toLowerCase();
+    const isMp4Family = /\.(mp4|mov|m4v)$/.test(lower) || /^video\/(mp4|quicktime)/.test(originalFile.type);
+    if (!isMp4Family) {
+      try {
+        const result = await compressVideo(originalFile, {
+          onProgress: (pct) => setCompressProgress(pct),
+        });
+        if (result.compressed && result.ratio < 0.9) {
+          file = result.file;
+        }
+      } catch {
+        // 压缩失败走原文件
       }
-    } catch {
-      // 压缩本身已 try/catch fallback,这里仅防御
     }
     setCompressProgress(100);
     setPhase("upload");
 
-    // 八十四续 P2:慢网友好分片 — 1MB 单片
-    // 5MB 在弱网/高 RTT 下 fetch 单 stream 易撞 CF/HTTP2 timeout 被 reset
-    // (实测用户 ERR_HTTP2_PROTOCOL_ERROR);1MB 1-2s 内完成,稳过 stream timeout
-    const CHUNK_SIZE = 1 * 1024 * 1024;
+    // 八十四续 P4:XHR 替代 fetch + 串行 1 路 + 重试 5 次。
+    // 实测用户 fetch+HTTP/2 上 9 个并发 stream 全被 CF RST(ERR_HTTP2_PROTOCOL_ERROR)。
+    // XHR 用更老的 API,在某些网络/CF 路径下比 fetch 更稳;串行 1 路降低 stream 数。
+    // 单片 2MB 平衡 RTT 数 与 单片传输时间(2MB 在 1Mbps 上行下 ~16s,稳过 CF stream timeout)。
+    const CHUNK_SIZE = 2 * 1024 * 1024;
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
     const uploadId = Array.from(crypto.getRandomValues(new Uint8Array(8)))
       .map(b => b.toString(16).padStart(2, "0")).join("");
     const startTime = Date.now();
-
-    // 八十四续:并发上传(限 3),家用上行 3-5x 提速。
-    // 后端在"最后一片"到达时合并,所以 0..N-2 并发,最后一片串行触发合并。
-    const CONCURRENCY = 3;
     let sentBytesAtomic = 0;
     const updateProgress = (delta: number) => {
       sentBytesAtomic += delta;
@@ -103,7 +102,7 @@ export default function OralBroadcastListPage() {
       }
     };
 
-    const sendOneChunk = async (i: number): Promise<{ status: string; session_id?: string }> => {
+    const sendOneChunk = (i: number): Promise<{ status: string; session_id?: string }> => {
       const start = i * CHUNK_SIZE;
       const end = Math.min(start + CHUNK_SIZE, file.size);
       const chunkBlob = file.slice(start, end);
@@ -114,61 +113,66 @@ export default function OralBroadcastListPage() {
       fd.append("total_chunks", String(totalChunks));
       fd.append("filename", file.name);
 
-      let attempt = 0;
-      let lastErr = "";
-      while (attempt < 3) {
-        try {
-          const res = await fetch(`${API_BASE}/api/oral/upload-chunk`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${token()}` },
-            credentials: "include",
-            body: fd,
-          });
-          if (!res.ok) {
-            const body = await res.json().catch(() => ({}));
-            lastErr = body.detail ?? `分片 ${i + 1}/${totalChunks} HTTP ${res.status}`;
-            // 4xx 不重试(413/400 重试也没用),5xx / 网络错继续
-            if (res.status >= 400 && res.status < 500) throw new Error(lastErr);
-            throw new Error(lastErr);
+      const tryOnce = (): Promise<{ status: string; session_id?: string }> =>
+        new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", `${API_BASE}/api/oral/upload-chunk`);
+          xhr.setRequestHeader("Authorization", `Bearer ${token()}`);
+          xhr.timeout = 120000;  // 单片 120s 硬超时(2MB 在极慢网下也够)
+          xhr.withCredentials = true;
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try { resolve(JSON.parse(xhr.responseText)); }
+              catch { reject(new Error(`分片 ${i + 1}/${totalChunks} 响应解析失败`)); }
+            } else {
+              let detail = `HTTP ${xhr.status}`;
+              try { detail = JSON.parse(xhr.responseText).detail || detail; } catch { /* ignore */ }
+              const err = new Error(`分片 ${i + 1}/${totalChunks} ${detail}`);
+              (err as Error & { status?: number }).status = xhr.status;
+              reject(err);
+            }
+          };
+          xhr.onerror = () => reject(new Error(`分片 ${i + 1}/${totalChunks} 网络错(可能是 CF/HTTP2 RST)`));
+          xhr.ontimeout = () => reject(new Error(`分片 ${i + 1}/${totalChunks} 超时 (120s)`));
+          xhr.onabort = () => reject(new Error(`分片 ${i + 1}/${totalChunks} 已取消`));
+          xhr.send(fd);
+        });
+
+      const runWithRetry = async () => {
+        let lastErr: Error | null = null;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            const data = await tryOnce();
+            updateProgress(end - start);
+            return data;
+          } catch (e) {
+            lastErr = e as Error;
+            const status = (e as Error & { status?: number }).status;
+            // 4xx 不重试(413/400 是后端拒,重试无用)
+            if (status && status >= 400 && status < 500) throw e;
+            // 网络错 / 5xx:指数退避 1/2/4/8/16 秒
+            await new Promise(r => setTimeout(r, 1000 * (1 << attempt)));
           }
-          const data = await res.json();
-          updateProgress(end - start);
-          return data;
-        } catch (e: unknown) {
-          attempt++;
-          lastErr = e instanceof Error ? e.message : String(e);
-          if (attempt >= 3) throw new Error(lastErr);
-          await new Promise(r => setTimeout(r, 1000));
         }
-      }
-      throw new Error(lastErr);
+        throw lastErr || new Error(`分片 ${i + 1}/${totalChunks} 5 次重试后失败`);
+      };
+      return runWithRetry();
     };
 
     try {
-      // 0..N-2 并发(限 3);N-1 最后一片留到所有其他片完成后单独发(触发后端合并)
-      const idxList = Array.from({ length: totalChunks - 1 }, (_, i) => i);
-      // 简单 semaphore:每次起 CONCURRENCY 个,等任一完成立即派下一个
-      const runConcurrent = async () => {
-        let cursor = 0;
-        const workers = Array.from({ length: Math.min(CONCURRENCY, idxList.length) }, async () => {
-          while (cursor < idxList.length) {
-            const my = cursor++;
-            await sendOneChunk(idxList[my]);
+      // 串行单连接,最稳,降低 CF 多 stream RST 概率
+      for (let i = 0; i < totalChunks; i++) {
+        const data = await sendOneChunk(i);
+        if (i === totalChunks - 1) {
+          if (data.status === "completed" && data.session_id) {
+            setUploadProgress(100);
+            setUploadSpeed(t("oral.processing"));
+            router.push(`/video/oral-broadcast/${data.session_id}`);
+            return;
           }
-        });
-        await Promise.all(workers);
-      };
-      await runConcurrent();
-
-      // 最后一片单独发 — 后端在此片合并 + 创建 session
-      const finalData = await sendOneChunk(totalChunks - 1);
-      if (finalData.status === "completed" && finalData.session_id) {
-        setUploadProgress(100);
-        setUploadSpeed(t("oral.processing"));
-        router.push(`/video/oral-broadcast/${finalData.session_id}`);
-        return;
+          throw new Error("最后一片返回异常,请重试");
+        }
       }
-      throw new Error("最后一片返回异常,请重试");
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : t("oral.errUploadFail"));
     } finally {
