@@ -79,9 +79,10 @@ export default function OralBroadcastListPage() {
     setCompressProgress(100);
     setPhase("upload");
 
-    // 七十七续 P5:分片上传(YouTube/OSS 标配)
-    // 单片 5MB 远小于 nginx client_max_body_size,带宽再差也只是慢一点不会失败
-    const CHUNK_SIZE = 5 * 1024 * 1024;
+    // 八十四续 P2:慢网友好分片 — 1MB 单片
+    // 5MB 在弱网/高 RTT 下 fetch 单 stream 易撞 CF/HTTP2 timeout 被 reset
+    // (实测用户 ERR_HTTP2_PROTOCOL_ERROR);1MB 1-2s 内完成,稳过 stream timeout
+    const CHUNK_SIZE = 1 * 1024 * 1024;
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
     const uploadId = Array.from(crypto.getRandomValues(new Uint8Array(8)))
       .map(b => b.toString(16).padStart(2, "0")).join("");
