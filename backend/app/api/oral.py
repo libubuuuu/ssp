@@ -1064,6 +1064,108 @@ async def upload_chunk(
     }
 
 
+# ==================== 端点 1.6:POST /finalize-cos(八十四续 P5)====================
+# 浏览器直传 COS 完成后调本端点,后端从 COS 拉文件到本地 oral session 目录
+# (同区域 GB/s),ffprobe 拿 duration + 创建 session。
+# 优势:用户上行不再被腾讯云轻量服务器 32Mbps 出口锁死,也不经过 CF。
+
+class FinalizeCosBody(BaseModel):
+    object_key: str       # 形如 "uploads/<user_id>/<ts>_<safe_name>"
+    filename: str         # 原始文件名,用于推断 ext
+    file_size: int        # 浏览器报的字节数,服务端会复核
+
+
+@router.post("/finalize-cos")
+async def finalize_cos_upload(
+    body: FinalizeCosBody,
+    current_user: dict = Depends(get_current_user),
+):
+    """浏览器 COS 直传完成后调用 — 后端从 COS 同区域拉文件到本地 + 建 session。"""
+    import httpx
+    from app.services.storage_sts import _check_enabled
+    from app.config import settings
+
+    try:
+        _check_enabled()
+    except Exception as e:
+        raise HTTPException(503, f"COS 未启用: {e}")
+
+    user_id = str(current_user["id"])
+    # object_key 必须以 uploads/<user_id>/ 开头,防止越权拉别人的文件
+    expected_prefix = f"{settings.STORAGE_BUCKET_PREFIX.rstrip('/')}/{user_id}/"
+    if not body.object_key.startswith(expected_prefix):
+        raise HTTPException(403, f"object_key 必须以 {expected_prefix} 开头")
+    if len(body.object_key) > 400:
+        raise HTTPException(400, "object_key 过长")
+    if body.file_size <= 0 or body.file_size > 500 * 1024 * 1024:
+        raise HTTPException(413, f"file_size {body.file_size} 不合法(0 < 且 ≤ 500MB)")
+
+    # 拼公开 URL(私有 bucket 这个 URL 浏览器访问会 403,但同区域服务器拉
+    # 走 COS 内部权限可访问)
+    public_url = (
+        f"https://{settings.STORAGE_BUCKET}.cos.{settings.STORAGE_REGION}"
+        f".myqcloud.com/{body.object_key}"
+    )
+
+    # 拉到本地 session_dir
+    session_id = str(uuid.uuid4())[:12]
+    session_dir = ORAL_UPLOAD_ROOT / user_id / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+    raw_ext = os.path.splitext(body.filename)[1] or ".mp4"
+    ext = re.sub(r"[^a-zA-Z0-9.]", "", raw_ext)[:8] or ".mp4"
+    video_path = session_dir / f"orig{ext}"
+
+    try:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            async with client.stream("GET", public_url) as resp:
+                if resp.status_code != 200:
+                    shutil.rmtree(session_dir, ignore_errors=True)
+                    raise HTTPException(
+                        502, f"COS 拉取失败 status={resp.status_code} url={public_url[:100]}"
+                    )
+                with open(video_path, "wb") as f:
+                    async for chunk in resp.aiter_bytes(64 * 1024):
+                        f.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as e:
+        shutil.rmtree(session_dir, ignore_errors=True)
+        raise HTTPException(502, f"COS 拉取异常: {str(e)[:200]}")
+
+    actual_size = video_path.stat().st_size
+    if actual_size == 0:
+        shutil.rmtree(session_dir, ignore_errors=True)
+        raise HTTPException(502, "COS 拉取后文件为空")
+
+    # ffprobe 拿 duration(失败已带 ffmpeg remux 兜底)
+    from app.api.video_studio import _get_video_duration
+    try:
+        duration = _get_video_duration(str(video_path))
+    except ValueError as e:
+        log_warning(
+            "upload_no_duration_metadata",
+            user=user_id, file=body.filename, size=actual_size, reason=str(e),
+        )
+        shutil.rmtree(session_dir, ignore_errors=True)
+        raise HTTPException(400, str(e))
+
+    if duration <= 0:
+        shutil.rmtree(session_dir, ignore_errors=True)
+        raise HTTPException(400, f"视频时长无效({duration}s),请重新上传")
+    if duration > MAX_DURATION_SECONDS:
+        shutil.rmtree(session_dir, ignore_errors=True)
+        raise HTTPException(413, f"视频时长 {duration:.1f}s 超过 {MAX_DURATION_SECONDS} 秒上限")
+
+    _create_session(session_id, user_id, str(video_path), duration)
+
+    return {
+        "status": "completed",
+        "session_id": session_id,
+        "duration_seconds": round(duration, 2),
+        "size_mb": round(actual_size / 1024 / 1024, 2),
+    }
+
+
 # ==================== 端点 1.5:POST /upload-mask ====================
 
 

@@ -60,8 +60,9 @@ export default function OralBroadcastListPage() {
     setCompressProgress(0);
     setUploadSpeed("");
 
-    // 八十四续 P4:mp4/mov 跳过 webm 压缩(避免 MediaRecorder webm duration 烂)。
-    // 只对 webm/avi/未知格式做压缩(它们不直接被 fal/ffmpeg 友好处理)。
+    // 八十四续 P5:浏览器直传腾讯云 COS,完全绕过 ailixiao.com / CF。
+    // 流程:STS 拿临时凭证 → cos-js-sdk-v5 PUT 到 bucket → 调 /finalize-cos 后端拉文件
+    // 兜底:STS 失败(COS 未启用 / 503) → fallback 走老 /upload-chunk 路径。
     setPhase("compress");
     let file = originalFile;
     const lower = (originalFile.name || "").toLowerCase();
@@ -80,6 +81,73 @@ export default function OralBroadcastListPage() {
     }
     setCompressProgress(100);
     setPhase("upload");
+
+    // 尝试 COS 直传,失败 fallback 老分片路径
+    try {
+      const stsRes = await fetch(`${API_BASE}/api/storage/sts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
+        credentials: "include",
+        body: JSON.stringify({ filename: file.name }),
+      });
+      if (stsRes.ok) {
+        const sts = await stsRes.json();
+        const startTime2 = Date.now();
+        const COS = (await import("cos-js-sdk-v5")).default;
+        const cos = new COS({
+          getAuthorization: (_options: object, callback: (data: {
+            TmpSecretId: string; TmpSecretKey: string;
+            SecurityToken: string; ExpiredTime: number;
+          }) => void) => {
+            callback({
+              TmpSecretId: sts.credentials.tmpSecretId,
+              TmpSecretKey: sts.credentials.tmpSecretKey,
+              SecurityToken: sts.credentials.sessionToken,
+              ExpiredTime: sts.expiredTime,
+            });
+          },
+        });
+        await new Promise<void>((resolve, reject) => {
+          cos.uploadFile({
+            Bucket: sts.bucket,
+            Region: sts.region,
+            Key: sts.object_key,
+            Body: file,
+            SliceSize: 1024 * 1024 * 5,  // 5MB 分片(SDK 自动并发)
+            onProgress: (info: { loaded: number; total: number; speed: number; percent: number }) => {
+              setUploadProgress(info.percent * 100);
+              const elapsed = (Date.now() - startTime2) / 1000;
+              if (elapsed > 0.5) {
+                const mbps = (info.loaded / 1024 / 1024) / elapsed;
+                const remainSec = (info.total - info.loaded) / Math.max(1, info.loaded / elapsed);
+                setUploadSpeed(`${mbps.toFixed(1)} MB/s · ${t("oral.eta")} ${Math.max(1, Math.ceil(remainSec))}s`);
+              }
+            },
+          }, (err: Error | null) => err ? reject(err) : resolve());
+        });
+        // 通知后端 finalize:从 COS 拉文件 + 建 session
+        const finRes = await fetch(`${API_BASE}/api/oral/finalize-cos`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
+          credentials: "include",
+          body: JSON.stringify({
+            object_key: sts.object_key,
+            filename: file.name,
+            file_size: file.size,
+          }),
+        });
+        const finData = await finRes.json();
+        if (!finRes.ok) throw new Error(finData.detail || "finalize 失败");
+        setUploadProgress(100);
+        setUploadSpeed(t("oral.processing"));
+        router.push(`/video/oral-broadcast/${finData.session_id}`);
+        return;
+      }
+      // STS 503 / 其他非 200 → 静默 fallback 到老路径
+      console.warn("[oral upload] COS 未启用,fallback 到分片上传");
+    } catch (e) {
+      console.warn("[oral upload] COS 直传失败,fallback 到分片上传:", e);
+    }
 
     // 八十四续 P4:XHR 替代 fetch + 串行 1 路 + 重试 5 次。
     // 实测用户 fetch+HTTP/2 上 9 个并发 stream 全被 CF RST(ERR_HTTP2_PROTOCOL_ERROR)。
