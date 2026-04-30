@@ -24,7 +24,9 @@ from .logger import log_info, log_error
 
 
 SEEDANCE_ENDPOINT = "fal-ai/bytedance/seedance/v2/pro/image-to-video"
-NANO_BANANA_EDIT_ENDPOINT = "fal-ai/nano-banana-2/edit"
+# 八十四续 P6:nano-banana-2/edit (Google) NSFW 拦截严 + fal 端偶发 downstream
+# unavailable。切字节 Seedream 4 (国产 + 稳定 + 接受 image_urls 数组多图融合)。
+NANO_BANANA_EDIT_ENDPOINT = "fal-ai/bytedance/seedream/v4/edit"
 
 
 # ============== Nano Banana 多图合成首帧 ==============

@@ -152,13 +152,16 @@ async def generate_multi_reference_image(req: ImageMultiReferenceRequest, curren
     if req.style in style_prefixes and style_prefixes[req.style]:
         full_prompt = style_prefixes[req.style] + full_prompt
 
+    # 八十四续 P6:nano-banana-2/edit (Google) NSFW 拦截极严 + fal 端 downstream
+    # 偶发 unavailable。切字节 Seedream 4 edit (国产对带货宽容,稳定性更好)。
     import fal_client
     try:
         fal_result = await fal_client.run_async(
-            "fal-ai/nano-banana-2/edit",
+            "fal-ai/bytedance/seedream/v4/edit",
             arguments={
                 "prompt": full_prompt,
                 "image_urls": req.reference_images,
+                "image_size": "square_hd",
             }
         )
         images = fal_result.get("images", [])
@@ -167,8 +170,8 @@ async def generate_multi_reference_image(req: ImageMultiReferenceRequest, curren
         img_url = images[0].get("url")
         result = {
             "image_url": img_url,
-            "model": "fal-ai/nano-banana-2/edit",
-            "model_label": "Nano Banana 2 Edit (多图融合)",
+            "model": "fal-ai/bytedance/seedream/v4/edit",
+            "model_label": "Seedream 4 Edit (字节多图融合)",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
