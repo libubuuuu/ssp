@@ -258,9 +258,9 @@ export default function OralBroadcastListPage() {
     if (files.length > slotsLeft) {
       setError(`${t("oral.batchMax")}(${files.length} → ${slotsLeft})`);
     }
-    // 真并发:单文件不导航(避免 5 个一起 push 路由乱),最后由 list polling 自动展示
-    const navigate = toUpload.length === 1 && activeUploads === 0;
-    Promise.all(toUpload.map(f => createNew(f, navigate))).finally(loadSessions);
+    // P26:任何上传都不再 navigate,留主页让 list 立刻刷新展示所有 session。
+    // 老 navigate=true 让用户被强制跳详情页,连传 N 个时永远只看到当前一个。
+    Promise.all(toUpload.map(f => createNew(f, false))).finally(loadSessions);
   };
 
   return (
