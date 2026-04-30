@@ -666,7 +666,7 @@ async def _run_inpainting_step(session_id: str) -> None:
                             "prompt": prompt,
                             "duration": str(seg_dur_int),
                             "aspect_ratio": "9:16",
-                            "resolution": "1080p",
+                            "resolution": "720p",
                             "enable_audio": False,
                         }
                         endpoint = endpoint_default
