@@ -577,9 +577,9 @@ async def _run_inpainting_step(session_id: str) -> None:
         engine = (os.getenv("ORAL_STEP_B_ENGINE", "seedance-i2v") or "seedance-i2v").lower()
         product_names = [p.get("name", "") for p in products if p.get("name")]
         if engine == "seedance-i2v":
-            # 八十四续 P12 修:fal 端点路径 seedance/v2/pro 已废,改 seedance-2.0/fast
-            # fast 版:lower latency + cost,带 sync audio + start/end frame 控制
-            endpoint_default = "fal-ai/bytedance/seedance-2.0/fast/image-to-video"
+            # 八十四续 P12 修:fal seedance-2.0 系列路径不带 fal-ai/ 前缀(实测同
+            # endpoint 加前缀返 'Path /seedance-2.0/... not found',去前缀 OK)
+            endpoint_default = "bytedance/seedance-2.0/fast/image-to-video"
             seg_timeout_loops = 60   # 10 min cap (实测 1-3 min/段)
             SEG_LEN_S = 10.0         # seedance 支持 5/10/12
             if product_names:
@@ -709,8 +709,11 @@ async def _run_inpainting_step(session_id: str) -> None:
                     for _ in range(seg_timeout_loops):
                         await asyncio.sleep(10)
                         status_obj = await fal_client.status_async(endpoint, task_id, with_logs=False)
-                        state = status_obj.status if hasattr(status_obj, "status") else None
-                        if state == "COMPLETED":
+                        # 八十四续 P13:fal Status 对象通过 type 区分(Queued/InProgress/Completed),
+                        # 不是 .status 属性。老代码用 hasattr 判 .status 永远 False → 9 个
+                        # session 死在 timeout(不是模型真慢,是判断 bug)。改 type-name 判定。
+                        state_name = type(status_obj).__name__
+                        if state_name == "Completed":
                             final = await fal_client.result_async(endpoint, task_id)
                             video_obj = final.get("video") if isinstance(final, dict) else None
                             url = (
