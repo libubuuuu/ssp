@@ -54,6 +54,8 @@ export default function OralBroadcastWorkbench() {
   // 默认 economy 是当前唯一全链路可用的档位。
   const [tier, setTier] = useState<Tier>("economy");
   const [legalConsent, setLegalConsent] = useState(false);
+  // P16:成片比例(空字符串表示跟随原视频)
+  const [aspectRatio, setAspectRatio] = useState<"" | "9:16" | "16:9" | "1:1">("");
 
   // Step 1 模特/产品(URL 输入 + 从库选两种来源)
   const [modelName, setModelName] = useState("");
@@ -168,7 +170,7 @@ export default function OralBroadcastWorkbench() {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
         credentials: "include",
-        body: JSON.stringify({ session_id: sessionId, tier, models, products, legal_consent: legalConsent }),
+        body: JSON.stringify({ session_id: sessionId, tier, models, products, legal_consent: legalConsent, aspect_ratio: aspectRatio || null }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.detail || t("oral.errStartFail")); return; }
@@ -351,6 +353,34 @@ export default function OralBroadcastWorkbench() {
                   </label>
                 );
               })}
+            </div>
+
+            {/* P16:成片比例选择 */}
+            <div style={{ marginBottom: "1.5rem" }}>
+              <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>{t("oral.aspectTitle")}</div>
+              <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                {(["", "9:16", "16:9", "1:1"] as const).map(opt => (
+                  <label key={opt || "auto"} style={{
+                    flex: "1 1 120px",
+                    padding: "0.6rem 0.8rem",
+                    border: aspectRatio === opt ? "2px solid #0d0d0d" : "1px solid #ddd",
+                    background: aspectRatio === opt ? "#f9f7f2" : "#fff",
+                    borderRadius: 10,
+                    cursor: "pointer",
+                    textAlign: "center",
+                  }}>
+                    <input type="radio" name="aspect" value={opt} checked={aspectRatio === opt}
+                      onChange={() => setAspectRatio(opt)} style={{ marginRight: "0.4rem" }} />
+                    <strong>{opt || t("oral.aspectAuto")}</strong>
+                    <div style={{ fontSize: "0.7rem", color: "#999", marginTop: 2 }}>
+                      {opt === "" ? t("oral.aspectAutoDesc") :
+                       opt === "9:16" ? t("oral.aspectVertical") :
+                       opt === "16:9" ? t("oral.aspectHorizontal") :
+                                        t("oral.aspectSquare")}
+                    </div>
+                  </label>
+                ))}
+              </div>
             </div>
 
             <div style={{ marginBottom: "1.5rem" }}>

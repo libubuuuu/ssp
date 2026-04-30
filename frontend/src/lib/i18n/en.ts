@@ -624,6 +624,12 @@ export const en = {
     tierTitle: "Tier",
     tier: { economy: "Economy", standard: "Standard ⭐", premium: "Premium" },
     tierComingSoon: "(Coming soon)",
+    aspectTitle: "Output aspect ratio",
+    aspectAuto: "Auto",
+    aspectAutoDesc: "Follow source video",
+    aspectVertical: "Vertical / TikTok / Reels",
+    aspectHorizontal: "Horizontal / YouTube",
+    aspectSquare: "Square / Instagram",
     textTooLong: "Text exceeds 1000 character limit. Please trim.",
     tierDesc: {
       economy: "MiniMax voice + 480p swap + veed lipsync",

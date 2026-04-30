@@ -74,6 +74,7 @@ class StartRequest(BaseModel):
     models: List[dict]      # [{name, image_url}, ...] 1-4 个
     products: List[dict]    # [{name, image_url}, ...] 0-4 个
     legal_consent: bool     # L1 用户责任声明,前端勾选后传 true(规划文档 Q4)
+    aspect_ratio: Optional[str] = None  # P16:成片比例 "9:16"/"16:9"/"1:1"/None(跟随原视频)
 
 
 class EditRequest(BaseModel):
@@ -497,21 +498,31 @@ async def _run_inpainting_step(session_id: str) -> None:
                 raise RuntimeError(f"抽首帧失败: {ferr[:200]}")
             frame_fal_url = await fal_client.upload_file_async(str(frame_path))
 
-            # 2. 探测原视频宽高 → Seedream 输出按同比例(避免 reference 与 driving aspect 错位)
-            seed_size = "portrait_16_9"  # 兜底:竖屏短视频
-            try:
-                probe = subprocess.run(
-                    ["ffprobe", "-v", "error", "-select_streams", "v:0",
-                     "-show_entries", "stream=width,height",
-                     "-of", "csv=s=x:p=0", original_video_path],
-                    capture_output=True, text=True, timeout=10,
-                )
-                w_str, h_str = probe.stdout.strip().split("x")
-                w_i, h_i = int(w_str), int(h_str)
-                scale = min(1.0, 2048 / max(w_i, h_i))
-                seed_size = {"width": int(w_i * scale), "height": int(h_i * scale)}
-            except Exception as probe_err:
-                _log(f"_run_inpainting_step probe size 失败,用 portrait_16_9 兜底: {probe_err}")
+            # 2. 决定 Seedream 输出尺寸:用户在 /start 选的 aspect_ratio 优先,
+            # 否则按原视频比例自动跟随(P16)
+            user_aspect = (session.get("aspect_ratio") or "").strip().lower()
+            ASPECT_PRESETS = {
+                "9:16": {"width": 720,  "height": 1280},
+                "16:9": {"width": 1280, "height": 720},
+                "1:1":  {"width": 1024, "height": 1024},
+            }
+            if user_aspect in ASPECT_PRESETS:
+                seed_size = ASPECT_PRESETS[user_aspect]
+            else:
+                seed_size = "portrait_16_9"  # 兜底:竖屏短视频
+                try:
+                    probe = subprocess.run(
+                        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                         "-show_entries", "stream=width,height",
+                         "-of", "csv=s=x:p=0", original_video_path],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    w_str, h_str = probe.stdout.strip().split("x")
+                    w_i, h_i = int(w_str), int(h_str)
+                    scale = min(1.0, 2048 / max(w_i, h_i))
+                    seed_size = {"width": int(w_i * scale), "height": int(h_i * scale)}
+                except Exception as probe_err:
+                    _log(f"_run_inpainting_step probe size 失败,用 portrait_16_9 兜底: {probe_err}")
 
             # 3. 拼中文 prompt(Seedream 是字节模型,中文准)
             image_urls = [frame_fal_url, model_url]
@@ -1387,6 +1398,11 @@ async def start_pipeline(
     if not deduct_credits(user_id, charge):
         raise HTTPException(500, "扣费失败,请重试")
 
+    # P16:校验 aspect_ratio,只接受白名单 / None
+    aspect = (req.aspect_ratio or "").strip().lower()
+    if aspect and aspect not in ("9:16", "16:9", "1:1"):
+        raise HTTPException(400, "aspect_ratio 必须是 9:16 / 16:9 / 1:1")
+
     # 写入 session — 状态推进到 asr_running(实际 ASR 调用 P2 实现)
     _update_session(
         req.session_id,
@@ -1395,6 +1411,7 @@ async def start_pipeline(
         selected_models=json.dumps(req.models, ensure_ascii=False),
         selected_products=json.dumps(req.products, ensure_ascii=False),
         credits_charged=charge,
+        aspect_ratio=(aspect or None),
     )
 
     # 写 audit_log(L1 责任声明已确认)

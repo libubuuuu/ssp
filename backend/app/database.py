@@ -68,6 +68,8 @@ def _patch_oral_columns(cursor):
         ("archived_at", "ALTER TABLE oral_sessions ADD COLUMN archived_at TIMESTAMP"),
         # 八十四续 V3 — VTON 静态试穿产物("模特穿产品"合成图,Step A 输出,Step B reference 输入)
         ("vton_image_url", "ALTER TABLE oral_sessions ADD COLUMN vton_image_url TEXT"),
+        # 八十四续 P16 — 用户在 /start 选择成片比例(9:16 / 16:9 / 1:1 / auto)
+        ("aspect_ratio", "ALTER TABLE oral_sessions ADD COLUMN aspect_ratio TEXT"),
     ]
     for col_name, sql in patches:
         try:

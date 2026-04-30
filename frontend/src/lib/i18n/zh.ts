@@ -624,6 +624,12 @@ export const zh = {
     tierTitle: "选档位",
     tier: { economy: "经济档", standard: "标准档 ⭐", premium: "顶级档" },
     tierComingSoon: "(即将上线)",
+    aspectTitle: "成片比例",
+    aspectAuto: "自动",
+    aspectAutoDesc: "跟随原视频",
+    aspectVertical: "短视频 / 抖音 / 小红书",
+    aspectHorizontal: "横屏 / B 站 / YouTube",
+    aspectSquare: "正方形 / 朋友圈",
     textTooLong: "文案超过 1000 字符上限,请删减",
     tierDesc: {
       economy: "MiniMax 音色 + 480p 换装 + veed 口型",
