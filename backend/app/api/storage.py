@@ -50,9 +50,13 @@ async def issue_sts(req: STSRequest, current_user: dict = Depends(get_current_us
 async def issue_presigned_put(req: STSRequest, current_user: dict = Depends(get_current_user)):
     """八十四续 P5:签发 COS PUT presigned URL,浏览器 zero-deps fetch PUT 直传。
 
-    比 STS + cos-js-sdk-v5 更稳:不依赖任何浏览器 SDK,绕开 turbopack
-    polyfill 问题。Presigned URL 内嵌 q-sign 签名,有效期 15 分钟。
+    P22 暂停:子账号 ssp-sts-signer 没 GetObject 权限 → backend finalize-cos
+    阶段拉文件 403 → 前端 fallback chunk 再传一次,反而**双倍流量更慢**。
+    禁用 COS 直传 → 前端立刻 fallback chunk(单次上传)。
+    彻底修:用户去腾讯云 CAM 给子账号加 cos:GetObject 权限,删除本 raise 即可。
     """
+    raise HTTPException(503, "COS 直传暂停(子账号待补 GetObject 权限,前端会自动 fallback 分片上传)")
+    # 下面代码保留待权限补齐后启用
     from qcloud_cos import CosConfig, CosS3Client
     from app.config import get_settings
     from app.services.storage_sts import _check_enabled, _build_resource_path
