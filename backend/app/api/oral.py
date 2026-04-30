@@ -564,7 +564,7 @@ async def _run_inpainting_step(session_id: str) -> None:
                             raise RuntimeError(f"seg {seg_idx} 既无 task_id 也无 video URL")
                         return url
                     endpoint = drive_result.get("model", endpoint_default)
-                    for _ in range(180):  # 30min cap
+                    for _ in range(360):  # 60min cap (kling 实测可能 35-50min)
                         await asyncio.sleep(10)
                         status_obj = await fal_client.status_async(endpoint, task_id, with_logs=False)
                         state = status_obj.status if hasattr(status_obj, "status") else None
@@ -579,7 +579,7 @@ async def _run_inpainting_step(session_id: str) -> None:
                             if not url:
                                 raise RuntimeError(f"seg {seg_idx} kling 未返 video URL")
                             return url
-                    raise RuntimeError(f"seg {seg_idx} kling 超时(30min)")
+                    raise RuntimeError(f"seg {seg_idx} kling 超时(60min)")
 
             seg_urls = await asyncio.gather(*[_drive_one(i, p) for i, p in enumerate(seg_paths)])
             _log(f"_run_inpainting_step Step B {n_segments} 段全部完成 session={session_id}")
