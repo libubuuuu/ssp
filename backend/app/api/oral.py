@@ -563,74 +563,118 @@ async def _run_inpainting_step(session_id: str) -> None:
             except Exception:
                 pass
 
-        # ---------- Step B:拆段 + kling/reference 并发驱动 + concat ----------
-        # 单次 kling/reference 上限 10.05s,长视频(>10s)必拆段。
-        # 段长 9s 留 1s 余量;每段独立 reference 驱动;ffmpeg concat 硬切拼回。
-        # 八十四续 P9:prompt 加"保留背景"防 kling 自由发挥改背景
+        # ---------- Step B:拆段 + 并发驱动 + concat ----------
+        # 八十四续 P12:三引擎可切换(ORAL_STEP_B_ENGINE env)
+        #   seedance-i2v (默认) → fal-ai/bytedance/seedance/v2/pro/image-to-video
+        #                          首帧锁死产品(用 vton 图)→ 产品 100% 严格保留
+        #                          单次 5/10/12s,长视频拆段(每段都用 vton 首帧)
+        #                          缺点:动作不复刻原视频,自由发挥
+        #                          实测 1-3 min/段,wallclock 3-7 min
+        #   ltx                 → fal-ai/ltx-2.3-22b/distilled/reference-video-to-video
+        #                          v2v reference,复刻原动作但产品会漂
+        #   kling               → fal-ai/kling-video/o1/video-to-video/reference
+        #                          v2v reference,产品稍稳但 35-50 min/段
+        engine = (os.getenv("ORAL_STEP_B_ENGINE", "seedance-i2v") or "seedance-i2v").lower()
         product_names = [p.get("name", "") for p in products if p.get("name")]
-        BG_LOCK = (
-            "Preserve the original background, scene, lighting, camera angle, and composition "
-            "exactly as in the reference video — do not change the environment."
-        )
-        if product_names:
-            prompt = (
-                f"A person wearing {', '.join(product_names)}, "
-                f"performing the same actions, gestures, and movements as in the reference video. "
-                f"{BG_LOCK}"
-            )
+        if engine == "seedance-i2v":
+            endpoint_default = "fal-ai/bytedance/seedance/v2/pro/image-to-video"
+            seg_timeout_loops = 60   # 10 min cap (实测 1-3 min/段)
+            SEG_LEN_S = 10.0         # seedance 支持 5/10/12
+            if product_names:
+                prompt = (
+                    f"A young woman wearing the {', '.join(product_names)} from the reference image, "
+                    f"naturally showcasing the product with subtle hand gestures, smiling at camera, "
+                    f"smooth body movement, photorealistic UGC selfie style, vertical 9:16 composition, "
+                    f"soft natural lighting matching the reference image."
+                )
+            else:
+                prompt = (
+                    "A young woman from the reference image, naturally showcasing herself with subtle "
+                    "hand gestures, smiling at camera, smooth body movement, photorealistic UGC selfie "
+                    "style, vertical 9:16 composition, soft natural lighting matching the reference image."
+                )
         else:
-            prompt = (
-                f"A person performing the same actions and movements as in the reference video. "
-                f"{BG_LOCK}"
+            BG_LOCK = (
+                "Preserve the original background, scene, lighting, camera angle, and composition "
+                "exactly as in the reference video — do not change the environment."
             )
+            if product_names:
+                prompt = (
+                    f"A person wearing {', '.join(product_names)}, "
+                    f"performing the same actions, gestures, and movements as in the reference video. "
+                    f"{BG_LOCK}"
+                )
+            else:
+                prompt = (
+                    f"A person performing the same actions and movements as in the reference video. "
+                    f"{BG_LOCK}"
+                )
+            if engine == "ltx":
+                endpoint_default = "fal-ai/ltx-2.3-22b/distilled/reference-video-to-video"
+                seg_timeout_loops = 180   # 30 min cap
+                SEG_LEN_S = 9.0
+            else:  # kling
+                endpoint_default = "fal-ai/kling-video/o1/video-to-video/reference"
+                seg_timeout_loops = 360   # 60 min cap
+                SEG_LEN_S = 9.0
 
-        SEG_LEN_S = 9.0
         duration = float(session.get("duration_seconds") or 0)
         if duration <= 0:
             duration = _get_video_duration(session["original_video_path"])
 
-        # 切段到 /tmp/oral_segs_<sid>/seg_NN.mp4(根目录上层 GC 兜底)
         import math
         seg_root = Path(tempfile.mkdtemp(prefix=f"oral_segs_{session_id}_"))
         try:
             n_segments = max(1, math.ceil(duration / SEG_LEN_S))
-            seg_paths: List[Path] = []
+            seg_durations: List[float] = []
             for i in range(n_segments):
-                start = i * SEG_LEN_S
-                seg_path = seg_root / f"seg_{i:02d}.mp4"
-                # 最后一段用 -t 不限,让 ffmpeg 自己截到末尾(规避浮点边界)
-                cmd = ["ffmpeg", "-y", "-ss", f"{start:.3f}",
-                       "-i", session["original_video_path"]]
                 if i < n_segments - 1:
-                    cmd += ["-t", f"{SEG_LEN_S:.3f}"]
-                cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", "20", "-an", str(seg_path)]
-                ok, ferr = _run_ffmpeg(cmd)
-                if not ok or not seg_path.exists():
-                    raise RuntimeError(f"ffmpeg 切段 {i} 失败: {ferr[:200]}")
-                seg_paths.append(seg_path)
-            _log(f"_run_inpainting_step Step B 拆 {n_segments} 段 duration={duration:.1f}s session={session_id}")
+                    seg_durations.append(SEG_LEN_S)
+                else:
+                    seg_durations.append(max(1.0, duration - i * SEG_LEN_S))
 
-            # 八十四续 P11:env switch 选 v2v 引擎
-            #   ltx (默认)  → fal-ai/ltx-2.3-22b/distilled/reference-video-to-video
-            #                  蒸馏加速 + 1/10 定价,实测可能 5-15 min/段
-            #   kling        → fal-ai/kling-video/o1/video-to-video/reference
-            #                  闭源旗舰,实测 35-50 min/段(慢)
-            engine = (os.getenv("ORAL_STEP_B_ENGINE", "ltx") or "ltx").lower()
-            if engine == "ltx":
-                endpoint_default = "fal-ai/ltx-2.3-22b/distilled/reference-video-to-video"
-                seg_timeout_loops = 180  # 30 min cap (LTX 蒸馏版预期 5-15 min)
+            # i2v 路线不切原视频段(不用 driving video);v2v 才切
+            seg_paths: List[Optional[Path]] = []
+            if engine in ("ltx", "kling"):
+                for i in range(n_segments):
+                    start = i * SEG_LEN_S
+                    seg_path = seg_root / f"seg_{i:02d}.mp4"
+                    cmd = ["ffmpeg", "-y", "-ss", f"{start:.3f}",
+                           "-i", session["original_video_path"]]
+                    if i < n_segments - 1:
+                        cmd += ["-t", f"{SEG_LEN_S:.3f}"]
+                    cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", "20", "-an", str(seg_path)]
+                    ok, ferr = _run_ffmpeg(cmd)
+                    if not ok or not seg_path.exists():
+                        raise RuntimeError(f"ffmpeg 切段 {i} 失败: {ferr[:200]}")
+                    seg_paths.append(seg_path)
             else:
-                endpoint_default = "fal-ai/kling-video/o1/video-to-video/reference"
-                seg_timeout_loops = 360  # 60 min cap (kling 实测 35-50 min)
-            _log(f"_run_inpainting_step Step B engine={engine} endpoint={endpoint_default} session={session_id}")
+                seg_paths = [None] * n_segments
+            _log(f"_run_inpainting_step Step B engine={engine} endpoint={endpoint_default} segs={n_segments} duration={duration:.1f}s session={session_id}")
 
             sem = asyncio.Semaphore(3)
 
-            async def _drive_one(seg_idx: int, seg_path: Path) -> str:
+            async def _drive_one(seg_idx: int, seg_path: Optional[Path]) -> str:
                 async with sem:
-                    seg_fal_url = await fal_client.upload_file_async(str(seg_path))
-                    if engine == "ltx":
-                        # LTX-2.3 distilled reference-v2v:single image_url + match_video_length
+                    if engine == "seedance-i2v":
+                        # i2v:vton 图首帧 + duration + prompt,每段独立(不依赖 driving video)
+                        seg_dur_int = max(5, min(12, int(round(seg_durations[seg_idx]))))
+                        args = {
+                            "image_url": reference_image,
+                            "prompt": prompt,
+                            "duration": str(seg_dur_int),
+                            "aspect_ratio": "9:16",
+                            "resolution": "1080p",
+                            "enable_audio": False,
+                        }
+                        endpoint = endpoint_default
+                        try:
+                            handler = await fal_client.submit_async(endpoint, arguments=args)
+                            task_id = handler.request_id
+                        except Exception as e:
+                            raise RuntimeError(f"seedance-i2v seg {seg_idx} submit: {e}")
+                    elif engine == "ltx":
+                        seg_fal_url = await fal_client.upload_file_async(str(seg_path))
                         args = {
                             "video_url": seg_fal_url,
                             "image_url": reference_image,
@@ -643,7 +687,8 @@ async def _run_inpainting_step(session_id: str) -> None:
                             task_id = handler.request_id
                         except Exception as e:
                             raise RuntimeError(f"LTX seg {seg_idx} submit: {e}")
-                    else:
+                    else:  # kling
+                        seg_fal_url = await fal_client.upload_file_async(str(seg_path))
                         drive_result = await vid_svc.drive_with_reference(
                             driving_video_url=seg_fal_url,
                             reference_image_url=reference_image,
