@@ -657,6 +657,26 @@ async def _run_inpainting_step(session_id: str) -> None:
                     "hand gestures, smiling at camera, smooth body movement, photorealistic UGC selfie "
                     "style, vertical 9:16 composition, soft natural lighting matching the reference image."
                 )
+        elif engine == "kling-o1-edit":
+            # P30 (2026-05-01):fal-ai/kling-video/o1/video-to-video/edit
+            # 真 v2v 视频编辑 — 直接吃原视频段 + @Element 占位符替换人/物,
+            # 复刻原动作骨架 + 衣物物理感保留(i2v 从静图凭空生成做不到)。
+            # Probe 实测 2026-05-01:8d2389eb-110 baseline 9s 段,3:48 出片,
+            # NSFW 内衣场景过审,产品锁死、动作复刻 OK。
+            endpoint_default = "fal-ai/kling-video/o1/video-to-video/edit"
+            seg_timeout_loops = 60   # 10 min cap(实测 ~4 min/段)
+            SEG_LEN_S = 8.0          # 文档 3-10s,留 2s 余量;长视频均匀拆段
+            if product_names:
+                prompt = (
+                    f"Replace the woman in the video with @Element1, "
+                    f"and replace her clothing/outfit with @Element2 ({', '.join(product_names)}). "
+                    f"Preserve the original body motion, gestures, facial expressions and camera movement exactly."
+                )
+            else:
+                prompt = (
+                    "Replace the woman in the video with @Element1. "
+                    "Preserve the original body motion, gestures, facial expressions and camera movement exactly."
+                )
         else:
             BG_LOCK = (
                 "Preserve the original background, scene, lighting, camera angle, and composition "
@@ -698,8 +718,9 @@ async def _run_inpainting_step(session_id: str) -> None:
                     seg_durations.append(max(1.0, duration - i * SEG_LEN_S))
 
             # i2v 路线不切原视频段(不用 driving video);v2v 才切
+            # P30:kling-o1-edit 也吃原视频段(真 v2v),加入切段路径
             seg_paths: List[Optional[Path]] = []
-            if engine in ("ltx", "kling-v2v"):
+            if engine in ("ltx", "kling-v2v", "kling-o1-edit"):
                 for i in range(n_segments):
                     start = i * SEG_LEN_S
                     seg_path = seg_root / f"seg_{i:02d}.mp4"
@@ -748,6 +769,32 @@ async def _run_inpainting_step(session_id: str) -> None:
                             task_id = handler.request_id
                         except Exception as e:
                             raise RuntimeError(f"LTX seg {seg_idx} submit: {e}")
+                    elif engine == "kling-o1-edit":
+                        # P30:真 v2v 视频编辑(@Element 占位符语法)
+                        # element 1 = 模特,element 2 = 产品(可选)
+                        # 每个 element 必须 frontal + reference_image_urls(>=1),
+                        # probe 实测空 reference_image_urls 会返 elementReferList size 错。
+                        seg_fal_url = await fal_client.upload_file_async(str(seg_path))
+                        elements = [
+                            {"frontal_image_url": model_url, "reference_image_urls": [model_url]},
+                        ]
+                        if garment_url:
+                            elements.append({
+                                "frontal_image_url": garment_url,
+                                "reference_image_urls": [garment_url],
+                            })
+                        args = {
+                            "video_url": seg_fal_url,
+                            "prompt": prompt,
+                            "elements": elements,
+                            "keep_audio": False,
+                        }
+                        endpoint = endpoint_default
+                        try:
+                            handler = await fal_client.submit_async(endpoint, arguments=args)
+                            task_id = handler.request_id
+                        except Exception as e:
+                            raise RuntimeError(f"kling-o1-edit seg {seg_idx} submit: {e}")
                     else:  # kling-v2v
                         seg_fal_url = await fal_client.upload_file_async(str(seg_path))
                         drive_result = await vid_svc.drive_with_reference(
@@ -861,12 +908,33 @@ async def _run_inpainting_step(session_id: str) -> None:
 # 防 fal.media 30 天过期。合规深度合成水印责任移交用户决定(Phase 4)。
 
 
+async def _faststart_remux(in_path: "Path") -> None:
+    """P30:把 mp4 的 moov atom 挪到文件头(faststart),让浏览器流式播放,
+    不必整个文件下载完才能开始放(老路径会让用户看到"视频一直在转")。
+    -c copy 不重编码,几秒搞定。失败不阻塞(原文件保留)。"""
+    from app.api.video_studio import _run_ffmpeg
+    tmp_path = in_path.with_suffix(".faststart.mp4")
+    ok, err = _run_ffmpeg([
+        "ffmpeg", "-y", "-i", str(in_path),
+        "-c", "copy", "-movflags", "+faststart", str(tmp_path),
+    ])
+    if ok and tmp_path.exists() and tmp_path.stat().st_size > 0:
+        shutil.move(str(tmp_path), str(in_path))
+        os.chmod(in_path, 0o644)
+    else:
+        _log(f"_faststart_remux 失败(继续用原文件): {err[:200]}")
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 async def _archive_lipsync_final(
     fal_video_url: str,
     user_id: str,
     session_id: str,
 ) -> str:
-    """下载 fal final → 落本地归档(无水印)。返 public URL。"""
+    """下载 fal final → 落本地归档(无水印)+ faststart remux。返 public URL。"""
     import httpx
 
     out_dir = ORAL_UPLOAD_ROOT / user_id / session_id
@@ -882,6 +950,7 @@ async def _archive_lipsync_final(
                     f.write(chunk)
 
     os.chmod(out_path, 0o644)
+    await _faststart_remux(out_path)
     public = f"/uploads/oral/{user_id}/{session_id}/final.mp4"
     _log(f"_archive_lipsync_final OK session={session_id} -> {public}")
     return public
@@ -1011,6 +1080,7 @@ async def _run_lipsync_chunked(session_id: str, session: dict) -> str:
         out_path = out_dir / "final.mp4"
         shutil.copy2(merged, out_path)
         os.chmod(out_path, 0o644)
+        await _faststart_remux(out_path)
         public = f"/uploads/oral/{user_id}/{session_id}/final.mp4"
         _log(f"_run_lipsync_chunked OK session={session_id} segs={n} -> {public}")
         return public
