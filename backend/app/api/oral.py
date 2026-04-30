@@ -226,17 +226,30 @@ async def _run_asr_step(session_id: str) -> None:
         if not ok:
             raise RuntimeError(f"ffmpeg 失败: {err}")
 
-        # 2) 上传到 fal storage(私有 URL,不依赖我们 nginx 公开)
-        audio_fal_url = await fal_client.upload_file_async(audio_path)
-
-        # 3) 调 wizper
+        # 2)+3) fal upload + wizper 整体重试(P27)。fal 偶发 500 / 网关抖动让用户
+        # 进 failed_step1 重做整套流程很伤,瞬态用 3 次尝试 + 5s/10s 退避兜住。
         from app.services.fal_service import get_asr_service
         asr_svc = get_asr_service()
         if not asr_svc:
             raise RuntimeError("FAL ASR service 未初始化")
-        result = await asr_svc.transcribe(audio_fal_url)
-        if "error" in result:
-            raise RuntimeError(f"wizper: {result['error']}")
+
+        result = None
+        last_err: Optional[Exception] = None
+        for attempt in range(1, 4):
+            try:
+                audio_fal_url = await fal_client.upload_file_async(audio_path)
+                r = await asr_svc.transcribe(audio_fal_url)
+                if "error" in r:
+                    raise RuntimeError(f"wizper: {r['error']}")
+                result = r
+                break
+            except Exception as fe:
+                last_err = fe
+                _log(f"_run_asr_step session={session_id} attempt={attempt}/3 err={str(fe)[:200]}")
+                if attempt < 3:
+                    await asyncio.sleep(5 * attempt)
+        if result is None:
+            raise RuntimeError(f"ASR 重试 3 次仍失败: {str(last_err)[:300]}")
 
         # 4) 写库,推进状态
         _update_session(
