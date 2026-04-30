@@ -54,27 +54,28 @@ async def issue_presigned_put(req: STSRequest, current_user: dict = Depends(get_
     polyfill 问题。Presigned URL 内嵌 q-sign 签名,有效期 15 分钟。
     """
     from qcloud_cos import CosConfig, CosS3Client
-    from app.config import settings
+    from app.config import get_settings
     from app.services.storage_sts import _check_enabled, _build_resource_path
     try:
         _check_enabled()
     except StorageNotConfigured as e:
         raise HTTPException(503, f"对象存储未启用: {e}")
 
+    s = get_settings()
     user_id = str(current_user["id"])
     object_key, _ = _build_resource_path(user_id, req.filename)
 
     config = CosConfig(
-        Region=settings.STORAGE_REGION,
-        SecretId=settings.STORAGE_SECRET_ID,
-        SecretKey=settings.STORAGE_SECRET_KEY,
+        Region=s.STORAGE_REGION,
+        SecretId=s.STORAGE_SECRET_ID,
+        SecretKey=s.STORAGE_SECRET_KEY,
     )
     client = CosS3Client(config)
     try:
         # 签 PUT presigned URL,15min 有效
         url = client.get_presigned_url(
             Method="PUT",
-            Bucket=settings.STORAGE_BUCKET,
+            Bucket=s.STORAGE_BUCKET,
             Key=object_key,
             Expired=900,
         )
@@ -86,7 +87,7 @@ async def issue_presigned_put(req: STSRequest, current_user: dict = Depends(get_
     return {
         "upload_url": url,
         "object_key": object_key,
-        "bucket": settings.STORAGE_BUCKET,
-        "region": settings.STORAGE_REGION,
+        "bucket": s.STORAGE_BUCKET,
+        "region": s.STORAGE_REGION,
         "expires_in": 900,
     }
