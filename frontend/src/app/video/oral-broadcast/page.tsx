@@ -70,7 +70,10 @@ export default function OralBroadcastListPage() {
     let file = originalFile;
     const lower = (originalFile.name || "").toLowerCase();
     const isMp4Family = /\.(mp4|mov|m4v)$/.test(lower) || /^video\/(mp4|quicktime)/.test(originalFile.type);
-    if (!isMp4Family) {
+    // P25:30MB 是 chunk 串行 + 250 KB/s 上行下"传 2 分钟"的临界点,大于必压
+    const FORCE_COMPRESS_THRESHOLD = 30 * 1024 * 1024;
+    const shouldCompress = !isMp4Family || originalFile.size > FORCE_COMPRESS_THRESHOLD;
+    if (shouldCompress) {
       try {
         const result = await compressVideo(originalFile, {
           onProgress: (pct) => setCompressProgress(pct),
