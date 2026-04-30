@@ -171,6 +171,11 @@ def _get_video_duration(path: str) -> float:
     历史 bug:bare except 静默吞 ValueError 返 0,下游 compute_charge 算 0,
     deduct_credits 拒 amount<=0,最后误导成 500 "扣费失败"。链路太长,
     必须从源头明确 raise。
+
+    八十四续 P3:Chrome MediaRecorder 输出的 WebM 没有 EBML duration → ffprobe N/A。
+    自动 fallback:ffmpeg remux 到 mp4(不重编码,几秒)注入 duration,然后
+    inplace 替换原文件。下游 _run_inpainting_step 拿到的就是 mp4,kling/reference
+    也更稳(它对 webm 偶发不收)。
     """
     cmd = [
         "ffprobe", "-v", "error",
@@ -179,23 +184,69 @@ def _get_video_duration(path: str) -> float:
         path,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"ffprobe FAIL rc={result.returncode} path={path} stderr={result.stderr[:200]}",
-              file=sys.stderr, flush=True)
-        raise ValueError(f"ffprobe 失败: {result.stderr[:100]}")
-    stdout = result.stdout.strip()
-    if not stdout or stdout == "N/A":
-        # Chrome MediaRecorder WebM 缺 EBML duration metadata 时 ffprobe 输出 "N/A",
-        # 此时无法可靠拿到时长,必须明确报错让用户重传
-        print(f"ffprobe duration N/A path={path} stdout={stdout!r}",
-              file=sys.stderr, flush=True)
-        raise ValueError("视频缺少时长元数据(可能是浏览器录制的 WebM 未写 EBML duration),请用相机录制或重新转码后上传")
+    stdout = result.stdout.strip() if result.returncode == 0 else ""
+
+    # 直接拿到合法 duration
+    if result.returncode == 0 and stdout and stdout != "N/A":
+        try:
+            return float(stdout)
+        except ValueError:
+            pass  # 落入下面 N/A fallback
+
+    # N/A / 失败 → ffmpeg remux 兜底
+    print(f"ffprobe duration unusable rc={result.returncode} stdout={stdout!r} path={path} → 尝试 ffmpeg remux fallback",
+          file=sys.stderr, flush=True)
+    fixed_path = path + ".fixed.mp4"
     try:
-        return float(stdout)
-    except ValueError:
-        print(f"ffprobe stdout not number path={path} stdout={stdout!r}",
+        mux = subprocess.run(
+            # genpts 重新生成 PTS,faststart 把 moov atom 提前(seek 友好)
+            # -c copy 不重编码,只换容器
+            ["ffmpeg", "-y", "-v", "error", "-fflags", "+genpts",
+             "-i", path, "-c", "copy", "-movflags", "faststart", fixed_path],
+            capture_output=True, text=True, timeout=120,
+        )
+        if mux.returncode != 0 or not os.path.exists(fixed_path):
+            print(f"ffmpeg remux FAIL rc={mux.returncode} stderr={mux.stderr[:200]}",
+                  file=sys.stderr, flush=True)
+            raise ValueError("视频缺少时长元数据,且 ffmpeg remux 兜底失败,请重新录制或转码后上传")
+        retry = subprocess.run(cmd[:-1] + [fixed_path], capture_output=True, text=True)
+        rstdout = retry.stdout.strip() if retry.returncode == 0 else ""
+        if retry.returncode != 0 or not rstdout or rstdout == "N/A":
+            print(f"ffprobe-after-remux still bad rc={retry.returncode} stdout={rstdout!r}",
+                  file=sys.stderr, flush=True)
+            try:
+                os.unlink(fixed_path)
+            except OSError:
+                pass
+            raise ValueError("视频缺少时长元数据,且重新封装后仍无法读取,请用相机录制或转码")
+        try:
+            duration = float(rstdout)
+        except ValueError:
+            try:
+                os.unlink(fixed_path)
+            except OSError:
+                pass
+            raise ValueError(f"ffprobe-after-remux 输出无法解析: {rstdout!r}")
+        # 成功:用修复后的 mp4 替换原文件(call site 拿到的 path 不变,内容已是 mp4)
+        os.replace(fixed_path, path)
+        print(f"ffmpeg remux OK duration={duration:.2f}s path={path}",
               file=sys.stderr, flush=True)
-        raise ValueError(f"ffprobe 输出无法解析为时长: {stdout!r}")
+        return duration
+    except subprocess.TimeoutExpired:
+        try:
+            os.unlink(fixed_path)
+        except OSError:
+            pass
+        raise ValueError("视频处理超时(120s),请上传更小的视频或更稳定的格式")
+    except ValueError:
+        raise
+    except Exception as e:
+        try:
+            os.unlink(fixed_path)
+        except OSError:
+            pass
+        print(f"ffmpeg remux 异常 path={path} err={e}", file=sys.stderr, flush=True)
+        raise ValueError(f"视频时长读取异常: {str(e)[:100]}")
 
 
 @router.post("/upload")
