@@ -49,7 +49,10 @@ export default function OralBroadcastListPage() {
     return () => clearInterval(i);
   }, [loadSessions]);
 
-  const createNew = async (originalFile: File) => {
+  // P19 批量:N/5 进度文字。空字符串 = 不在批量上传中
+  const [batchInfo, setBatchInfo] = useState("");
+
+  const createNew = async (originalFile: File, navigate: boolean = true) => {
     setError("");
     if (!originalFile.type.startsWith("video/")) {
       setError(t("oral.errVideoOnly"));
@@ -135,7 +138,7 @@ export default function OralBroadcastListPage() {
         if (!finRes.ok) throw new Error(finData.detail || "finalize 失败");
         setUploadProgress(100);
         setUploadSpeed(t("oral.processing"));
-        router.push(`/video/oral-broadcast/${finData.session_id}`);
+        if (navigate) router.push(`/video/oral-broadcast/${finData.session_id}`);
         return;
       }
       console.warn("[oral upload] presigned PUT 未启用,fallback 到分片上传");
@@ -228,7 +231,7 @@ export default function OralBroadcastListPage() {
         if (data.status === "completed" && data.session_id) {
           setUploadProgress(100);
           setUploadSpeed(t("oral.processing"));
-          router.push(`/video/oral-broadcast/${data.session_id}`);
+          if (navigate) router.push(`/video/oral-broadcast/${data.session_id}`);
           return;
         }
         throw new Error("最后一片返回异常,请重试");
@@ -241,6 +244,31 @@ export default function OralBroadcastListPage() {
       setUploading(false);
       setPhase("idle");
     }
+  };
+
+  // P19:批量上传(最多 5 个,串行避免争抢服务器)
+  const batchUpload = async (files: File[]) => {
+    setError("");
+    if (files.length === 0) return;
+    if (files.length > 5) {
+      setError(t("oral.batchMax"));
+      return;
+    }
+    if (files.length === 1) {
+      // 单文件直接走老 createNew 体验,导航到详情页
+      await createNew(files[0]);
+      return;
+    }
+    for (let i = 0; i < files.length; i++) {
+      setBatchInfo(`${i + 1}/${files.length}`);
+      try {
+        await createNew(files[i], false);
+      } catch {
+        // 单个失败不阻塞后续(setError 已在 createNew finally 处理)
+      }
+    }
+    setBatchInfo("");
+    loadSessions();
   };
 
   return (
@@ -269,14 +297,21 @@ export default function OralBroadcastListPage() {
               background: uploading ? "#ddd" : "#0d0d0d", color: "#fff",
               borderRadius: 10, cursor: uploading ? "not-allowed" : "pointer", fontWeight: 500,
             }}>
-              {uploading
+              {batchInfo
+                ? `${t("oral.batchUploading")} ${batchInfo}`
+                : uploading
                 ? (phase === "compress" ? t("oral.compressing") : t("oral.uploading"))
                 : `+ ${t("oral.newSession")}`}
-              <input type="file" accept="video/*" disabled={uploading}
-                onChange={e => { const f = e.target.files?.[0]; if (f) createNew(f); }}
+              <input type="file" accept="video/*" multiple disabled={uploading || !!batchInfo}
+                onChange={e => {
+                  const fs = Array.from(e.target.files || []);
+                  if (fs.length === 0) return;
+                  if (fs.length === 1) createNew(fs[0]); else batchUpload(fs);
+                  e.target.value = "";
+                }}
                 style={{ display: "none" }} />
             </label>
-            <span style={{ color: "#999", fontSize: "0.85rem" }}>{t("oral.maxDuration")}</span>
+            <span style={{ color: "#999", fontSize: "0.85rem" }}>{t("oral.maxDuration")} · {t("oral.batchHint")}</span>
           </div>
 
           {!uploading && (
