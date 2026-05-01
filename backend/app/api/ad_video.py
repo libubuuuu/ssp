@@ -51,7 +51,8 @@ class Script(BaseModel):
 
 class PreviewRequest(BaseModel):
     """首帧合成请求"""
-    product_image_url: str = Field(..., description="白底产品图(已上传到 fal storage)")
+    product_image_url: str = Field(..., description="产品正面图(已上传到 fal storage)")
+    product_back_image_url: Optional[str] = Field(None, description="P34: 产品反面/侧面图(可选,锁住产品反面材质细节)")
     background_image_url: Optional[str] = Field(None, description="可选背景图")
     model_description: str = Field(..., min_length=1, max_length=500)
     scene_visual_prompt: str = Field(..., min_length=1, max_length=1000)
@@ -83,6 +84,7 @@ class SceneRegenerateRequest(BaseModel):
 @require_credits("ad_video/analyze")
 async def analyze_product(
     file: UploadFile = File(...),
+    back_file: Optional[UploadFile] = File(None),  # P34: 产品反面图(可选)
     total_duration: int = 15,
     current_user: dict = Depends(get_current_user),
 ):
@@ -143,6 +145,35 @@ async def analyze_product(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"图片处理失败: {str(e)[:200]}")
 
+    # P34: 第二张产品图(反面/侧面),可选,流程同正面
+    product_back_image_url: Optional[str] = None
+    if back_file is not None and back_file.filename:
+        try:
+            back_contents = await read_bounded(back_file, 10 * 1024 * 1024, IMAGE_MIMES, "ad-video 产品反面图")
+            img_b = Image.open(io.BytesIO(back_contents))
+            if img_b.mode in ("RGBA", "P", "LA"):
+                bg_b = Image.new("RGB", img_b.size, (255, 255, 255))
+                if img_b.mode in ("RGBA", "LA"):
+                    bg_b.paste(img_b, mask=img_b.split()[-1])
+                else:
+                    bg_b.paste(img_b.convert("RGBA"), mask=img_b.convert("RGBA").split()[-1])
+                img_b = bg_b
+            elif img_b.mode != "RGB":
+                img_b = img_b.convert("RGB")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_b:
+                img_b.save(tmp_b.name, "JPEG", quality=90, optimize=True)
+                if os.path.getsize(tmp_b.name) > 10 * 1024 * 1024:
+                    img_b.save(tmp_b.name, "JPEG", quality=75, optimize=True)
+                tmp_back_path = tmp_b.name
+            try:
+                product_back_image_url = await fal_upload_with_retry(tmp_back_path)
+            finally:
+                os.unlink(tmp_back_path)
+        except Exception as e:
+            # 反面图失败不阻塞主流程,降级到只用正面
+            log_info(f"ad_video/analyze 反面图处理失败,降级单图: {str(e)[:150]}")
+            product_back_image_url = None
+
     # 调 VLM
     service = get_vlm_service()
     if service is None:
@@ -182,11 +213,15 @@ async def analyze_product(
                 detail="AI 生成的脚本包含敏感词,请重新上传或联系客服",
             )
 
-    log_info(f"ad_video/analyze ok user={current_user.get('id')} category={audit.get('category')}")
+    log_info(
+        f"ad_video/analyze ok user={current_user.get('id')} "
+        f"category={audit.get('category')} back={'yes' if product_back_image_url else 'no'}"
+    )
     return {
         "success": True,
         **result,
         "product_image_url": product_image_url,  # 给后续 /preview 复用
+        "product_back_image_url": product_back_image_url,  # P34
         "description": f"AI 带货视频分析: {audit.get('category', '产品')}",
     }
 
@@ -281,6 +316,7 @@ async def preview_first_frame(
         background_image_url=req.background_image_url,
         model_description=req.model_description,
         scene_visual_prompt=req.scene_visual_prompt,
+        product_back_image_url=req.product_back_image_url,  # P34
     )
 
     if "error" in result:

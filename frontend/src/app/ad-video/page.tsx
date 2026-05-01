@@ -46,6 +46,9 @@ export default function AdVideoPage() {
   // Step 1: 上传 + 时长选择
   const [productFile, setProductFile] = useState<File | null>(null);
   const [productPreview, setProductPreview] = useState("");
+  // P34:产品反面/侧面图(可选),锁住产品反面材质/logo/标签
+  const [productBackFile, setProductBackFile] = useState<File | null>(null);
+  const [productBackPreview, setProductBackPreview] = useState("");
   const [bgFile, setBgFile] = useState<File | null>(null);
   const [bgPreview, setBgPreview] = useState("");
   // P32:用户自定义视频总时长(5-300s),analyze 时透传给 VLM 出 N 段脚本
@@ -57,6 +60,7 @@ export default function AdVideoPage() {
 
   // Step 3: 首帧预览
   const [productImageUrl, setProductImageUrl] = useState(""); // fal storage URL
+  const [productBackImageUrl, setProductBackImageUrl] = useState(""); // P34
   const [bgImageUrl, setBgImageUrl] = useState("");
   const [previewImageUrl, setPreviewImageUrl] = useState("");
 
@@ -78,6 +82,10 @@ export default function AdVideoPage() {
   const onProductFile = (f: File) => {
     setProductFile(f);
     setProductPreview(URL.createObjectURL(f));
+  };
+  const onProductBackFile = (f: File) => {
+    setProductBackFile(f);
+    setProductBackPreview(URL.createObjectURL(f));
   };
   const onBgFile = (f: File) => {
     setBgFile(f);
@@ -101,6 +109,11 @@ export default function AdVideoPage() {
       setLoadingMsg("小九正在审核图片并生成脚本...");
       const fd = new FormData();
       fd.append("file", compressed);
+      // P34: 反面图(可选)同时上传
+      if (productBackFile) {
+        const compressedBack = await compressImage(productBackFile);
+        fd.append("back_file", compressedBack);
+      }
       const r = await fetch(`${API_BASE}/api/ad-video/analyze?total_duration=${duration}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token()}` },
@@ -115,6 +128,10 @@ export default function AdVideoPage() {
       // /analyze 内部已上传到 fal storage,直接复用 URL,后面 /preview 不用再传
       if (d.product_image_url) {
         setProductImageUrl(d.product_image_url);
+      }
+      // P34: 反面图(若上传了)
+      if (d.product_back_image_url) {
+        setProductBackImageUrl(d.product_back_image_url);
       }
       setStep(2);
     } catch (e) {
@@ -171,6 +188,7 @@ export default function AdVideoPage() {
         },
         body: JSON.stringify({
           product_image_url: pUrl,
+          product_back_image_url: productBackImageUrl || null,
           background_image_url: bUrl || null,
           model_description: script.model_description,
           scene_visual_prompt: script.scenes[0]?.visual_prompt || "",
@@ -347,19 +365,25 @@ export default function AdVideoPage() {
 
         {/* Step 1: 上传 */}
         {step === 1 && (
-          <Card title="第一步:上传产品图" desc="建议白底图、4:5 或 1:1、主体居中、光线均匀">
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <Card title="第一步:上传产品图" desc="建议白底图、4:5 或 1:1、主体居中、光线均匀。反面图能帮 AI 锁住材质/logo/标签细节,合成更真实">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
               <UploadBox
-                label="产品图(必填)"
+                label="产品正面(必填)"
                 preview={productPreview}
                 onFile={onProductFile}
                 required
               />
               <UploadBox
+                label="产品反面/侧面(可选)"
+                preview={productBackPreview}
+                onFile={onProductBackFile}
+                hint="材质 / logo / 反面图案"
+              />
+              <UploadBox
                 label="背景图(可选)"
                 preview={bgPreview}
                 onFile={onBgFile}
-                hint="不传则由 AI 自动生成场景"
+                hint="不传 AI 自动生成"
               />
             </div>
             <div style={{ marginTop: 20 }}>

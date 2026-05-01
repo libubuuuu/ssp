@@ -39,12 +39,14 @@ async def compose_first_frame(
     background_image_url: Optional[str],
     model_description: str,
     scene_visual_prompt: str,
+    product_back_image_url: Optional[str] = None,  # P34
 ) -> dict:
     """
     合成视频首帧:产品 + 背景 + 模特
 
     参数:
-        product_image_url: 用户上传的白底产品图(已上传到 fal storage)
+        product_image_url: 产品正面图(已上传到 fal storage)
+        product_back_image_url: P34 产品反面/侧面图(可选,锁住反面材质/logo/标签)
         background_image_url: 用户上传的背景图(可选)
         model_description: 模特特征描述(英文)
         scene_visual_prompt: 镜头一的 visual_prompt
@@ -59,17 +61,29 @@ async def compose_first_frame(
     if not circuit_breaker.is_available(cb_key):
         return {"error": "首帧合成服务暂时不可用,已熔断"}
 
-    # 拼参考图列表
+    # 拼参考图列表(P34: 顺序固定 — 产品正面 → 产品反面 → 背景)
     image_urls: List[str] = [product_image_url]
+    if product_back_image_url:
+        image_urls.append(product_back_image_url)
     if background_image_url:
         image_urls.append(background_image_url)
 
-    # 拼 prompt
+    # 拼 prompt(根据图序生成精准引导)
     prompt_parts = [
-        f"{model_description} holding or wearing the product shown in the reference image.",
+        f"{model_description} holding or wearing the product shown in the reference images.",
         scene_visual_prompt,
     ]
-    if background_image_url:
+    if product_back_image_url and background_image_url:
+        prompt_parts.append(
+            "First reference is product front, second is product back/side "
+            "(preserve all product details from both views), third is background scene."
+        )
+    elif product_back_image_url:
+        prompt_parts.append(
+            "First reference is product front, second is product back/side "
+            "(preserve product details from both angles for accurate rendering)."
+        )
+    elif background_image_url:
         prompt_parts.append("Use the second reference image as the background scene.")
     prompt_parts.append(
         "Photorealistic UGC selfie style, vertical 9:16 composition, "
