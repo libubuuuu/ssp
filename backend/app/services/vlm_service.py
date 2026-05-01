@@ -41,26 +41,89 @@ VISION_ENDPOINT = "openrouter/router/vision"
 
 # ============== Prompt 模板 ==============
 
-_ANALYSIS_PROMPT = """你是一个电商带货视频脚本编剧。请分析用户上传的产品图,完成两件事:
+# P31:split_segments 跟 jobs.py 的逻辑保持一致(单源)
+# total<=15 单段;否则每段 10s,total 整除 10
+def split_segments(total_duration: int) -> list[int]:
+    """把 total_duration 拆成 Seedance 单次能跑的段长(5/10/15s)。
+    简化版:<=15 单段直接返;>15 每段 10s 整除。"""
+    if total_duration <= 15:
+        return [max(5, total_duration)]
+    n = total_duration // 10
+    rem = total_duration - n * 10
+    segs = [10] * n
+    if rem == 0:
+        return segs
+    if rem >= 5:
+        segs.append(rem)
+        return segs
+    # rem 1-4:并到最后一段(上限 15)
+    if segs[-1] + rem <= 15:
+        segs[-1] += rem
+        return segs
+    # 极端:摊到前段(罕见,total 是 10 倍数走不到这分支)
+    return segs
+
+
+def _build_analysis_prompt(total_duration: int = 15) -> str:
+    """P31:按 total_duration 动态生成 N 段分镜。
+    每段独立可作为单次 Seedance 调用,共享 overall_setting + model_description
+    锁角色场景(简版段间一致性)。"""
+    seg_durs = split_segments(total_duration)
+    n = len(seg_durs)
+    if n == 1:
+        purpose_hint = "单段:开场 → 产品展示 → 促单 CTA 一气呵成"
+    elif n == 2:
+        purpose_hint = "镜头一开场+产品展示 / 镜头二促单 CTA"
+    elif n == 3:
+        purpose_hint = "镜头一开场吸引 / 镜头二产品展示 / 镜头三促单 CTA"
+    else:
+        purpose_hint = f"前 1 段开场,中间 {n-2} 段从不同角度展示卖点,最后 1 段促单 CTA"
+
+    # 拼时间戳
+    time_lines = []
+    cum = 0
+    for i, d in enumerate(seg_durs):
+        time_lines.append(f"  - 镜头{i+1}({cum}-{cum+d}s,共 {d} 秒)")
+        cum += d
+
+    scenes_example_parts = []
+    cum2 = 0
+    for i, d in enumerate(seg_durs[:3]):  # 仅展示前 3 段示例
+        scenes_example_parts.append(
+            f'      {{"id": {i+1}, "time_range": "{cum2}-{cum2+d}s", "purpose": "...", '
+            f'"shot_language": "...", "content": "...", '
+            f'"visual_prompt": "English prompt", "speech": "English speech"}}'
+        )
+        cum2 += d
+    if n > 3:
+        scenes_example_parts.append("      ... 共 {n} 段 ...".replace("{n}", str(n)))
+    scenes_example = ",\n".join(scenes_example_parts)
+
+    return f"""你是一个电商带货视频脚本编剧。请分析用户上传的产品图,完成两件事:
 
 【任务一:审核】
 - 图片质量(清晰度/光线/白底)
 - 是否有违规内容(侵权 logo / 违禁品 / 不雅内容 / 政治敏感)
 - 识别产品品类、颜色、材质、目标人群
 
-【任务二:生成 15 秒带货视频脚本】
-按 Seedance 2.0 的标准格式输出三段分镜(每段 5 秒):
-- 镜头一(0-5s):开场吸引
-- 镜头二(5-10s):产品展示
-- 镜头三(10-15s):促单 CTA
+【任务二:生成 {total_duration} 秒带货视频脚本(共 {n} 段)】
+拆成 {n} 段分镜,每段长度如下,**严格按这个段长输出 N 段 scene**:
+{chr(10).join(time_lines)}
 
-每段必须有:shot_language(镜头语言) / content(场景内容) / visual_prompt(视觉提示词,英文,给视频模型) / speech(说话内容,英文,口语化带货)
+整体节奏:{purpose_hint}
+
+**关键约束(P31 段间一致性)**:
+1. overall_setting + model_description 是 N 段共享的锁定描述(模特长相、发型、肤色、服装风格、拍摄场景、灯光),N 段 visual_prompt 不要写跟它们冲突的内容
+2. 每段 visual_prompt 只写"这段独有的"动作/构图/卖点,**不要重复写模特外貌或场景**(由 overall + model 锁住)
+3. 每段 speech 是这段独立的口播台词,串起来要逻辑连贯
+
+每段字段:shot_language(中文镜头语言) / content(中文场景内容) / visual_prompt(英文视频模型提示词) / speech(英文口语化带货台词)
 
 【输出格式】
 严格按以下 JSON 返回,不要任何 markdown 标记或额外说明:
 
-{
-  "audit": {
+{{
+  "audit": {{
     "is_valid": true,
     "category": "产品品类",
     "color": "主色",
@@ -69,29 +132,23 @@ _ANALYSIS_PROMPT = """你是一个电商带货视频脚本编剧。请分析用�
     "issues": [],
     "violations": [],
     "target_audience": "目标人群"
-  },
-  "script": {
-    "overall_setting": "整体设定(拍摄风格/模特特征,中文)",
-    "model_description": "推荐模特特征,英文,给视频模型用",
+  }},
+  "script": {{
+    "overall_setting": "整体设定(N 段共享的拍摄风格/场景/灯光,中文)",
+    "model_description": "N 段共享的模特特征(年龄/发型/肤色/服装风格,英文,给视频模型锁角色)",
     "scenes": [
-      {
-        "id": 1,
-        "time_range": "0-5s",
-        "purpose": "开场吸引",
-        "shot_language": "中文描述拍摄角度+动作",
-        "content": "中文场景描述",
-        "visual_prompt": "English visual prompt for video model",
-        "speech": "English speech line"
-      },
-      {"id": 2, "time_range": "5-10s", "purpose": "产品展示", ...},
-      {"id": 3, "time_range": "10-15s", "purpose": "促单", ...}
+{scenes_example}
     ]
-  }
-}
+  }}
+}}
 
 如果图片有严重违规(色情 / 暴力 / 政治敏感),audit.is_valid 设为 false,violations 列出原因,scene 数组返回空 []。
 
-不要输出 ```json 或任何 markdown 标记,直接输出纯 JSON。"""
+不要输出 ```json 或任何 markdown 标记,直接输出纯 JSON。**scenes 数组必须正好 {n} 段**。"""
+
+
+# 向后兼容:模块加载时构造 15s 默认 prompt
+_ANALYSIS_PROMPT = _build_analysis_prompt(15)
 
 
 _SYSTEM_PROMPT = (
@@ -140,13 +197,16 @@ class VLMService:
         self,
         image_url: str,
         model: Optional[str] = None,
+        total_duration: int = 15,
     ) -> dict:
         """
         分析产品图 + 生成脚本
 
         参数:
-            image_url: 产品图的 fal storage URL(由 /api/ad-video/upload/image 返回)
+            image_url: 产品图的 fal storage URL
             model: 可选,指定 VLM 模型;默认走 DEFAULT_MODEL
+            total_duration: P31 总时长(秒),默认 15 维持向后兼容。
+                            > 15 时 VLM 会按 split_segments(total) 出 N 段 scenes。
 
         返回:
             {"audit": {...}, "script": {...}}  成功
@@ -157,6 +217,7 @@ class VLMService:
             return {"error": "VLM 视觉服务暂时不可用,请稍后再试"}
 
         chosen_model = model or DEFAULT_MODEL
+        prompt = _build_analysis_prompt(total_duration)
 
         # 调用 fal OpenRouter Vision
         try:
@@ -164,7 +225,7 @@ class VLMService:
                 VISION_ENDPOINT,
                 arguments={
                     "image_urls": [image_url],
-                    "prompt": _ANALYSIS_PROMPT,
+                    "prompt": prompt,
                     "system_prompt": _SYSTEM_PROMPT,
                     "model": chosen_model,
                 },
@@ -180,7 +241,7 @@ class VLMService:
                         VISION_ENDPOINT,
                         arguments={
                             "image_urls": [image_url],
-                            "prompt": _ANALYSIS_PROMPT,
+                            "prompt": prompt,
                             "system_prompt": _SYSTEM_PROMPT,
                             "model": FALLBACK_MODEL,
                         },

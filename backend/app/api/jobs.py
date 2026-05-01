@@ -125,41 +125,165 @@ async def _run_video_job(params: dict, job_type: str):
 
 
 async def _run_ad_video_job(params: dict):
-    """AI 带货视频 — Seedance 2.0 异步任务(2026-04-28 v3 新增)
+    """AI 带货视频 — Seedance 2.0 异步任务
+
+    单段(<=15s):走老路,所有 scenes 拼成一个 prompt 跑一次 Seedance
+    多段(>15s,P31 2026-05-01):每个 scene 独立调用 Seedance,
+                           Semaphore(5) 并发 + ffmpeg concat 拼接,
+                           沿用口播 V3 P28 长视频分段模板
 
     参数:
       - image_url: 首帧图(可以是 /preview 输出,也可以是直接上传的)
-      - script: 完整脚本 dict
-      - duration / aspect_ratio / resolution / enable_audio
+      - script: 完整脚本 dict {overall_setting, model_description, scenes:[...]}
+      - duration: 总时长 5-300 秒
+      - aspect_ratio / resolution / enable_audio
     """
     from app.services import ad_video_models
+    from app.services.vlm_service import split_segments
 
-    submit_result = await ad_video_models.submit_seedance_video(
-        image_url=params["image_url"],
-        script=params["script"],
-        duration=params.get("duration", 15),
-        aspect_ratio=params.get("aspect_ratio", "9:16"),
-        resolution=params.get("resolution", "1080p"),
-        enable_audio=params.get("enable_audio", True),
+    duration = int(params.get("duration", 15))
+    script = params.get("script") or {}
+    scenes = script.get("scenes") or []
+
+    # ---------- 单段模式(<=15s,老路保留) ----------
+    if duration <= 15 or len(scenes) <= 1:
+        submit_result = await ad_video_models.submit_seedance_video(
+            image_url=params["image_url"],
+            script=script,
+            duration=min(15, max(5, duration)),
+            aspect_ratio=params.get("aspect_ratio", "9:16"),
+            resolution=params.get("resolution", "1080p"),
+            enable_audio=params.get("enable_audio", True),
+        )
+        if submit_result.get("error"):
+            raise Exception(submit_result["error"])
+        task_id = submit_result.get("task_id")
+        if not task_id:
+            raise Exception("Seedance 未返回 task_id")
+        for _ in range(180):  # 15 min cap (Seedance v2 pro 1080p fal 实测 5-12min)
+            await asyncio.sleep(5)
+            status = await ad_video_models.poll_seedance_status(task_id)
+            if status.get("status") == "completed" and status.get("video_url"):
+                return {"video_url": status["video_url"], "type": "video"}
+            if status.get("status") == "failed":
+                raise Exception(status.get("error", "Seedance 失败"))
+        raise Exception("AI 带货视频生成超时(15 分钟)")
+
+    # ---------- 多段模式(>15s,P31) ----------
+    seg_durs = split_segments(duration)
+    n = len(seg_durs)
+    # scenes 数应跟 seg_durs 一致(VLM 已按 total_duration 出 N 段);
+    # 不一致(用户自己改了脚本)时按 min 兜底,避免越界
+    n_actual = min(n, len(scenes))
+    if n_actual < 2:
+        # 退回单段模式(防御)
+        submit_result = await ad_video_models.submit_seedance_video(
+            image_url=params["image_url"], script=script,
+            duration=min(15, duration),
+            aspect_ratio=params.get("aspect_ratio", "9:16"),
+            resolution=params.get("resolution", "1080p"),
+            enable_audio=False,
+        )
+        if submit_result.get("error"):
+            raise Exception(submit_result["error"])
+        task_id = submit_result.get("task_id")
+        for _ in range(180):  # 15 min cap
+            await asyncio.sleep(5)
+            status = await ad_video_models.poll_seedance_status(task_id)
+            if status.get("status") == "completed" and status.get("video_url"):
+                return {"video_url": status["video_url"], "type": "video"}
+            if status.get("status") == "failed":
+                raise Exception(status.get("error", "Seedance 失败"))
+        raise Exception("AI 带货视频生成超时(15 分钟)")
+
+    overall = script.get("overall_setting", "")
+    model_desc = script.get("model_description", "")
+    scenes_to_run = scenes[:n_actual]
+    aspect_ratio = params.get("aspect_ratio", "9:16")
+    resolution = params.get("resolution", "1080p")
+
+    sem = asyncio.Semaphore(5)  # P28 模板:并发 5
+
+    async def _run_scene(idx: int, scene: dict) -> str:
+        async with sem:
+            single_script = {
+                "overall_setting": overall,
+                "model_description": model_desc,
+                "scenes": [scene],
+            }
+            sub = await ad_video_models.submit_seedance_video(
+                image_url=params["image_url"],
+                script=single_script,
+                duration=seg_durs[idx],
+                aspect_ratio=aspect_ratio,
+                resolution=resolution,
+                enable_audio=False,  # 多段拼接禁原生音频(段间换音轨会跳)
+            )
+            if sub.get("error"):
+                raise Exception(f"段 {idx+1}/{n_actual}: {sub['error']}")
+            tid = sub.get("task_id")
+            if not tid:
+                raise Exception(f"段 {idx+1}/{n_actual}: Seedance 未返 task_id")
+            for _ in range(180):  # 15 min/段
+                await asyncio.sleep(5)
+                st = await ad_video_models.poll_seedance_status(tid)
+                if st.get("status") == "completed" and st.get("video_url"):
+                    return st["video_url"]
+                if st.get("status") == "failed":
+                    raise Exception(f"段 {idx+1}/{n_actual}: {st.get('error')}")
+            raise Exception(f"段 {idx+1}/{n_actual}: 超时(15 min)")
+
+    seg_urls = await asyncio.gather(
+        *[_run_scene(i, s) for i, s in enumerate(scenes_to_run)]
     )
 
-    if submit_result.get("error"):
-        raise Exception(submit_result["error"])
+    # ---------- 下载 + ffmpeg concat ----------
+    import tempfile, shutil, subprocess
+    import httpx
+    import fal_client as _fc
 
-    task_id = submit_result.get("task_id")
-    if not task_id:
-        raise Exception("Seedance 未返回 task_id")
+    seg_root = Path(tempfile.mkdtemp(prefix="ad_video_segs_"))
+    try:
+        local_paths = []
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            for i, url in enumerate(seg_urls):
+                out = seg_root / f"out_{i:02d}.mp4"
+                async with client.stream("GET", url) as resp:
+                    resp.raise_for_status()
+                    with open(out, "wb") as fp:
+                        async for chunk in resp.aiter_bytes(64 * 1024):
+                            fp.write(chunk)
+                local_paths.append(out)
 
-    # 轮询(最多 5 分钟,Seedance 一般 1-3 分钟)
-    for _ in range(60):
-        await asyncio.sleep(5)
-        status = await ad_video_models.poll_seedance_status(task_id)
-        if status.get("status") == "completed" and status.get("video_url"):
-            return {"video_url": status["video_url"], "type": "video"}
-        if status.get("status") == "failed":
-            raise Exception(status.get("error", "Seedance 失败"))
+        concat_list = seg_root / "concat.txt"
+        with open(concat_list, "w") as fp:
+            for p in local_paths:
+                fp.write(f"file '{p}'\n")
 
-    raise Exception("AI 带货视频生成超时(5 分钟)")
+        merged = seg_root / "final.mp4"
+        # 优先 stream copy(快+无损),失败再 re-encode 兜底
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
+             "-i", str(concat_list), "-c", "copy", str(merged)],
+            capture_output=True, text=True, timeout=120,
+        )
+        if r.returncode != 0 or not merged.exists() or merged.stat().st_size == 0:
+            # re-encode fallback(各段编码参数不一致时走这条)
+            r2 = subprocess.run(
+                ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                 "-i", str(concat_list),
+                 "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-an",
+                 str(merged)],
+                capture_output=True, text=True, timeout=300,
+            )
+            if r2.returncode != 0 or not merged.exists():
+                raise Exception(f"ffmpeg concat 失败: {r2.stderr[-500:]}")
+
+        # 上传到 fal storage 拿可访问 URL(沿用现有归档/分发模式)
+        final_url = await _fc.upload_file_async(str(merged))
+        return {"video_url": final_url, "type": "video"}
+    finally:
+        shutil.rmtree(seg_root, ignore_errors=True)
 
 
 async def _execute_job(job_id: str):

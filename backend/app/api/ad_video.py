@@ -60,10 +60,13 @@ class GenerateRequest(BaseModel):
     """视频生成请求"""
     image_url: str = Field(..., description="首帧图 URL(来自 /preview 或直接上传)")
     script: Script
-    duration: int = Field(15, ge=5, le=15, description="时长 5-15 秒")
+    # P31 (2026-05-01):total_duration 上限 15 → 300。
+    # >15 时 jobs.py 走 split_segments(每段 10s)+ N 段并发 + ffmpeg concat,
+    # 段间一致性靠共享 overall_setting + model_description + 同一首帧 product_image_url 锁。
+    duration: int = Field(15, ge=5, le=300, description="总时长 5-300 秒(>15 走多段并发拼接)")
     aspect_ratio: str = Field("9:16", description="9:16 / 16:9 / 1:1")
     resolution: str = Field("1080p", description="720p / 1080p")
-    enable_audio: bool = Field(True, description="是否启用原生音频")
+    enable_audio: bool = Field(True, description="是否启用原生音频(>15 多段模式自动关,各段独立配音会跳)")
 
 
 class SceneRegenerateRequest(BaseModel):
@@ -79,15 +82,19 @@ class SceneRegenerateRequest(BaseModel):
 @require_credits("ad_video/analyze")
 async def analyze_product(
     file: UploadFile = File(...),
+    total_duration: int = 15,
     current_user: dict = Depends(get_current_user),
 ):
     """
     上传产品图 → VLM 审核 + 生成脚本
 
+    P31:total_duration 透传给 VLM,>15 时按 split_segments 出 N 段 scenes
+    (每段 10s 共享 overall_setting + model_description 锁角色)
+
     流程:
       1. 接收 multipart 文件
       2. 内部上传到 fal storage 拿到 URL(VLM 端点要 URL,不接受 base64)
-      3. 调 VLM(默认 Qwen3-VL,中文最强)审核 + 生成脚本
+      3. 调 VLM(默认 Qwen3-VL,中文最强)审核 + 生成 N 段脚本
 
     返回:
       {
@@ -140,7 +147,9 @@ async def analyze_product(
     if service is None:
         raise HTTPException(status_code=503, detail="VLM 视觉服务未初始化")
 
-    result = await service.analyze_product(product_image_url)
+    # P31:total_duration 透传,VLM 按段长动态出 N 段 scenes
+    safe_duration = max(5, min(300, int(total_duration)))
+    result = await service.analyze_product(product_image_url, total_duration=safe_duration)
 
     if "error" in result:
         # 服务故障 → 返还积分(装饰器会处理)
