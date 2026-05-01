@@ -60,9 +60,12 @@ class PreviewRequest(BaseModel):
 class GenerateRequest(BaseModel):
     """视频生成请求"""
     image_url: str = Field(..., description="首帧图 URL(共享/兼容,主要用 scene_image_urls)")
-    # P35: 每段独立首帧 URL list,从 /preview 返回。jobs.py 多段路径优先用这个,
-    # 不再调 compose_first_frame_for_scene 重复合成,避免 generate 阶段双倍 fal 钱。
+    # P35: 每段独立首帧 URL list,从 /preview 返回(reference-to-video 不再使用,留作兼容)
     scene_image_urls: Optional[List[str]] = Field(None, description="N 段独立首帧 URL list (P35)")
+    # P36: 切 reference-to-video,直接拿产品+背景图喂 Seedance,跳过 Seedream 合成
+    product_image_url: Optional[str] = Field(None, description="P36: 产品正面图 URL")
+    product_back_image_url: Optional[str] = Field(None, description="P36: 产品反面/侧面图 URL")
+    background_image_url: Optional[str] = Field(None, description="P36: 背景图 URL")
     script: Script
     # P31 (2026-05-01):total_duration 上限 15 → 300。
     # >15 时 jobs.py 走 split_segments(每段 10s)+ N 段并发 + ffmpeg concat,
@@ -429,13 +432,15 @@ async def generate_ad_video(
         "title": f"AI 带货视频 ({req.duration}s)",
         "params": {
             "image_url": req.image_url,
-            # P35: preview 阶段已合 N 张分镜首帧,jobs.py 直接用,不再重复合
             "scene_image_urls": req.scene_image_urls,
+            # P36: 透传给 jobs.py reference-to-video 用,跳过 Seedream
+            "product_image_url": req.product_image_url,
+            "product_back_image_url": req.product_back_image_url,
+            "background_image_url": req.background_image_url,
             "script": req.script.model_dump(),
             "duration": req.duration,
             "aspect_ratio": req.aspect_ratio,
-            # P32:强制 720p。v2/pro standard 1080p 太慢,720p 已切到 v1.5/pro 端点
-            "resolution": "720p",
+            "resolution": "720p",  # P32:reference-to-video 也强 720p
             "enable_audio": req.enable_audio,
         },
         "module": module,

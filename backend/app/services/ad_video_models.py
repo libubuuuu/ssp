@@ -181,7 +181,91 @@ async def compose_first_frame_for_scene(
         return {"error": f"本段首帧合成失败: {str(e)[:200]}"}
 
 
-# ============== Seedance 2.0 视频生成 ==============
+# ============== Seedance 2.0 reference-to-video (P36) ==============
+
+# P36 (2026-05-01):用户痛点"产品假 + 真人和背景不搭"根因是 Seedream 多图融合
+# 合成痕迹。换 reference-to-video 端点,Seedance 直接看产品图自己想模特+场景,
+# 训练数据是真带货视频,真人/产品/光线一致性更对路。probe 实测 5s 视频 2:52
+# (单段),NSFW 通过(束腰带塑形产品)。SDK path bug 让 status_async 拿不到结果,
+# 必须用 subscribe_async 阻塞等。
+SEEDANCE_REF2VID_ENDPOINT = "bytedance/seedance-2.0/reference-to-video"
+
+
+def build_seedance_ref2vid_prompt(scene: dict, model_description: str, overall_setting: str) -> str:
+    """拼 reference-to-video prompt:overall + model + shot + visual + speech 拼成英文叙事"""
+    parts = []
+    if overall_setting:
+        parts.append(overall_setting)
+    if model_description:
+        parts.append(f"Model: {model_description}")
+    if scene.get("shot_language"):
+        parts.append(f"Shot: {scene['shot_language']}")
+    if scene.get("visual_prompt"):
+        parts.append(f"Visual: {scene['visual_prompt']}")
+    if scene.get("speech"):
+        parts.append(f'Model speaks: "{scene["speech"]}"')
+    parts.append(
+        "Photorealistic UGC selfie style, vertical 9:16 composition, "
+        "natural lighting, preserve exact product details from reference images."
+    )
+    return "\n".join(parts)
+
+
+async def submit_seedance_ref2vid_subscribe(
+    reference_image_urls: List[str],
+    prompt: str,
+    duration: int = 5,
+    aspect_ratio: str = "9:16",
+    resolution: str = "720p",
+) -> dict:
+    """
+    P36: Seedance reference-to-video,subscribe_async 阻塞等结果。
+
+    被 jobs.py 多段路径在 asyncio.Semaphore(5) 并发调用,N 段并发出 N 段视频。
+
+    参数:
+        reference_image_urls: 1-9 张参考图(产品正面 + 反面 + 背景 等)
+        prompt: 完整文字 prompt(用 build_seedance_ref2vid_prompt 拼)
+        duration: 5/10/15 秒(本段时长)
+        aspect_ratio / resolution
+
+    返回:
+        {"video_url": "...", "model": "..."}  成功
+        {"error": "..."}                       失败
+    """
+    cb = get_circuit_breaker()
+    cb_key = "fal/seedance-ref2vid"
+    if not cb.is_available(cb_key):
+        return {"error": "Seedance reference-to-video 暂时不可用,已熔断"}
+
+    if not reference_image_urls:
+        return {"error": "无参考图,无法调 reference-to-video"}
+
+    try:
+        result = await fal_client.subscribe_async(
+            SEEDANCE_REF2VID_ENDPOINT,
+            arguments={
+                "reference_image_urls": reference_image_urls,
+                "prompt": prompt,
+                "duration": str(duration),
+                "aspect_ratio": aspect_ratio,
+                "resolution": resolution,
+            },
+        )
+        video_obj = result.get("video", {}) if isinstance(result, dict) else {}
+        url = video_obj.get("url") if isinstance(video_obj, dict) else None
+        if not url:
+            await cb.record_failure(cb_key)
+            return {"error": "ref2vid 返回视频 URL 为空"}
+        await cb.record_success(cb_key)
+        return {"video_url": url, "model": SEEDANCE_REF2VID_ENDPOINT}
+    except Exception as e:
+        await cb.record_failure(cb_key)
+        log_error(f"Seedance ref2vid 失败: {str(e)[:200]}")
+        return {"error": f"Seedance ref2vid 失败: {str(e)[:200]}"}
+
+
+# ============== Seedance 2.0 image-to-video (旧,保留作 fallback) ==============
 
 def build_seedance_prompt(script: dict) -> str:
     """

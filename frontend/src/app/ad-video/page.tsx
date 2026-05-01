@@ -225,7 +225,11 @@ export default function AdVideoPage() {
         },
         body: JSON.stringify({
           image_url: previewImageUrl,
-          scene_image_urls: sceneImageUrls,  // P35: N 张分镜首帧给 jobs.py 直接用
+          scene_image_urls: sceneImageUrls,  // P35
+          // P36: 透传产品+背景图给后端 reference-to-video 用,跳过 Seedream 合成
+          product_image_url: productImageUrl || null,
+          product_back_image_url: productBackImageUrl || null,
+          background_image_url: bgImageUrl || null,
           script,
           duration,
           aspect_ratio: "9:16",
