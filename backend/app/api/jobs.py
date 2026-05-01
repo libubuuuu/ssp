@@ -206,30 +206,34 @@ async def _run_ad_video_job(params: dict):
 
     async def _run_scene(idx: int, scene: dict) -> str:
         async with sem:
-            # P32 (一镜一图一段):每段先在共享首帧基础上合成本段独立首帧,
-            # 让本段画面跟 visual_prompt 匹配。失败则回退共享首帧(防全片崩)。
+            # P35: preview 阶段已合 N 张分镜首帧,优先用,避免 generate 重复合成
             shared_frame = params["image_url"]
-            scene_frame_url = shared_frame
-            try:
-                fr = await ad_video_models.compose_first_frame_for_scene(
-                    base_image_url=shared_frame,
-                    scene=scene,
-                    model_description=model_desc,
-                    overall_setting=overall,
-                )
-                if fr.get("image_url"):
-                    scene_frame_url = fr["image_url"]
-                else:
+            preview_urls = params.get("scene_image_urls") or []
+            if idx < len(preview_urls) and preview_urls[idx]:
+                scene_frame_url = preview_urls[idx]
+            else:
+                # P32 fallback: preview 没出 N 张(老前端兼容),现场合成本段首帧
+                scene_frame_url = shared_frame
+                try:
+                    fr = await ad_video_models.compose_first_frame_for_scene(
+                        base_image_url=shared_frame,
+                        scene=scene,
+                        model_description=model_desc,
+                        overall_setting=overall,
+                    )
+                    if fr.get("image_url"):
+                        scene_frame_url = fr["image_url"]
+                    else:
+                        from app.services.logger import log_warning
+                        log_warning(
+                            f"ad_video scene {idx+1}/{n_actual} 首帧合成失败,"
+                            f"回退共享首帧: {fr.get('error')}"
+                        )
+                except Exception as fe:
                     from app.services.logger import log_warning
                     log_warning(
-                        f"ad_video scene {idx+1}/{n_actual} 首帧合成失败,"
-                        f"回退共享首帧: {fr.get('error')}"
+                        f"ad_video scene {idx+1}/{n_actual} 首帧合成异常,回退共享首帧: {fe}"
                     )
-            except Exception as fe:
-                from app.services.logger import log_warning
-                log_warning(
-                    f"ad_video scene {idx+1}/{n_actual} 首帧合成异常,回退共享首帧: {fe}"
-                )
 
             single_script = {
                 "overall_setting": overall,

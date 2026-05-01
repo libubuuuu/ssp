@@ -97,6 +97,8 @@ async def compose_first_frame(
             arguments={
                 "prompt": full_prompt,
                 "image_urls": image_urls,
+                # P35: 显式 9:16 高分辨率(原默认偏小,用户反馈"比例太小")
+                "image_size": {"width": 1024, "height": 1820},
             },
         )
         images = result.get("images", [])
@@ -157,7 +159,12 @@ async def compose_first_frame_for_scene(
     try:
         result = await fal_client.run_async(
             NANO_BANANA_EDIT_ENDPOINT,
-            arguments={"prompt": prompt, "image_urls": [base_image_url]},
+            arguments={
+                "prompt": prompt,
+                "image_urls": [base_image_url],
+                # P35: 显式 9:16 高分辨率
+                "image_size": {"width": 1024, "height": 1820},
+            },
         )
         images = result.get("images", []) if isinstance(result, dict) else []
         if not images:

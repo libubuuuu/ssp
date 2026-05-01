@@ -50,17 +50,19 @@ class Script(BaseModel):
 
 
 class PreviewRequest(BaseModel):
-    """首帧合成请求"""
+    """首帧合成请求 (P35: 改成接整个 script,后端循环出 N 张分镜首帧)"""
     product_image_url: str = Field(..., description="产品正面图(已上传到 fal storage)")
-    product_back_image_url: Optional[str] = Field(None, description="P34: 产品反面/侧面图(可选,锁住产品反面材质细节)")
+    product_back_image_url: Optional[str] = Field(None, description="P34: 产品反面/侧面图(可选)")
     background_image_url: Optional[str] = Field(None, description="可选背景图")
-    model_description: str = Field(..., min_length=1, max_length=500)
-    scene_visual_prompt: str = Field(..., min_length=1, max_length=1000)
+    script: Script
 
 
 class GenerateRequest(BaseModel):
     """视频生成请求"""
-    image_url: str = Field(..., description="首帧图 URL(来自 /preview 或直接上传)")
+    image_url: str = Field(..., description="首帧图 URL(共享/兼容,主要用 scene_image_urls)")
+    # P35: 每段独立首帧 URL list,从 /preview 返回。jobs.py 多段路径优先用这个,
+    # 不再调 compose_first_frame_for_scene 重复合成,避免 generate 阶段双倍 fal 钱。
+    scene_image_urls: Optional[List[str]] = Field(None, description="N 段独立首帧 URL list (P35)")
     script: Script
     # P31 (2026-05-01):total_duration 上限 15 → 300。
     # >15 时 jobs.py 走 split_segments(每段 10s)+ N 段并发 + ffmpeg concat,
@@ -306,33 +308,82 @@ async def preview_first_frame(
     req: PreviewRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """合成首帧预览图(Nano Banana 2 Edit)"""
-    # 内容审核
-    assert_safe_prompt(req.scene_visual_prompt)
-    assert_safe_prompt(req.model_description)
+    """
+    P35: 合成 N 张分镜首帧(每段一张)。
 
-    result = await ad_video_models.compose_first_frame(
+    流程:
+      Step A:第 1 段用 compose_first_frame 锚定模特+产品+背景(产品正反面参考)
+      Step B:第 2..N 段用 compose_first_frame_for_scene 在第 1 段基础上调整为本段镜头
+              (并发 5,模特身份共享 base 锚定)
+
+    返回 N 张图 URL list,前端 step 3 网格显示。后续 /generate 直接用这 N 张
+    喂 Seedance i2v,不再重复合成首帧。
+    """
+    import asyncio
+
+    # 内容审核
+    assert_safe_prompt(req.script.model_description)
+    for sc in req.script.scenes:
+        assert_safe_prompt(sc.visual_prompt)
+
+    if not req.script.scenes:
+        raise HTTPException(status_code=400, detail="脚本至少需要 1 段")
+
+    # Step A: 第 1 段 = 共享 base(锚定模特+产品+背景)
+    first_scene = req.script.scenes[0]
+    base_result = await ad_video_models.compose_first_frame(
         product_image_url=req.product_image_url,
         background_image_url=req.background_image_url,
-        model_description=req.model_description,
-        scene_visual_prompt=req.scene_visual_prompt,
-        product_back_image_url=req.product_back_image_url,  # P34
+        model_description=req.script.model_description,
+        scene_visual_prompt=first_scene.visual_prompt,
+        product_back_image_url=req.product_back_image_url,
     )
+    if "error" in base_result or not base_result.get("image_url"):
+        raise HTTPException(status_code=500, detail=base_result.get("error", "首帧合成失败"))
 
-    if "error" in result:
-        raise HTTPException(status_code=500, detail=result["error"])
+    base_url = await archive_url(base_result["image_url"], current_user["id"], "image")
+    scene_image_urls = [base_url]
 
-    # 媒体归档(BUG-2)
-    if result.get("image_url"):
-        result["image_url"] = await archive_url(
-            result["image_url"], current_user["id"], "image"
-        )
+    # 单段不需要 Step B
+    if len(req.script.scenes) == 1:
+        log_info(f"ad_video/preview ok user={current_user.get('id')} scenes=1")
+        return {
+            "success": True,
+            "scene_image_urls": scene_image_urls,
+            "image_url": base_url,  # 兼容老前端字段
+            "description": "AI 带货视频首帧预览(1 段)",
+        }
 
-    log_info(f"ad_video/preview ok user={current_user.get('id')}")
+    # Step B: 第 2..N 段并发合成,以 base 为锚
+    sem = asyncio.Semaphore(5)
+
+    async def _gen_one(scene) -> str:
+        async with sem:
+            sf = await ad_video_models.compose_first_frame_for_scene(
+                base_image_url=base_url,
+                scene=scene.model_dump() if hasattr(scene, "model_dump") else dict(scene),
+                model_description=req.script.model_description,
+                overall_setting=req.script.overall_setting,
+            )
+            if sf.get("image_url"):
+                return await archive_url(sf["image_url"], current_user["id"], "image")
+            # 失败回退 base(用户能看到这段标"已回退")
+            log_info(f"ad_video/preview scene fallback to base: {sf.get('error', '?')}")
+            return base_url
+
+    rest_urls = await asyncio.gather(*[_gen_one(s) for s in req.script.scenes[1:]])
+    scene_image_urls.extend(rest_urls)
+
+    n_real = sum(1 for u in scene_image_urls if u != base_url) + 1  # 真合成的(非 fallback)
+    log_info(
+        f"ad_video/preview ok user={current_user.get('id')} "
+        f"scenes={len(scene_image_urls)} real={n_real}"
+    )
     return {
         "success": True,
-        **result,
-        "description": "AI 带货视频首帧预览",
+        "scene_image_urls": scene_image_urls,
+        "image_url": base_url,  # 兼容老前端字段
+        "description": f"AI 带货视频首帧预览({len(scene_image_urls)} 段)",
     }
 
 
@@ -378,11 +429,12 @@ async def generate_ad_video(
         "title": f"AI 带货视频 ({req.duration}s)",
         "params": {
             "image_url": req.image_url,
+            # P35: preview 阶段已合 N 张分镜首帧,jobs.py 直接用,不再重复合
+            "scene_image_urls": req.scene_image_urls,
             "script": req.script.model_dump(),
             "duration": req.duration,
             "aspect_ratio": req.aspect_ratio,
-            # P32 (2026-05-01):强制 720p。fal v2 pro 1080p 公网实测 10+min 常态,
-            # 720p 4-6min 出片体验差距巨大,清晰度损失对带货展示可接受
+            # P32:强制 720p。v2/pro standard 1080p 太慢,720p 已切到 v1.5/pro 端点
             "resolution": "720p",
             "enable_audio": req.enable_audio,
         },

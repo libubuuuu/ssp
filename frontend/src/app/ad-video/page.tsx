@@ -63,6 +63,8 @@ export default function AdVideoPage() {
   const [productBackImageUrl, setProductBackImageUrl] = useState(""); // P34
   const [bgImageUrl, setBgImageUrl] = useState("");
   const [previewImageUrl, setPreviewImageUrl] = useState("");
+  // P35: N 张分镜首帧(每段一张),后续 generate 直接复用,jobs.py 不再重复合
+  const [sceneImageUrls, setSceneImageUrls] = useState<string[]>([]);
 
   // Step 4: 视频
   const [videoUrl, setVideoUrl] = useState("");
@@ -179,7 +181,7 @@ export default function AdVideoPage() {
         setBgImageUrl(bUrl);
       }
 
-      setLoadingMsg("Nano Banana 2 合成首帧...");
+      setLoadingMsg(`Seedream 合成 ${script.scenes.length} 张分镜首帧...`);
       const r = await fetch(`${API_BASE}/api/ad-video/preview`, {
         method: "POST",
         headers: {
@@ -190,15 +192,16 @@ export default function AdVideoPage() {
           product_image_url: pUrl,
           product_back_image_url: productBackImageUrl || null,
           background_image_url: bUrl || null,
-          model_description: script.model_description,
-          scene_visual_prompt: script.scenes[0]?.visual_prompt || "",
+          script: script,  // P35: 整个 script,后端循环出 N 张
         }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || "首帧合成失败");
       if (typeof d.cost === "number" && d.cost > 0) adjustLocalUserCredits(-d.cost);
 
+      // P35: 接收 N 张分镜首帧;image_url 是兼容字段(第 1 张)
       setPreviewImageUrl(d.image_url);
+      setSceneImageUrls(d.scene_image_urls || (d.image_url ? [d.image_url] : []));
       setStep(3);
     } catch (e) {
       setErr(errMsg(e));
@@ -222,6 +225,7 @@ export default function AdVideoPage() {
         },
         body: JSON.stringify({
           image_url: previewImageUrl,
+          scene_image_urls: sceneImageUrls,  // P35: N 张分镜首帧给 jobs.py 直接用
           script,
           duration,
           aspect_ratio: "9:16",
@@ -466,20 +470,52 @@ export default function AdVideoPage() {
           </>
         )}
 
-        {/* Step 3: 首帧预览 */}
-        {step === 3 && previewImageUrl && (
+        {/* Step 3: 首帧预览 — P35: N 张分镜首帧网格 */}
+        {step === 3 && (sceneImageUrls.length > 0 || previewImageUrl) && (
           <>
-            <Card title="首帧预览" desc="这就是视频开场画面,满意后再生成视频(避免浪费积分)">
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                <div>
-                  <div style={smallLabel}>原始产品图</div>
-                  <img src={productPreview} alt="产品图预览" style={{ width: "100%", borderRadius: 12, background: "#fff" }} />
+            <Card
+              title={`分镜首帧预览(${sceneImageUrls.length || 1} 张)`}
+              desc="每段分镜对应一张首帧,Seedance 用各自首帧生成本段视频。满意点'生成视频',否则点'重新生成首帧'重出"
+            >
+              {sceneImageUrls.length > 1 ? (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
+                  {sceneImageUrls.map((url, idx) => (
+                    <div key={idx} style={{ position: "relative" }}>
+                      <div style={{ ...smallLabel, marginBottom: 4 }}>
+                        段 {idx + 1}{script?.scenes?.[idx]?.time_range ? ` · ${script.scenes[idx].time_range}` : ""}
+                      </div>
+                      <img
+                        src={url}
+                        alt={`段 ${idx + 1} 首帧`}
+                        style={{
+                          width: "100%",
+                          aspectRatio: "9 / 16",
+                          objectFit: "cover",
+                          borderRadius: 10,
+                          background: "#fff",
+                          border: "1.5px solid #ddd",
+                        }}
+                      />
+                      {script?.scenes?.[idx]?.shot_language && (
+                        <div style={{ fontSize: "0.72rem", color: "#666", marginTop: 4, lineHeight: 1.3 }}>
+                          {script.scenes[idx].shot_language}
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
-                <div>
-                  <div style={smallLabel}>AI 合成首帧</div>
-                  <img src={previewImageUrl} alt="首帧预览" style={{ width: "100%", borderRadius: 12, background: "#fff", border: "2px solid #0d0d0d" }} />
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                  <div>
+                    <div style={smallLabel}>原始产品图</div>
+                    <img src={productPreview} alt="产品图预览" style={{ width: "100%", borderRadius: 12, background: "#fff" }} />
+                  </div>
+                  <div>
+                    <div style={smallLabel}>AI 合成首帧</div>
+                    <img src={sceneImageUrls[0] || previewImageUrl} alt="首帧预览" style={{ width: "100%", borderRadius: 12, background: "#fff", border: "2px solid #0d0d0d" }} />
+                  </div>
                 </div>
-              </div>
+              )}
             </Card>
 
             <ActionRow>
