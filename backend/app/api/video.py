@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 from pydantic import BaseModel, ConfigDict
 from typing import Optional, List
 from enum import Enum
-from app.services.fal_service import get_video_service
+from app.services.fal_service import get_video_service, fal_upload_with_retry
 from app.services.decorators import require_credits
 from app.services.content_filter import assert_safe_prompt
 from app.services.media_archiver import archive_url
@@ -413,7 +413,7 @@ async def upload_image(file: UploadFile = File(...), current_user: dict = Depend
             img.save(tmp.name, "JPEG", quality=75, optimize=True)
         tmp_path = tmp.name
     try:
-        url = await fal_client.upload_file_async(tmp_path)
+        url = await fal_upload_with_retry(tmp_path)
         return {"url": url}
     finally:
         os.unlink(tmp_path)
@@ -429,7 +429,7 @@ async def upload_video(file: UploadFile = File(...), current_user: dict = Depend
         tmp.write(contents)
         tmp_path = tmp.name
     try:
-        url = await fal_client.upload_file_async(tmp_path)
+        url = await fal_upload_with_retry(tmp_path)
         return {"url": url}
     finally:
         os.unlink(tmp_path)

@@ -28,6 +28,8 @@ import uuid
 from pathlib import Path
 from typing import Optional, List
 
+from app.services.fal_service import fal_upload_with_retry
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
@@ -237,7 +239,7 @@ async def _run_asr_step(session_id: str) -> None:
         last_err: Optional[Exception] = None
         for attempt in range(1, 4):
             try:
-                audio_fal_url = await fal_client.upload_file_async(audio_path)
+                audio_fal_url = await fal_upload_with_retry(audio_path)
                 r = await asr_svc.transcribe(audio_fal_url)
                 if "error" in r:
                     raise RuntimeError(f"wizper: {r['error']}")
@@ -316,7 +318,7 @@ async def _run_tts_step(session_id: str) -> None:
             audio_path = session.get("extracted_audio_path")
             if not audio_path or not os.path.exists(audio_path):
                 raise RuntimeError("extracted_audio_path 缺失或不存在,无法 bypass")
-            audio_fal_url = await fal_client.upload_file_async(audio_path)
+            audio_fal_url = await fal_upload_with_retry(audio_path)
             log_warning(
                 "voice_clone_bypassed",
                 user=str(session.get("user_id", "")),
@@ -348,7 +350,7 @@ async def _run_tts_step(session_id: str) -> None:
             edited_text = edited_text[:1000]
 
         # 1) 上传 voice_ref 到 fal storage
-        voice_ref_fal_url = await fal_client.upload_file_async(voice_ref_path)
+        voice_ref_fal_url = await fal_upload_with_retry(voice_ref_path)
 
         # 2) 调 minimax voice-clone 一步生成新音频
         from app.services.fal_service import get_voice_service
@@ -576,7 +578,7 @@ async def _run_inpainting_step(session_id: str) -> None:
                 "partner_validation_failed", "content checker",
             )
             for idx, fp in enumerate(frame_paths):
-                frame_fal_url = await fal_client.upload_file_async(str(fp))
+                frame_fal_url = await fal_upload_with_retry(str(fp))
                 image_urls = [frame_fal_url, model_url]
                 if garment_url:
                     image_urls.append(garment_url)
@@ -756,7 +758,7 @@ async def _run_inpainting_step(session_id: str) -> None:
                         except Exception as e:
                             raise RuntimeError(f"i2v seg {seg_idx} submit: {e}")
                     elif engine == "ltx":
-                        seg_fal_url = await fal_client.upload_file_async(str(seg_path))
+                        seg_fal_url = await fal_upload_with_retry(str(seg_path))
                         args = {
                             "video_url": seg_fal_url,
                             "image_url": reference_image,
@@ -774,7 +776,7 @@ async def _run_inpainting_step(session_id: str) -> None:
                         # element 1 = 模特,element 2 = 产品(可选)
                         # 每个 element 必须 frontal + reference_image_urls(>=1),
                         # probe 实测空 reference_image_urls 会返 elementReferList size 错。
-                        seg_fal_url = await fal_client.upload_file_async(str(seg_path))
+                        seg_fal_url = await fal_upload_with_retry(str(seg_path))
                         elements = [
                             {"frontal_image_url": model_url, "reference_image_urls": [model_url]},
                         ]
@@ -796,7 +798,7 @@ async def _run_inpainting_step(session_id: str) -> None:
                         except Exception as e:
                             raise RuntimeError(f"kling-o1-edit seg {seg_idx} submit: {e}")
                     else:  # kling-v2v
-                        seg_fal_url = await fal_client.upload_file_async(str(seg_path))
+                        seg_fal_url = await fal_upload_with_retry(str(seg_path))
                         drive_result = await vid_svc.drive_with_reference(
                             driving_video_url=seg_fal_url,
                             reference_image_url=reference_image,
@@ -1037,8 +1039,8 @@ async def _run_lipsync_chunked(session_id: str, session: dict) -> str:
                 last_err: Optional[str] = None
                 for attempt in range(1, 3):
                     try:
-                        vurl = await fal_client.upload_file_async(str(seg_videos[i]))
-                        aurl = await fal_client.upload_file_async(str(seg_audios[i]))
+                        vurl = await fal_upload_with_retry(str(seg_videos[i]))
+                        aurl = await fal_upload_with_retry(str(seg_audios[i]))
                         res = await lip_svc.sync(video_url=vurl, audio_url=aurl, tier=session["tier"])
                         if "error" in res:
                             last_err = str(res["error"])[:300]

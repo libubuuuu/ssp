@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
-from app.services.fal_service import get_image_service, get_video_service
+from app.services.fal_service import get_image_service, get_video_service, fal_upload_with_retry
 from app.services.billing import get_task_cost, check_user_credits, deduct_credits, add_credits, create_consumption_record
 from app.api.auth import get_current_user
 
@@ -305,7 +305,7 @@ async def _run_ad_video_job(params: dict):
                 raise Exception(f"ffmpeg concat 失败: {r2.stderr[-500:]}")
 
         # 上传到 fal storage 拿可访问 URL(沿用现有归档/分发模式)
-        final_url = await _fc.upload_file_async(str(merged))
+        final_url = await fal_upload_with_retry(str(merged))
         return {"video_url": final_url, "type": "video"}
     finally:
         shutil.rmtree(seg_root, ignore_errors=True)

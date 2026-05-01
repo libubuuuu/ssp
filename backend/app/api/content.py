@@ -172,6 +172,7 @@ def _generate_tags(prompt: str, style: str) -> list[str]:
 from fastapi import UploadFile, File, Depends
 from app.api.auth import get_current_user
 from app.services.upload_guard import read_bounded, IMAGE_MIMES
+from app.services.fal_service import fal_upload_with_retry
 import fal_client, tempfile, os
 
 @router.post("/upload")
@@ -187,7 +188,7 @@ async def upload_content(file: UploadFile = File(...), current_user: dict = Depe
         tmp.write(contents)
         tmp_path = tmp.name
     try:
-        url = await fal_client.upload_file_async(tmp_path)
+        url = await fal_upload_with_retry(tmp_path)
         return {"url": url, "image_url": url}
     finally:
         os.unlink(tmp_path)

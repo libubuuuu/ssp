@@ -616,3 +616,45 @@ def get_vton_service() -> "FalVTONService":
 
 def get_lipsync_service() -> FalLipsyncService:
     return _lipsync_service
+
+
+# ============== fal storage upload retry helper (P33 2026-05-01) ==============
+
+async def fal_upload_with_retry(local_path: str, max_retries: int = 3) -> str:
+    """
+    fal storage upload 带 transient retry。
+
+    实测 fal 自家 nginx 偶发 5xx(2026-05-01 video.py:416 踩到一次)。
+    本封装在 5xx / network timeout / connection reset 时退避重试 1s/2s/4s,
+    其他错误立刻抛(避免吞用户输入级错误)。
+
+    所有 fal_client.upload_file_async 调用点应改用此 helper。
+    """
+    last_err: Optional[Exception] = None
+    for attempt in range(max_retries):
+        try:
+            return await fal_client.upload_file_async(local_path)
+        except Exception as e:
+            err_str = str(e)
+            err_low = err_str.lower()
+            is_transient = (
+                "500 internal" in err_low or
+                "502" in err_str or
+                "503" in err_str or
+                "504" in err_str or
+                "timeout" in err_low or
+                "connection" in err_low or
+                "reset" in err_low or
+                "temporarily" in err_low
+            )
+            if not is_transient or attempt == max_retries - 1:
+                raise
+            last_err = e
+            log_warning(
+                f"fal_upload retry {attempt + 1}/{max_retries} "
+                f"path={local_path[-60:]} err={err_str[:120]}"
+            )
+            await asyncio.sleep(1.0 * (2 ** attempt))
+    if last_err:
+        raise last_err
+    raise RuntimeError("fal_upload_with_retry: unreachable")

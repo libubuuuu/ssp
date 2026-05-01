@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import List, Optional
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from pydantic import BaseModel
-from app.services.fal_service import get_video_service
+from app.services.fal_service import get_video_service, fal_upload_with_retry
 from app.services.billing import (
     get_task_cost,
     check_user_credits,
@@ -488,7 +488,7 @@ async def _do_split(session_id, segment_duration, task, video_path, duration, se
     import fal_client
     async def _upload_one(index, start, output):
         try:
-            fal_url = await fal_client.upload_file_async(str(output))
+            fal_url = await fal_upload_with_retry(str(output))
             return {
                 "index": index,
                 "start": start,
@@ -801,7 +801,7 @@ async def merge_segments(
 
     # 上传最终成品到 fal
     import fal_client
-    final_url = await fal_client.upload_file_async(str(output))
+    final_url = await fal_upload_with_retry(str(output))
 
     task["final_url"] = final_url
     task["status"] = "finished"

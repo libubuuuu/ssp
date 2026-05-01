@@ -23,6 +23,7 @@ from app.services.decorators import require_credits
 from app.services.content_filter import assert_safe_prompt
 from app.services.media_archiver import archive_url
 from app.services.vlm_service import get_vlm_service
+from app.services.fal_service import fal_upload_with_retry
 from app.services import ad_video_models
 from app.services.logger import log_info, log_error
 
@@ -136,7 +137,7 @@ async def analyze_product(
             tmp_path = tmp.name
 
         try:
-            product_image_url = await fal_client.upload_file_async(tmp_path)
+            product_image_url = await fal_upload_with_retry(tmp_path)
         finally:
             os.unlink(tmp_path)
     except Exception as e:
@@ -231,7 +232,7 @@ async def quick_prompt(
             tmp_path = tmp.name
 
         try:
-            product_image_url = await fal_client.upload_file_async(tmp_path)
+            product_image_url = await fal_upload_with_retry(tmp_path)
         finally:
             os.unlink(tmp_path)
     except Exception as e:
@@ -344,7 +345,9 @@ async def generate_ad_video(
             "script": req.script.model_dump(),
             "duration": req.duration,
             "aspect_ratio": req.aspect_ratio,
-            "resolution": req.resolution,
+            # P32 (2026-05-01):强制 720p。fal v2 pro 1080p 公网实测 10+min 常态,
+            # 720p 4-6min 出片体验差距巨大,清晰度损失对带货展示可接受
+            "resolution": "720p",
             "enable_audio": req.enable_audio,
         },
         "module": module,
@@ -449,7 +452,7 @@ async def upload_image(
             img.save(tmp.name, "JPEG", quality=75, optimize=True)
         tmp_path = tmp.name
     try:
-        url = await fal_client.upload_file_async(tmp_path)
+        url = await fal_upload_with_retry(tmp_path)
         return {"url": url}
     finally:
         os.unlink(tmp_path)
