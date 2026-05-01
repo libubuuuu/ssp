@@ -27,9 +27,12 @@ from .logger import log_info, log_error
 # v1.5/pro probe 70s 出 5s 视频(15x 提速)+ NSFW 通过。换 v1.5/pro。
 # 历史:fal-ai/bytedance/seedance/v2/pro/image-to-video
 SEEDANCE_ENDPOINT = "fal-ai/bytedance/seedance/v1.5/pro/image-to-video"
-# 八十四续 P6:nano-banana-2/edit (Google) NSFW 拦截严 + fal 端偶发 downstream
-# unavailable。切字节 Seedream 4 (国产 + 稳定 + 接受 image_urls 数组多图融合)。
-NANO_BANANA_EDIT_ENDPOINT = "fal-ai/bytedance/seedream/v4/edit"
+# P39 (2026-05-01):Seedream v4 edit 产品保真度差(用户实测"产品被改"),
+# 换 Flux Kontext (BlackForestLabs SOTA image edit,对参考图 preserve 极强,
+# probe 实测 17.8 秒出图 + NSFW 通过塑形产品)。schema 兼容(prompt + image_urls),
+# 只是 image_size→aspect_ratio。
+# 历史: fal-ai/bytedance/seedream/v4/edit
+NANO_BANANA_EDIT_ENDPOINT = "fal-ai/flux-pro/kontext/max/multi"
 
 
 # ============== Nano Banana 多图合成首帧 ==============
@@ -97,8 +100,11 @@ async def compose_first_frame(
             arguments={
                 "prompt": full_prompt,
                 "image_urls": image_urls,
-                # P35: 显式 9:16 高分辨率(原默认偏小,用户反馈"比例太小")
-                "image_size": {"width": 1024, "height": 1820},
+                # P39: Flux Kontext schema:aspect_ratio + guidance_scale
+                "aspect_ratio": "9:16",
+                "guidance_scale": 3.5,
+                "num_images": 1,
+                "output_format": "png",
             },
         )
         images = result.get("images", [])
@@ -113,7 +119,7 @@ async def compose_first_frame(
         }
     except Exception as e:
         await circuit_breaker.record_failure(cb_key)
-        log_error(f"Nano Banana 合成首帧失败: {e}")
+        log_error(f"Flux Kontext 合成首帧失败: {e}")
         return {"error": f"首帧合成失败: {str(e)[:200]}"}
 
 
@@ -162,8 +168,11 @@ async def compose_first_frame_for_scene(
             arguments={
                 "prompt": prompt,
                 "image_urls": [base_image_url],
-                # P35: 显式 9:16 高分辨率
-                "image_size": {"width": 1024, "height": 1820},
+                # P39: Flux Kontext schema
+                "aspect_ratio": "9:16",
+                "guidance_scale": 3.5,
+                "num_images": 1,
+                "output_format": "png",
             },
         )
         images = result.get("images", []) if isinstance(result, dict) else []
@@ -192,21 +201,37 @@ SEEDANCE_REF2VID_ENDPOINT = "bytedance/seedance-2.0/reference-to-video"
 
 
 def build_seedance_ref2vid_prompt(scene: dict, model_description: str, overall_setting: str) -> str:
-    """拼 reference-to-video prompt:overall + model + shot + visual + speech 拼成英文叙事"""
+    """
+    拼 reference-to-video prompt:overall + model + shot + visual + speech 拼成英文叙事
+
+    P38 (2026-05-01):用户实测 ref2vid 改了产品(产品保真度差),原 prompt 只
+    "preserve exact product details" 引导太软。改成 CRITICAL 强约束,锁死颜色/
+    纹理/形状/品牌 不准改。Seedance 是视频模型,对参考图保真天生比 image edit
+    模型弱,需要 prompt 工程明确约束。
+    """
     parts = []
+    # 产品保真硬约束(放最前面优先级最高)
+    parts.append(
+        "CRITICAL PRODUCT FIDELITY: The product shown in the reference images "
+        "MUST appear IDENTICAL in this video. Do NOT invent a different product. "
+        "Do NOT change the product's color, pattern, texture, shape, material, "
+        "or branding. The product must be visually exactly the same as the first "
+        "reference image."
+    )
     if overall_setting:
-        parts.append(overall_setting)
+        parts.append(f"Setting: {overall_setting}")
     if model_description:
         parts.append(f"Model: {model_description}")
     if scene.get("shot_language"):
         parts.append(f"Shot: {scene['shot_language']}")
     if scene.get("visual_prompt"):
-        parts.append(f"Visual: {scene['visual_prompt']}")
+        parts.append(f"Action: {scene['visual_prompt']}")
     if scene.get("speech"):
         parts.append(f'Model speaks: "{scene["speech"]}"')
     parts.append(
         "Photorealistic UGC selfie style, vertical 9:16 composition, "
-        "natural lighting, preserve exact product details from reference images."
+        "natural lighting. Realistic human model with natural facial features, "
+        "skin texture, and expressions. The product remains identical to reference."
     )
     return "\n".join(parts)
 

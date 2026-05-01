@@ -145,96 +145,118 @@ async def _run_ad_video_job(params: dict):
     script = params.get("script") or {}
     scenes = script.get("scenes") or []
 
-    # P36: 共享 reference 图集(产品正面 + 反面 + 背景),所有路径都用
-    def _build_ref_urls() -> list:
-        urls: list[str] = []
-        if params.get("product_image_url"):
-            urls.append(params["product_image_url"])
-        if params.get("product_back_image_url"):
-            urls.append(params["product_back_image_url"])
-        if params.get("background_image_url"):
-            urls.append(params["background_image_url"])
-        # 兜底:没产品 URL 时用共享首帧或 preview 出的图
-        if not urls:
-            preview_urls = params.get("scene_image_urls") or []
-            if preview_urls:
-                urls = [preview_urls[0]]
-            elif params.get("image_url"):
-                urls = [params["image_url"]]
-        return urls
-
     overall = script.get("overall_setting", "")
     model_desc = script.get("model_description", "")
     aspect_ratio = params.get("aspect_ratio", "9:16")
     resolution = params.get("resolution", "720p")
 
-    # ---------- 单段模式(<=15s) — P36 切 reference-to-video ----------
-    if duration <= 15 or len(scenes) <= 1:
-        scene_for_prompt = scenes[0] if scenes else {}
-        prompt = ad_video_models.build_seedance_ref2vid_prompt(
-            scene_for_prompt, model_desc, overall
-        )
-        ref_urls = _build_ref_urls()
-        if not ref_urls:
-            raise Exception("无产品图/参考图,无法生成视频")
+    # P39 (2026-05-01):回 i2v 架构 + Flux Kontext 合首帧。
+    # 痛点:ref2vid 改产品(用户实测产品被改) → 切 image edit SOTA 锁产品。
+    # 路线:产品图 → Flux Kontext 17s 合"模特+产品+背景"首帧 → Seedance v1.5/pro
+    # i2v 70s 出视频。5s 视频总用时 ~90 秒,产品保真度高,真人质感强。
 
-        result = await ad_video_models.submit_seedance_ref2vid_subscribe(
-            reference_image_urls=ref_urls,
-            prompt=prompt,
+    # 第 1 步:用产品图 + 第 1 段 visual 调 Flux Kontext 合共享 base 首帧
+    first_scene = scenes[0] if scenes else {}
+    base_result = await ad_video_models.compose_first_frame(
+        product_image_url=params.get("product_image_url") or params.get("image_url"),
+        background_image_url=params.get("background_image_url"),
+        model_description=model_desc,
+        scene_visual_prompt=first_scene.get("visual_prompt", ""),
+        product_back_image_url=params.get("product_back_image_url"),
+    )
+    if "error" in base_result or not base_result.get("image_url"):
+        raise Exception(f"首帧合成失败: {base_result.get('error', '?')}")
+    base_image_url = base_result["image_url"]
+
+    # ---------- 单段模式(<=15s) — Flux Kontext 共享 base + Seedance v1.5/pro i2v ----------
+    if duration <= 15 or len(scenes) <= 1:
+        single_script = {
+            "overall_setting": overall,
+            "model_description": model_desc,
+            "scenes": [first_scene] if first_scene else [],
+        }
+        sub = await ad_video_models.submit_seedance_video(
+            image_url=base_image_url,
+            script=single_script,
             duration=min(15, max(5, duration)),
             aspect_ratio=aspect_ratio,
             resolution=resolution,
+            enable_audio=params.get("enable_audio", True),
         )
-        if result.get("error"):
-            raise Exception(result["error"])
-        return {"video_url": result["video_url"], "type": "video"}
+        if sub.get("error"):
+            raise Exception(sub["error"])
+        task_id = sub.get("task_id")
+        if not task_id:
+            raise Exception("Seedance 未返回 task_id")
+        for _ in range(180):
+            await asyncio.sleep(5)
+            st = await ad_video_models.poll_seedance_status(task_id)
+            if st.get("status") == "completed" and st.get("video_url"):
+                return {"video_url": st["video_url"], "type": "video"}
+            if st.get("status") == "failed":
+                raise Exception(st.get("error", "Seedance 失败"))
+        raise Exception("AI 带货视频生成超时(15 分钟)")
 
-    # ---------- 多段模式(>15s,P31 + P36) ----------
+    # ---------- 多段模式(>15s):N 段独立首帧 + N 段 i2v 并发 + ffmpeg concat ----------
     seg_durs = split_segments(duration)
     n = len(seg_durs)
     n_actual = min(n, len(scenes))
-    if n_actual < 2:
-        # 退回单段模式(防御)
-        scene_for_prompt = scenes[0] if scenes else {}
-        prompt = ad_video_models.build_seedance_ref2vid_prompt(
-            scene_for_prompt, model_desc, overall
-        )
-        ref_urls = _build_ref_urls()
-        result = await ad_video_models.submit_seedance_ref2vid_subscribe(
-            reference_image_urls=ref_urls,
-            prompt=prompt,
-            duration=min(15, duration),
-            aspect_ratio=aspect_ratio,
-            resolution=resolution,
-        )
-        if result.get("error"):
-            raise Exception(result["error"])
-        return {"video_url": result["video_url"], "type": "video"}
-
     scenes_to_run = scenes[:n_actual]
-    ref_urls = _build_ref_urls()
-    if not ref_urls:
-        raise Exception("无产品图/参考图,多段也无法生成")
 
-    sem = asyncio.Semaphore(5)  # 并发 5
+    sem = asyncio.Semaphore(5)
 
     async def _run_scene(idx: int, scene: dict) -> str:
         async with sem:
-            # P36: 每段独立 reference-to-video,共享同一组 reference 图(产品+背景),
-            # prompt 用本段的 visual/shot/speech,Seedance 自己想象本段的"模特拿着产品做什么"
-            prompt = ad_video_models.build_seedance_ref2vid_prompt(
-                scene, model_desc, overall
-            )
-            result = await ad_video_models.submit_seedance_ref2vid_subscribe(
-                reference_image_urls=ref_urls,
-                prompt=prompt,
+            # Step A: 每段在共享 base 上调 Flux Kontext 合本段独立首帧(锁模特身份+按本段 visual)
+            scene_frame_url = base_image_url  # fallback
+            try:
+                fr = await ad_video_models.compose_first_frame_for_scene(
+                    base_image_url=base_image_url,
+                    scene=scene,
+                    model_description=model_desc,
+                    overall_setting=overall,
+                )
+                if fr.get("image_url"):
+                    scene_frame_url = fr["image_url"]
+                else:
+                    from app.services.logger import log_warning
+                    log_warning(
+                        f"ad_video scene {idx+1}/{n_actual} 首帧合成失败,"
+                        f"回退共享 base: {fr.get('error')}"
+                    )
+            except Exception as fe:
+                from app.services.logger import log_warning
+                log_warning(
+                    f"ad_video scene {idx+1}/{n_actual} 首帧合成异常,回退共享 base: {fe}"
+                )
+
+            # Step B: 用本段独立首帧调 Seedance v1.5/pro i2v
+            single_script = {
+                "overall_setting": overall,
+                "model_description": model_desc,
+                "scenes": [scene],
+            }
+            sub = await ad_video_models.submit_seedance_video(
+                image_url=scene_frame_url,
+                script=single_script,
                 duration=seg_durs[idx],
                 aspect_ratio=aspect_ratio,
                 resolution=resolution,
+                enable_audio=False,  # 多段拼接禁原生音频(段间换音轨会跳)
             )
-            if result.get("error"):
-                raise Exception(f"段 {idx+1}/{n_actual}: {result['error']}")
-            return result["video_url"]
+            if sub.get("error"):
+                raise Exception(f"段 {idx+1}/{n_actual}: {sub['error']}")
+            tid = sub.get("task_id")
+            if not tid:
+                raise Exception(f"段 {idx+1}/{n_actual}: Seedance 未返 task_id")
+            for _ in range(180):
+                await asyncio.sleep(5)
+                st = await ad_video_models.poll_seedance_status(tid)
+                if st.get("status") == "completed" and st.get("video_url"):
+                    return st["video_url"]
+                if st.get("status") == "failed":
+                    raise Exception(f"段 {idx+1}/{n_actual}: {st.get('error')}")
+            raise Exception(f"段 {idx+1}/{n_actual}: 超时(15 min)")
 
     seg_urls = await asyncio.gather(
         *[_run_scene(i, s) for i, s in enumerate(scenes_to_run)]
