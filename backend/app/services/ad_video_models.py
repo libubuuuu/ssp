@@ -101,6 +101,65 @@ async def compose_first_frame(
         return {"error": f"首帧合成失败: {str(e)[:200]}"}
 
 
+async def compose_first_frame_for_scene(
+    base_image_url: str,
+    scene: dict,
+    model_description: str,
+    overall_setting: str,
+) -> dict:
+    """
+    P32 一镜一图: 给单个分镜单独合成它的首帧
+
+    在共享首帧(已含模特+产品+场景)基础上,按本段 visual_prompt 调整为本段镜头/姿态。
+    模特身份和场景靠 base_image 锁定,Seedream 只调整本段独有的镜头语言。
+
+    参数:
+        base_image_url: 共享首帧 URL(/preview 出的那张,作为模特+产品 anchor)
+        scene: 本段 scene dict (含 visual_prompt / shot_language / content)
+        model_description: 模特特征(N 段共享,锁角色)
+        overall_setting: 整体设定(N 段共享,锁场景)
+
+    返回:
+        {"image_url": "...", "model": "..."} 成功
+        {"error": "..."} 失败(jobs.py 用 fallback 回退到 base_image_url)
+    """
+    cb = get_circuit_breaker()
+    cb_key = "fal/nano-banana-edit"
+    if not cb.is_available(cb_key):
+        return {"error": "首帧合成服务暂时不可用,已熔断"}
+
+    visual = (scene.get("visual_prompt") or "").strip()
+    if not visual:
+        return {"error": "scene 缺 visual_prompt"}
+
+    prompt = (
+        f"Adjust the reference image to show this specific shot: {visual}. "
+        f"Keep the model's identity consistent ({model_description}). "
+        f"Maintain the overall setting: {overall_setting}. "
+        f"Photorealistic UGC selfie style, vertical 9:16 composition, "
+        f"natural lighting, preserve the exact product details from reference."
+    )
+
+    try:
+        result = await fal_client.run_async(
+            NANO_BANANA_EDIT_ENDPOINT,
+            arguments={"prompt": prompt, "image_urls": [base_image_url]},
+        )
+        images = result.get("images", []) if isinstance(result, dict) else []
+        if not images:
+            await cb.record_failure(cb_key)
+            return {"error": "本段首帧未生成"}
+        await cb.record_success(cb_key)
+        return {
+            "image_url": images[0].get("url"),
+            "model": NANO_BANANA_EDIT_ENDPOINT,
+        }
+    except Exception as e:
+        await cb.record_failure(cb_key)
+        log_error(f"compose_first_frame_for_scene 失败 scene={scene.get('id')}: {e}")
+        return {"error": f"本段首帧合成失败: {str(e)[:200]}"}
+
+
 # ============== Seedance 2.0 视频生成 ==============
 
 def build_seedance_prompt(script: dict) -> str:

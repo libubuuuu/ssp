@@ -43,11 +43,13 @@ type Step = 1 | 2 | 3 | 4;
 export default function AdVideoPage() {
   const [step, setStep] = useState<Step>(1);
 
-  // Step 1: 上传
+  // Step 1: 上传 + 时长选择
   const [productFile, setProductFile] = useState<File | null>(null);
   const [productPreview, setProductPreview] = useState("");
   const [bgFile, setBgFile] = useState<File | null>(null);
   const [bgPreview, setBgPreview] = useState("");
+  // P32:用户自定义视频总时长(5-300s),analyze 时透传给 VLM 出 N 段脚本
+  const [duration, setDuration] = useState(15);
 
   // Step 2: 审核 + 脚本(从 /analyze 返回)
   const [audit, setAudit] = useState<Audit | null>(null);
@@ -99,7 +101,7 @@ export default function AdVideoPage() {
       setLoadingMsg("小九正在审核图片并生成脚本...");
       const fd = new FormData();
       fd.append("file", compressed);
-      const r = await fetch(`${API_BASE}/api/ad-video/analyze`, {
+      const r = await fetch(`${API_BASE}/api/ad-video/analyze?total_duration=${duration}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token()}` },
         body: fd,
@@ -203,9 +205,9 @@ export default function AdVideoPage() {
         body: JSON.stringify({
           image_url: previewImageUrl,
           script,
-          duration: 15,
+          duration,
           aspect_ratio: "9:16",
-          resolution: "1080p",
+          resolution: "720p",
           enable_audio: true,
         }),
       });
@@ -360,6 +362,36 @@ export default function AdVideoPage() {
                 hint="不传则由 AI 自动生成场景"
               />
             </div>
+            <div style={{ marginTop: 20 }}>
+              <label style={{ display: "block", fontSize: "0.9rem", color: "#444", marginBottom: 8, fontWeight: 500 }}>
+                视频总时长
+              </label>
+              <select
+                value={duration}
+                onChange={(e) => setDuration(Number(e.target.value))}
+                style={{
+                  width: "100%",
+                  padding: "0.7rem 0.9rem",
+                  border: "1px solid #ddd",
+                  borderRadius: 8,
+                  fontSize: "0.95rem",
+                  background: "#fff",
+                  cursor: "pointer",
+                }}
+              >
+                <option value={5}>5 秒(单镜)</option>
+                <option value={10}>10 秒(单镜)</option>
+                <option value={15}>15 秒(单镜)</option>
+                <option value={30}>30 秒(3 段拼接)</option>
+                <option value={60}>60 秒(6 段拼接)</option>
+                <option value={120}>120 秒(12 段拼接)</option>
+                <option value={180}>180 秒(18 段拼接)</option>
+                <option value={300}>300 秒(30 段拼接,5 分钟)</option>
+              </select>
+              <div style={{ fontSize: "0.8rem", color: "#888", marginTop: 6 }}>
+                超过 15 秒会自动拆段并发生成,每段独立首帧 + 独立视频,最后拼接
+              </div>
+            </div>
             <PrimaryButton onClick={callAnalyze} disabled={!productFile} marginTop>
               开始 AI 审核(消耗 1 积分) →
             </PrimaryButton>
@@ -373,7 +405,7 @@ export default function AdVideoPage() {
               <AuditGrid audit={audit} />
             </Card>
 
-            <Card title="分镜脚本" desc={`${script.scenes.length} 个分镜 · 共 15 秒 · 可逐字编辑或点'重新生成'让 AI 改写`}>
+            <Card title="分镜脚本" desc={`${script.scenes.length} 个分镜 · 共 ${duration} 秒 · 可逐字编辑或点'重新生成'让 AI 改写`}>
               <FieldBlock label="整体设定">
                 <textarea
                   value={script.overall_setting}
