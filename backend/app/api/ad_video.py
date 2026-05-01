@@ -59,9 +59,9 @@ class PreviewRequest(BaseModel):
 
 class GenerateRequest(BaseModel):
     """视频生成请求"""
-    image_url: str = Field(..., description="首帧图 URL(共享/兼容,主要用 scene_image_urls)")
-    # P35: 每段独立首帧 URL list,从 /preview 返回(reference-to-video 不再使用,留作兼容)
-    scene_image_urls: Optional[List[str]] = Field(None, description="N 段独立首帧 URL list (P35)")
+    # P37: 删 preview 首帧步骤后, image_url 不再是必填(reference-to-video 不需要首帧)
+    image_url: Optional[str] = Field(None, description="兼容字段,P36 后已不使用")
+    scene_image_urls: Optional[List[str]] = Field(None, description="兼容字段 (P35,已弃用)")
     # P36: 切 reference-to-video,直接拿产品+背景图喂 Seedance,跳过 Seedream 合成
     product_image_url: Optional[str] = Field(None, description="P36: 产品正面图 URL")
     product_back_image_url: Optional[str] = Field(None, description="P36: 产品反面/侧面图 URL")

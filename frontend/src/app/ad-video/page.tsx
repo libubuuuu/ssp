@@ -36,7 +36,8 @@ interface Script {
   scenes: Scene[];
 }
 
-type Step = 1 | 2 | 3 | 4;
+// P37: 删 preview 首帧后,流程从 4 步精简到 3 步
+type Step = 1 | 2 | 3;
 
 // ============== Page ==============
 
@@ -211,12 +212,33 @@ export default function AdVideoPage() {
   };
 
   const callGenerate = async () => {
-    if (!previewImageUrl || !script) return;
+    if (!script) return;
+    // P37: 不再需要首帧 URL — reference-to-video 直接从产品图出发
     setErr("");
     setLoading(true);
     setLoadingMsg("提交视频生成任务...");
 
     try {
+      // 确保产品图已上传到 fal storage(callAnalyze 通常已上传过,这里兜底)
+      let pUrl = productImageUrl;
+      if (!pUrl && productFile) {
+        setLoadingMsg("上传产品图...");
+        pUrl = await uploadImage(productFile);
+        setProductImageUrl(pUrl);
+      }
+      if (!pUrl) {
+        throw new Error("缺产品图");
+      }
+
+      // 背景图(可选)
+      let bUrl = bgImageUrl;
+      if (bgFile && !bUrl) {
+        setLoadingMsg("上传背景图...");
+        bUrl = await uploadImage(bgFile);
+        setBgImageUrl(bUrl);
+      }
+
+      setLoadingMsg("Seedance 直出视频中...");
       const r = await fetch(`${API_BASE}/api/ad-video/generate`, {
         method: "POST",
         headers: {
@@ -224,12 +246,11 @@ export default function AdVideoPage() {
           Authorization: `Bearer ${token()}`,
         },
         body: JSON.stringify({
-          image_url: previewImageUrl,
-          scene_image_urls: sceneImageUrls,  // P35
-          // P36: 透传产品+背景图给后端 reference-to-video 用,跳过 Seedream 合成
-          product_image_url: productImageUrl || null,
+          image_url: pUrl,  // 兼容字段
+          // P36: 直接喂 reference-to-video
+          product_image_url: pUrl,
           product_back_image_url: productBackImageUrl || null,
-          background_image_url: bgImageUrl || null,
+          background_image_url: bUrl || null,
           script,
           duration,
           aspect_ratio: "9:16",
@@ -241,7 +262,7 @@ export default function AdVideoPage() {
       if (!r.ok) throw new Error(d.detail || "提交失败");
       if (typeof d.cost === "number" && d.cost > 0) adjustLocalUserCredits(-d.cost);
 
-      setStep(4);
+      setStep(3);
       startPolling(d.job_id);
     } catch (e) {
       setErr(errMsg(e));
@@ -467,64 +488,6 @@ export default function AdVideoPage() {
 
             <ActionRow>
               <GhostButton onClick={() => setStep(1)}>← 重新上传</GhostButton>
-              <PrimaryButton onClick={callPreview}>
-                生成首帧预览(消耗 2 积分) →
-              </PrimaryButton>
-            </ActionRow>
-          </>
-        )}
-
-        {/* Step 3: 首帧预览 — P35: N 张分镜首帧网格 */}
-        {step === 3 && (sceneImageUrls.length > 0 || previewImageUrl) && (
-          <>
-            <Card
-              title={`分镜首帧预览(${sceneImageUrls.length || 1} 张)`}
-              desc="每段分镜对应一张首帧,Seedance 用各自首帧生成本段视频。满意点'生成视频',否则点'重新生成首帧'重出"
-            >
-              {sceneImageUrls.length > 1 ? (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
-                  {sceneImageUrls.map((url, idx) => (
-                    <div key={idx} style={{ position: "relative" }}>
-                      <div style={{ ...smallLabel, marginBottom: 4 }}>
-                        段 {idx + 1}{script?.scenes?.[idx]?.time_range ? ` · ${script.scenes[idx].time_range}` : ""}
-                      </div>
-                      <img
-                        src={url}
-                        alt={`段 ${idx + 1} 首帧`}
-                        style={{
-                          width: "100%",
-                          aspectRatio: "9 / 16",
-                          objectFit: "cover",
-                          borderRadius: 10,
-                          background: "#fff",
-                          border: "1.5px solid #ddd",
-                        }}
-                      />
-                      {script?.scenes?.[idx]?.shot_language && (
-                        <div style={{ fontSize: "0.72rem", color: "#666", marginTop: 4, lineHeight: 1.3 }}>
-                          {script.scenes[idx].shot_language}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                  <div>
-                    <div style={smallLabel}>原始产品图</div>
-                    <img src={productPreview} alt="产品图预览" style={{ width: "100%", borderRadius: 12, background: "#fff" }} />
-                  </div>
-                  <div>
-                    <div style={smallLabel}>AI 合成首帧</div>
-                    <img src={sceneImageUrls[0] || previewImageUrl} alt="首帧预览" style={{ width: "100%", borderRadius: 12, background: "#fff", border: "2px solid #0d0d0d" }} />
-                  </div>
-                </div>
-              )}
-            </Card>
-
-            <ActionRow>
-              <GhostButton onClick={() => setStep(2)}>← 修改脚本</GhostButton>
-              <SecondaryButton onClick={callPreview}>↻ 重新生成首帧(2 积分)</SecondaryButton>
               <PrimaryButton onClick={callGenerate}>
                 生成视频(消耗 30 积分) →
               </PrimaryButton>
@@ -532,8 +495,8 @@ export default function AdVideoPage() {
           </>
         )}
 
-        {/* Step 4: 视频结果 */}
-        {step === 4 && (
+        {/* P37: 删 step 3 首帧预览(reference-to-video 不再需要),原 step 4 改 step 3 */}
+        {step === 3 && (
           <Card title="视频生成" desc={videoUrl ? "完成!可下载或分享" : jobProgress || "正在排队..."}>
             {!videoUrl && (
               <div style={{ background: "#fff", padding: "3rem", borderRadius: 12, textAlign: "center" }}>
