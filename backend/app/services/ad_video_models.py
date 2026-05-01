@@ -23,7 +23,10 @@ from .circuit_breaker import get_circuit_breaker
 from .logger import log_info, log_error
 
 
-SEEDANCE_ENDPOINT = "fal-ai/bytedance/seedance/v2/pro/image-to-video"
+# P33 (2026-05-01):v2/pro/standard 实测 17min+ timeout fail,v2/fast NSFW 严拒真人,
+# v1.5/pro probe 70s 出 5s 视频(15x 提速)+ NSFW 通过。换 v1.5/pro。
+# 历史:fal-ai/bytedance/seedance/v2/pro/image-to-video
+SEEDANCE_ENDPOINT = "fal-ai/bytedance/seedance/v1.5/pro/image-to-video"
 # 八十四续 P6:nano-banana-2/edit (Google) NSFW 拦截严 + fal 端偶发 downstream
 # unavailable。切字节 Seedream 4 (国产 + 稳定 + 接受 image_urls 数组多图融合)。
 NANO_BANANA_EDIT_ENDPOINT = "fal-ai/bytedance/seedream/v4/edit"
