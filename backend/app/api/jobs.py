@@ -168,8 +168,8 @@ async def _run_ad_video_job(params: dict):
         raise Exception(f"首帧合成失败: {base_result.get('error', '?')}")
     base_image_url = base_result["image_url"]
 
-    # ---------- 单段模式(<=15s) — Flux Kontext 共享 base + Seedance v1.5/pro i2v ----------
-    if duration <= 15 or len(scenes) <= 1:
+    # ---------- 单段模式(<=12s,P40) — v1.5/pro duration 上限 12 ----------
+    if duration <= 12 or len(scenes) <= 1:
         single_script = {
             "overall_setting": overall,
             "model_description": model_desc,
@@ -178,7 +178,7 @@ async def _run_ad_video_job(params: dict):
         sub = await ad_video_models.submit_seedance_video(
             image_url=base_image_url,
             script=single_script,
-            duration=min(15, max(5, duration)),
+            duration=min(12, max(4, duration)),  # P40: v1.5/pro 上限 12
             aspect_ratio=aspect_ratio,
             resolution=resolution,
             enable_audio=params.get("enable_audio", True),

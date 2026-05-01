@@ -318,10 +318,13 @@ def build_seedance_prompt(script: dict) -> str:
     return "\n".join(parts).strip()
 
 
+_VALID_V15_DURATIONS = {4, 5, 6, 7, 8, 9, 10, 11, 12}  # P40: v1.5/pro 实测上限
+
+
 async def submit_seedance_video(
     image_url: str,
     script: dict,
-    duration: int = 15,
+    duration: int = 5,
     aspect_ratio: str = "9:16",
     resolution: str = "1080p",
     enable_audio: bool = True,
@@ -339,6 +342,11 @@ async def submit_seedance_video(
     if not circuit_breaker.is_available(cb_key):
         return {"error": "Seedance 服务暂时不可用,已熔断"}
 
+    # P40: v1.5/pro 只支持 duration 4-12,15+ 会被 fal queue 接收但 task 静默死
+    safe_duration = max(4, min(12, int(duration)))
+    if safe_duration != int(duration):
+        log_info(f"Seedance duration {duration}→{safe_duration} (v1.5/pro 上限 12)")
+
     prompt = build_seedance_prompt(script)
 
     try:
@@ -347,7 +355,7 @@ async def submit_seedance_video(
             arguments={
                 "image_url": image_url,
                 "prompt": prompt,
-                "duration": str(duration),
+                "duration": str(safe_duration),
                 "aspect_ratio": aspect_ratio,
                 "resolution": resolution,
                 "enable_audio": enable_audio,

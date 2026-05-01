@@ -53,7 +53,7 @@ export default function AdVideoPage() {
   const [bgFile, setBgFile] = useState<File | null>(null);
   const [bgPreview, setBgPreview] = useState("");
   // P32:用户自定义视频总时长(5-300s),analyze 时透传给 VLM 出 N 段脚本
-  const [duration, setDuration] = useState(15);
+  const [duration, setDuration] = useState(12);  // P40: v1.5/pro 单段上限
 
   // Step 2: 审核 + 脚本(从 /analyze 返回)
   const [audit, setAudit] = useState<Audit | null>(null);
@@ -433,8 +433,9 @@ export default function AdVideoPage() {
                 }}
               >
                 <option value={5}>5 秒(单镜)</option>
+                <option value={8}>8 秒(单镜)</option>
                 <option value={10}>10 秒(单镜)</option>
-                <option value={15}>15 秒(单镜)</option>
+                <option value={12}>12 秒(单镜,Seedance 单段上限)</option>
                 <option value={30}>30 秒(3 段拼接)</option>
                 <option value={60}>60 秒(6 段拼接)</option>
                 <option value={120}>120 秒(12 段拼接)</option>

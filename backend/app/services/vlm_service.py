@@ -46,18 +46,19 @@ VISION_ENDPOINT = "openrouter/router/vision"
 def split_segments(total_duration: int) -> list[int]:
     """把 total_duration 拆成 Seedance 单次能跑的段长(5/10/15s)。
     简化版:<=15 单段直接返;>15 每段 10s 整除。"""
-    if total_duration <= 15:
-        return [max(5, total_duration)]
+    # P40 (2026-05-01):v1.5/pro 实测 duration 只接 4-12,>12 fal queue 静默死
+    if total_duration <= 12:
+        return [max(4, total_duration)]
     n = total_duration // 10
     rem = total_duration - n * 10
     segs = [10] * n
     if rem == 0:
         return segs
-    if rem >= 5:
+    if rem >= 4:
         segs.append(rem)
         return segs
-    # rem 1-4:并到最后一段(上限 15)
-    if segs[-1] + rem <= 15:
+    # rem 1-3:并到最后一段(上限 12)
+    if segs[-1] + rem <= 12:
         segs[-1] += rem
         return segs
     # 极端:摊到前段(罕见,total 是 10 倍数走不到这分支)
