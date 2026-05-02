@@ -61,6 +61,17 @@ MAX_DURATION_SECONDS = 300
 # 档位允许值
 TIERS = ("economy", "standard", "premium")
 
+# P41:Step B 引擎白名单 — 用户可在 /start 显式指定;None/空串走 env(默认 kling-o1-edit)
+# 各引擎 fal schema 真值见 _drive_one 各分支(2026-05-03 openapi 实查)
+_STEP_B_ENGINES = (
+    "i2v",              # fal-ai/kling-video/o3/standard/image-to-video(P15 老路)
+    "kling-o1-edit",    # fal-ai/kling-video/o1/video-to-video/edit(P30 当前默认)
+    "seedance-2-r2v",   # fal-ai/bytedance/seedance-2.0/reference-to-video(P41 新)
+    "kling-o3-r2v",     # fal-ai/kling-video/o3/pro/reference-to-video(P41 新)
+    "kling-o3-v2v",     # fal-ai/kling-video/o3/pro/video-to-video/reference(P41 新)
+    "kling-2-6-i2v",    # fal-ai/kling-video/v2.6/pro/image-to-video(P41 新,native audio)
+)
+
 # 状态机 — 详见规划文档 §4.2
 STATUS_INITIAL = "uploaded"
 STATUS_TERMINAL_OK = "completed"
@@ -79,6 +90,7 @@ class StartRequest(BaseModel):
     products: List[dict]    # [{name, image_url}, ...] 0-4 个
     legal_consent: bool     # L1 用户责任声明,前端勾选后传 true(规划文档 Q4)
     aspect_ratio: Optional[str] = None  # P16:成片比例 "9:16"/"16:9"/"1:1"/None(跟随原视频)
+    step_b_engine: Optional[str] = None  # P41:Step B 引擎覆盖,白名单见 _STEP_B_ENGINES;None=跟随 env
 
 
 class EditRequest(BaseModel):
@@ -635,7 +647,10 @@ async def _run_inpainting_step(session_id: str) -> None:
         #                v2v reference,复刻原动作但产品会漂
         #   kling-v2v  → fal-ai/kling-video/o1/video-to-video/reference
         #                v2v reference 老路,35-50 min/段
-        engine = (os.getenv("ORAL_STEP_B_ENGINE", "i2v") or "i2v").lower()
+        # P41:session.step_b_engine 优先(用户实测对比),回落 env,再回落 "i2v"
+        engine_session = (session.get("step_b_engine") or "").strip().lower()
+        engine_env = (os.getenv("ORAL_STEP_B_ENGINE", "i2v") or "i2v").lower()
+        engine = engine_session or engine_env
         # 兼容老配置:seedance-i2v 别名归一
         if engine == "seedance-i2v":
             engine = "i2v"
@@ -679,6 +694,77 @@ async def _run_inpainting_step(session_id: str) -> None:
                     "Replace the woman in the video with @Element1. "
                     "Preserve the original body motion, gestures, facial expressions and camera movement exactly."
                 )
+        elif engine == "seedance-2-r2v":
+            # P41:fal-ai/bytedance/seedance-2.0/reference-to-video
+            # 多素材统一 @Index 引用:image_urls(<=9)+ video_urls(<=3,2-15s)+ audio_urls
+            # 注:2026-02 起,真人 prompt 下多参考能力被 ByteDance 阉割,实测验证。
+            # 价格:有 video_urls $0.1814/s,无 video $0.3024/s
+            endpoint_default = "fal-ai/bytedance/seedance-2.0/reference-to-video"
+            seg_timeout_loops = 60
+            SEG_LEN_S = 8.0
+            if product_names:
+                prompt = (
+                    f"@Image1 wearing the {', '.join(product_names)} from @Image2, "
+                    f"performing the same actions, gestures, and movements as in @Video1. "
+                    f"Preserve the original background and camera angle from @Video1 exactly."
+                )
+            else:
+                prompt = (
+                    "@Image1 performing the same actions and movements as in @Video1. "
+                    "Preserve the original background and camera angle from @Video1 exactly."
+                )
+        elif engine == "kling-o3-r2v":
+            # P41:fal-ai/kling-video/o3/pro/reference-to-video
+            # 纯 r2v(无 driving video),element 多图锁身份 + generate_audio + 每元素 voice_id
+            # 价格 audio off $0.112/s,audio on $0.14/s
+            endpoint_default = "fal-ai/kling-video/o3/pro/reference-to-video"
+            seg_timeout_loops = 60
+            SEG_LEN_S = 8.0
+            if product_names:
+                prompt = (
+                    f"@Element1 wearing @Element2 ({', '.join(product_names)}), "
+                    f"naturally showcasing the product, smooth body movement, photorealistic UGC selfie style."
+                )
+            else:
+                prompt = (
+                    "@Element1 naturally showcasing herself, smooth body movement, "
+                    "photorealistic UGC selfie style."
+                )
+        elif engine == "kling-o3-v2v":
+            # P41:fal-ai/kling-video/o3/pro/video-to-video/reference
+            # 真 v2v + element 多图;keep_audio 默认 true,我们 lipsync 接管所以关掉
+            # 价格 $0.168/s
+            endpoint_default = "fal-ai/kling-video/o3/pro/video-to-video/reference"
+            seg_timeout_loops = 60
+            SEG_LEN_S = 8.0   # 文档 3-10s
+            if product_names:
+                prompt = (
+                    f"Replace the person in @Video1 with @Element1, wearing @Element2 "
+                    f"({', '.join(product_names)}). Preserve the original motion, gestures, and camera movement."
+                )
+            else:
+                prompt = (
+                    "Replace the person in @Video1 with @Element1. "
+                    "Preserve the original motion, gestures, and camera movement."
+                )
+        elif engine == "kling-2-6-i2v":
+            # P41:fal-ai/kling-video/v2.6/pro/image-to-video(Native Audio 主打)
+            # 单首帧 + native audio,duration 只能 "5" 或 "10"
+            # 价格 audio off $0.07/s,audio on $0.14/s,+voice_ids $0.168/s
+            endpoint_default = "fal-ai/kling-video/v2.6/pro/image-to-video"
+            seg_timeout_loops = 60
+            SEG_LEN_S = 5.0   # v2.6 duration 仅 "5"/"10",取 5 跟 i2v 一致段长
+            if product_names:
+                prompt = (
+                    f"A young woman wearing the {', '.join(product_names)}, "
+                    f"naturally showcasing the product with subtle hand gestures, smiling at camera, "
+                    f"smooth body movement, photorealistic UGC selfie style."
+                )
+            else:
+                prompt = (
+                    "A young woman naturally showcasing herself with subtle hand gestures, "
+                    "smiling at camera, smooth body movement, photorealistic UGC selfie style."
+                )
         else:
             BG_LOCK = (
                 "Preserve the original background, scene, lighting, camera angle, and composition "
@@ -721,8 +807,9 @@ async def _run_inpainting_step(session_id: str) -> None:
 
             # i2v 路线不切原视频段(不用 driving video);v2v 才切
             # P30:kling-o1-edit 也吃原视频段(真 v2v),加入切段路径
+            # P41:seedance-2-r2v(吃 video_urls 当参考)、kling-o3-v2v(吃 video_url driving)也切段
             seg_paths: List[Optional[Path]] = []
-            if engine in ("ltx", "kling-v2v", "kling-o1-edit"):
+            if engine in ("ltx", "kling-v2v", "kling-o1-edit", "seedance-2-r2v", "kling-o3-v2v"):
                 for i in range(n_segments):
                     start = i * SEG_LEN_S
                     seg_path = seg_root / f"seg_{i:02d}.mp4"
@@ -797,6 +884,109 @@ async def _run_inpainting_step(session_id: str) -> None:
                             task_id = handler.request_id
                         except Exception as e:
                             raise RuntimeError(f"kling-o1-edit seg {seg_idx} submit: {e}")
+                    elif engine == "seedance-2-r2v":
+                        # P41:Seedance 2.0 r2v — image_urls + video_urls + @Index 引用
+                        # @Image1=vton 参考图, @Image2=产品图(可选), @Video1=原视频段
+                        seg_fal_url = await fal_upload_with_retry(str(seg_path))
+                        image_urls_arg = [reference_image]
+                        if garment_url:
+                            image_urls_arg.append(garment_url)
+                        # aspect_ratio 映射:用户选 9:16/16:9/1:1,跟随 → "auto"
+                        seedance_aspect = (session.get("aspect_ratio") or "auto").strip().lower()
+                        if seedance_aspect not in ("9:16", "16:9", "1:1", "21:9", "4:3", "3:4"):
+                            seedance_aspect = "auto"
+                        args = {
+                            "prompt": prompt,
+                            "image_urls": image_urls_arg,
+                            "video_urls": [seg_fal_url],
+                            "duration": str(int(seg_durations[seg_idx])) if 4 <= int(seg_durations[seg_idx]) <= 15 else "auto",
+                            "resolution": "720p",
+                            "aspect_ratio": seedance_aspect,
+                            "generate_audio": True,
+                        }
+                        endpoint = endpoint_default
+                        try:
+                            handler = await fal_client.submit_async(endpoint, arguments=args)
+                            task_id = handler.request_id
+                        except Exception as e:
+                            raise RuntimeError(f"seedance-2-r2v seg {seg_idx} submit: {e}")
+                    elif engine == "kling-o3-r2v":
+                        # P41:Kling o3 r2v — element 多图 + start_image_url + generate_audio
+                        # 不切原视频段;每段独立用 reference_image 当 start frame
+                        elements = [
+                            {"frontal_image_url": model_url, "reference_image_urls": [model_url]},
+                        ]
+                        if garment_url:
+                            elements.append({
+                                "frontal_image_url": garment_url,
+                                "reference_image_urls": [garment_url],
+                            })
+                        # aspect_ratio:o3 r2v 仅 "16:9"/"9:16"/"1:1",无 "auto",跟随 → 9:16
+                        o3_aspect = (session.get("aspect_ratio") or "9:16").strip().lower()
+                        if o3_aspect not in ("16:9", "9:16", "1:1"):
+                            o3_aspect = "9:16"
+                        seg_dur = max(3, min(15, int(seg_durations[seg_idx])))
+                        args = {
+                            "prompt": prompt,
+                            "start_image_url": reference_image,
+                            "elements": elements,
+                            "duration": str(seg_dur),
+                            "aspect_ratio": o3_aspect,
+                            "generate_audio": True,
+                        }
+                        endpoint = endpoint_default
+                        try:
+                            handler = await fal_client.submit_async(endpoint, arguments=args)
+                            task_id = handler.request_id
+                        except Exception as e:
+                            raise RuntimeError(f"kling-o3-r2v seg {seg_idx} submit: {e}")
+                    elif engine == "kling-o3-v2v":
+                        # P41:Kling o3 v2v/reference — 顶层 video_url 必填(driving 3-10s)
+                        # element 多图 + image_urls(reference_image)
+                        seg_fal_url = await fal_upload_with_retry(str(seg_path))
+                        elements = [
+                            {"frontal_image_url": model_url, "reference_image_urls": [model_url]},
+                        ]
+                        if garment_url:
+                            elements.append({
+                                "frontal_image_url": garment_url,
+                                "reference_image_urls": [garment_url],
+                            })
+                        v2v_aspect = (session.get("aspect_ratio") or "auto").strip().lower()
+                        if v2v_aspect not in ("16:9", "9:16", "1:1"):
+                            v2v_aspect = "auto"
+                        seg_dur = max(3, min(10, int(seg_durations[seg_idx])))
+                        args = {
+                            "prompt": prompt,
+                            "video_url": seg_fal_url,
+                            "image_urls": [reference_image],
+                            "elements": elements,
+                            "duration": str(seg_dur),
+                            "aspect_ratio": v2v_aspect,
+                            "keep_audio": False,
+                        }
+                        endpoint = endpoint_default
+                        try:
+                            handler = await fal_client.submit_async(endpoint, arguments=args)
+                            task_id = handler.request_id
+                        except Exception as e:
+                            raise RuntimeError(f"kling-o3-v2v seg {seg_idx} submit: {e}")
+                    elif engine == "kling-2-6-i2v":
+                        # P41:Kling 2.6 Pro i2v(Native Audio)— start_image_url + duration "5"/"10"
+                        # 不切原视频段;generate_audio 默认 true,我们 lipsync 接管所以关掉
+                        seg_dur_s = "5" if int(seg_durations[seg_idx]) <= 5 else "10"
+                        args = {
+                            "prompt": prompt,
+                            "start_image_url": reference_image,
+                            "duration": seg_dur_s,
+                            "generate_audio": False,
+                        }
+                        endpoint = endpoint_default
+                        try:
+                            handler = await fal_client.submit_async(endpoint, arguments=args)
+                            task_id = handler.request_id
+                        except Exception as e:
+                            raise RuntimeError(f"kling-2-6-i2v seg {seg_idx} submit: {e}")
                     else:  # kling-v2v
                         seg_fal_url = await fal_upload_with_retry(str(seg_path))
                         drive_result = await vid_svc.drive_with_reference(
@@ -1698,6 +1888,11 @@ async def start_pipeline(
     if aspect and aspect not in ("9:16", "16:9", "1:1"):
         raise HTTPException(400, "aspect_ratio 必须是 9:16 / 16:9 / 1:1")
 
+    # P41:校验 step_b_engine,白名单 / None
+    step_b_engine = (req.step_b_engine or "").strip().lower()
+    if step_b_engine and step_b_engine not in _STEP_B_ENGINES:
+        raise HTTPException(400, f"step_b_engine 必须是 {_STEP_B_ENGINES} 之一,或不传")
+
     # 写入 session — 状态推进到 asr_running(实际 ASR 调用 P2 实现)
     _update_session(
         req.session_id,
@@ -1707,6 +1902,7 @@ async def start_pipeline(
         selected_products=json.dumps(req.products, ensure_ascii=False),
         credits_charged=charge,
         aspect_ratio=(aspect or None),
+        step_b_engine=(step_b_engine or None),
     )
 
     # 写 audit_log(L1 责任声明已确认)

@@ -631,6 +631,17 @@ export const zh = {
     aspectVertical: "短视频 / 抖音 / 小红书",
     aspectHorizontal: "横屏 / B 站 / YouTube",
     aspectSquare: "正方形 / 朋友圈",
+    engineTitle: "Step B 视频生成引擎(实测对比)",
+    engine: {
+      default: "默认(系统选择,当前 Kling o1 Edit)",
+      klingO1Edit: "Kling o1 Edit · 真 v2v 复刻动作 · NSFW 已过审",
+      klingO3V2v: "Kling o3 v2v/Reference · 真 v2v + 多元素图 · $0.168/s",
+      klingO3R2v: "Kling o3 r2v · 多元素图 + 原生音频 · $0.14/s",
+      seedance2R2v: "Seedance 2.0 r2v · 9 图 + 3 视频 + 音频参考 · 真人多参考 2 月起阉割",
+      kling26I2v: "Kling 2.6 Pro i2v · 主打原生音频 · $0.07–$0.168/s",
+      i2v: "Kling o3 Standard i2v · 静图首帧 · 老路保留",
+      note: "默认即可。仅用于对比实测,各模型 NSFW/复刻/音频能力不同,价格也不同。",
+    },
     textTooLong: "文案超过 1000 字符上限,请删减",
     tierDesc: {
       economy: "MiniMax 音色 + 480p 换装 + veed 口型",

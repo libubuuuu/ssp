@@ -56,6 +56,9 @@ export default function OralBroadcastWorkbench() {
   const [legalConsent, setLegalConsent] = useState(false);
   // P16:成片比例(空字符串表示跟随原视频)
   const [aspectRatio, setAspectRatio] = useState<"" | "9:16" | "16:9" | "1:1">("");
+  // P41:Step B 引擎覆盖(空字符串=后端默认 kling-o1-edit;其余 5 个用户实测对比)
+  type StepBEngine = "" | "kling-o1-edit" | "i2v" | "seedance-2-r2v" | "kling-o3-r2v" | "kling-o3-v2v" | "kling-2-6-i2v";
+  const [stepBEngine, setStepBEngine] = useState<StepBEngine>("");
 
   // Step 1 模特/产品(URL 输入 + 从库选两种来源)
   const [modelName, setModelName] = useState("");
@@ -170,7 +173,7 @@ export default function OralBroadcastWorkbench() {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
         credentials: "include",
-        body: JSON.stringify({ session_id: sessionId, tier, models, products, legal_consent: legalConsent, aspect_ratio: aspectRatio || null }),
+        body: JSON.stringify({ session_id: sessionId, tier, models, products, legal_consent: legalConsent, aspect_ratio: aspectRatio || null, step_b_engine: stepBEngine || null }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.detail || t("oral.errStartFail")); return; }
@@ -387,6 +390,24 @@ export default function OralBroadcastWorkbench() {
                     </div>
                   </label>
                 ))}
+              </div>
+            </div>
+
+            {/* P41:Step B 引擎选择(实测对比用) */}
+            <div style={{ marginBottom: "1.5rem" }}>
+              <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>{t("oral.engineTitle")}</div>
+              <select value={stepBEngine} onChange={e => setStepBEngine(e.target.value as StepBEngine)}
+                style={{ width: "100%", padding: "0.6rem 0.8rem", border: "1px solid #ddd", borderRadius: 10, background: "#fff", fontSize: "0.9rem", cursor: "pointer" }}>
+                <option value="">{t("oral.engine.default")}</option>
+                <option value="kling-o1-edit">{t("oral.engine.klingO1Edit")}</option>
+                <option value="kling-o3-v2v">{t("oral.engine.klingO3V2v")}</option>
+                <option value="kling-o3-r2v">{t("oral.engine.klingO3R2v")}</option>
+                <option value="seedance-2-r2v">{t("oral.engine.seedance2R2v")}</option>
+                <option value="kling-2-6-i2v">{t("oral.engine.kling26I2v")}</option>
+                <option value="i2v">{t("oral.engine.i2v")}</option>
+              </select>
+              <div style={{ fontSize: "0.7rem", color: "#999", marginTop: 4 }}>
+                {t("oral.engine.note")}
               </div>
             </div>
 

@@ -70,6 +70,8 @@ def _patch_oral_columns(cursor):
         ("vton_image_url", "ALTER TABLE oral_sessions ADD COLUMN vton_image_url TEXT"),
         # 八十四续 P16 — 用户在 /start 选择成片比例(9:16 / 16:9 / 1:1 / auto)
         ("aspect_ratio", "ALTER TABLE oral_sessions ADD COLUMN aspect_ratio TEXT"),
+        # P41 — 用户在 /start 选择 Step B 引擎(白名单见 oral.py _STEP_B_ENGINES)
+        ("step_b_engine", "ALTER TABLE oral_sessions ADD COLUMN step_b_engine TEXT"),
     ]
     for col_name, sql in patches:
         try:
