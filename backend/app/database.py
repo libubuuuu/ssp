@@ -72,6 +72,8 @@ def _patch_oral_columns(cursor):
         ("aspect_ratio", "ALTER TABLE oral_sessions ADD COLUMN aspect_ratio TEXT"),
         # P41 — 用户在 /start 选择 Step B 引擎(白名单见 oral.py _STEP_B_ENGINES)
         ("step_b_engine", "ALTER TABLE oral_sessions ADD COLUMN step_b_engine TEXT"),
+        # P43-2 — 用户选是否过 fal Topaz 超分到 1440p(720p×2),+$0.02/秒
+        ("use_topaz_upscale", "ALTER TABLE oral_sessions ADD COLUMN use_topaz_upscale INTEGER NOT NULL DEFAULT 0"),
     ]
     for col_name, sql in patches:
         try:

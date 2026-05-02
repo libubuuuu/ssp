@@ -640,7 +640,12 @@ export const zh = {
       seedance2R2v: "Seedance 2.0 r2v · 9 图 + 3 视频 + 音频参考 · 真人多参考 2 月起阉割",
       kling26I2v: "Kling 2.6 Pro i2v · 主打原生音频 · $0.07–$0.168/s",
       i2v: "Kling o3 Standard i2v · 静图首帧 · 老路保留",
+      wan22Replace: "Wan 2.2 Animate Replace · 阿里开源 · 内衣过审 · 单图复刻 · $0.04-0.08/s · 慢但质量高(17 min/段)",
       note: "默认即可。仅用于对比实测,各模型 NSFW/复刻/音频能力不同,价格也不同。",
+    },
+    topaz: {
+      title: "出片 1440p 超分(+$0.02/秒)",
+      desc: "默认 720p。开启后过 fal Topaz 超分到 1440p,画面更精细,接近即梦档位。",
     },
     assets: {
       title: "高级:多素材编排(仅 Seedance 2.0 启用)",

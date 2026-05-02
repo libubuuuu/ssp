@@ -76,10 +76,11 @@ _ASSET_TYPES = ("image", "video", "audio")
 _STEP_B_ENGINES = (
     "i2v",              # fal-ai/kling-video/o3/standard/image-to-video(P15 老路)
     "kling-o1-edit",    # fal-ai/kling-video/o1/video-to-video/edit(P30 当前默认)
-    "seedance-2-r2v",   # fal-ai/bytedance/seedance-2.0/reference-to-video(P41 新)
+    "seedance-2-r2v",   # fal-ai/bytedance/seedance-2.0/reference-to-video(P41 新,内衣 partner_validation 拒)
     "kling-o3-r2v",     # fal-ai/kling-video/o3/pro/reference-to-video(P41 新)
     "kling-o3-v2v",     # fal-ai/kling-video/o3/pro/video-to-video/reference(P41 新)
     "kling-2-6-i2v",    # fal-ai/kling-video/v2.6/pro/image-to-video(P41 新,native audio)
+    "wan-2-2-animate-replace",  # fal-ai/wan/v2.2-14b/animate/replace(P43 新,单图+driving,17 min/段,质量更高)
 )
 
 # 状态机 — 详见规划文档 §4.2
@@ -115,6 +116,7 @@ class StartRequest(BaseModel):
     aspect_ratio: Optional[str] = None  # P16:成片比例 "9:16"/"16:9"/"1:1"/None(跟随原视频)
     step_b_engine: Optional[str] = None  # P41:Step B 引擎覆盖,白名单见 _STEP_B_ENGINES;None=跟随 env
     assets: Optional[List[AssetItem]] = None  # P42:多素材编排(场景图/运镜视频/节奏音频),None=老路单素材
+    use_topaz_upscale: Optional[bool] = False  # P43-2:出片过 fal Topaz 超分(720p×2),+$0.02/秒
 
 
 class EditRequest(BaseModel):
@@ -813,6 +815,14 @@ async def _run_inpainting_step(session_id: str) -> None:
                     "Replace the person in @Video1 with @Element1. "
                     "Preserve the original motion, gestures, and camera movement."
                 )
+        elif engine == "wan-2-2-animate-replace":
+            # P43:fal-ai/wan/v2.2-14b/animate/replace — Apache 2.0 阿里开源,无 partner validation
+            # 单图(image_url 取 vton 合成图,带产品+模特)+ driving video → 复刻动作
+            # safety_checker 默认关,内衣类 probe ✅;17 分钟/段(~慢但质量高)
+            endpoint_default = "fal-ai/wan/v2.2-14b/animate/replace"
+            seg_timeout_loops = 180  # 30 min cap(实测 17 min/段)
+            SEG_LEN_S = 8.0          # 跟 driving video 切段一致
+            prompt = ""              # Wan Animate 无 prompt 字段,纯视觉驱动
         elif engine == "kling-2-6-i2v":
             # P41:fal-ai/kling-video/v2.6/pro/image-to-video(Native Audio 主打)
             # 单首帧 + native audio,duration 只能 "5" 或 "10"
@@ -875,7 +885,7 @@ async def _run_inpainting_step(session_id: str) -> None:
             # P30:kling-o1-edit 也吃原视频段(真 v2v),加入切段路径
             # P41:seedance-2-r2v(吃 video_urls 当参考)、kling-o3-v2v(吃 video_url driving)也切段
             seg_paths: List[Optional[Path]] = []
-            if engine in ("ltx", "kling-v2v", "kling-o1-edit", "seedance-2-r2v", "kling-o3-v2v"):
+            if engine in ("ltx", "kling-v2v", "kling-o1-edit", "seedance-2-r2v", "kling-o3-v2v", "wan-2-2-animate-replace"):
                 for i in range(n_segments):
                     start = i * SEG_LEN_S
                     seg_path = seg_root / f"seg_{i:02d}.mp4"
@@ -1070,6 +1080,23 @@ async def _run_inpainting_step(session_id: str) -> None:
                             task_id = handler.request_id
                         except Exception as e:
                             raise RuntimeError(f"kling-2-6-i2v seg {seg_idx} submit: {e}")
+                    elif engine == "wan-2-2-animate-replace":
+                        # P43:Wan 2.2 Animate Replace — image_url(vton 合成图,带产品+模特)+ video_url(driving)
+                        # safety_checker 默认关,内衣类 probe 实测过审 ✅;17 min/段
+                        seg_fal_url = await fal_upload_with_retry(str(seg_path))
+                        args = {
+                            "video_url": seg_fal_url,
+                            "image_url": reference_image,  # vton 合成图(模特+产品)
+                            "resolution": "720p",
+                            "enable_safety_checker": False,
+                            "enable_output_safety_checker": False,
+                        }
+                        endpoint = endpoint_default
+                        try:
+                            handler = await fal_client.submit_async(endpoint, arguments=args)
+                            task_id = handler.request_id
+                        except Exception as e:
+                            raise RuntimeError(f"wan-2-2-animate-replace seg {seg_idx} submit: {e}")
                     else:  # kling-v2v
                         seg_fal_url = await fal_upload_with_retry(str(seg_path))
                         drive_result = await vid_svc.drive_with_reference(
@@ -1209,8 +1236,46 @@ async def _archive_lipsync_final(
     user_id: str,
     session_id: str,
 ) -> str:
-    """下载 fal final → 落本地归档(无水印)+ faststart remux。返 public URL。"""
+    """下载 fal final → 落本地归档(无水印)+ faststart remux。返 public URL。
+
+    P43-2:可选 Topaz 超分(session.use_topaz_upscale 优先,env 兜底)。720p → 1440p,
+    +$0.02/s,画面分辨率档拉到即梦同档。失败降级用原 720p,不阻塞 pipeline。
+    """
     import httpx
+
+    # P43-2:用户 session 字段优先,env 兜底
+    use_topaz = False
+    try:
+        sess_row = _get_session(session_id)
+        if sess_row and sess_row.get("use_topaz_upscale"):
+            use_topaz = True
+    except Exception:
+        pass
+    if not use_topaz and os.getenv("ORAL_ENABLE_TOPAZ_UPSCALE", "").lower() in ("1", "true", "yes"):
+        use_topaz = True
+
+    if use_topaz:
+        try:
+            import fal_client
+            _log(f"_archive_lipsync_final P43-2 Topaz upscale start session={session_id}")
+            t0 = time.time()
+            handler = await fal_client.submit_async(
+                "fal-ai/topaz/upscale/video",
+                arguments={"video_url": fal_video_url, "upscale_factor": 2},
+            )
+            tid = handler.request_id
+            for _ in range(60):  # 10 min cap
+                await asyncio.sleep(10)
+                s = await fal_client.status_async("fal-ai/topaz/upscale/video", tid, with_logs=False)
+                if type(s).__name__ == "Completed":
+                    final = await fal_client.result_async("fal-ai/topaz/upscale/video", tid)
+                    new_url = (final.get("video") or {}).get("url") if isinstance(final, dict) else None
+                    if new_url:
+                        fal_video_url = new_url
+                        _log(f"_archive_lipsync_final P43-2 Topaz OK session={session_id} elapsed={time.time()-t0:.1f}s")
+                    break
+        except Exception as e:
+            _log(f"_archive_lipsync_final P43-2 Topaz fail(降级原 video): {str(e)[:200]}")
 
     out_dir = ORAL_UPLOAD_ROOT / user_id / session_id
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -2003,6 +2068,7 @@ async def start_pipeline(
         credits_charged=charge,
         aspect_ratio=(aspect or None),
         step_b_engine=(step_b_engine or None),
+        use_topaz_upscale=1 if req.use_topaz_upscale else 0,
     )
 
     # P42:写入多素材编排表(可选,空跳过)

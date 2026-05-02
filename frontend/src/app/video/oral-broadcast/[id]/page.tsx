@@ -56,9 +56,11 @@ export default function OralBroadcastWorkbench() {
   const [legalConsent, setLegalConsent] = useState(false);
   // P16:成片比例(空字符串表示跟随原视频)
   const [aspectRatio, setAspectRatio] = useState<"" | "9:16" | "16:9" | "1:1">("");
-  // P41:Step B 引擎覆盖(空字符串=后端默认 kling-o1-edit;其余 5 个用户实测对比)
-  type StepBEngine = "" | "kling-o1-edit" | "i2v" | "seedance-2-r2v" | "kling-o3-r2v" | "kling-o3-v2v" | "kling-2-6-i2v";
+  // P41:Step B 引擎覆盖(空字符串=后端默认 kling-o1-edit;其余多个用户实测对比)
+  type StepBEngine = "" | "kling-o1-edit" | "i2v" | "seedance-2-r2v" | "kling-o3-r2v" | "kling-o3-v2v" | "kling-2-6-i2v" | "wan-2-2-animate-replace";
   const [stepBEngine, setStepBEngine] = useState<StepBEngine>("");
+  // P43-2:可选 Topaz 超分到 1440p(默认关,+$0.02/秒)
+  const [useTopazUpscale, setUseTopazUpscale] = useState(false);
   // P42:多素材编排 MVP — 仅 seedance-2-r2v 引擎使用,其他引擎忽略
   // scene_ref:场景定调参考图(背景/光感),shot_ref:运镜参考视频(独立于 driving)
   const [sceneRefUrl, setSceneRefUrl] = useState("");
@@ -182,7 +184,7 @@ export default function OralBroadcastWorkbench() {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
         credentials: "include",
-        body: JSON.stringify({ session_id: sessionId, tier, models, products, legal_consent: legalConsent, aspect_ratio: aspectRatio || null, step_b_engine: stepBEngine || null, assets: assets.length ? assets : null }),
+        body: JSON.stringify({ session_id: sessionId, tier, models, products, legal_consent: legalConsent, aspect_ratio: aspectRatio || null, step_b_engine: stepBEngine || null, assets: assets.length ? assets : null, use_topaz_upscale: useTopazUpscale }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.detail || t("oral.errStartFail")); return; }
@@ -438,6 +440,7 @@ export default function OralBroadcastWorkbench() {
                 style={{ width: "100%", padding: "0.6rem 0.8rem", border: "1px solid #ddd", borderRadius: 10, background: "#fff", fontSize: "0.9rem", cursor: "pointer" }}>
                 <option value="">{t("oral.engine.default")}</option>
                 <option value="kling-o1-edit">{t("oral.engine.klingO1Edit")}</option>
+                <option value="wan-2-2-animate-replace">{t("oral.engine.wan22Replace")}</option>
                 <option value="kling-o3-v2v">{t("oral.engine.klingO3V2v")}</option>
                 <option value="kling-o3-r2v">{t("oral.engine.klingO3R2v")}</option>
                 <option value="seedance-2-r2v">{t("oral.engine.seedance2R2v")}</option>
@@ -447,6 +450,26 @@ export default function OralBroadcastWorkbench() {
               <div style={{ fontSize: "0.7rem", color: "#999", marginTop: 4 }}>
                 {t("oral.engine.note")}
               </div>
+            </div>
+
+            {/* P43-2:Topaz 超分到 1440p */}
+            <div style={{ marginBottom: "1.5rem" }}>
+              <label style={{
+                display: "flex", alignItems: "center", padding: "0.6rem 0.8rem",
+                border: useTopazUpscale ? "2px solid #0d0d0d" : "1px solid #ddd",
+                background: useTopazUpscale ? "#f9f7f2" : "#fff",
+                borderRadius: 10, cursor: "pointer",
+              }}>
+                <input type="checkbox" checked={useTopazUpscale}
+                  onChange={e => setUseTopazUpscale(e.target.checked)}
+                  style={{ marginRight: "0.5rem" }} />
+                <div style={{ flex: 1 }}>
+                  <strong style={{ fontSize: "0.85rem" }}>{t("oral.topaz.title")}</strong>
+                  <div style={{ fontSize: "0.7rem", color: "#999", marginTop: 2 }}>
+                    {t("oral.topaz.desc")}
+                  </div>
+                </div>
+              </label>
             </div>
 
             {/* P42 MVP:多素材编排(仅 seedance-2-r2v 引擎使用,其他引擎忽略此输入) */}

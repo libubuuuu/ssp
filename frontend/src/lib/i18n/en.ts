@@ -640,7 +640,12 @@ export const en = {
       seedance2R2v: "Seedance 2.0 r2v · 9 imgs + 3 vids + audio refs · multi-ref nerfed for real-people since Feb",
       kling26I2v: "Kling 2.6 Pro i2v · native-audio focused · $0.07–$0.168/s",
       i2v: "Kling o3 Standard i2v · static first-frame · legacy",
+      wan22Replace: "Wan 2.2 Animate Replace · Alibaba open · NSFW OK · single-image · $0.04-0.08/s · slow but higher quality (17 min/seg)",
       note: "Default is fine. For A/B comparison only. NSFW / motion fidelity / audio differ; pricing differs.",
+    },
+    topaz: {
+      title: "1440p upscale output (+$0.02/sec)",
+      desc: "Default 720p. Enable to run fal Topaz upscale to 1440p — sharper output, close to Jimeng quality tier.",
     },
     assets: {
       title: "Advanced: multi-asset composition (Seedance 2.0 only)",
