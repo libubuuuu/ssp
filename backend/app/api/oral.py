@@ -738,16 +738,27 @@ async def _run_inpainting_step(session_id: str) -> None:
             endpoint_default = "fal-ai/kling-video/o1/video-to-video/edit"
             seg_timeout_loops = 60   # 10 min cap(实测 ~4 min/段)
             SEG_LEN_S = 8.0          # 文档 3-10s,留 2s 余量;长视频均匀拆段
+            # P43:Comfy-Org/workflow_templates 抽出的 Kling 官方 Keep/Replace/Adjust 三段式范式 +
+            # maciejdzierzek/kling-ai-prompt-generator 的 motion endpoint 收尾句 + text-fixed 防漂
             if product_names:
                 prompt = (
-                    f"Replace the woman in the video with @Element1, "
-                    f"and replace her clothing/outfit with @Element2 ({', '.join(product_names)}). "
-                    f"Preserve the original body motion, gestures, facial expressions and camera movement exactly."
+                    f"Keep the scene, background, lighting, camera framing, camera movement, body posture, "
+                    f"hand gestures, facial expressions and all decorative details from the reference video "
+                    f"completely unchanged. Replace the woman in the video with @Element1. Replace her "
+                    f"clothing/outfit with @Element2 ({', '.join(product_names)}); all text labels, logos "
+                    f"and printed graphics on the product remain absolutely fixed and unchanged. Adjust the "
+                    f"lighting and color tone of @Element1 and @Element2 to match the original background "
+                    f"for a natural, cohesive visual effect. The motion ends and settles back into the "
+                    f"starting position seamlessly."
                 )
             else:
                 prompt = (
-                    "Replace the woman in the video with @Element1. "
-                    "Preserve the original body motion, gestures, facial expressions and camera movement exactly."
+                    "Keep the scene, background, lighting, camera framing, camera movement, body posture, "
+                    "hand gestures, facial expressions and all decorative details from the reference video "
+                    "completely unchanged. Replace the woman in the video with @Element1. Adjust the "
+                    "lighting and color tone of @Element1 to match the original background for a natural, "
+                    "cohesive visual effect. The motion ends and settles back into the starting position "
+                    "seamlessly."
                 )
         elif engine == "seedance-2-r2v":
             # P41:fal-ai/bytedance/seedance-2.0/reference-to-video
