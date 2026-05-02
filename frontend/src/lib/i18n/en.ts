@@ -647,6 +647,12 @@ export const en = {
       title: "1440p upscale output (+$0.02/sec)",
       desc: "Default 720p. Enable to run fal Topaz upscale to 1440p — sharper output, close to Jimeng quality tier.",
     },
+    angle: {
+      modelHint: "Optional: + add 1-2 multi-angle model photos (side/full body) to improve identity preservation",
+      productHint: "Optional: + add 1-2 multi-angle product photos (back/material/logo) to reduce detail drift",
+      addModelTip: "Add multi-angle model photos (max 2)",
+      addProductTip: "Add multi-angle product photos (max 2)",
+    },
     assets: {
       title: "Advanced: multi-asset composition (Seedance 2.0 only)",
       note: "When Seedance 2.0 r2v is selected, add scene/shot refs for director-level composition. Other engines ignore these.",

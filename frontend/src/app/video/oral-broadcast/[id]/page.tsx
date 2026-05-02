@@ -61,6 +61,10 @@ export default function OralBroadcastWorkbench() {
   const [stepBEngine, setStepBEngine] = useState<StepBEngine>("");
   // P43-2:可选 Topaz 超分到 1440p(默认关,+$0.02/秒)
   const [useTopazUpscale, setUseTopazUpscale] = useState(false);
+  // P43-3:模特/产品多角度图(每个最多 2 张额外,+ 主图共 3 张,Kling O1 elements ref 上限)
+  const [modelExtraUrls, setModelExtraUrls] = useState<string[]>([]);
+  const [productExtraUrls, setProductExtraUrls] = useState<string[]>([]);
+  const [uploadingExtraIdx, setUploadingExtraIdx] = useState<"model_extra" | "product_extra" | null>(null);
   // P42:多素材编排 MVP — 仅 seedance-2-r2v 引擎使用,其他引擎忽略
   // scene_ref:场景定调参考图(背景/光感),shot_ref:运镜参考视频(独立于 driving)
   const [sceneRefUrl, setSceneRefUrl] = useState("");
@@ -180,6 +184,9 @@ export default function OralBroadcastWorkbench() {
       const assets: Array<{ role: string; type: string; url: string; alias?: string; ord?: number }> = [];
       if (sceneRefUrl) assets.push({ role: "scene_ref", type: "image", url: sceneRefUrl, alias: "scene", ord: 0 });
       if (shotRefUrl) assets.push({ role: "shot_ref", type: "video", url: shotRefUrl, alias: "shot", ord: 1 });
+      // P43-3:模特/产品多角度图(后端 Kling o1 edit 用到 elements.reference_image_urls)
+      modelExtraUrls.forEach((u, i) => assets.push({ role: "anchor_model", type: "image", url: u, alias: `model_${i+2}`, ord: 10 + i }));
+      productExtraUrls.forEach((u, i) => assets.push({ role: "anchor_product", type: "image", url: u, alias: `product_${i+2}`, ord: 20 + i }));
       const res = await fetch(`${API_BASE}/api/oral/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
@@ -275,6 +282,32 @@ export default function OralBroadcastWorkbench() {
       setError(e instanceof Error ? e.message : t("oral.picker.uploadFail"));
     } finally {
       setUploadingExtra(null);
+    }
+  };
+
+  // P43-3:多角度图上传(模特或产品,push 到对应数组)
+  const handleAngleUpload = async (kind: "model_extra" | "product_extra", originalFile: File) => {
+    if (!originalFile.type.startsWith("image/")) { setError(t("oral.errVideoOnly")); return; }
+    setUploadingExtraIdx(kind);
+    setError("");
+    try {
+      const file = await compressImage(originalFile);
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`${API_BASE}/api/video/upload/image`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token()}` },
+        credentials: "include",
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok || !data.url) { setError(data.detail ?? t("oral.picker.uploadFail")); return; }
+      if (kind === "model_extra") setModelExtraUrls(prev => [...prev, data.url].slice(0, 2));
+      else setProductExtraUrls(prev => [...prev, data.url].slice(0, 2));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : t("oral.picker.uploadFail"));
+    } finally {
+      setUploadingExtraIdx(null);
     }
   };
 
@@ -559,9 +592,33 @@ export default function OralBroadcastWorkbench() {
                 onChange={e => setModelUrl(e.target.value)}
                 style={{ width: "100%", padding: "0.6rem", border: "1px solid #ddd", borderRadius: 8 }} />
               {modelUrl && (
-                <div style={{ marginTop: "0.5rem" }}>
+                <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
                   <img src={modelUrl} alt="" style={{ height: 60, borderRadius: 6, objectFit: "cover" }} />
+                  {/* P43-3:多角度模特图(侧面/全身),最多 2 张 */}
+                  {modelExtraUrls.map((u, i) => (
+                    <div key={i} style={{ position: "relative" }}>
+                      <img src={u} alt="" style={{ height: 60, borderRadius: 6, objectFit: "cover", opacity: 0.85 }} />
+                      <button type="button" onClick={() => setModelExtraUrls(prev => prev.filter((_, idx) => idx !== i))}
+                        style={{ position: "absolute", top: -6, right: -6, width: 18, height: 18, borderRadius: "50%", border: "1px solid #ddd", background: "#fff", fontSize: "0.7rem", cursor: "pointer", lineHeight: 1, padding: 0 }}>×</button>
+                    </div>
+                  ))}
+                  {modelExtraUrls.length < 2 && (
+                    <label style={{
+                      height: 60, width: 60, border: "1px dashed #ddd", borderRadius: 6,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      cursor: uploadingExtraIdx ? "not-allowed" : "pointer",
+                      fontSize: "1rem", color: "#888",
+                    }} title={t("oral.angle.addModelTip")}>
+                      {uploadingExtraIdx === "model_extra" ? "..." : "+"}
+                      <input type="file" accept="image/*" disabled={uploadingExtraIdx !== null}
+                        onChange={e => { const f = e.target.files?.[0]; if (f) handleAngleUpload("model_extra", f); e.target.value = ""; }}
+                        style={{ display: "none" }} />
+                    </label>
+                  )}
                 </div>
+              )}
+              {modelUrl && modelExtraUrls.length === 0 && (
+                <div style={{ fontSize: "0.7rem", color: "#aaa", marginTop: 4 }}>{t("oral.angle.modelHint")}</div>
               )}
             </div>
 
@@ -594,9 +651,33 @@ export default function OralBroadcastWorkbench() {
                 onChange={e => setProductUrl(e.target.value)}
                 style={{ width: "100%", padding: "0.6rem", border: "1px solid #ddd", borderRadius: 8 }} />
               {productUrl && (
-                <div style={{ marginTop: "0.5rem" }}>
+                <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
                   <img src={productUrl} alt="" style={{ height: 60, borderRadius: 6, objectFit: "cover" }} />
+                  {/* P43-3:多角度产品图(反面/材质/logo),最多 2 张 */}
+                  {productExtraUrls.map((u, i) => (
+                    <div key={i} style={{ position: "relative" }}>
+                      <img src={u} alt="" style={{ height: 60, borderRadius: 6, objectFit: "cover", opacity: 0.85 }} />
+                      <button type="button" onClick={() => setProductExtraUrls(prev => prev.filter((_, idx) => idx !== i))}
+                        style={{ position: "absolute", top: -6, right: -6, width: 18, height: 18, borderRadius: "50%", border: "1px solid #ddd", background: "#fff", fontSize: "0.7rem", cursor: "pointer", lineHeight: 1, padding: 0 }}>×</button>
+                    </div>
+                  ))}
+                  {productExtraUrls.length < 2 && (
+                    <label style={{
+                      height: 60, width: 60, border: "1px dashed #ddd", borderRadius: 6,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      cursor: uploadingExtraIdx ? "not-allowed" : "pointer",
+                      fontSize: "1rem", color: "#888",
+                    }} title={t("oral.angle.addProductTip")}>
+                      {uploadingExtraIdx === "product_extra" ? "..." : "+"}
+                      <input type="file" accept="image/*" disabled={uploadingExtraIdx !== null}
+                        onChange={e => { const f = e.target.files?.[0]; if (f) handleAngleUpload("product_extra", f); e.target.value = ""; }}
+                        style={{ display: "none" }} />
+                    </label>
+                  )}
                 </div>
+              )}
+              {productUrl && productExtraUrls.length === 0 && (
+                <div style={{ fontSize: "0.7rem", color: "#aaa", marginTop: 4 }}>{t("oral.angle.productHint")}</div>
               )}
             </div>
 

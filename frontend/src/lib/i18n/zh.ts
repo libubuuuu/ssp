@@ -647,6 +647,12 @@ export const zh = {
       title: "出片 1440p 超分(+$0.02/秒)",
       desc: "默认 720p。开启后过 fal Topaz 超分到 1440p,画面更精细,接近即梦档位。",
     },
+    angle: {
+      modelHint: "可选:点 + 加 1-2 张多角度模特图(侧面/全身),提升身份还原度",
+      productHint: "可选:点 + 加 1-2 张多角度产品图(反面/材质/logo),减少细节漂移",
+      addModelTip: "添加多角度模特图(最多 2 张)",
+      addProductTip: "添加多角度产品图(最多 2 张)",
+    },
     assets: {
       title: "高级:多素材编排(仅 Seedance 2.0 启用)",
       note: "选了 Seedance 2.0 r2v 时可加场景图 + 运镜视频,做到接近即梦的导演级编排。其他引擎自动忽略。",

@@ -939,14 +939,27 @@ async def _run_inpainting_step(session_id: str) -> None:
                         # element 1 = 模特,element 2 = 产品(可选)
                         # 每个 element 必须 frontal + reference_image_urls(>=1),
                         # probe 实测空 reference_image_urls 会返 elementReferList size 错。
+                        # P43-3:从 session_assets 读 anchor_model / anchor_product 多张
+                        # 拼到 reference_image_urls(O1 schema 1-3 张多角度,身份还原拉满)
                         seg_fal_url = await fal_upload_with_retry(str(seg_path))
+                        anchor_model_urls = [a["url"] for a in session_assets if a.get("role") == "anchor_model"]
+                        anchor_product_urls = [a["url"] for a in session_assets if a.get("role") == "anchor_product"]
+                        # 模特 element:frontal=主图,reference=主图+多角度(去重 + 上限 3)
+                        model_refs: List[str] = [model_url]
+                        for u in anchor_model_urls:
+                            if u not in model_refs and len(model_refs) < 3:
+                                model_refs.append(u)
                         elements = [
-                            {"frontal_image_url": model_url, "reference_image_urls": [model_url]},
+                            {"frontal_image_url": model_url, "reference_image_urls": model_refs},
                         ]
                         if garment_url:
+                            product_refs: List[str] = [garment_url]
+                            for u in anchor_product_urls:
+                                if u not in product_refs and len(product_refs) < 3:
+                                    product_refs.append(u)
                             elements.append({
                                 "frontal_image_url": garment_url,
-                                "reference_image_urls": [garment_url],
+                                "reference_image_urls": product_refs,
                             })
                         args = {
                             "video_url": seg_fal_url,
