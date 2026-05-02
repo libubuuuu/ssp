@@ -59,6 +59,11 @@ export default function OralBroadcastWorkbench() {
   // P41:Step B 引擎覆盖(空字符串=后端默认 kling-o1-edit;其余 5 个用户实测对比)
   type StepBEngine = "" | "kling-o1-edit" | "i2v" | "seedance-2-r2v" | "kling-o3-r2v" | "kling-o3-v2v" | "kling-2-6-i2v";
   const [stepBEngine, setStepBEngine] = useState<StepBEngine>("");
+  // P42:多素材编排 MVP — 仅 seedance-2-r2v 引擎使用,其他引擎忽略
+  // scene_ref:场景定调参考图(背景/光感),shot_ref:运镜参考视频(独立于 driving)
+  const [sceneRefUrl, setSceneRefUrl] = useState("");
+  const [shotRefUrl, setShotRefUrl] = useState("");
+  const [uploadingExtra, setUploadingExtra] = useState<"scene" | "shot" | null>(null);
 
   // Step 1 模特/产品(URL 输入 + 从库选两种来源)
   const [modelName, setModelName] = useState("");
@@ -169,11 +174,15 @@ export default function OralBroadcastWorkbench() {
     try {
       const models = [{ name: modelName, image_url: modelUrl }];
       const products = productName && productUrl ? [{ name: productName, image_url: productUrl }] : [];
+      // P42:组装 assets(空数组 = 走老路单素材)
+      const assets: Array<{ role: string; type: string; url: string; alias?: string; ord?: number }> = [];
+      if (sceneRefUrl) assets.push({ role: "scene_ref", type: "image", url: sceneRefUrl, alias: "scene", ord: 0 });
+      if (shotRefUrl) assets.push({ role: "shot_ref", type: "video", url: shotRefUrl, alias: "shot", ord: 1 });
       const res = await fetch(`${API_BASE}/api/oral/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
         credentials: "include",
-        body: JSON.stringify({ session_id: sessionId, tier, models, products, legal_consent: legalConsent, aspect_ratio: aspectRatio || null, step_b_engine: stepBEngine || null }),
+        body: JSON.stringify({ session_id: sessionId, tier, models, products, legal_consent: legalConsent, aspect_ratio: aspectRatio || null, step_b_engine: stepBEngine || null, assets: assets.length ? assets : null }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.detail || t("oral.errStartFail")); return; }
@@ -235,6 +244,35 @@ export default function OralBroadcastWorkbench() {
       setError(e instanceof Error ? e.message : t("oral.picker.uploadFail"));
     } finally {
       setUploadingKind(null);
+    }
+  };
+
+  // P42 MVP:场景图(image)/ 运镜参考视频(video)单独上传,不入 model/product 槽
+  const handleExtraUpload = async (slot: "scene" | "shot", originalFile: File) => {
+    const wantImage = slot === "scene";
+    if (wantImage && !originalFile.type.startsWith("image/")) { setError(t("oral.errVideoOnly")); return; }
+    if (!wantImage && !originalFile.type.startsWith("video/")) { setError(t("oral.errVideoOnly")); return; }
+    setUploadingExtra(slot);
+    setError("");
+    try {
+      const file = wantImage ? await compressImage(originalFile) : originalFile;
+      const fd = new FormData();
+      fd.append("file", file);
+      const endpoint = wantImage ? "/api/video/upload/image" : "/api/video/upload/video";
+      const res = await fetch(`${API_BASE}${endpoint}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token()}` },
+        credentials: "include",
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok || !data.url) { setError(data.detail ?? t("oral.picker.uploadFail")); return; }
+      if (slot === "scene") setSceneRefUrl(data.url);
+      else setShotRefUrl(data.url);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : t("oral.picker.uploadFail"));
+    } finally {
+      setUploadingExtra(null);
     }
   };
 
@@ -410,6 +448,64 @@ export default function OralBroadcastWorkbench() {
                 {t("oral.engine.note")}
               </div>
             </div>
+
+            {/* P42 MVP:多素材编排(仅 seedance-2-r2v 引擎使用,其他引擎忽略此输入) */}
+            {stepBEngine === "seedance-2-r2v" && (
+              <div style={{ marginBottom: "1.5rem", padding: "0.8rem", background: "#fafaf7", border: "1px solid #e8e6dc", borderRadius: 10 }}>
+                <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>{t("oral.assets.title")}</div>
+                <div style={{ fontSize: "0.7rem", color: "#999", marginBottom: "0.8rem" }}>{t("oral.assets.note")}</div>
+
+                {/* 场景参考图 */}
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "0.6rem" }}>
+                  <div style={{ flex: 1, fontSize: "0.8rem" }}>
+                    <strong>{t("oral.assets.sceneTitle")}</strong>
+                    <div style={{ fontSize: "0.7rem", color: "#999" }}>{t("oral.assets.sceneDesc")}</div>
+                    {sceneRefUrl && <div style={{ fontSize: "0.7rem", color: "#0a8" }}>✓ {sceneRefUrl.slice(-40)}</div>}
+                  </div>
+                  <label style={{
+                    border: "1px solid #ddd", borderRadius: 6, padding: "0.3rem 0.7rem",
+                    fontSize: "0.75rem", cursor: uploadingExtra ? "not-allowed" : "pointer",
+                    background: "#fff",
+                  }}>
+                    {uploadingExtra === "scene" ? t("oral.picker.uploading") : (sceneRefUrl ? t("oral.assets.replaceBtn") : t("oral.picker.uploadBtn"))}
+                    <input type="file" accept="image/*" disabled={uploadingExtra !== null}
+                      onChange={e => { const f = e.target.files?.[0]; if (f) handleExtraUpload("scene", f); e.target.value = ""; }}
+                      style={{ display: "none" }} />
+                  </label>
+                  {sceneRefUrl && (
+                    <button type="button" onClick={() => setSceneRefUrl("")}
+                      style={{ background: "none", border: "1px solid #ddd", borderRadius: 6, padding: "0.3rem 0.6rem", fontSize: "0.75rem", cursor: "pointer", color: "#888" }}>
+                      ×
+                    </button>
+                  )}
+                </div>
+
+                {/* 运镜参考视频 */}
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                  <div style={{ flex: 1, fontSize: "0.8rem" }}>
+                    <strong>{t("oral.assets.shotTitle")}</strong>
+                    <div style={{ fontSize: "0.7rem", color: "#999" }}>{t("oral.assets.shotDesc")}</div>
+                    {shotRefUrl && <div style={{ fontSize: "0.7rem", color: "#0a8" }}>✓ {shotRefUrl.slice(-40)}</div>}
+                  </div>
+                  <label style={{
+                    border: "1px solid #ddd", borderRadius: 6, padding: "0.3rem 0.7rem",
+                    fontSize: "0.75rem", cursor: uploadingExtra ? "not-allowed" : "pointer",
+                    background: "#fff",
+                  }}>
+                    {uploadingExtra === "shot" ? t("oral.picker.uploading") : (shotRefUrl ? t("oral.assets.replaceBtn") : t("oral.picker.uploadBtn"))}
+                    <input type="file" accept="video/*" disabled={uploadingExtra !== null}
+                      onChange={e => { const f = e.target.files?.[0]; if (f) handleExtraUpload("shot", f); e.target.value = ""; }}
+                      style={{ display: "none" }} />
+                  </label>
+                  {shotRefUrl && (
+                    <button type="button" onClick={() => setShotRefUrl("")}
+                      style={{ background: "none", border: "1px solid #ddd", borderRadius: 6, padding: "0.3rem 0.6rem", fontSize: "0.75rem", cursor: "pointer", color: "#888" }}>
+                      ×
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div style={{ marginBottom: "1.5rem" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>

@@ -642,6 +642,15 @@ export const zh = {
       i2v: "Kling o3 Standard i2v · 静图首帧 · 老路保留",
       note: "默认即可。仅用于对比实测,各模型 NSFW/复刻/音频能力不同,价格也不同。",
     },
+    assets: {
+      title: "高级:多素材编排(仅 Seedance 2.0 启用)",
+      note: "选了 Seedance 2.0 r2v 时可加场景图 + 运镜视频,做到接近即梦的导演级编排。其他引擎自动忽略。",
+      sceneTitle: "场景参考图",
+      sceneDesc: "上传一张图片定调背景/光感(如想要的店面/光线/调色)",
+      shotTitle: "运镜参考视频",
+      shotDesc: "上传一段电影/广告片段做镜头语言参考(独立于你上传的口播原视频)",
+      replaceBtn: "更换",
+    },
     textTooLong: "文案超过 1000 字符上限,请删减",
     tierDesc: {
       economy: "MiniMax 音色 + 480p 换装 + veed 口型",

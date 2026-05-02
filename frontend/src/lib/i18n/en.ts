@@ -642,6 +642,15 @@ export const en = {
       i2v: "Kling o3 Standard i2v · static first-frame · legacy",
       note: "Default is fine. For A/B comparison only. NSFW / motion fidelity / audio differ; pricing differs.",
     },
+    assets: {
+      title: "Advanced: multi-asset composition (Seedance 2.0 only)",
+      note: "When Seedance 2.0 r2v is selected, add scene/shot refs for director-level composition. Other engines ignore these.",
+      sceneTitle: "Scene reference image",
+      sceneDesc: "Upload one image to set background/lighting tone (storefront/light/color grading)",
+      shotTitle: "Camera-language reference video",
+      shotDesc: "Upload a film/ad clip as cinematic reference (separate from your driving voice-over video)",
+      replaceBtn: "Replace",
+    },
     textTooLong: "Text exceeds 1000 character limit. Please trim.",
     tierDesc: {
       economy: "MiniMax voice + 480p swap + veed lipsync",

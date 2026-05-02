@@ -61,6 +61,16 @@ MAX_DURATION_SECONDS = 300
 # 档位允许值
 TIERS = ("economy", "standard", "premium")
 
+# P42:assets role / type 白名单
+_ASSET_ROLES = (
+    "anchor_model",      # 模特角色锚定(可多张:正面/侧面/全身)
+    "anchor_product",    # 产品角色锚定(可多张:正反/材质/logo)
+    "scene_ref",         # 场景定调(背景/光感参考图)
+    "shot_ref",          # 运镜参考(镜头语言参考视频,与 driving 不同)
+    "rhythm_ref",        # 节奏氛围(参考音频,影响生成节奏)
+)
+_ASSET_TYPES = ("image", "video", "audio")
+
 # P41:Step B 引擎白名单 — 用户可在 /start 显式指定;None/空串走 env(默认 kling-o1-edit)
 # 各引擎 fal schema 真值见 _drive_one 各分支(2026-05-03 openapi 实查)
 _STEP_B_ENGINES = (
@@ -82,6 +92,19 @@ STATUS_FAILED_PREFIX = "failed_"
 # ==================== Pydantic 请求/响应 ====================
 
 
+class AssetItem(BaseModel):
+    """P42:导演级工作流的单个素材条目。
+    role: 在生成中的语义角色 — anchor_model / anchor_product / scene_ref / shot_ref / rhythm_ref
+    type: image / video / audio
+    alias: 用户起的引用名(prompt 用 @alias),可选
+    """
+    role: str
+    type: str
+    url: str
+    alias: Optional[str] = None
+    ord: Optional[int] = 0
+
+
 class StartRequest(BaseModel):
     """POST /api/oral/start"""
     session_id: str
@@ -91,6 +114,7 @@ class StartRequest(BaseModel):
     legal_consent: bool     # L1 用户责任声明,前端勾选后传 true(规划文档 Q4)
     aspect_ratio: Optional[str] = None  # P16:成片比例 "9:16"/"16:9"/"1:1"/None(跟随原视频)
     step_b_engine: Optional[str] = None  # P41:Step B 引擎覆盖,白名单见 _STEP_B_ENGINES;None=跟随 env
+    assets: Optional[List[AssetItem]] = None  # P42:多素材编排(场景图/运镜视频/节奏音频),None=老路单素材
 
 
 class EditRequest(BaseModel):
@@ -176,6 +200,32 @@ def _create_session(
             (session_id, str(user_id), "economy", STATUS_INITIAL, video_path, duration, 0),
         )
         conn.commit()
+
+
+# P42:多素材编排 DB 操作
+def _save_assets(session_id: str, assets: List[dict]) -> None:
+    """把 [{role, type, url, alias, ord}, ...] 写入 oral_session_assets。
+    每次 /start 调用前先清空老 assets(同一 session 重启不堆叠)。"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM oral_session_assets WHERE session_id = ?", (session_id,))
+        for i, a in enumerate(assets):
+            cursor.execute(
+                "INSERT INTO oral_session_assets (session_id, role, type, url, alias, ord) VALUES (?, ?, ?, ?, ?, ?)",
+                (session_id, a["role"], a["type"], a["url"], a.get("alias"), a.get("ord") or i),
+            )
+        conn.commit()
+
+
+def _load_assets(session_id: str) -> List[dict]:
+    """读 session 的 assets 列表,按 ord 排序"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT role, type, url, alias, ord FROM oral_session_assets WHERE session_id = ? ORDER BY ord ASC",
+            (session_id,),
+        )
+        return [dict(r) for r in cursor.fetchall()]
 
 
 def _log(msg: str) -> None:
@@ -493,6 +543,11 @@ async def _run_inpainting_step(session_id: str) -> None:
     if not session:
         _log(f"_run_inpainting_step: session {session_id} 已不存在,跳过")
         return
+
+    # P42:多素材编排 — 读 oral_session_assets。空列表 = 老路单素材模板。
+    session_assets = _load_assets(session_id)
+    if session_assets:
+        _log(f"_run_inpainting_step P42 加载 {len(session_assets)} 个 assets session={session_id}")
 
     try:
         models = json.loads(session.get("selected_models") or "[]")
@@ -885,12 +940,27 @@ async def _run_inpainting_step(session_id: str) -> None:
                         except Exception as e:
                             raise RuntimeError(f"kling-o1-edit seg {seg_idx} submit: {e}")
                     elif engine == "seedance-2-r2v":
-                        # P41:Seedance 2.0 r2v — image_urls + video_urls + @Index 引用
-                        # @Image1=vton 参考图, @Image2=产品图(可选), @Video1=原视频段
+                        # P41+P42:Seedance 2.0 r2v — image_urls + video_urls + audio_urls + @Index
+                        # P42:若 session_assets 非空,按 role 编排;否则老路 reference_image + garment
                         seg_fal_url = await fal_upload_with_retry(str(seg_path))
-                        image_urls_arg = [reference_image]
-                        if garment_url:
-                            image_urls_arg.append(garment_url)
+                        if session_assets:
+                            # 用户编排路:image_urls 按 role 排序(anchor_model→anchor_product→scene_ref)
+                            # video_urls = [driving 段] + 用户上传的 shot_ref 视频(总和 ≤3 段)
+                            # audio_urls = rhythm_ref 音频
+                            asset_imgs = [a["url"] for a in session_assets if a["type"] == "image"]
+                            asset_videos = [a["url"] for a in session_assets if a["type"] == "video" and a["role"] == "shot_ref"]
+                            asset_audios = [a["url"] for a in session_assets if a["type"] == "audio"]
+                            # 把 vton 合成图(reference_image)放在最前作主参考
+                            image_urls_arg = [reference_image] + asset_imgs[:8]  # 上限 9 张
+                            video_urls_arg = [seg_fal_url] + asset_videos[:2]    # 上限 3 段
+                            audio_urls_arg = asset_audios[:3]
+                        else:
+                            # 老路:vton + 产品图,无 audio
+                            image_urls_arg = [reference_image]
+                            if garment_url:
+                                image_urls_arg.append(garment_url)
+                            video_urls_arg = [seg_fal_url]
+                            audio_urls_arg = []
                         # aspect_ratio 映射:用户选 9:16/16:9/1:1,跟随 → "auto"
                         seedance_aspect = (session.get("aspect_ratio") or "auto").strip().lower()
                         if seedance_aspect not in ("9:16", "16:9", "1:1", "21:9", "4:3", "3:4"):
@@ -898,12 +968,14 @@ async def _run_inpainting_step(session_id: str) -> None:
                         args = {
                             "prompt": prompt,
                             "image_urls": image_urls_arg,
-                            "video_urls": [seg_fal_url],
+                            "video_urls": video_urls_arg,
                             "duration": str(int(seg_durations[seg_idx])) if 4 <= int(seg_durations[seg_idx]) <= 15 else "auto",
                             "resolution": "720p",
                             "aspect_ratio": seedance_aspect,
                             "generate_audio": True,
                         }
+                        if audio_urls_arg:
+                            args["audio_urls"] = audio_urls_arg
                         endpoint = endpoint_default
                         try:
                             handler = await fal_client.submit_async(endpoint, arguments=args)
@@ -1893,6 +1965,23 @@ async def start_pipeline(
     if step_b_engine and step_b_engine not in _STEP_B_ENGINES:
         raise HTTPException(400, f"step_b_engine 必须是 {_STEP_B_ENGINES} 之一,或不传")
 
+    # P42:校验 assets,白名单 role + type;空列表/None 走老路单素材
+    asset_dicts: List[dict] = []
+    if req.assets:
+        if len(req.assets) > 20:
+            raise HTTPException(400, "assets 最多 20 个")
+        for a in req.assets:
+            if a.role not in _ASSET_ROLES:
+                raise HTTPException(400, f"asset role 必须是 {_ASSET_ROLES} 之一(收到 {a.role})")
+            if a.type not in _ASSET_TYPES:
+                raise HTTPException(400, f"asset type 必须是 {_ASSET_TYPES} 之一(收到 {a.type})")
+            if not a.url or not a.url.startswith(("http://", "https://", "/")):
+                raise HTTPException(400, f"asset url 非法:{a.url[:60]}")
+            asset_dicts.append({
+                "role": a.role, "type": a.type, "url": a.url,
+                "alias": a.alias, "ord": a.ord or 0,
+            })
+
     # 写入 session — 状态推进到 asr_running(实际 ASR 调用 P2 实现)
     _update_session(
         req.session_id,
@@ -1904,6 +1993,14 @@ async def start_pipeline(
         aspect_ratio=(aspect or None),
         step_b_engine=(step_b_engine or None),
     )
+
+    # P42:写入多素材编排表(可选,空跳过)
+    if asset_dicts:
+        try:
+            _save_assets(req.session_id, asset_dicts)
+        except Exception as e:
+            _log(f"_save_assets failed session={req.session_id}: {e}")
+            # 不阻塞流程,降级到老路单素材
 
     # 写 audit_log(L1 责任声明已确认)
     try:

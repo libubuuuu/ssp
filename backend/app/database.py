@@ -360,6 +360,23 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_oral_status ON oral_sessions(status)")
         _patch_oral_columns(cursor)
 
+        # P42 — 多素材编排子表(导演级工作流)
+        # role:asset 在生成中的语义角色;type:媒体类型;alias:用户起的引用名(prompt 用 @alias)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS oral_session_assets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            type TEXT NOT NULL,
+            url TEXT NOT NULL,
+            alias TEXT,
+            ord INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES oral_sessions(id) ON DELETE CASCADE
+        )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_oral_assets_session ON oral_session_assets(session_id, ord)")
+
         # 创建索引优化查询性能
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
