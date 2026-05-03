@@ -3245,6 +3245,41 @@ async def _run_segment_task(session_id: str, seg_idx: int, user_id: str):
             _log(f"vace-mask P82 seg {seg_idx} VACE error: {vres['error'][:200]}")
             return
         fal_url = vres["video_url"]
+        # P85:VACE 输出后,本地 InsightFace 换脸 → 用户模特脸替换 driving 模特脸
+        # 用 P46 segment_face_swap_worker.py(本地 CPU 推理,~2min/5s 段,免费)
+        models = json.loads(session.get("selected_models") or "[]")
+        model_url_swap = models[0].get("image_url") if models and models[0].get("image_url") else None
+        if model_url_swap:
+            try:
+                import urllib.request
+                swap_tmpdir = Path(tempfile.mkdtemp(prefix=f"face_swap_{session_id}_seg{seg_idx}_"))
+                model_local = swap_tmpdir / "model.jpg"
+                vace_local = swap_tmpdir / "vace_in.mp4"
+                swap_local = swap_tmpdir / "swap_out.mp4"
+                urllib.request.urlretrieve(model_url_swap, str(model_local))
+                urllib.request.urlretrieve(fal_url, str(vace_local))
+                _log(f"vace-mask P85 seg {seg_idx} 启动 InsightFace 换脸...")
+                swap_t0 = time.time()
+                proc = await asyncio.create_subprocess_exec(
+                    "/opt/ssp/face_venv/bin/python",
+                    "/opt/ssp/scripts/segment_face_swap_worker.py",
+                    str(model_local), str(vace_local), str(swap_local), "5",
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+                try:
+                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    raise RuntimeError("InsightFace 换脸超时 5min")
+                if proc.returncode == 0 and swap_local.exists() and swap_local.stat().st_size > 0:
+                    swapped_fal = await fal_upload_with_retry(str(swap_local))
+                    fal_url = swapped_fal  # 覆盖原 VACE url 为换脸后 url
+                    _log(f"vace-mask P85 seg {seg_idx} InsightFace OK elapsed={int(time.time()-swap_t0)}s")
+                else:
+                    _log(f"vace-mask P85 seg {seg_idx} InsightFace 失败(rc={proc.returncode} stderr={(stderr or b'').decode()[:200]}),用 VACE 原输出")
+                shutil.rmtree(swap_tmpdir, ignore_errors=True)
+            except Exception as swap_err:
+                _log(f"vace-mask P85 seg {seg_idx} InsightFace 异常,降级用 VACE 原输出: {swap_err}")
         try:
             fal_url = await archive_url(fal_url, user_id, "video")
         except Exception as arch_err:
