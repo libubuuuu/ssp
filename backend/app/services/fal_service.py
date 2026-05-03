@@ -522,6 +522,120 @@ class FalVTONService:
             return {"error": str(e)}
 
 
+class FalAudioSeparatorService:
+    """P44 工作流:音轨分离(BGM ⊥ 人声)。
+
+    主路 demucs(6 stem:vocals/drums/bass/guitar/piano/other),probe 实测
+    15s wav 19.6s 出活,vocals/BGM 都能用 ffmpeg amix 重组。
+    备胎 elevenlabs/audio-isolation(只出 isolated vocals,4.5s,BGM 丢),
+    用于 demucs 故障兜底。
+
+    返回:
+      {"vocals_url": "...", "bgm_stem_urls": [...], "model": "demucs"}  主路成功
+      {"vocals_url": "...", "bgm_stem_urls": [], "model": "elevenlabs"}  备胎成功
+      {"error": "..."}  全失败
+    """
+    PRIMARY = "fal-ai/demucs"
+    FALLBACK = "fal-ai/elevenlabs/audio-isolation"
+
+    def __init__(self, fal_key: str):
+        self.fal_key = fal_key
+
+    async def separate(self, audio_url: str) -> dict:
+        cb = get_circuit_breaker()
+
+        # 主路 demucs
+        if cb.is_available("demucs"):
+            try:
+                result = await fal_client.run_async(self.PRIMARY, arguments={"audio_url": audio_url})
+                await cb.record_success("demucs")
+                if isinstance(result, dict):
+                    vocals = result.get("vocals", {})
+                    vocals_url = vocals.get("url") if isinstance(vocals, dict) else None
+                    if vocals_url:
+                        # BGM 由 drums + bass + guitar + other 合成(piano 一般 -80dB 静音可丢);
+                        # 这里返 stem urls,真正合成由调用方 ffmpeg amix(本地处理省 fal 流量)
+                        bgm_keys = ("drums", "bass", "guitar", "other")
+                        bgm_urls = []
+                        for k in bgm_keys:
+                            stem = result.get(k, {}) if isinstance(result, dict) else {}
+                            u = stem.get("url") if isinstance(stem, dict) else None
+                            if u:
+                                bgm_urls.append(u)
+                        return {
+                            "vocals_url": vocals_url,
+                            "bgm_stem_urls": bgm_urls,
+                            "model": self.PRIMARY,
+                        }
+            except Exception as e:
+                await cb.record_failure("demucs")
+                log_warning(f"FalAudioSeparator demucs 失败,降级 elevenlabs: {e}")
+
+        # 备胎 elevenlabs(只 vocal,无 BGM stems)
+        if cb.is_available("elevenlabs-isolate"):
+            try:
+                result = await fal_client.run_async(self.FALLBACK, arguments={"audio_url": audio_url})
+                await cb.record_success("elevenlabs-isolate")
+                audio = result.get("audio", {}) if isinstance(result, dict) else {}
+                vocals_url = audio.get("url") if isinstance(audio, dict) else None
+                if vocals_url:
+                    return {
+                        "vocals_url": vocals_url,
+                        "bgm_stem_urls": [],
+                        "model": self.FALLBACK,
+                    }
+            except Exception as e:
+                await cb.record_failure("elevenlabs-isolate")
+                log_warning(f"FalAudioSeparator elevenlabs 也失败: {e}")
+
+        return {"error": "音轨分离主路 + 备胎全部失败"}
+
+
+class FalPixverseSwapService:
+    """P44 工作流 Step B 主路:Pixverse Swap。
+
+    专门做 person/object/background 替换,fal 文档列三类全 swap。
+    probe 实测内衣类参考图(seedance-2/enterprise 直接拒)→ pixverse 111.8s
+    出 8s 视频成功,**NSFW 友好** 是 fal 上目前最干净的真人替换路。
+
+    schema(2026-05-03 fal 文档实查):
+      input  : video_url(MP4/MOV/WebM/M4V/GIF) + image_url
+      output : video.url
+      duration: 5s 基线,>5s 加倍
+      pricing: $0.20 / 5s @720p,$0.40 / 5s @1080p
+      audio  : 自动保留原音(我们 lipsync 接管所以无所谓)
+
+    限制(已知):
+      - image_url 单图,无 multi-ref(产品多角度无法在此端点叠加)
+      - 单段 5s 基线,长视频拆段后接到 _drive_one 多段并发框架
+    """
+    ENDPOINT = "fal-ai/pixverse/swap"
+
+    def __init__(self, fal_key: str):
+        self.fal_key = fal_key
+
+    async def swap(self, video_url: str, image_url: str) -> dict:
+        cb = get_circuit_breaker()
+        if not cb.is_available("pixverse-swap"):
+            return {"error": "模型 pixverse-swap 已熔断"}
+        try:
+            args = {"video_url": video_url, "image_url": image_url}
+            result = await fal_client.run_async(self.ENDPOINT, arguments=args)
+            await cb.record_success("pixverse-swap")
+            video_obj = result.get("video") if isinstance(result, dict) else None
+            video_url_out = (
+                video_obj.get("url") if isinstance(video_obj, dict)
+                else result.get("video_url") if isinstance(result, dict)
+                else None
+            )
+            if not video_url_out:
+                return {"error": "pixverse-swap 未返 video URL"}
+            return {"video_url": video_url_out, "model": self.ENDPOINT}
+        except Exception as e:
+            await cb.record_failure("pixverse-swap")
+            return {"error": str(e)}
+
+
 class FalLipsyncService:
     """七十七续 P3:口型对齐(三档不同 endpoint)。
 
@@ -579,11 +693,13 @@ _asr_service: Optional[FalASRService] = None
 _inpainting_service: Optional[FalInpaintingService] = None
 _vton_service: Optional["FalVTONService"] = None
 _lipsync_service: Optional[FalLipsyncService] = None
+_audio_separator_service: Optional["FalAudioSeparatorService"] = None
+_pixverse_swap_service: Optional["FalPixverseSwapService"] = None
 
 
 def init_fal_services(fal_key: str):
     os.environ["FAL_KEY"] = fal_key
-    global _image_service, _video_service, _avatar_service, _voice_service, _asr_service, _inpainting_service, _vton_service, _lipsync_service
+    global _image_service, _video_service, _avatar_service, _voice_service, _asr_service, _inpainting_service, _vton_service, _lipsync_service, _audio_separator_service, _pixverse_swap_service
     _image_service = FalImageService(fal_key)
     _video_service = FalVideoService(fal_key)
     _avatar_service = FalAvatarService(fal_key)
@@ -592,6 +708,8 @@ def init_fal_services(fal_key: str):
     _inpainting_service = FalInpaintingService(fal_key)
     _vton_service = FalVTONService(fal_key)
     _lipsync_service = FalLipsyncService(fal_key)
+    _audio_separator_service = FalAudioSeparatorService(fal_key)
+    _pixverse_swap_service = FalPixverseSwapService(fal_key)
 
 def get_image_service() -> FalImageService:
     return _image_service
@@ -616,6 +734,12 @@ def get_vton_service() -> "FalVTONService":
 
 def get_lipsync_service() -> FalLipsyncService:
     return _lipsync_service
+
+def get_audio_separator_service() -> "FalAudioSeparatorService":
+    return _audio_separator_service
+
+def get_pixverse_swap_service() -> "FalPixverseSwapService":
+    return _pixverse_swap_service
 
 
 # ============== fal storage upload retry helper (P33 2026-05-01) ==============

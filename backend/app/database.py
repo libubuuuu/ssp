@@ -74,6 +74,13 @@ def _patch_oral_columns(cursor):
         ("step_b_engine", "ALTER TABLE oral_sessions ADD COLUMN step_b_engine TEXT"),
         # P43-2 — 用户选是否过 fal Topaz 超分到 1440p(720p×2),+$0.02/秒
         ("use_topaz_upscale", "ALTER TABLE oral_sessions ADD COLUMN use_topaz_upscale INTEGER NOT NULL DEFAULT 0"),
+        # P44 — demucs 音轨分离(Step 1 ASR 内异步触发,失败降级 elevenlabs/原音轨)
+        # vocals_path:本地 mp3,Step 5 lipsync 用作干净人声输入(替代原音轨)
+        # bgm_path  :本地 mp3,Step 5 lipsync 后 ffmpeg amix 混回成片(实现"保留 BGM")
+        ("vocals_path", "ALTER TABLE oral_sessions ADD COLUMN vocals_path TEXT"),
+        ("bgm_path", "ALTER TABLE oral_sessions ADD COLUMN bgm_path TEXT"),
+        # P44 — Step B 实际跑通的引擎(可能是 fallback 后的,跟 step_b_engine 用户选项不同)
+        ("step_b_engine_used", "ALTER TABLE oral_sessions ADD COLUMN step_b_engine_used TEXT"),
     ]
     for col_name, sql in patches:
         try:

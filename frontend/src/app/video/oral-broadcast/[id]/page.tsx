@@ -57,7 +57,7 @@ export default function OralBroadcastWorkbench() {
   // P16:成片比例(空字符串表示跟随原视频)
   const [aspectRatio, setAspectRatio] = useState<"" | "9:16" | "16:9" | "1:1">("");
   // P41:Step B 引擎覆盖(空字符串=后端默认 kling-o1-edit;其余多个用户实测对比)
-  type StepBEngine = "" | "kling-o1-edit" | "i2v" | "seedance-2-r2v" | "kling-o3-r2v" | "kling-o3-v2v" | "kling-2-6-i2v" | "wan-2-2-animate-replace";
+  type StepBEngine = "" | "auto" | "pixverse-swap" | "kling-o1-edit" | "i2v" | "seedance-2-r2v" | "kling-o3-r2v" | "kling-o3-v2v" | "kling-2-6-i2v" | "wan-2-2-animate-replace";
   const [stepBEngine, setStepBEngine] = useState<StepBEngine>("");
   // P43-2:可选 Topaz 超分到 1440p(默认关,+$0.02/秒)
   const [useTopazUpscale, setUseTopazUpscale] = useState(false);
@@ -472,6 +472,8 @@ export default function OralBroadcastWorkbench() {
               <select value={stepBEngine} onChange={e => setStepBEngine(e.target.value as StepBEngine)}
                 style={{ width: "100%", padding: "0.6rem 0.8rem", border: "1px solid #ddd", borderRadius: 10, background: "#fff", fontSize: "0.9rem", cursor: "pointer" }}>
                 <option value="">{t("oral.engine.default")}</option>
+                <option value="auto">{t("oral.engine.auto")}</option>
+                <option value="pixverse-swap">{t("oral.engine.pixverseSwap")}</option>
                 <option value="kling-o1-edit">{t("oral.engine.klingO1Edit")}</option>
                 <option value="wan-2-2-animate-replace">{t("oral.engine.wan22Replace")}</option>
                 <option value="kling-o3-v2v">{t("oral.engine.klingO3V2v")}</option>

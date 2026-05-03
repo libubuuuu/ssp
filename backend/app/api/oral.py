@@ -81,6 +81,8 @@ _STEP_B_ENGINES = (
     "kling-o3-v2v",     # fal-ai/kling-video/o3/pro/video-to-video/reference(P41 新)
     "kling-2-6-i2v",    # fal-ai/kling-video/v2.6/pro/image-to-video(P41 新,native audio)
     "wan-2-2-animate-replace",  # fal-ai/wan/v2.2-14b/animate/replace(P43 新,单图+driving,17 min/段,质量更高)
+    "pixverse-swap",            # fal-ai/pixverse/swap(P44 新主路,NSFW 友好,5s/段 ~14s/s 出片)
+    "auto",                     # P44 智能 fallback 链:pixverse → seedance-2-r2v → wan-2-2-animate-replace
 )
 
 # 状态机 — 详见规划文档 §4.2
@@ -317,6 +319,61 @@ async def _run_asr_step(session_id: str) -> None:
         if result is None:
             raise RuntimeError(f"ASR 重试 3 次仍失败: {str(last_err)[:300]}")
 
+        # P44:demucs 音轨分离(vocals + BGM 4 stem)。失败不阻塞主链路,降级用原音轨当 vocals。
+        # 真值:probe 实测 demucs 19.6s/15s 段,vocals -18.5dB,bgm 4 stem 各 -36~-39dB(piano 静音)。
+        vocals_path: Optional[str] = None
+        bgm_path: Optional[str] = None
+        try:
+            from app.services.fal_service import get_audio_separator_service
+            sep_svc = get_audio_separator_service()
+            if sep_svc:
+                sep_t0 = time.time()
+                sep_result = await sep_svc.separate(audio_fal_url)
+                if "error" not in sep_result:
+                    vocals_url = sep_result.get("vocals_url")
+                    bgm_stem_urls = sep_result.get("bgm_stem_urls") or []
+                    sep_model = sep_result.get("model", "?")
+                    if vocals_url:
+                        vp = str(session_dir / "vocals.mp3")
+                        await _download_url_to(vocals_url, Path(vp))
+                        vocals_path = vp
+                    if bgm_stem_urls:
+                        # 下载 4 stem → ffmpeg amix → bgm.mp3
+                        from app.api.video_studio import _run_ffmpeg
+                        stem_locals: List[str] = []
+                        for i, url in enumerate(bgm_stem_urls):
+                            sp = str(session_dir / f"bgm_stem_{i}.mp3")
+                            await _download_url_to(url, Path(sp))
+                            stem_locals.append(sp)
+                        bp = str(session_dir / "bgm.mp3")
+                        amix_cmd = ["ffmpeg", "-y"]
+                        for sp in stem_locals:
+                            amix_cmd += ["-i", sp]
+                        amix_cmd += [
+                            "-filter_complex",
+                            f"amix=inputs={len(stem_locals)}:duration=longest:dropout_transition=0:normalize=0",
+                            "-c:a", "libmp3lame", "-q:a", "2", bp,
+                        ]
+                        ok_m, err_m = _run_ffmpeg(amix_cmd)
+                        if ok_m:
+                            bgm_path = bp
+                        else:
+                            _log(f"_run_asr_step BGM amix 失败(不阻塞): {err_m[:200]}")
+                        # 清理 stem 临时文件
+                        for sp in stem_locals:
+                            try:
+                                Path(sp).unlink(missing_ok=True)
+                            except Exception:
+                                pass
+                    _log(f"_run_asr_step audio-sep OK session={session_id} model={sep_model} "
+                         f"vocals={'yes' if vocals_path else 'no'} bgm={'yes' if bgm_path else 'no'} "
+                         f"elapsed={time.time()-sep_t0:.1f}s")
+                else:
+                    _log(f"_run_asr_step audio-sep 失败(不阻塞,降级原音轨): {sep_result.get('error')}")
+        except Exception as sep_e:
+            # 不阻塞 ASR step,vocals_path/bgm_path 留 None,Step 5 自动降级用原音轨
+            _log(f"_run_asr_step audio-sep 异常(不阻塞): {sep_e}")
+
         # 4) 写库,推进状态
         _update_session(
             session_id,
@@ -324,6 +381,8 @@ async def _run_asr_step(session_id: str) -> None:
             voice_ref_audio_path=voice_ref_path,
             asr_transcript=result.get("text", ""),
             asr_word_timestamps=json.dumps(result.get("chunks", []), ensure_ascii=False),
+            vocals_path=vocals_path,
+            bgm_path=bgm_path,
             status="asr_done",
         )
         _log(f"_run_asr_step OK session={session_id} text_len={len(result.get('text', ''))}")
@@ -577,7 +636,9 @@ async def _run_inpainting_step(session_id: str) -> None:
             duration_for_frames = float(session.get("duration_seconds") or 0)
             if duration_for_frames <= 0:
                 duration_for_frames = _get_video_duration(original_video_path) or 0
-            FRAME_POS_RATIOS = [0.5, 0.25, 0.75, 0.1, 0.9]
+            # P44-2:候选帧池 5→10 帧(中点 + 三层分散),NSFW 过审率 + 选帧多样性提升
+            # 顺序按"被拒概率从低到高"排:中点最稳,接近端点最容易撩衣/露肤被拒
+            FRAME_POS_RATIOS = [0.5, 0.4, 0.6, 0.35, 0.65, 0.25, 0.75, 0.15, 0.85, 0.5]
             frame_paths: List[Path] = []
             for i, ratio in enumerate(FRAME_POS_RATIOS):
                 pos = max(0.0, duration_for_frames * ratio - 0.05)
@@ -708,6 +769,9 @@ async def _run_inpainting_step(session_id: str) -> None:
         engine_session = (session.get("step_b_engine") or "").strip().lower()
         engine_env = (os.getenv("ORAL_STEP_B_ENGINE", "i2v") or "i2v").lower()
         engine = engine_session or engine_env
+        # P44:auto = pixverse-swap 主路。真 fallback 链(失败切 seedance/wan)留 P44.5
+        if engine == "auto":
+            engine = "pixverse-swap"
         # 兼容老配置:seedance-i2v 别名归一
         if engine == "seedance-i2v":
             engine = "i2v"
@@ -823,6 +887,16 @@ async def _run_inpainting_step(session_id: str) -> None:
             seg_timeout_loops = 180  # 30 min cap(实测 17 min/段)
             SEG_LEN_S = 8.0          # 跟 driving video 切段一致
             prompt = ""              # Wan Animate 无 prompt 字段,纯视觉驱动
+        elif engine == "pixverse-swap":
+            # P44:fal-ai/pixverse/swap — 专门做 person/object/bg 替换
+            # 输入:video_url(driving) + image_url(reference,单图);无 prompt;无 multi-ref
+            # probe 真值(2026-05-03):内衣类参考图,seedance enterprise 直接拒,
+            # pixverse 111.8s 出 8s 视频成功,**NSFW 友好**,推荐主路。
+            # 5s 基线 $0.20,>5s 加倍($0.40 / 6-10s);定 5s 跟 keyframe_id 一致段长
+            endpoint_default = "fal-ai/pixverse/swap"
+            seg_timeout_loops = 60   # ~10min cap(实测 ~14s/s 出片,5s 段约 70-120s)
+            SEG_LEN_S = 5.0
+            prompt = ""              # 无 prompt 字段
         elif engine == "kling-2-6-i2v":
             # P41:fal-ai/kling-video/v2.6/pro/image-to-video(Native Audio 主打)
             # 单首帧 + native audio,duration 只能 "5" 或 "10"
@@ -885,7 +959,7 @@ async def _run_inpainting_step(session_id: str) -> None:
             # P30:kling-o1-edit 也吃原视频段(真 v2v),加入切段路径
             # P41:seedance-2-r2v(吃 video_urls 当参考)、kling-o3-v2v(吃 video_url driving)也切段
             seg_paths: List[Optional[Path]] = []
-            if engine in ("ltx", "kling-v2v", "kling-o1-edit", "seedance-2-r2v", "kling-o3-v2v", "wan-2-2-animate-replace"):
+            if engine in ("ltx", "kling-v2v", "kling-o1-edit", "seedance-2-r2v", "kling-o3-v2v", "wan-2-2-animate-replace", "pixverse-swap"):
                 for i in range(n_segments):
                     start = i * SEG_LEN_S
                     seg_path = seg_root / f"seg_{i:02d}.mp4"
@@ -1110,6 +1184,21 @@ async def _run_inpainting_step(session_id: str) -> None:
                             task_id = handler.request_id
                         except Exception as e:
                             raise RuntimeError(f"wan-2-2-animate-replace seg {seg_idx} submit: {e}")
+                    elif engine == "pixverse-swap":
+                        # P44:Pixverse Swap — driving 视频 + 单 ref 图,无 prompt
+                        # 内部 schema 已通过 probe 验过(probe_seedance_enterprise_pixverse.py)
+                        # NSFW 友好,~14s/s 成片,长视频 5s/段并发跑
+                        seg_fal_url = await fal_upload_with_retry(str(seg_path))
+                        args = {
+                            "video_url": seg_fal_url,
+                            "image_url": reference_image,
+                        }
+                        endpoint = endpoint_default
+                        try:
+                            handler = await fal_client.submit_async(endpoint, arguments=args)
+                            task_id = handler.request_id
+                        except Exception as e:
+                            raise RuntimeError(f"pixverse-swap seg {seg_idx} submit: {e}")
                     else:  # kling-v2v
                         seg_fal_url = await fal_upload_with_retry(str(seg_path))
                         drive_result = await vid_svc.drive_with_reference(
@@ -1187,6 +1276,7 @@ async def _run_inpainting_step(session_id: str) -> None:
                 session_id,
                 swap_fal_request_id=endpoint_default,
                 swapped_video_url=swapped_url,
+                step_b_engine_used=engine,
             )
             _log(f"_run_inpainting_step Step B OK session={session_id} segments={n_segments} → {swapped_url}")
         finally:
@@ -1301,6 +1391,36 @@ async def _archive_lipsync_final(
             with out_path.open("wb") as f:
                 async for chunk in resp.aiter_bytes(chunk_size=64 * 1024):
                     f.write(chunk)
+
+    # P44:若 ASR step 拆出了 BGM,这里 ffmpeg amix(lipsync 视频音轨 + BGM)
+    # 实现"复刻音乐节奏 + 保留情绪"。失败不阻塞,降级原 lipsync 音轨。
+    try:
+        sess_bgm = _get_session(session_id)
+        bgm_path = sess_bgm.get("bgm_path") if sess_bgm else None
+        if bgm_path and Path(bgm_path).exists():
+            from app.api.video_studio import _run_ffmpeg
+            mixed = out_dir / "final_mixed.mp4"
+            # -shortest 防 BGM 比 lipsync 长把视频拉伸;volume=0.5 BGM 压低
+            # 让 TTS 人声(new_audio)主导,BGM 当背景
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", str(out_path),
+                "-i", bgm_path,
+                "-filter_complex",
+                "[0:a]volume=1.0[v0];[1:a]volume=0.35[v1];"
+                "[v0][v1]amix=inputs=2:duration=shortest:dropout_transition=0:normalize=0[aout]",
+                "-map", "0:v", "-map", "[aout]",
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                "-shortest", str(mixed),
+            ]
+            ok_x, err_x = _run_ffmpeg(cmd)
+            if ok_x and mixed.exists() and mixed.stat().st_size > 0:
+                shutil.move(str(mixed), str(out_path))
+                _log(f"_archive_lipsync_final P44 BGM amix OK session={session_id}")
+            else:
+                _log(f"_archive_lipsync_final P44 BGM amix 失败(降级原 lipsync 音轨): {err_x[:200]}")
+    except Exception as mix_e:
+        _log(f"_archive_lipsync_final P44 BGM amix 异常(降级): {mix_e}")
 
     os.chmod(out_path, 0o644)
     await _faststart_remux(out_path)
