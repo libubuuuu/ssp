@@ -26,7 +26,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Tuple
 
 from app.services.fal_service import fal_upload_with_retry
 
@@ -785,17 +785,19 @@ async def _run_inpainting_step(session_id: str) -> None:
             qwenvl_svc = get_aliyun_qwenvl_service()  # P71 视频理解
             if sam2_svc is None or vace_svc is None:
                 raise RuntimeError("SAM2/VACE Fun service 未初始化")
-            from app.api.video_studio import _run_ffmpeg
+            from app.api.video_studio import _run_ffmpeg, _get_video_duration
+            import math, urllib.request
             vace_tmpdir = Path(tempfile.mkdtemp(prefix=f"vace_{session_id}_"))
             try:
-                # 抽 driving 前 5s 段(VACE Fun 默认 81 帧 16fps ≈ 5s)
-                seg5_path = vace_tmpdir / "seg5.mp4"
-                ok, ferr = _run_ffmpeg([
-                    "ffmpeg", "-y", "-i", original_video_path, "-t", "5", "-c", "copy", str(seg5_path)
-                ])
-                if not ok or not seg5_path.exists():
-                    raise RuntimeError(f"vace-mask 抽 5s 段失败: {ferr}")
-                seg5_fal = await fal_upload_with_retry(str(seg5_path))
+                # P80:整段 driving(不再只抽前 5s),后续按 5s 拆段并发
+                full_duration = float(session.get("duration_seconds") or 0)
+                if full_duration <= 0:
+                    full_duration = _get_video_duration(original_video_path) or 5.0
+                SEG_LEN_S = 5.0  # VACE Fun 默认 81 帧 16fps ≈ 5.0625s
+                n_segs = max(1, math.ceil(full_duration / SEG_LEN_S))
+                _log(f"vace-mask P80 driving={full_duration:.1f}s 拆 {n_segs} 段 × {SEG_LEN_S}s")
+                # 整段 driving 上传 fal(SAM2 + qwen-vl 用整段 → 全段精度信息一致)
+                seg5_fal = await fal_upload_with_retry(original_video_path)
                 # 解析用户 mask box(可选,无则用默认胸部 box)
                 mask_box_raw = session.get("mask_box")
                 box_prompts = None
@@ -905,37 +907,126 @@ async def _run_inpainting_step(session_id: str) -> None:
                     "Strict layering: outer layer always on top, inner layer always underneath (covered by outer).\n"
                     "Do NOT place inner item over outer layer. Only replace within the mask-specified region."
                 )
-                cn_prompt = "".join(cn_prompt_parts)
-                # P77:截 cn_prompt 到 800 字防 VACE Fun 卡(text encoder token 上限,降到 800 更稳)
-                if len(cn_prompt) > 800:
-                    cn_prompt = cn_prompt[:800]
-                    _log(f"vace-mask P77 cn_prompt 截到 800 字 session={session_id}")
-                vace_t0 = time.time()
-                # P77:fal_client.run_async 默认无 timeout,VACE Fun 卡死时无限等。
-                # 包 asyncio.wait_for(20 min 上限),超时自动 raise TimeoutError → fail_step4 退款。
+                cn_prompt_full_essence = "".join(cn_prompt_parts)
+                # P80:下载整段 mask 视频本地用于切段
+                full_mask_path = vace_tmpdir / "mask_full.mp4"
                 try:
-                    vace_res = await asyncio.wait_for(
-                        vace_svc.inpaint(
-                            video_url=seg5_fal,
-                            mask_video_url=mask_url,
-                            ref_image_urls=[garment_url],
-                            prompt=cn_prompt,
-                        ),
-                        timeout=20 * 60,  # 20 min(probe 实测 10 min,留 2x 余量)
+                    urllib.request.urlretrieve(mask_url, str(full_mask_path))
+                except Exception as dl_err:
+                    raise RuntimeError(f"vace-mask 下载 mask 视频失败: {dl_err}")
+                # 提取共用【服装层次】(所有段都用)
+                m_layer_full = _re.search(r"【服装层次】[^【]*", scene_breakdown)
+                layer_text_seg = m_layer_full.group(0).strip() if m_layer_full else ""
+                # 提取所有【时间分镜】行(后面按段切片)
+                m_timeline = _re.search(r"【时间分镜】([^【]*)", scene_breakdown)
+                timeline_lines_all: List[Tuple[int, int, str]] = []
+                if m_timeline:
+                    for tline in m_timeline.group(1).split("\n"):
+                        tm = _re.match(r"\s*(\d+)\s*[--]\s*(\d+)s\s*[::]", tline)
+                        if tm:
+                            timeline_lines_all.append((int(tm.group(1)), int(tm.group(2)), tline.strip()))
+                # 提取所有【关键时刻】行(后面按段切片)
+                m_keymoment = _re.search(r"【关键时刻】([^【]*)", scene_breakdown)
+                key_lines_all: List[Tuple[float, str]] = []
+                if m_keymoment:
+                    for kline in m_keymoment.group(1).split("\n"):
+                        kline = kline.strip()
+                        if not kline:
+                            continue
+                        km = _re.search(r"(\d+(?:\.\d+)?)s", kline)
+                        if km:
+                            key_lines_all.append((float(km.group(1)), kline))
+
+                # P80:切段并发 VACE Fun
+                async def _drive_one_vace_seg(seg_idx: int) -> str:
+                    start_s = seg_idx * SEG_LEN_S
+                    end_s = min((seg_idx + 1) * SEG_LEN_S, full_duration)
+                    seg_dur = end_s - start_s
+                    # ffmpeg 拆 driving 段
+                    seg_path = vace_tmpdir / f"seg_{seg_idx:02d}.mp4"
+                    ok, ferr = _run_ffmpeg([
+                        "ffmpeg", "-y", "-ss", f"{start_s:.2f}", "-i", original_video_path,
+                        "-t", f"{seg_dur:.2f}", "-c", "copy", str(seg_path),
+                    ])
+                    if not ok or not seg_path.exists():
+                        raise RuntimeError(f"vace-mask seg {seg_idx} ffmpeg driving 失败: {ferr}")
+                    seg_fal = await fal_upload_with_retry(str(seg_path))
+                    # ffmpeg 拆 mask 段
+                    mask_seg_path = vace_tmpdir / f"mask_{seg_idx:02d}.mp4"
+                    ok, ferr = _run_ffmpeg([
+                        "ffmpeg", "-y", "-ss", f"{start_s:.2f}", "-i", str(full_mask_path),
+                        "-t", f"{seg_dur:.2f}", "-c", "copy", str(mask_seg_path),
+                    ])
+                    if not ok or not mask_seg_path.exists():
+                        raise RuntimeError(f"vace-mask seg {seg_idx} ffmpeg mask 失败: {ferr}")
+                    mask_seg_fal = await fal_upload_with_retry(str(mask_seg_path))
+                    # 切片本段对应的时间分镜
+                    seg_timeline = [t[2] for t in timeline_lines_all if int(start_s) <= t[0] < int(end_s)]
+                    seg_keys = [k[1] for k in key_lines_all if start_s <= k[0] < end_s]
+                    # 拼本段 prompt(800 字内)
+                    sp_parts: List[str] = []
+                    if layer_text_seg:
+                        sp_parts.append(layer_text_seg)
+                    if seg_timeline:
+                        sp_parts.append(f"【本段({int(start_s)}-{int(end_s)}s)分镜】\n" + "\n".join(seg_timeline[:8]))
+                    if seg_keys:
+                        sp_parts.append("【本段关键时刻】\n" + "\n".join(seg_keys[:5]))
+                    sp_parts.append(
+                        "Replace only the masked region with the reference image item. "
+                        "Preserve outer garment, action, background, layering exactly."
                     )
-                except asyncio.TimeoutError:
-                    raise RuntimeError("VACE Fun 超时 20 min(fal 端卡死,自动退款重试)")
-                if "error" in vace_res:
-                    raise RuntimeError(f"VACE Fun fail: {vace_res['error']}")
-                swapped_url = vace_res["video_url"]
-                _log(f"vace-mask VACE Fun OK session={session_id} elapsed={int(time.time()-vace_t0)}s")
-                # 归档防 fal.media 30d 过期
+                    seg_prompt = "\n\n".join(sp_parts)
+                    if len(seg_prompt) > 800:
+                        seg_prompt = seg_prompt[:800]
+                    _log(f"vace-mask P80 seg {seg_idx} {start_s:.1f}-{end_s:.1f}s prompt_len={len(seg_prompt)}")
+                    # VACE Fun(20min timeout)
+                    try:
+                        vres = await asyncio.wait_for(
+                            vace_svc.inpaint(
+                                video_url=seg_fal,
+                                mask_video_url=mask_seg_fal,
+                                ref_image_urls=[garment_url],
+                                prompt=seg_prompt,
+                            ),
+                            timeout=20 * 60,
+                        )
+                    except asyncio.TimeoutError:
+                        raise RuntimeError(f"VACE Fun seg {seg_idx} 超时 20 min")
+                    if "error" in vres:
+                        raise RuntimeError(f"VACE Fun seg {seg_idx} fail: {vres['error']}")
+                    return vres["video_url"]
+
+                # 并发跑 N 段
+                vace_t0 = time.time()
+                seg_urls = await asyncio.gather(*[_drive_one_vace_seg(i) for i in range(n_segs)])
+                _log(f"vace-mask P80 {n_segs} 段全部完成 elapsed={int(time.time()-vace_t0)}s")
+
+                # 下载所有段 + ffmpeg concat
+                seg_local_paths: List[Path] = []
+                for i, url in enumerate(seg_urls):
+                    local_p = vace_tmpdir / f"swapped_{i:02d}.mp4"
+                    try:
+                        urllib.request.urlretrieve(url, str(local_p))
+                    except Exception as dl_err:
+                        raise RuntimeError(f"vace-mask 下载 seg {i} 失败: {dl_err}")
+                    seg_local_paths.append(local_p)
+                concat_list = vace_tmpdir / "concat.txt"
+                concat_list.write_text("\n".join(f"file '{p}'" for p in seg_local_paths))
+                final_path = vace_tmpdir / "swapped.mp4"
+                ok, ferr = _run_ffmpeg([
+                    "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
+                    "-c", "copy", str(final_path),
+                ])
+                if not ok or not final_path.exists():
+                    raise RuntimeError(f"vace-mask concat 失败: {ferr}")
+                # 上传 fal + 归档
+                swapped_url = await fal_upload_with_retry(str(final_path))
                 try:
                     swapped_url = await archive_url(swapped_url, user_id, "video")
                 except Exception as arch_err:
                     _log(f"vace-mask archive failed: {arch_err}")
                 _update_session(session_id, swapped_video_url=swapped_url)
-                _log(f"vace-mask Step B OK session={session_id} → {swapped_url[:80]}")
+                _log(f"vace-mask P80 Step B OK n_segs={n_segs} session={session_id} → {swapped_url[:80]}")
                 await _try_advance_to_lipsync(session_id)
                 return
             finally:
