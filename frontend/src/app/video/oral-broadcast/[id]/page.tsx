@@ -476,10 +476,11 @@ export default function OralBroadcastWorkbench() {
               <select value={stepBEngine} onChange={e => setStepBEngine(e.target.value as StepBEngine)}
                 style={{ width: "100%", padding: "0.6rem 0.8rem", border: "1px solid #ddd", borderRadius: 10, background: "#fff", fontSize: "0.9rem", cursor: "pointer" }}>
                 {/* P49:核心两个产品级模型 — 一个挂另一个能用
-                    P50:模型 B 从 kling-3-pro-i2v 换 kling-o3-v2v(真复刻 driving,similarity 0.464 vs 0.423) */}
+                    P51:模型 B 从 Kling O3 v2v(¥6/5s 太贵)换 pixverse-swap(¥1.4/5s,P44 已稳定运行)
+                    Kling O3 v2v 留在高级组作精修档(¥6/5s 商家想花就花) */}
                 <optgroup label={t("oral.engine.groupCore")}>
                   <option value="auto-cheap">{t("oral.engine.autoCheap")}</option>
-                  <option value="kling-o3-v2v">{t("oral.engine.klingO3V2vCore")}</option>
+                  <option value="pixverse-swap">{t("oral.engine.pixverseSwapCore")}</option>
                 </optgroup>
                 {/* 高级:精修档 + 多引擎 fallback + 单独引擎选择 */}
                 <optgroup label={t("oral.engine.groupAdvanced")}>
