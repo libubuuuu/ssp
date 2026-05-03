@@ -1354,10 +1354,23 @@ async def _run_inpainting_step(session_id: str) -> None:
                         if v2v_aspect not in ("16:9", "9:16", "1:1"):
                             v2v_aspect = "auto"
                         seg_dur = max(3, min(10, int(seg_durations[seg_idx])))
+                        # P59:image_urls 用用户原图(模特+多角度+产品+多角度),
+                        # 不再用 Seedream 合成图(合成会丢/改信息,导致脸/光/字漂)。
+                        # elements 已含 frontal+reference 多图,顶层 image_urls 用原图作辅助参考即可。
+                        kling_image_urls: List[str] = [model_url]
+                        for u in anchor_model_urls:
+                            if u not in kling_image_urls and len(kling_image_urls) < 8:
+                                kling_image_urls.append(u)
+                        if garment_url:
+                            if garment_url not in kling_image_urls:
+                                kling_image_urls.append(garment_url)
+                            for u in anchor_product_urls:
+                                if u not in kling_image_urls and len(kling_image_urls) < 8:
+                                    kling_image_urls.append(u)
                         args = {
                             "prompt": prompt,
                             "video_url": seg_fal_url,
-                            "image_urls": [reference_image],
+                            "image_urls": kling_image_urls,
                             "elements": elements,
                             "duration": str(seg_dur),
                             "aspect_ratio": v2v_aspect,
@@ -1587,6 +1600,7 @@ async def _run_inpainting_step(session_id: str) -> None:
                     anchor_model_urls = [a["url"] for a in session_assets if a.get("role") == "anchor_model" and a.get("url")]
                     model_refs = [model_url] + [u for u in anchor_model_urls if u != model_url][:3]
                     elements = [{"frontal_image_url": model_url, "reference_image_urls": model_refs}]
+                    anchor_product_urls: List[str] = []
                     if garment_url:
                         anchor_product_urls = [a["url"] for a in session_assets if a.get("role") == "anchor_product" and a.get("url")]
                         product_refs = [garment_url] + [u for u in anchor_product_urls if u != garment_url][:3]
@@ -1594,10 +1608,21 @@ async def _run_inpainting_step(session_id: str) -> None:
                     v2v_aspect = (session.get("aspect_ratio") or "9:16").strip().lower()
                     if v2v_aspect not in ("16:9", "9:16", "1:1"):
                         v2v_aspect = "9:16"
+                    # P59:同 _drive_one — image_urls 用用户原图,不用 Seedream 合成图
+                    kling_image_urls: List[str] = [model_url]
+                    for u in anchor_model_urls:
+                        if u not in kling_image_urls and len(kling_image_urls) < 8:
+                            kling_image_urls.append(u)
+                    if garment_url:
+                        if garment_url not in kling_image_urls:
+                            kling_image_urls.append(garment_url)
+                        for u in anchor_product_urls:
+                            if u not in kling_image_urls and len(kling_image_urls) < 8:
+                                kling_image_urls.append(u)
                     args = {
                         "prompt": FALLBACK_PROMPT,
                         "video_url": seg_fal_url,
-                        "image_urls": [reference_image],
+                        "image_urls": kling_image_urls,
                         "elements": elements,
                         "duration": "5",
                         "aspect_ratio": v2v_aspect,
