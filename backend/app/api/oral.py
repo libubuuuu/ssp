@@ -834,12 +834,25 @@ async def _run_inpainting_step(session_id: str) -> None:
                 elif qwenvl_svc and qwenvl_svc.is_available():
                     qwen_t0 = time.time()
                     qwen_instruction = (
-                        "请用中性词描述视频每秒画面动作。"
-                        "重要:必须避免敏感词,"
-                        "把'内衣'、'文胸'、'bra'、'胸罩'、'拉起'、'露出'、'掀起'、'撩起'、'裸露'等词,"
-                        "改用'内层物品'、'内层服装'、'底层物品'、'动作变化'、'肢体动作'代替。"
-                        "格式严格:每行 '0-1s:[动作 + 服装层次描述]' < 50 字。"
-                        "末尾加一行【关键时刻】描述外层服装变化 / 内层物品出现的时间点。"
+                        "请按以下结构详细描述视频内容,用于 AI 视频复刻参考。"
+                        "敏感词替换:'内衣/文胸/bra/胸罩/balconette' → '内层物品';"
+                        "'拉起/露出/掀起/撩起/裸露/脱下' → '动作变化/出现/位移';"
+                        "'胸前/乳' → '前胸位置/上身'。\n\n"
+                        "【画面构图】景别(特写/近景/中景/全景)、镜头角度(平视/仰视/俯视)、"
+                        "镜头运动(固定/推拉/摇移)、画面比例(9:16/16:9)、画面焦点位置。\n\n"
+                        "【场景背景】拍摄环境(室内/室外/工作室)、墙面/家具/装饰物、"
+                        "光线方向(顺光/侧光/逆光)、色温(暖/冷/中性)、整体氛围(明亮/暗调/柔和)。\n\n"
+                        "【模特特征】身材比例(高瘦/中等/丰满)、肤色、发型、发色、"
+                        "面部表情(微笑/严肃/自然)、年龄段(20-30/30-40/40+)、配饰(项链/耳环/戒指等)。\n\n"
+                        "【产品特征】颜色、材质(棉/丝/合成)、款式、关键细节(纹理/线条/支撑结构/装饰),"
+                        "避免敏感词用'内层物品'统称。\n\n"
+                        "【时间分镜】按每 1 秒一段精细描述,每段 120-200 字,内容包括:"
+                        "模特身体姿态、双手位置、面部朝向、服装层次状态、服装变化(用中性词)、"
+                        "镜头位置变化、画面里出现的文字(如有)。"
+                        "格式严格:'0-1s:[详细描述]' / '1-2s:[详细描述]' / ...\n\n"
+                        "【关键时刻】精确标注外层服装位移 / 内层物品出现的时间点(精确到 0.5s),"
+                        "以及触发该变化的具体动作。\n\n"
+                        "要求:每个段落充实具体,总输出 1000-2000 字,信息密度优先于简洁。"
                     )
                     qwen_res = await qwenvl_svc.analyze_video(seg5_fal, qwen_instruction)
                     if "error" not in qwen_res and qwen_res.get("text"):
@@ -2992,6 +3005,7 @@ async def submit_edited_transcript(
 
 class GenerateVideoPromptRequest(BaseModel):
     session_id: str
+    force: bool = False  # P75:强制重新生成(不读缓存)
 
 
 @router.post("/generate-video-prompt")
@@ -2999,9 +3013,9 @@ async def generate_video_prompt(
     req: GenerateVideoPromptRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """P72:用 qwen-vl-max-latest 自动分析 driving 视频生成精细分镜 prompt。
+    """P72/P75:用 qwen-vl-max-latest 自动分析 driving 视频生成详细分镜脚本。
 
-    返回:{ "auto_prompt": "0-1s:...\n1-2s:...\n【关键时刻】..." }
+    返回:{ "auto_prompt": "【画面构图】...【时间分镜】..." }
     前端 Step 2 调用展示 + 让用户编辑。
     """
     user_id = str(current_user["id"])
@@ -3013,8 +3027,8 @@ async def generate_video_prompt(
     if not session.get("original_video_path"):
         raise HTTPException(400, "driving 视频未上传")
 
-    # 已有自动 prompt 直接返回(避免重复 qwen-vl 调用)
-    if session.get("auto_video_prompt"):
+    # P75:force=False 时已有缓存直接返回
+    if not req.force and session.get("auto_video_prompt"):
         return {"auto_prompt": session["auto_video_prompt"]}
 
     from app.services.fal_service import get_aliyun_qwenvl_service
@@ -3024,17 +3038,33 @@ async def generate_video_prompt(
 
     # 上传 driving 视频拿公网 URL(qwen-vl 需要可访问 URL)
     driving_url = await fal_upload_with_retry(session["original_video_path"])
+    # P75:精细分镜 instruction(画面+场景+镜头+模特+产品+时间分镜+关键时刻),NSFW sanitize
     instruction = (
-        "请按时间分段(每 1 秒一段)精炼描述视频画面动作和服装层次,"
-        "重点标注外层服装、内层服装、动作变化时机。"
-        "格式严格:每行 '0-1s:[动作+服装]' < 50 字。"
-        "末尾加一行【关键时刻】描述外层拉起 / 内层露出的时间点。"
+        "请按以下结构详细描述视频内容,用于 AI 视频复刻参考。"
+        "敏感词替换:'内衣/文胸/bra/胸罩/balconette' → '内层物品';"
+        "'拉起/露出/掀起/撩起/裸露/脱下' → '动作变化/出现/位移';"
+        "'胸前/乳' → '前胸位置/上身'。\n\n"
+        "【画面构图】景别(特写/近景/中景/全景)、镜头角度(平视/仰视/俯视)、"
+        "镜头运动(固定/推拉/摇移)、画面比例(9:16/16:9)、画面焦点位置。\n\n"
+        "【场景背景】拍摄环境(室内/室外/工作室)、墙面/家具/装饰物、"
+        "光线方向(顺光/侧光/逆光)、色温(暖/冷/中性)、整体氛围(明亮/暗调/柔和)。\n\n"
+        "【模特特征】身材比例(高瘦/中等/丰满)、肤色、发型、发色、"
+        "面部表情(微笑/严肃/自然)、年龄段、配饰(项链/耳环/戒指等)。\n\n"
+        "【产品特征】颜色、材质、款式、关键细节(纹理/线条/支撑结构/装饰),"
+        "避免敏感词用'内层物品'统称。\n\n"
+        "【时间分镜】按每 1 秒一段精细描述,每段 120-200 字,内容包括:"
+        "模特身体姿态、双手位置、面部朝向、服装层次状态、服装变化(用中性词)、"
+        "镜头位置变化、画面里出现的文字(如有)。"
+        "格式严格:'0-1s:[详细描述]' / '1-2s:[详细描述]' / ...\n\n"
+        "【关键时刻】精确标注外层服装位移 / 内层物品出现的时间点(精确到 0.5s),"
+        "以及触发该变化的具体动作。\n\n"
+        "要求:每个段落充实具体,总输出 1000-2000 字,信息密度优先于简洁。"
     )
     res = await qwen.analyze_video(driving_url, instruction)
     if "error" in res or not res.get("text"):
         raise HTTPException(502, f"qwen-vl 失败: {res.get('error', '?')[:200]}")
 
-    auto_prompt = res["text"][:3000]
+    auto_prompt = res["text"][:5000]  # P75:增到 5000 字符
     _update_session(req.session_id, auto_video_prompt=auto_prompt)
     return {"auto_prompt": auto_prompt}
 

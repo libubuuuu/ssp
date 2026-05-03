@@ -250,8 +250,8 @@ export default function OralBroadcastWorkbench() {
     }
   };
 
-  // P72:自动生成视频复刻分镜 prompt
-  const generateVideoPrompt = async () => {
+  // P72/P75:自动生成视频复刻分镜 prompt(force=true 强制重新调 qwen-vl,不读缓存)
+  const generateVideoPrompt = async (force: boolean = false) => {
     setVideoPromptGen(true);
     setError("");
     try {
@@ -259,7 +259,7 @@ export default function OralBroadcastWorkbench() {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
         credentials: "include",
-        body: JSON.stringify({ session_id: sessionId }),
+        body: JSON.stringify({ session_id: sessionId, force }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.detail || t("oral.errVideoPromptGenFail")); return; }
@@ -930,7 +930,7 @@ export default function OralBroadcastWorkbench() {
                 </div>
                 {isAsrDone && (
                   <div style={{ display: "flex", gap: "0.6rem" }}>
-                    <button onClick={generateVideoPrompt} disabled={videoPromptGen}
+                    <button onClick={() => generateVideoPrompt(true)} disabled={videoPromptGen}
                       style={{
                         padding: "0.6rem 1rem",
                         background: videoPromptGen ? "#ccc" : "#fff",
