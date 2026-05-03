@@ -85,6 +85,7 @@ _STEP_B_ENGINES = (
     "auto",                     # P44 智能 fallback 链:pixverse → seedance-2-r2v → wan-2-2-animate-replace
     "aliyun-wan2.7-r2v",        # P47-B 阿里通义万相 Wan2.7 r2v(免费 180 天 + 即梦同档,慢 520s/段)
     "auto-cheap",               # P47-B 免费优先:阿里 wan2.7-r2v 主路 + fal pixverse 失败兜底(慢但便宜)
+    "auto-best",                # P48-B 高质量:阿里 wan + fal kling-3-pro 并发出片 + InsightFace 选优(¥3-4/5s)
 )
 
 # P47-A:auto 模式段级 fallback 链(主引擎失败 → 切下一个)
@@ -94,6 +95,13 @@ FALLBACK_CHAIN_AUTO = ("pixverse-swap", "seedance-2-r2v", "wan-2-2-animate-repla
 # P47-B:auto-cheap 免费优先链。阿里 wan2.7-r2v 主路(免费 180 天)→ fal 兜底
 # 用户开通百炼 + 设了 DASHSCOPE_API_KEY 才生效;否则整链降级到 FALLBACK_CHAIN_AUTO
 FALLBACK_CHAIN_CHEAP = ("aliyun-wan2.7-r2v", "pixverse-swap", "seedance-2-r2v", "wan-2-2-animate-replace")
+
+# P48-B:Best-of-2 同段并发引擎(InsightFace 选 max similarity)
+# probe 真值(2026-05-03,14c390bb 内衣场景):阿里 wan 0.4165, kling-3-pro 0.4096(均 0.41+ 强档),
+# 其他端点(pixverse 0.28, kling-o3-4k 0.28)显著低,Best-of-2 用前两个最优。
+# 成本:阿里 ¥0(免费)+ kling-3-pro $0.07/s × 5s = $0.35 ≈ ¥2.5/段
+BEST_OF_N_ENGINES = ("aliyun-wan2.7-r2v", "kling-3-pro-i2v")  # 阿里 + Kling 3.0 Pro i2v
+KLING3_PRO_I2V_ENDPOINT = "fal-ai/kling-video/v3/pro/image-to-video"
 
 # fallback 时统一用的通用 prompt(主引擎用 P46-L1 完整 prompt 工程,fallback 降级)
 FALLBACK_PROMPT = (
@@ -863,16 +871,20 @@ async def _run_inpainting_step(session_id: str) -> None:
         # P44:auto = pixverse-swap 主路 alias
         # P47-A:auto 时启用段级 fallback 链(主引擎失败自动切下一个)
         # P47-B:auto-cheap 时启用免费优先链(阿里 wan2.7-r2v 主路)
+        # P48-B:auto-best 时启用 Best-of-2 (阿里 wan + kling-3-pro 并发 + similarity 选优)
         auto_fallback = False
         cheap_fallback = False
+        best_n_mode = False
         if engine == "auto":
             engine = "pixverse-swap"
             auto_fallback = True
         elif engine == "auto-cheap":
-            # 主路是阿里 wan,但闭包外层 prepare config 走 pixverse(因为 prompt 等仅 fallback 用,
-            # 阿里 wan 自己内部 prepare,不依赖外层 endpoint_default/prompt)
             engine = "pixverse-swap"
             cheap_fallback = True
+        elif engine == "auto-best":
+            # 主路是 Best-of-2(阿里 wan + kling-3-pro 并发),InsightFace 评分选最高
+            engine = "pixverse-swap"  # 闭包外层 prepare 占位,真路径在 _drive_one_best_of_2
+            best_n_mode = True
         # 兼容老配置:seedance-i2v 别名归一
         if engine == "seedance-i2v":
             engine = "i2v"
@@ -1494,6 +1506,110 @@ async def _run_inpainting_step(session_id: str) -> None:
                         return url
                 raise RuntimeError(f"fallback {try_engine} 超时")
 
+            # P48-B:Best-of-2 同段并发(阿里 wan + Kling 3 Pro i2v)+ similarity 选优
+            async def _drive_one_kling3_pro_i2v(seg_idx: int, seg_path: Optional[Path]) -> str:
+                """Kling 3.0 Pro i2v(probe verified similarity 0.4096,跟阿里 wan 0.4165 接近"""
+                # i2v 用 reference_image 当首帧,不需要 driving video
+                args = {
+                    "image_url": reference_image,
+                    "prompt": (
+                        "A young woman wearing the products, naturally showcasing them with subtle "
+                        "hand gestures, smiling at camera, smooth body movement, photorealistic UGC selfie style. "
+                        "Do NOT alter facial proportions, eye spacing, nose shape, jawline, hair, or skin tone."
+                    ) if product_names else (
+                        "A young woman naturally showing herself with subtle hand gestures, smiling at camera, "
+                        "smooth body movement, photorealistic UGC selfie style. "
+                        "Do NOT alter facial proportions, eye spacing, nose shape, jawline, hair, or skin tone."
+                    ),
+                    "duration": "5",
+                    "aspect_ratio": (session.get("aspect_ratio") or "9:16").strip().lower() or "9:16",
+                }
+                handler = await fal_client.submit_async(KLING3_PRO_I2V_ENDPOINT, arguments=args)
+                tid = handler.request_id
+                for _ in range(60):  # 10 min cap
+                    await asyncio.sleep(10)
+                    s = await fal_client.status_async(KLING3_PRO_I2V_ENDPOINT, tid, with_logs=False)
+                    if type(s).__name__ == "Completed":
+                        final = await fal_client.result_async(KLING3_PRO_I2V_ENDPOINT, tid)
+                        v = final.get("video") if isinstance(final, dict) else None
+                        url = v.get("url") if isinstance(v, dict) else None
+                        if not url:
+                            raise RuntimeError("kling-3-pro-i2v 未返 video URL")
+                        return url
+                raise RuntimeError("kling-3-pro-i2v 超时")
+
+            FACE_SIM_WORKER = "/opt/ssp/scripts/face_similarity_worker.py"
+
+            async def _score_similarity(video_url: str, src_face_local: str) -> float:
+                """下载视频到 /tmp 调 face_similarity_worker 评分 vs 用户原模特图"""
+                import tempfile as _tf
+                tmp_video = Path(_tf.mktemp(prefix="bof_", suffix=".mp4"))
+                try:
+                    await _download_url_to(video_url, tmp_video, timeout=120.0)
+                    proc = await asyncio.create_subprocess_exec(
+                        "/opt/ssp/face_venv/bin/python", FACE_SIM_WORKER,
+                        src_face_local, str(tmp_video), "0.5",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    sout, _serr = await asyncio.wait_for(proc.communicate(), timeout=120)
+                    line = (sout or b"").decode(errors="replace").strip()
+                    for ln in line.splitlines():
+                        if ln.startswith("SCORE="):
+                            return float(ln[len("SCORE="):])
+                    return -1.0
+                except Exception:
+                    return -1.0
+                finally:
+                    try:
+                        tmp_video.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+
+            async def _drive_one_best_of_2(seg_idx: int, seg_path: Optional[Path]) -> tuple:
+                """同段并发阿里 wan + Kling 3.0 Pro i2v,InsightFace 选 max similarity"""
+                # 准备 src face local 路径(用户原模特图,P45 增强后或原图)
+                src_face_local = str(ORAL_UPLOAD_ROOT / user_id / session_id / "_bof_src_face.jpg")
+                Path(src_face_local).parent.mkdir(parents=True, exist_ok=True)
+                if not Path(src_face_local).exists():
+                    src_url = session.get("enhanced_model_url") or model_url
+                    try:
+                        await _download_url_to(src_url, Path(src_face_local), timeout=60.0)
+                    except Exception as e:
+                        _log(f"_drive_one_best_of_2 下载 src face 失败: {e}")
+                        # 降级:只跑阿里 wan
+                        url = await _drive_one_aliyun_wan(seg_idx, seg_path)
+                        return (url, "aliyun-wan2.7-r2v")
+
+                # 并发 2 引擎
+                tasks = [
+                    asyncio.create_task(_drive_one_aliyun_wan(seg_idx, seg_path)),
+                    asyncio.create_task(_drive_one_kling3_pro_i2v(seg_idx, seg_path)),
+                ]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                candidates = []
+                for engine_name, r in zip(["aliyun-wan2.7-r2v", "kling-3-pro-i2v"], results):
+                    if isinstance(r, Exception):
+                        _log(f"_drive_one_best_of_2 seg {seg_idx} {engine_name} 失败: {str(r)[:200]}")
+                    else:
+                        candidates.append((engine_name, r))
+
+                if not candidates:
+                    raise RuntimeError(f"seg {seg_idx} best-of-2 全失败")
+                if len(candidates) == 1:
+                    return (candidates[0][1], candidates[0][0])
+
+                # similarity 评分(并发)
+                sim_tasks = [_score_similarity(url, src_face_local) for _, url in candidates]
+                scores = await asyncio.gather(*sim_tasks)
+                scored = list(zip(candidates, scores))
+                _log(f"_drive_one_best_of_2 seg {seg_idx} scores: " +
+                     ", ".join(f"{e}={s:.3f}" for (e, _), s in scored))
+                # 选 max(无效 -1.0 排最后)
+                best = max(scored, key=lambda x: x[1])
+                (best_eng, best_url), best_score = best
+                return (best_url, f"{best_eng}@{best_score:.3f}")
+
             async def _drive_one_with_fallback(seg_idx: int, seg_path: Optional[Path]) -> tuple:
                 """段级 auto fallback 链。
                 主路用现有 _drive_one(P46-L1 完整 prompt 工程);
@@ -1501,7 +1617,12 @@ async def _run_inpainting_step(session_id: str) -> None:
                 返回 (url, engine_used)。
 
                 P47-B:auto-cheap 模式用 FALLBACK_CHAIN_CHEAP(阿里 wan 主路 + fal 兜底)
+                P48-B:auto-best 模式走 _drive_one_best_of_2(并发选优,贵但 95 分)
                 """
+                # P48-B 优先
+                if best_n_mode:
+                    return await _drive_one_best_of_2(seg_idx, seg_path)
+
                 # 选 chain
                 if cheap_fallback:
                     use_chain = FALLBACK_CHAIN_CHEAP

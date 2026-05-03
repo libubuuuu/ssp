@@ -57,7 +57,7 @@ export default function OralBroadcastWorkbench() {
   // P16:成片比例(空字符串表示跟随原视频)
   const [aspectRatio, setAspectRatio] = useState<"" | "9:16" | "16:9" | "1:1">("");
   // P41:Step B 引擎覆盖(空字符串=后端默认 kling-o1-edit;其余多个用户实测对比)
-  type StepBEngine = "" | "auto" | "auto-cheap" | "aliyun-wan2.7-r2v" | "pixverse-swap" | "kling-o1-edit" | "i2v" | "seedance-2-r2v" | "kling-o3-r2v" | "kling-o3-v2v" | "kling-2-6-i2v" | "wan-2-2-animate-replace";
+  type StepBEngine = "" | "auto" | "auto-cheap" | "auto-best" | "aliyun-wan2.7-r2v" | "pixverse-swap" | "kling-o1-edit" | "i2v" | "seedance-2-r2v" | "kling-o3-r2v" | "kling-o3-v2v" | "kling-2-6-i2v" | "wan-2-2-animate-replace";
   // P47-C:默认 "auto-cheap"(阿里 wan 主路 + fal 兜底,180 天免费 ¥0,慢但白嫖)
   // 商家用户要快可改 "auto"(fal 主路,~¥17/30s 但 5min 出片)
   const [stepBEngine, setStepBEngine] = useState<StepBEngine>("auto-cheap");
@@ -478,6 +478,7 @@ export default function OralBroadcastWorkbench() {
                 <option value="">{t("oral.engine.default")}</option>
                 <option value="auto">{t("oral.engine.auto")}</option>
                 <option value="auto-cheap">{t("oral.engine.autoCheap")}</option>
+                <option value="auto-best">{t("oral.engine.autoBest")}</option>
                 <option value="aliyun-wan2.7-r2v">{t("oral.engine.aliyunWan27R2v")}</option>
                 <option value="pixverse-swap">{t("oral.engine.pixverseSwap")}</option>
                 <option value="kling-o1-edit">{t("oral.engine.klingO1Edit")}</option>
