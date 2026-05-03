@@ -1489,7 +1489,89 @@ async def _archive_lipsync_final(
     await _faststart_remux(out_path)
     public = f"/uploads/oral/{user_id}/{session_id}/final.mp4"
     _log(f"_archive_lipsync_final OK session={session_id} -> {public}")
+
+    # P46-L2:fire-and-forget 启动本地 inswapper 生成 thumbnail
+    # (免费,~16s,UI 列表页/历史页用,失败不影响 final video)
+    asyncio.create_task(_generate_face_swapped_thumbnail(session_id, str(out_path), user_id))
+
     return public
+
+
+# ==================== P46-L2:本地 inswapper thumbnail ====================
+FACE_SWAP_WORKER = "/opt/ssp/scripts/face_swap_thumbnail.py"
+FACE_SWAP_VENV_PY = "/opt/ssp/face_venv/bin/python"
+
+
+async def _generate_face_swapped_thumbnail(session_id: str, video_path: str, user_id: str) -> None:
+    """异步触发 worker 生成 face-swapped thumbnail。fire-and-forget 模式。
+
+    用户原模特图(selected_models[0].image_url)→ 抽视频中点帧(0.5)→ inswapper
+    把模特脸 swap 上去 → /uploads/oral/<uid>/<sid>/thumbnail.jpg
+
+    完全本地 CPU 推理,无 fal 调用,免费。失败不阻塞 pipeline,不退款。
+    实测:~16s/次(8.9s 装载 + 7.5s 推理)。
+    """
+    try:
+        if not Path(FACE_SWAP_WORKER).is_file() or not Path(FACE_SWAP_VENV_PY).is_file():
+            _log(f"_generate_face_swapped_thumbnail: worker 或 venv 缺失,跳过 session={session_id}")
+            return
+
+        sess = _get_session(session_id)
+        if not sess:
+            return
+        models = json.loads(sess.get("selected_models") or "[]")
+        if not models:
+            _log(f"_generate_face_swapped_thumbnail: 无模特图,跳过 session={session_id}")
+            return
+        # 优先用 codeformer 增强后的模特图(P45),否则原图
+        src_model_url = sess.get("enhanced_model_url") or models[0].get("image_url")
+        if not src_model_url:
+            return
+
+        # 下载模特图到本地(若是远端 fal/CDN URL)
+        out_dir = ORAL_UPLOAD_ROOT / user_id / session_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+        src_face_local = out_dir / "_thumb_src_face.jpg"
+        thumb_path = out_dir / "thumbnail.jpg"
+        try:
+            await _download_url_to(src_model_url, src_face_local, timeout=60.0)
+        except Exception as e:
+            _log(f"_generate_face_swapped_thumbnail: 下载源模特图失败: {e}")
+            return
+
+        # subprocess 调 face_venv worker(2 vCPU 跑 ~16s)
+        t0 = time.time()
+        proc = await asyncio.create_subprocess_exec(
+            FACE_SWAP_VENV_PY, FACE_SWAP_WORKER,
+            str(src_face_local), str(video_path), str(thumb_path),
+            "0.5",  # 抽中点帧(更稳,首帧可能空场)
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
+        except asyncio.TimeoutError:
+            proc.kill()
+            _log(f"_generate_face_swapped_thumbnail: worker 180s 超时 session={session_id}")
+            return
+
+        elapsed = time.time() - t0
+        if proc.returncode == 0 and thumb_path.exists() and thumb_path.stat().st_size > 0:
+            os.chmod(thumb_path, 0o644)
+            public = f"/uploads/oral/{user_id}/{session_id}/thumbnail.jpg"
+            _update_session(session_id, thumbnail_url=public)
+            _log(f"_generate_face_swapped_thumbnail OK session={session_id} elapsed={elapsed:.1f}s -> {public}")
+        else:
+            err = (stderr or b"").decode(errors="replace")[:500]
+            _log(f"_generate_face_swapped_thumbnail rc={proc.returncode} elapsed={elapsed:.1f}s err={err}")
+
+        # 清理 _thumb_src_face.jpg
+        try:
+            src_face_local.unlink(missing_ok=True)
+        except Exception:
+            pass
+    except Exception as e:
+        _log(f"_generate_face_swapped_thumbnail unexpected: {e}")
 
 
 # ==================== P28:长视频 lipsync 分段 + concat ====================
@@ -2431,6 +2513,7 @@ def _build_status_payload(session: dict) -> dict:
             "swap1_video_url": session.get("swap1_video_url"),
             "swapped_video_url": session.get("swapped_video_url"),
             "final_video_url": session.get("final_video_url"),
+            "thumbnail_url": session.get("thumbnail_url"),
             # 八十四续 V3:VTON 管线无需 mask,这三个字段恒返 True 兼容老前端
             # (新前端不再读这些字段;旧 cache 期内的浏览器也不会卡校验)
             "mask_uploaded": True,
@@ -2489,7 +2572,7 @@ async def list_sessions(current_user: dict = Depends(get_current_user)):
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT id, tier, status, duration_seconds, final_video_url, created_at
+            SELECT id, tier, status, duration_seconds, final_video_url, thumbnail_url, created_at
               FROM oral_sessions
              WHERE user_id = ?
           ORDER BY created_at DESC
@@ -2508,6 +2591,7 @@ async def list_sessions(current_user: dict = Depends(get_current_user)):
             "status": d["status"],
             "duration_seconds": d["duration_seconds"],
             "final_video_url": d["final_video_url"],
+            "thumbnail_url": d["thumbnail_url"],
             "title": f"口播带货 {d['duration_seconds']:.0f}s ({d['tier']})",
             "created_at": d["created_at"],
         })

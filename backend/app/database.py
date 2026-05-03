@@ -84,6 +84,8 @@ def _patch_oral_columns(cursor):
         # P45 — codeformer 增强后的模特图(预处理产物);use_face_enhance 用户开关(默认 1 开启)
         ("enhanced_model_url", "ALTER TABLE oral_sessions ADD COLUMN enhanced_model_url TEXT"),
         ("use_face_enhance", "ALTER TABLE oral_sessions ADD COLUMN use_face_enhance INTEGER NOT NULL DEFAULT 1"),
+        # P46-L2 — 本地 InsightFace inswapper 生成的视频缩略图(免费,前端列表/历史页用)
+        ("thumbnail_url", "ALTER TABLE oral_sessions ADD COLUMN thumbnail_url TEXT"),
     ]
     for col_name, sql in patches:
         try:

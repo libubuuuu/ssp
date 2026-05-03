@@ -13,6 +13,7 @@ interface OralSession {
   status: string;
   duration_seconds: number;
   final_video_url?: string | null;
+  thumbnail_url?: string | null;  // P46-L2:本地 inswapper 生成的 face-swapped 缩略图
   title: string;
   created_at: string;
 }
@@ -347,6 +348,13 @@ export default function OralBroadcastListPage() {
               <div key={s.session_id}
                 onClick={() => router.push(`/video/oral-broadcast/${s.session_id}`)}
                 style={{ padding: "1rem", background: "#fff", borderRadius: 12, cursor: "pointer", border: "1px solid #eee" }}>
+                {/* P46-L2:列表页显示 face-swapped thumbnail(本地 inswapper 生成,免费) */}
+                {s.thumbnail_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={s.thumbnail_url} alt={s.title}
+                    style={{ width: "100%", aspectRatio: "9/16", objectFit: "cover", borderRadius: 8, marginBottom: "0.6rem", background: "#f4f4f4" }}
+                    loading="lazy" />
+                ) : null}
                 <div style={{ fontWeight: 500, marginBottom: "0.4rem" }}>{s.title}</div>
                 <div style={{ fontSize: "0.8rem", color: "#888" }}>
                   {t(`oral.status.${s.status}`) || s.status}
