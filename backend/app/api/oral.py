@@ -3207,12 +3207,18 @@ async def _run_segment_task(session_id: str, seg_idx: int, user_id: str):
             segments[seg_idx] = seg
             _update_session(session_id, segments_json=json.dumps(segments, ensure_ascii=False))
             return
+        # P84:ref_image_urls 加模特图(全能参考:模特+产品双信号)
+        models = json.loads(session.get("selected_models") or "[]")
+        model_url_p84 = models[0].get("image_url") if models and models[0].get("image_url") else None
+        ref_imgs = [garment_url]
+        if model_url_p84:
+            ref_imgs.append(model_url_p84)
         try:
             vres = await asyncio.wait_for(
                 vace_svc.inpaint(
                     video_url=seg["driving_url"],
                     mask_video_url=seg["mask_url"],
-                    ref_image_urls=[garment_url],
+                    ref_image_urls=ref_imgs,
                     prompt=seg["prompt"],
                 ),
                 timeout=20 * 60,
