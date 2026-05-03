@@ -921,26 +921,21 @@ async def _run_inpainting_step(session_id: str) -> None:
             )
             WARDROBE_LOCK = (
                 "Keep the wardrobe, clothing, garments, outfit, and apparel from @Video1 EXACTLY "
-                "as shown — same shirts, same underwear, same fabric, same colors, same layers. "
+                "as shown — same shirts, same underwear, same fabric, same colors, same layers, "
+                "same layering order (e.g. shirt OVER undergarments, never reversed). "
                 "Do NOT replace, swap, alter, add, or remove any clothing item. "
             )
-            NEG = " No face distortion, no wardrobe replacement, no clothing swap, no background change, no scene drift."
-            if product_names:
-                prompt = (
-                    f"{ID_LOCK}{BG_LOCK}{WARDROBE_LOCK}"
-                    f"Replace ONLY the person identity (face, body, hair, skin) in @Video1 with @Element1. "
-                    f"@Element2 ({', '.join(product_names)}) is a product reference image only — "
-                    f"use it to understand product appearance, do NOT use @Element2 to replace the wardrobe in @Video1. "
-                    f"Adjust @Element1 lighting to match @Video1 naturally."
-                    f"{NEG}"
-                )
-            else:
-                prompt = (
-                    f"{ID_LOCK}{BG_LOCK}{WARDROBE_LOCK}"
-                    "Replace ONLY the person identity (face, body, hair, skin) in @Video1 with @Element1. "
-                    "Adjust @Element1 lighting to match @Video1 naturally."
-                    f"{NEG}"
-                )
+            NEG = " No face distortion, no wardrobe replacement, no clothing swap, no layering reversal, no background change, no scene drift."
+            # P63:不再引用 @Element2 / product_names。elements 数组也只传 @Element1。
+            # driving 视频本身已展示产品 + 服装层次,Kling 只需把脸/身体换成 @Element1。
+            prompt = (
+                f"{ID_LOCK}{BG_LOCK}{WARDROBE_LOCK}"
+                "Replace ONLY the person identity (face, body, hair, skin) in @Video1 with @Element1. "
+                "Preserve every clothing layer and the gestures (e.g. lifting/pulling shirt to reveal "
+                "what's underneath) exactly as in @Video1. "
+                "Adjust @Element1 lighting to match @Video1 naturally."
+                f"{NEG}"
+            )
         elif engine == "kling-o3-v2v":
             # P41:fal-ai/kling-video/o3/pro/video-to-video/reference
             # 真 v2v + element 多图;keep_audio 默认 true,我们 lipsync 接管所以关掉
@@ -962,26 +957,20 @@ async def _run_inpainting_step(session_id: str) -> None:
             )
             WARDROBE_LOCK = (
                 "Keep the wardrobe, clothing, garments, outfit, and apparel from @Video1 EXACTLY "
-                "as shown — same shirts, same underwear, same fabric, same colors, same layers. "
+                "as shown — same shirts, same underwear, same fabric, same colors, same layers, "
+                "same layering order (e.g. shirt OVER undergarments, never reversed). "
                 "Do NOT replace, swap, alter, add, or remove any clothing item. "
             )
-            NEG = " No face distortion, no wardrobe replacement, no clothing swap, no color palette shift, no background change, no scene drift."
-            if product_names:
-                prompt = (
-                    f"{ID_LOCK}{BG_LOCK}{WARDROBE_LOCK}"
-                    f"Replace ONLY the person identity (face, body, hair, skin) in @Video1 with @Element1. "
-                    f"@Element2 ({', '.join(product_names)}) is a product reference image only — "
-                    f"use it to understand product appearance, do NOT use @Element2 to replace the wardrobe in @Video1. "
-                    f"Adjust @Element1 lighting to match @Video1 naturally."
-                    f"{NEG}"
-                )
-            else:
-                prompt = (
-                    f"{ID_LOCK}{BG_LOCK}{WARDROBE_LOCK}"
-                    "Replace ONLY the person identity (face, body, hair, skin) in @Video1 with @Element1. "
-                    "Adjust @Element1 lighting to match @Video1 naturally."
-                    f"{NEG}"
-                )
+            NEG = " No face distortion, no wardrobe replacement, no clothing swap, no layering reversal, no color palette shift, no background change, no scene drift."
+            # P63:同 standard-v2v,不引用 @Element2,Kling 只换主体身份。
+            prompt = (
+                f"{ID_LOCK}{BG_LOCK}{WARDROBE_LOCK}"
+                "Replace ONLY the person identity (face, body, hair, skin) in @Video1 with @Element1. "
+                "Preserve every clothing layer and the gestures (e.g. lifting/pulling shirt to reveal "
+                "what's underneath) exactly as in @Video1. "
+                "Adjust @Element1 lighting to match @Video1 naturally."
+                f"{NEG}"
+            )
         elif engine == "pixverse-swap":
             # P44:fal-ai/pixverse/swap — 专门做 person/object/bg 替换
             # 输入:video_url(driving) + image_url(reference,单图);无 prompt;无 multi-ref
@@ -1217,39 +1206,24 @@ async def _run_inpainting_step(session_id: str) -> None:
                             raise RuntimeError(f"kling-o3-r2v seg {seg_idx} submit: {e}")
                     elif engine == "kling-o3-v2v" or engine == "kling-o3-standard-v2v":
                         # P41 / P56:Kling o3 v2v reference/edit — 顶层 video_url 必填(driving 3-10s)
-                        # element 多图 + image_urls(reference_image)
-                        # P56:加 anchor_model + anchor_product 多角度图进 element reference_image_urls
+                        # P63:elements 不传产品 — Kling 看到 @Element2 会本能用产品图替换
+                        # driving 服装,导致"T恤外面穿内衣"的层次错乱。让 Kling 只看
+                        # @Element1 模特,driving 视频的服装层次/动作完全保留。
                         seg_fal_url = await fal_upload_with_retry(str(seg_path))
-                        # 模特 element:主图 + 多角度
                         anchor_model_urls = [a["url"] for a in session_assets if a.get("role") == "anchor_model" and a.get("url")]
                         model_refs = [model_url] + [u for u in anchor_model_urls if u != model_url][:3]
                         elements = [
                             {"frontal_image_url": model_url, "reference_image_urls": model_refs},
                         ]
-                        if garment_url:
-                            anchor_product_urls = [a["url"] for a in session_assets if a.get("role") == "anchor_product" and a.get("url")]
-                            product_refs = [garment_url] + [u for u in anchor_product_urls if u != garment_url][:3]
-                            elements.append({
-                                "frontal_image_url": garment_url,
-                                "reference_image_urls": product_refs,
-                            })
+                        # P63:image_urls 也只传模特图(产品信息从 driving 视频本身获得,Kling 不需要)
+                        kling_image_urls: List[str] = [model_url]
+                        for u in anchor_model_urls:
+                            if u not in kling_image_urls and len(kling_image_urls) < 5:
+                                kling_image_urls.append(u)
                         v2v_aspect = (session.get("aspect_ratio") or "auto").strip().lower()
                         if v2v_aspect not in ("16:9", "9:16", "1:1"):
                             v2v_aspect = "auto"
                         seg_dur = max(3, min(10, int(seg_durations[seg_idx])))
-                        # P59:image_urls 用用户原图(模特+多角度+产品+多角度),
-                        # 不再用 Seedream 合成图(合成会丢/改信息,导致脸/光/字漂)。
-                        # elements 已含 frontal+reference 多图,顶层 image_urls 用原图作辅助参考即可。
-                        kling_image_urls: List[str] = [model_url]
-                        for u in anchor_model_urls:
-                            if u not in kling_image_urls and len(kling_image_urls) < 8:
-                                kling_image_urls.append(u)
-                        if garment_url:
-                            if garment_url not in kling_image_urls:
-                                kling_image_urls.append(garment_url)
-                            for u in anchor_product_urls:
-                                if u not in kling_image_urls and len(kling_image_urls) < 8:
-                                    kling_image_urls.append(u)
                         args = {
                             "prompt": prompt,
                             "video_url": seg_fal_url,
