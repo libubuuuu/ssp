@@ -475,10 +475,11 @@ export default function OralBroadcastWorkbench() {
               <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>{t("oral.engineTitle")}</div>
               <select value={stepBEngine} onChange={e => setStepBEngine(e.target.value as StepBEngine)}
                 style={{ width: "100%", padding: "0.6rem 0.8rem", border: "1px solid #ddd", borderRadius: 10, background: "#fff", fontSize: "0.9rem", cursor: "pointer" }}>
-                {/* P49:核心两个产品级模型 — 一个挂另一个能用 */}
+                {/* P49:核心两个产品级模型 — 一个挂另一个能用
+                    P50:模型 B 从 kling-3-pro-i2v 换 kling-o3-v2v(真复刻 driving,similarity 0.464 vs 0.423) */}
                 <optgroup label={t("oral.engine.groupCore")}>
                   <option value="auto-cheap">{t("oral.engine.autoCheap")}</option>
-                  <option value="kling-3-pro-i2v">{t("oral.engine.kling3ProI2v")}</option>
+                  <option value="kling-o3-v2v">{t("oral.engine.klingO3V2vCore")}</option>
                 </optgroup>
                 {/* 高级:精修档 + 多引擎 fallback + 单独引擎选择 */}
                 <optgroup label={t("oral.engine.groupAdvanced")}>
