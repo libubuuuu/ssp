@@ -475,19 +475,26 @@ export default function OralBroadcastWorkbench() {
               <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>{t("oral.engineTitle")}</div>
               <select value={stepBEngine} onChange={e => setStepBEngine(e.target.value as StepBEngine)}
                 style={{ width: "100%", padding: "0.6rem 0.8rem", border: "1px solid #ddd", borderRadius: 10, background: "#fff", fontSize: "0.9rem", cursor: "pointer" }}>
-                <option value="">{t("oral.engine.default")}</option>
-                <option value="auto">{t("oral.engine.auto")}</option>
-                <option value="auto-cheap">{t("oral.engine.autoCheap")}</option>
-                <option value="auto-best">{t("oral.engine.autoBest")}</option>
-                <option value="aliyun-wan2.7-r2v">{t("oral.engine.aliyunWan27R2v")}</option>
-                <option value="pixverse-swap">{t("oral.engine.pixverseSwap")}</option>
-                <option value="kling-o1-edit">{t("oral.engine.klingO1Edit")}</option>
-                <option value="wan-2-2-animate-replace">{t("oral.engine.wan22Replace")}</option>
-                <option value="kling-o3-v2v">{t("oral.engine.klingO3V2v")}</option>
-                <option value="kling-o3-r2v">{t("oral.engine.klingO3R2v")}</option>
-                <option value="seedance-2-r2v">{t("oral.engine.seedance2R2v")}</option>
-                <option value="kling-2-6-i2v">{t("oral.engine.kling26I2v")}</option>
-                <option value="i2v">{t("oral.engine.i2v")}</option>
+                {/* P49:核心两个产品级模型 — 一个挂另一个能用 */}
+                <optgroup label={t("oral.engine.groupCore")}>
+                  <option value="auto-cheap">{t("oral.engine.autoCheap")}</option>
+                  <option value="kling-3-pro-i2v">{t("oral.engine.kling3ProI2v")}</option>
+                </optgroup>
+                {/* 高级:精修档 + 多引擎 fallback + 单独引擎选择 */}
+                <optgroup label={t("oral.engine.groupAdvanced")}>
+                  <option value="auto-best">{t("oral.engine.autoBest")}</option>
+                  <option value="auto">{t("oral.engine.auto")}</option>
+                  <option value="">{t("oral.engine.default")}</option>
+                  <option value="aliyun-wan2.7-r2v">{t("oral.engine.aliyunWan27R2v")}</option>
+                  <option value="pixverse-swap">{t("oral.engine.pixverseSwap")}</option>
+                  <option value="kling-o1-edit">{t("oral.engine.klingO1Edit")}</option>
+                  <option value="wan-2-2-animate-replace">{t("oral.engine.wan22Replace")}</option>
+                  <option value="kling-o3-v2v">{t("oral.engine.klingO3V2v")}</option>
+                  <option value="kling-o3-r2v">{t("oral.engine.klingO3R2v")}</option>
+                  <option value="seedance-2-r2v">{t("oral.engine.seedance2R2v")}</option>
+                  <option value="kling-2-6-i2v">{t("oral.engine.kling26I2v")}</option>
+                  <option value="i2v">{t("oral.engine.i2v")}</option>
+                </optgroup>
               </select>
               <div style={{ fontSize: "0.7rem", color: "#999", marginTop: 4 }}>
                 {t("oral.engine.note")}

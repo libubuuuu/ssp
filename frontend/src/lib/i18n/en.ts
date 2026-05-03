@@ -635,8 +635,11 @@ export const en = {
     engine: {
       default: "Default (system pick, currently Kling o1 Edit)",
       auto: "Smart + multi-engine auto-fallback (P47 recommended · pixverse → seedance → wan → kling chain · one fails, switch to next)",
-      autoCheap: "🆓 Free-first (DEFAULT · ¥1.6/5s · Alibaba Wan primary + fal fallback · 180-day FREE quota)",
-      autoBest: "⭐ Premium (¥3-4/5s · Alibaba Wan + Kling 3 Pro concurrent + InsightFace auto-select best face match · 95-tier near Jimeng)",
+      groupCore: "── Core 2 models (one fails, switch to the other) ──",
+      groupAdvanced: "── Advanced / Engine comparison ──",
+      autoCheap: "🆓 Model A · Alibaba Wan2.7 (FREE 180-day · ¥1.22/5s · slow 25min · NSFW-friendly)",
+      kling3ProI2v: "⚡ Model B · Kling 3.0 Pro (fast 5min · ¥2.97/5s · same tier as Alibaba)",
+      autoBest: "⭐ Premium · Alibaba + Kling concurrent + InsightFace auto-pick best face match (¥3-4/5s · 95-tier near Jimeng)",
       aliyunWan27R2v: "Alibaba Wan2.7 r2v · Jimeng-tier · 180-day FREE quota · 8 min/segment · NSFW-friendly",
       pixverseSwap: "Pixverse Swap · person/object/bg swap · NSFW-friendly · ~14s/s · $0.20/5s",
       klingO1Edit: "Kling o1 Edit · true v2v motion clone · NSFW probed OK",

@@ -86,6 +86,7 @@ _STEP_B_ENGINES = (
     "aliyun-wan2.7-r2v",        # P47-B 阿里通义万相 Wan2.7 r2v(免费 180 天 + 即梦同档,慢 520s/段)
     "auto-cheap",               # P47-B 免费优先:阿里 wan2.7-r2v 主路 + fal pixverse 失败兜底(慢但便宜)
     "auto-best",                # P48-B 高质量:阿里 wan + fal kling-3-pro 并发出片 + InsightFace 选优(¥3-4/5s)
+    "kling-3-pro-i2v",          # P49 单引擎档 fal-ai/kling-video/v3/pro/image-to-video(快速 + 同档质量,¥2.5/5s)
 )
 
 # P47-A:auto 模式段级 fallback 链(主引擎失败 → 切下一个)
@@ -1618,6 +1619,7 @@ async def _run_inpainting_step(session_id: str) -> None:
 
                 P47-B:auto-cheap 模式用 FALLBACK_CHAIN_CHEAP(阿里 wan 主路 + fal 兜底)
                 P48-B:auto-best 模式走 _drive_one_best_of_2(并发选优,贵但 95 分)
+                P49:engine == "kling-3-pro-i2v" 单引擎档(快速,fal kling 3 Pro,¥2.5/5s)
                 """
                 # P48-B 优先
                 if best_n_mode:
@@ -1632,6 +1634,9 @@ async def _run_inpainting_step(session_id: str) -> None:
                     # 显式选了某引擎,不走 fallback
                     if engine == "aliyun-wan2.7-r2v":
                         url = await _drive_one_aliyun_wan(seg_idx, seg_path)
+                    elif engine == "kling-3-pro-i2v":
+                        # P49 fal-ai/kling-video/v3/pro/image-to-video 单跑(快速档)
+                        url = await _drive_one_kling3_pro_i2v(seg_idx, seg_path)
                     else:
                         url = await _drive_one(seg_idx, seg_path)
                     return (url, engine)
