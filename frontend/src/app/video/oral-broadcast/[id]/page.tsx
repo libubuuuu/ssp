@@ -488,10 +488,11 @@ export default function OralBroadcastWorkbench() {
               <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>{t("oral.engineTitle")}</div>
               <select value={stepBEngine} onChange={e => setStepBEngine(e.target.value as StepBEngine)}
                 style={{ width: "100%", padding: "0.6rem 0.8rem", border: "1px solid #ddd", borderRadius: 10, background: "#fff", fontSize: "0.9rem", cursor: "pointer" }}>
-                {/* 3 选:全部真复刻 verified + 多图原图直喂 */}
+                {/* 4 选:全部真复刻 verified */}
                 <option value="auto-cheap">{t("oral.engine.autoCheap")}</option>
                 <option value="aliyun-wan2.7-r2v">{t("oral.engine.aliyunWan27R2v")}</option>
                 <option value="kling-o3-standard-v2v">{t("oral.engine.klingO3StandardV2v")}</option>
+                <option value="pixverse-swap">{t("oral.engine.pixverseSwap")}</option>
               </select>
               <div style={{ fontSize: "0.7rem", color: "#999", marginTop: 4 }}>
                 {t("oral.engine.note")}

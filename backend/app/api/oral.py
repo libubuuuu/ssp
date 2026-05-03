@@ -905,8 +905,10 @@ async def _run_inpainting_step(session_id: str) -> None:
             endpoint_default = "fal-ai/kling-video/o3/standard/video-to-video/edit"
             seg_timeout_loops = 60
             SEG_LEN_S = 5.0
-            # P61:prompt 必须强锁"背景+场景+光线",否则 Kling 自由发挥换背景。
-            # 实测 P60 没说保留背景 → 生成视频背景跟 driving 视频不一致(用户报)。
+            # P61 强锁背景;P62 强锁服装(用户报"内衣展示丢了"):
+            # Kling O3 v2v edit 默认会用 @Element2 替换 driving 服装。用户期望
+            # 是"换人保留 driving 一切" — 服装/内衣展示/动作全保留。改 prompt 把
+            # @Element2 降级成 product reference,不让它替换 wardrobe。
             ID_LOCK = (
                 "Primary identity anchor: @Element1. Do NOT alter facial proportions, "
                 "eye spacing, nose shape, jawline, hair, or skin tone. "
@@ -917,20 +919,26 @@ async def _run_inpainting_step(session_id: str) -> None:
                 "must all stay exactly identical to @Video1. Do NOT change the environment, "
                 "do NOT generate a new background, do NOT alter the scene. "
             )
-            NEG = " No face distortion, no unintended wardrobe changes, no background change, no scene drift."
+            WARDROBE_LOCK = (
+                "Keep the wardrobe, clothing, garments, outfit, and apparel from @Video1 EXACTLY "
+                "as shown — same shirts, same underwear, same fabric, same colors, same layers. "
+                "Do NOT replace, swap, alter, add, or remove any clothing item. "
+            )
+            NEG = " No face distortion, no wardrobe replacement, no clothing swap, no background change, no scene drift."
             if product_names:
                 prompt = (
-                    f"{ID_LOCK}{BG_LOCK}"
-                    f"Replace ONLY the person in @Video1 with @Element1, wearing @Element2 "
-                    f"({', '.join(product_names)}). Adjust @Element1 and @Element2 lighting "
-                    f"to match @Video1 background naturally."
+                    f"{ID_LOCK}{BG_LOCK}{WARDROBE_LOCK}"
+                    f"Replace ONLY the person identity (face, body, hair, skin) in @Video1 with @Element1. "
+                    f"@Element2 ({', '.join(product_names)}) is a product reference image only — "
+                    f"use it to understand product appearance, do NOT use @Element2 to replace the wardrobe in @Video1. "
+                    f"Adjust @Element1 lighting to match @Video1 naturally."
                     f"{NEG}"
                 )
             else:
                 prompt = (
-                    f"{ID_LOCK}{BG_LOCK}"
-                    "Replace ONLY the person in @Video1 with @Element1. "
-                    "Adjust @Element1 lighting to match @Video1 background naturally."
+                    f"{ID_LOCK}{BG_LOCK}{WARDROBE_LOCK}"
+                    "Replace ONLY the person identity (face, body, hair, skin) in @Video1 with @Element1. "
+                    "Adjust @Element1 lighting to match @Video1 naturally."
                     f"{NEG}"
                 )
         elif engine == "kling-o3-v2v":
@@ -941,7 +949,7 @@ async def _run_inpainting_step(session_id: str) -> None:
             endpoint_default = "fal-ai/kling-video/o3/pro/video-to-video/reference"
             seg_timeout_loops = 60
             SEG_LEN_S = 5.0
-            # P61:同 standard-v2v,强锁背景
+            # P61 强锁背景;P62 强锁服装,@Element2 降级为 reference-only
             ID_LOCK = (
                 "Primary identity anchor: @Element1. Do NOT alter facial proportions, "
                 "eye spacing, nose shape, jawline, hair, or skin tone. "
@@ -952,20 +960,26 @@ async def _run_inpainting_step(session_id: str) -> None:
                 "must all stay exactly identical to @Video1. Do NOT change the environment, "
                 "do NOT generate a new background, do NOT alter the scene. "
             )
-            NEG = " No face distortion, no wardrobe changes from @Element2, no color palette shift, no background change, no scene drift."
+            WARDROBE_LOCK = (
+                "Keep the wardrobe, clothing, garments, outfit, and apparel from @Video1 EXACTLY "
+                "as shown — same shirts, same underwear, same fabric, same colors, same layers. "
+                "Do NOT replace, swap, alter, add, or remove any clothing item. "
+            )
+            NEG = " No face distortion, no wardrobe replacement, no clothing swap, no color palette shift, no background change, no scene drift."
             if product_names:
                 prompt = (
-                    f"{ID_LOCK}{BG_LOCK}"
-                    f"Replace ONLY the person in @Video1 with @Element1, wearing @Element2 "
-                    f"({', '.join(product_names)}). Adjust @Element1 and @Element2 lighting "
-                    f"to match @Video1 background naturally."
+                    f"{ID_LOCK}{BG_LOCK}{WARDROBE_LOCK}"
+                    f"Replace ONLY the person identity (face, body, hair, skin) in @Video1 with @Element1. "
+                    f"@Element2 ({', '.join(product_names)}) is a product reference image only — "
+                    f"use it to understand product appearance, do NOT use @Element2 to replace the wardrobe in @Video1. "
+                    f"Adjust @Element1 lighting to match @Video1 naturally."
                     f"{NEG}"
                 )
             else:
                 prompt = (
-                    f"{ID_LOCK}{BG_LOCK}"
-                    "Replace ONLY the person in @Video1 with @Element1. "
-                    "Adjust @Element1 lighting to match @Video1 background naturally."
+                    f"{ID_LOCK}{BG_LOCK}{WARDROBE_LOCK}"
+                    "Replace ONLY the person identity (face, body, hair, skin) in @Video1 with @Element1. "
+                    "Adjust @Element1 lighting to match @Video1 naturally."
                     f"{NEG}"
                 )
         elif engine == "pixverse-swap":
