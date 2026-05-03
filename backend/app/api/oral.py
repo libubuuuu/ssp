@@ -314,18 +314,33 @@ async def _run_asr_step(session_id: str) -> None:
         if not ok:
             raise RuntimeError(f"ffmpeg 失败: {err}")
 
-        # 2)+3) fal upload + wizper 整体重试(P27)。fal 偶发 500 / 网关抖动让用户
-        # 进 failed_step1 重做整套流程很伤,瞬态用 3 次尝试 + 5s/10s 退避兜住。
-        from app.services.fal_service import get_asr_service
+        # 2)+3) fal upload + ASR
+        # P47-C:cheap 模式优先阿里 paraformer-v2(免费 180 天),失败降级 fal whisper
+        # 主路 / cheap 由 session.step_b_engine 反推(auto-cheap = 全免费链)
+        prefer_aliyun_asr = (session.get("step_b_engine") or "").lower() in ("auto-cheap", "aliyun-wan2.7-r2v")
+
+        from app.services.fal_service import get_asr_service, get_aliyun_asr_service
         asr_svc = get_asr_service()
-        if not asr_svc:
-            raise RuntimeError("FAL ASR service 未初始化")
+        aliyun_asr = get_aliyun_asr_service()
 
         result = None
+        audio_fal_url = None  # 后面 demucs 还要用
         last_err: Optional[Exception] = None
         for attempt in range(1, 4):
             try:
                 audio_fal_url = await fal_upload_with_retry(audio_path)
+                # P47-C:cheap 模式先试阿里 paraformer-v2(免费)
+                if prefer_aliyun_asr and aliyun_asr and aliyun_asr.is_available():
+                    r = await aliyun_asr.transcribe(audio_fal_url, language="zh")
+                    if "error" in r:
+                        _log(f"_run_asr_step P47-C aliyun paraformer 失败,降级 fal whisper: {r['error']}")
+                    else:
+                        _log(f"_run_asr_step P47-C aliyun paraformer OK session={session_id}")
+                        result = r
+                        break
+                # fal whisper 主路 / 阿里降级
+                if not asr_svc:
+                    raise RuntimeError("FAL ASR service 未初始化")
                 r = await asr_svc.transcribe(audio_fal_url)
                 if "error" in r:
                     raise RuntimeError(f"wizper: {r['error']}")

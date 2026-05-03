@@ -4,6 +4,7 @@ AI 服务封装
 import asyncio
 import fal_client
 import os
+import time
 from typing import Optional, Dict, Any, List
 from .circuit_breaker import get_circuit_breaker
 from .alert import get_alert_service
@@ -631,6 +632,99 @@ class AliyunWanService:
             return {"error": str(e)[:300]}
 
 
+class AliyunASRService:
+    """P47-C 免费替代 fal whisper:阿里 paraformer-v2 录音文件识别。
+
+    probe 真值(2026-05-03):23.5s 出转写结果,新人 180 天免费配额。
+    端点:async submit → poll → SUCCEEDED 取 transcription_url(JSON 文件)
+    URL:dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription
+
+    输入:file_urls 列表(支持 mp3 / wav / aac 等),公网可访问 URL
+    输出:results[].transcription_url(JSON 文件,内含 text + word timestamps)
+    """
+    BASE_URL = "https://dashscope.aliyuncs.com/api/v1"
+    SUBMIT_URL = f"{BASE_URL}/services/audio/asr/transcription"
+
+    def __init__(self):
+        self.api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
+
+    def is_available(self) -> bool:
+        return bool(self.api_key)
+
+    async def transcribe(self, audio_url: str, language: str = "zh") -> dict:
+        """阿里 paraformer-v2 ASR。返 {"text": ..., "chunks": [...]} 或 {"error": ...}"""
+        if not self.api_key:
+            return {"error": "DASHSCOPE_API_KEY 未配置"}
+        cb = get_circuit_breaker()
+        if not cb.is_available("aliyun-paraformer-v2"):
+            return {"error": "aliyun-paraformer-v2 已熔断"}
+        body = {
+            "model": "paraformer-v2",
+            "input": {"file_urls": [audio_url]},
+            "parameters": {"language_hints": [language]},
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "X-DashScope-Async": "enable",
+        }
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                r = await client.post(self.SUBMIT_URL, headers=headers, json=body)
+                if r.status_code != 200:
+                    await cb.record_failure("aliyun-paraformer-v2")
+                    return {"error": f"submit {r.status_code}: {r.text[:200]}"}
+                task_id = r.json().get("output", {}).get("task_id")
+                if not task_id:
+                    await cb.record_failure("aliyun-paraformer-v2")
+                    return {"error": "no task_id"}
+                # poll(平均 20-40s 完成)
+                poll_url = f"{self.BASE_URL}/tasks/{task_id}"
+                poll_headers = {"Authorization": f"Bearer {self.api_key}"}
+                deadline = time.time() + 180
+                while time.time() < deadline:
+                    await asyncio.sleep(5)
+                    pr = await client.get(poll_url, headers=poll_headers)
+                    if pr.status_code != 200:
+                        continue
+                    data = pr.json().get("output", {})
+                    status = data.get("task_status")
+                    if status == "SUCCEEDED":
+                        # results[0].transcription_url 是个 JSON 文件,要二次拉
+                        results = data.get("results", [])
+                        if not results:
+                            return {"error": "no results"}
+                        trans_url = results[0].get("transcription_url")
+                        if not trans_url:
+                            return {"error": "no transcription_url"}
+                        tr = await client.get(trans_url, timeout=30)
+                        if tr.status_code != 200:
+                            return {"error": f"fetch transcription {tr.status_code}"}
+                        tdata = tr.json()
+                        # paraformer-v2 输出格式:transcripts[0].text + .sentences[]
+                        transcripts = tdata.get("transcripts", [])
+                        if not transcripts:
+                            return {"error": "empty transcripts"}
+                        text = transcripts[0].get("text", "")
+                        sentences = transcripts[0].get("sentences", [])
+                        # 转成 fal whisper 兼容的 chunks 格式(begin_time/end_time/text)
+                        chunks = [{
+                            "timestamp": [s.get("begin_time", 0) / 1000.0, s.get("end_time", 0) / 1000.0],
+                            "text": s.get("text", ""),
+                        } for s in sentences]
+                        await cb.record_success("aliyun-paraformer-v2")
+                        return {"text": text, "chunks": chunks, "model": "aliyun-paraformer-v2"}
+                    if status == "FAILED":
+                        await cb.record_failure("aliyun-paraformer-v2")
+                        return {"error": f"FAILED: {data.get('message', '?')[:200]}"}
+                await cb.record_failure("aliyun-paraformer-v2")
+                return {"error": "timeout 180s"}
+        except Exception as e:
+            await cb.record_failure("aliyun-paraformer-v2")
+            return {"error": str(e)[:300]}
+
+
 class FalCodeformerService:
     """P45 工作流:CodeFormer 单图人脸修复(身份保真)。
 
@@ -896,11 +990,12 @@ _pixverse_swap_service: Optional["FalPixverseSwapService"] = None
 _codeformer_service: Optional["FalCodeformerService"] = None
 _pulid_service: Optional["FalPuLIDService"] = None
 _aliyun_wan_service: Optional["AliyunWanService"] = None
+_aliyun_asr_service: Optional["AliyunASRService"] = None
 
 
 def init_fal_services(fal_key: str):
     os.environ["FAL_KEY"] = fal_key
-    global _image_service, _video_service, _avatar_service, _voice_service, _asr_service, _inpainting_service, _vton_service, _lipsync_service, _audio_separator_service, _pixverse_swap_service, _codeformer_service, _pulid_service, _aliyun_wan_service
+    global _image_service, _video_service, _avatar_service, _voice_service, _asr_service, _inpainting_service, _vton_service, _lipsync_service, _audio_separator_service, _pixverse_swap_service, _codeformer_service, _pulid_service, _aliyun_wan_service, _aliyun_asr_service
     _image_service = FalImageService(fal_key)
     _video_service = FalVideoService(fal_key)
     _avatar_service = FalAvatarService(fal_key)
@@ -915,6 +1010,8 @@ def init_fal_services(fal_key: str):
     _pulid_service = FalPuLIDService(fal_key)
     # P47-B:阿里通义万相 Wan2.7(读 DASHSCOPE_API_KEY env,缺失时 service 整体禁用)
     _aliyun_wan_service = AliyunWanService()
+    # P47-C:阿里 paraformer-v2 ASR(替代 fal whisper)
+    _aliyun_asr_service = AliyunASRService()
 
 def get_image_service() -> FalImageService:
     return _image_service
@@ -954,6 +1051,9 @@ def get_pulid_service() -> "FalPuLIDService":
 
 def get_aliyun_wan_service() -> "AliyunWanService":
     return _aliyun_wan_service
+
+def get_aliyun_asr_service() -> "AliyunASRService":
+    return _aliyun_asr_service
 
 
 # ============== fal storage upload retry helper (P33 2026-05-01) ==============

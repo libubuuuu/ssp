@@ -58,8 +58,9 @@ export default function OralBroadcastWorkbench() {
   const [aspectRatio, setAspectRatio] = useState<"" | "9:16" | "16:9" | "1:1">("");
   // P41:Step B 引擎覆盖(空字符串=后端默认 kling-o1-edit;其余多个用户实测对比)
   type StepBEngine = "" | "auto" | "auto-cheap" | "aliyun-wan2.7-r2v" | "pixverse-swap" | "kling-o1-edit" | "i2v" | "seedance-2-r2v" | "kling-o3-r2v" | "kling-o3-v2v" | "kling-2-6-i2v" | "wan-2-2-animate-replace";
-  // P47:默认推荐 "auto"(多引擎 fallback),用户可改其他
-  const [stepBEngine, setStepBEngine] = useState<StepBEngine>("auto");
+  // P47-C:默认 "auto-cheap"(阿里 wan 主路 + fal 兜底,180 天免费 ¥0,慢但白嫖)
+  // 商家用户要快可改 "auto"(fal 主路,~¥17/30s 但 5min 出片)
+  const [stepBEngine, setStepBEngine] = useState<StepBEngine>("auto-cheap");
   // P43-2:可选 Topaz 超分到 1440p(默认关,+$0.02/秒)
   const [useTopazUpscale, setUseTopazUpscale] = useState(false);
   // P45:模特图过 codeformer 修脸预处理(默认开,补 fal r2v 真人保身份残差)
