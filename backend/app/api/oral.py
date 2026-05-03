@@ -728,6 +728,9 @@ async def _run_inpainting_step(session_id: str) -> None:
         user_id = str(session["user_id"])
         original_video_path = session["original_video_path"]
 
+        # P60 hot-fix:Step B 切段仍需要这两个 helper(line 1157 + ffmpeg 切段用)
+        from app.api.video_studio import _run_ffmpeg, _get_video_duration
+
         # ---------- Step A:跳过 Seedream(P60)— 多图引擎直接吃用户原图 ----------
         # P29-P56 的 Seedream 多图融合会产出"含 driving 场景"的合成图,
         # 信息丢失 + 失真,让 Kling/阿里 wan 看到的不是用户原图,导致脸/光/字漂。
