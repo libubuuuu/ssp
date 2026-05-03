@@ -973,9 +973,14 @@ async def _run_inpainting_step(session_id: str) -> None:
                         sp_parts.append(f"【本段({int(start_s)}-{int(end_s)}s)分镜】\n" + "\n".join(seg_timeline[:8]))
                     if seg_keys:
                         sp_parts.append("【本段关键时刻】\n" + "\n".join(seg_keys[:5]))
+                    # P83:VACE Fun 倾向保留 driving 上下文,prompt 必须强力指令使用 ref image,
+                    # 不能用通用 "replace with reference",必须 IMITATE/COPY/MIMIC 关键词强调
                     sp_parts.append(
-                        "Replace only the masked region with the reference image item. "
-                        "Preserve outer garment, action, background, layering exactly."
+                        "CRITICAL: The masked region MUST show the EXACT item from the reference image. "
+                        "Do NOT generate any new garment. Do NOT keep original video content in masked area. "
+                        "COPY the reference image item PIXEL-BY-PIXEL into the masked region: "
+                        "same color, same fabric, same shape, same neckline, same straps. "
+                        "Outside masked region: preserve outer garment, action, background, layering exactly."
                     )
                     seg_prompt_text = "\n\n".join(sp_parts)
                     if len(seg_prompt_text) > 800:
