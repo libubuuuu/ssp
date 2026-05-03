@@ -3171,14 +3171,93 @@ class GenerateSegmentRequest(BaseModel):
     seg_idx: int
 
 
+async def _run_segment_task(session_id: str, seg_idx: int, user_id: str):
+    """P82:VACE Fun 单段后台 task。立即返回避免 nginx 5min 超时。"""
+    try:
+        session = _get_session(session_id)
+        if not session:
+            _log(f"vace-mask P82 seg {seg_idx} session not found")
+            return
+        seg_json_raw = session.get("segments_json")
+        if not seg_json_raw:
+            return
+        segments: List[Dict[str, Any]] = json.loads(seg_json_raw)
+        if seg_idx < 0 or seg_idx >= len(segments):
+            return
+        seg = segments[seg_idx]
+        products = json.loads(session.get("selected_products") or "[]")
+        garment_url = products[0].get("image_url") if products and products[0].get("image_url") else None
+        if not garment_url:
+            seg["status"] = "failed"
+            seg["error"] = "缺少产品图"
+            segments[seg_idx] = seg
+            _update_session(session_id, segments_json=json.dumps(segments, ensure_ascii=False))
+            return
+        from app.services.fal_service import get_vace_fun_service
+        vace_svc = get_vace_fun_service()
+        if vace_svc is None:
+            seg["status"] = "failed"
+            seg["error"] = "VACE Fun service 未初始化"
+            segments[seg_idx] = seg
+            _update_session(session_id, segments_json=json.dumps(segments, ensure_ascii=False))
+            return
+        try:
+            vres = await asyncio.wait_for(
+                vace_svc.inpaint(
+                    video_url=seg["driving_url"],
+                    mask_video_url=seg["mask_url"],
+                    ref_image_urls=[garment_url],
+                    prompt=seg["prompt"],
+                ),
+                timeout=20 * 60,
+            )
+        except asyncio.TimeoutError:
+            seg["status"] = "failed"
+            seg["error"] = "VACE Fun 超时 20min"
+            segments[seg_idx] = seg
+            _update_session(session_id, segments_json=json.dumps(segments, ensure_ascii=False))
+            _log(f"vace-mask P82 seg {seg_idx} 超时")
+            return
+        except Exception as e:
+            seg["status"] = "failed"
+            seg["error"] = str(e)[:300]
+            segments[seg_idx] = seg
+            _update_session(session_id, segments_json=json.dumps(segments, ensure_ascii=False))
+            _log(f"vace-mask P82 seg {seg_idx} exception: {str(e)[:200]}")
+            return
+        if "error" in vres:
+            seg["status"] = "failed"
+            seg["error"] = vres["error"][:300]
+            segments[seg_idx] = seg
+            _update_session(session_id, segments_json=json.dumps(segments, ensure_ascii=False))
+            _log(f"vace-mask P82 seg {seg_idx} VACE error: {vres['error'][:200]}")
+            return
+        fal_url = vres["video_url"]
+        try:
+            fal_url = await archive_url(fal_url, user_id, "video")
+        except Exception as arch_err:
+            _log(f"vace-mask P82 seg {seg_idx} archive failed: {arch_err}")
+        # 重读 session 防 race(其他段并发更新)
+        latest = _get_session(session_id)
+        latest_segs = json.loads(latest.get("segments_json") or "[]") if latest else segments
+        if seg_idx < len(latest_segs):
+            latest_segs[seg_idx]["status"] = "generated"
+            latest_segs[seg_idx]["fal_url"] = fal_url
+            latest_segs[seg_idx]["error"] = None
+            _update_session(session_id, segments_json=json.dumps(latest_segs, ensure_ascii=False))
+        _log(f"vace-mask P82 seg {seg_idx} OK url={fal_url[:80]}")
+    except Exception as outer:
+        _log(f"vace-mask P82 seg {seg_idx} outer exception: {outer}")
+
+
 @router.post("/generate-segment")
 async def generate_segment(
     req: GenerateSegmentRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """P81 vace-mask 手动模式 — 用户按某段生成按钮触发该段 VACE Fun。
+    """P81/P82 vace-mask 手动模式 — 立即返回 + 后台跑 VACE Fun(防 nginx 5min 超时)。
 
-    需 session 处于 swap_running 且 segments_json 已写入(_run_inpainting_step 已准备完毕)。
+    前端轮询 /status segments_json 看 status 切到 'generated' + fal_url。
     """
     user_id = str(current_user["id"])
     session = _get_session(req.session_id)
@@ -3201,60 +3280,16 @@ async def generate_segment(
     if not garment_url:
         raise HTTPException(400, "缺少产品图")
 
-    # 标记 generating + 写库
+    # 标记 generating + 写库 + 立即返回
     seg["status"] = "generating"
     seg["fal_url"] = None
     seg["error"] = None
     segments[req.seg_idx] = seg
     _update_session(req.session_id, segments_json=json.dumps(segments, ensure_ascii=False))
 
-    # 跑 VACE Fun(20min timeout)
-    from app.services.fal_service import get_vace_fun_service
-    vace_svc = get_vace_fun_service()
-    if vace_svc is None:
-        raise HTTPException(503, "VACE Fun service 未初始化")
-    try:
-        vres = await asyncio.wait_for(
-            vace_svc.inpaint(
-                video_url=seg["driving_url"],
-                mask_video_url=seg["mask_url"],
-                ref_image_urls=[garment_url],
-                prompt=seg["prompt"],
-            ),
-            timeout=20 * 60,
-        )
-    except asyncio.TimeoutError:
-        seg["status"] = "failed"
-        seg["error"] = "VACE Fun 超时 20min"
-        segments[req.seg_idx] = seg
-        _update_session(req.session_id, segments_json=json.dumps(segments, ensure_ascii=False))
-        raise HTTPException(504, "VACE Fun 超时 20min")
-    except Exception as e:
-        seg["status"] = "failed"
-        seg["error"] = str(e)[:300]
-        segments[req.seg_idx] = seg
-        _update_session(req.session_id, segments_json=json.dumps(segments, ensure_ascii=False))
-        raise HTTPException(502, f"VACE Fun 失败: {str(e)[:200]}")
-
-    if "error" in vres:
-        seg["status"] = "failed"
-        seg["error"] = vres["error"][:300]
-        segments[req.seg_idx] = seg
-        _update_session(req.session_id, segments_json=json.dumps(segments, ensure_ascii=False))
-        raise HTTPException(502, f"VACE Fun 失败: {vres['error'][:200]}")
-
-    # 归档防 fal.media 30d 过期
-    fal_url = vres["video_url"]
-    try:
-        fal_url = await archive_url(fal_url, user_id, "video")
-    except Exception as arch_err:
-        _log(f"vace-mask P81 seg {req.seg_idx} archive failed: {arch_err}")
-    seg["status"] = "generated"
-    seg["fal_url"] = fal_url
-    segments[req.seg_idx] = seg
-    _update_session(req.session_id, segments_json=json.dumps(segments, ensure_ascii=False))
-    _log(f"vace-mask P81 seg {req.seg_idx} OK url={fal_url[:80]}")
-    return {"seg_idx": req.seg_idx, "fal_url": fal_url, "status": "generated"}
+    # P82:后台跑 VACE Fun,立即返回防 nginx 超时
+    asyncio.create_task(_run_segment_task(req.session_id, req.seg_idx, user_id))
+    return {"seg_idx": req.seg_idx, "status": "generating"}
 
 
 class MergeSegmentsRequest(BaseModel):
