@@ -828,8 +828,15 @@ async def _run_inpainting_step(session_id: str) -> None:
             SEG_LEN_S = 8.0          # 文档 3-10s,留 2s 余量;长视频均匀拆段
             # P43:Comfy-Org/workflow_templates 抽出的 Kling 官方 Keep/Replace/Adjust 三段式范式 +
             # maciejdzierzek/kling-ai-prompt-generator 的 motion endpoint 收尾句 + text-fixed 防漂
+            # P46:identity-locking 前缀 + negation(magichour.ai 业界共识)
+            ID_LOCK = (
+                "Primary identity anchor: @Element1. Do NOT alter facial proportions, "
+                "eye spacing, nose shape, jawline, hair, or skin tone. "
+            )
+            NEG = " No face distortion, no unintended wardrobe changes."
             if product_names:
                 prompt = (
+                    f"{ID_LOCK}"
                     f"Keep the scene, background, lighting, camera framing, camera movement, body posture, "
                     f"hand gestures, facial expressions and all decorative details from the reference video "
                     f"completely unchanged. Replace the woman in the video with @Element1. Replace her "
@@ -838,68 +845,102 @@ async def _run_inpainting_step(session_id: str) -> None:
                     f"lighting and color tone of @Element1 and @Element2 to match the original background "
                     f"for a natural, cohesive visual effect. The motion ends and settles back into the "
                     f"starting position seamlessly."
+                    f"{NEG}"
                 )
             else:
                 prompt = (
+                    f"{ID_LOCK}"
                     "Keep the scene, background, lighting, camera framing, camera movement, body posture, "
                     "hand gestures, facial expressions and all decorative details from the reference video "
                     "completely unchanged. Replace the woman in the video with @Element1. Adjust the "
                     "lighting and color tone of @Element1 to match the original background for a natural, "
                     "cohesive visual effect. The motion ends and settles back into the starting position "
                     "seamlessly."
+                    f"{NEG}"
                 )
         elif engine == "seedance-2-r2v":
             # P41:fal-ai/bytedance/seedance-2.0/reference-to-video
             # 多素材统一 @Index 引用:image_urls(<=9)+ video_urls(<=3,2-15s)+ audio_urls
             # 注:2026-02 起,真人 prompt 下多参考能力被 ByteDance 阉割,实测验证。
             # 价格:有 video_urls $0.1814/s,无 video $0.3024/s
+            # P46:段长 8s → 5s(magichour.ai 业界共识 3-5s 最稳,8s 漂)
             endpoint_default = "fal-ai/bytedance/seedance-2.0/reference-to-video"
             seg_timeout_loops = 60
-            SEG_LEN_S = 8.0
+            SEG_LEN_S = 5.0
+            # P46:identity-locking 前缀 + negation(magichour 实战 prompt 模板)
+            ID_LOCK = (
+                "Primary identity anchor: @Image1. Do NOT alter facial proportions, "
+                "eye spacing, nose shape, jawline, hair, or skin tone. "
+            )
+            NEG = " No face distortion, no wardrobe changes from @Image2, no color palette shift."
             if product_names:
                 prompt = (
+                    f"{ID_LOCK}"
                     f"@Image1 wearing the {', '.join(product_names)} from @Image2, "
                     f"performing the same actions, gestures, and movements as in @Video1. "
                     f"Preserve the original background and camera angle from @Video1 exactly."
+                    f"{NEG}"
                 )
             else:
                 prompt = (
+                    f"{ID_LOCK}"
                     "@Image1 performing the same actions and movements as in @Video1. "
                     "Preserve the original background and camera angle from @Video1 exactly."
+                    f"{NEG}"
                 )
         elif engine == "kling-o3-r2v":
             # P41:fal-ai/kling-video/o3/pro/reference-to-video
             # 纯 r2v(无 driving video),element 多图锁身份 + generate_audio + 每元素 voice_id
             # 价格 audio off $0.112/s,audio on $0.14/s
+            # P46:段长 8s → 5s + identity-locking
             endpoint_default = "fal-ai/kling-video/o3/pro/reference-to-video"
             seg_timeout_loops = 60
-            SEG_LEN_S = 8.0
+            SEG_LEN_S = 5.0
+            ID_LOCK = (
+                "Primary identity anchor: @Element1. Do NOT alter facial proportions, "
+                "eye spacing, nose shape, jawline, hair, or skin tone. "
+            )
+            NEG = " No face distortion, no wardrobe changes."
             if product_names:
                 prompt = (
+                    f"{ID_LOCK}"
                     f"@Element1 wearing @Element2 ({', '.join(product_names)}), "
                     f"naturally showcasing the product, smooth body movement, photorealistic UGC selfie style."
+                    f"{NEG}"
                 )
             else:
                 prompt = (
+                    f"{ID_LOCK}"
                     "@Element1 naturally showcasing herself, smooth body movement, "
                     "photorealistic UGC selfie style."
+                    f"{NEG}"
                 )
         elif engine == "kling-o3-v2v":
             # P41:fal-ai/kling-video/o3/pro/video-to-video/reference
             # 真 v2v + element 多图;keep_audio 默认 true,我们 lipsync 接管所以关掉
             # 价格 $0.168/s
+            # P46:段长 8s → 5s + identity-locking
             endpoint_default = "fal-ai/kling-video/o3/pro/video-to-video/reference"
             seg_timeout_loops = 60
-            SEG_LEN_S = 8.0   # 文档 3-10s
+            SEG_LEN_S = 5.0
+            ID_LOCK = (
+                "Primary identity anchor: @Element1. Do NOT alter facial proportions, "
+                "eye spacing, nose shape, jawline, hair, or skin tone. "
+            )
+            NEG = " No face distortion, no wardrobe changes from @Element2, no color palette shift."
             if product_names:
                 prompt = (
+                    f"{ID_LOCK}"
                     f"Replace the person in @Video1 with @Element1, wearing @Element2 "
                     f"({', '.join(product_names)}). Preserve the original motion, gestures, and camera movement."
+                    f"{NEG}"
                 )
             else:
                 prompt = (
+                    f"{ID_LOCK}"
                     "Replace the person in @Video1 with @Element1. "
                     "Preserve the original motion, gestures, and camera movement."
+                    f"{NEG}"
                 )
         elif engine == "wan-2-2-animate-replace":
             # P43:fal-ai/wan/v2.2-14b/animate/replace — Apache 2.0 阿里开源,无 partner validation
