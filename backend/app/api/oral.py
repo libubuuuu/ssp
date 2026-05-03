@@ -3173,6 +3173,7 @@ class GenerateSegmentRequest(BaseModel):
 
 async def _run_segment_task(session_id: str, seg_idx: int, user_id: str):
     """P82:VACE Fun 单段后台 task。立即返回避免 nginx 5min 超时。"""
+    from app.services.media_archiver import archive_url  # P82-fix:模块级 task 缺 import
     try:
         session = _get_session(session_id)
         if not session:
