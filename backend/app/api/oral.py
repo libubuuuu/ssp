@@ -900,13 +900,25 @@ async def _run_inpainting_step(session_id: str) -> None:
                     "Do NOT place inner item over outer layer. Only replace within the mask-specified region."
                 )
                 cn_prompt = "".join(cn_prompt_parts)
+                # P77:截 cn_prompt 到 1500 字防 VACE Fun 卡(text encoder token 上限)
+                if len(cn_prompt) > 1500:
+                    cn_prompt = cn_prompt[:1500]
+                    _log(f"vace-mask P77 cn_prompt 截到 1500 字 session={session_id}")
                 vace_t0 = time.time()
-                vace_res = await vace_svc.inpaint(
-                    video_url=seg5_fal,
-                    mask_video_url=mask_url,
-                    ref_image_urls=[garment_url],
-                    prompt=cn_prompt,
-                )
+                # P77:fal_client.run_async 默认无 timeout,VACE Fun 卡死时无限等。
+                # 包 asyncio.wait_for(20 min 上限),超时自动 raise TimeoutError → fail_step4 退款。
+                try:
+                    vace_res = await asyncio.wait_for(
+                        vace_svc.inpaint(
+                            video_url=seg5_fal,
+                            mask_video_url=mask_url,
+                            ref_image_urls=[garment_url],
+                            prompt=cn_prompt,
+                        ),
+                        timeout=20 * 60,  # 20 min(probe 实测 10 min,留 2x 余量)
+                    )
+                except asyncio.TimeoutError:
+                    raise RuntimeError("VACE Fun 超时 20 min(fal 端卡死,自动退款重试)")
                 if "error" in vace_res:
                     raise RuntimeError(f"VACE Fun fail: {vace_res['error']}")
                 swapped_url = vace_res["video_url"]
