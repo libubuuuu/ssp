@@ -626,6 +626,8 @@ export const en = {
     videoPromptRegenerate: "Regenerate",
     videoPromptSave: "Save breakdown",
     videoPromptPlaceholder: "AI-generated scene breakdown will appear here...",
+    videoPromptReadonly: "Read-only · pipeline already using this prompt",
+    videoPromptPending: "Upload driving video, then at ASR-done stage (② edit transcript) click \"Auto-generate breakdown\" to generate + edit",
     errVideoPromptGenFail: "Generate breakdown failed, please retry",
     errVideoPromptSaveFail: "Save breakdown failed, please retry",
     s4Waiting: "AI generating",

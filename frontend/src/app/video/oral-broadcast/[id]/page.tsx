@@ -885,16 +885,22 @@ export default function OralBroadcastWorkbench() {
           </section>
         )}
 
-        {/* ============ P72: 视频复刻分镜 prompt 编辑(Step 2 副) ============ */}
-        {isAsrDone && (
+        {/* ============ P72: 视频复刻分镜 prompt(Step 2 副,所有阶段都显示)============ */}
+        {/* P73:任何阶段都显示分镜面板,asr_done 阶段可编辑/重新生成,其他阶段只读展示 */}
+        {(sess.products.original_video_url || sess.products.asr_transcript || videoPrompt) && (
           <section style={{ background: "#fff", padding: "1.5rem", borderRadius: 12, marginBottom: "1rem" }}>
             <h2 style={{ fontSize: "1.1rem", fontWeight: 600, marginTop: 0 }}>
               {t("oral.videoPromptTitle")}
+              {!isAsrDone && (
+                <span style={{ marginLeft: "0.6rem", fontSize: "0.7rem", padding: "0.15rem 0.5rem", background: "#f0f0f0", color: "#888", borderRadius: 6, fontWeight: 400 }}>
+                  {t("oral.videoPromptReadonly")}
+                </span>
+              )}
             </h2>
             <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: "0.8rem", lineHeight: 1.6 }}>
               {t("oral.videoPromptHint")}
             </div>
-            {!videoPrompt && (
+            {!videoPrompt && isAsrDone && (
               <button onClick={generateVideoPrompt} disabled={videoPromptGen}
                 style={{
                   padding: "0.7rem 1.2rem",
@@ -907,37 +913,45 @@ export default function OralBroadcastWorkbench() {
                 {videoPromptGen ? t("oral.videoPromptGenerating") : t("oral.videoPromptGenerate")}
               </button>
             )}
+            {!videoPrompt && !isAsrDone && (
+              <div style={{ fontSize: "0.85rem", color: "#999", padding: "1rem", background: "#f9f7f2", borderRadius: 8 }}>
+                {t("oral.videoPromptPending")}
+              </div>
+            )}
             {videoPrompt && (
               <>
                 <textarea value={videoPrompt} onChange={e => setVideoPrompt(e.target.value)}
+                  readOnly={!isAsrDone}
                   rows={12}
                   placeholder={t("oral.videoPromptPlaceholder")}
-                  style={{ width: "100%", padding: "0.8rem", border: "1px solid #ddd", borderRadius: 8, fontFamily: "inherit", fontSize: "0.85rem", resize: "vertical", marginBottom: "0.6rem" }} />
+                  style={{ width: "100%", padding: "0.8rem", border: "1px solid #ddd", borderRadius: 8, fontFamily: "inherit", fontSize: "0.85rem", resize: "vertical", marginBottom: "0.6rem", background: !isAsrDone ? "#f9f7f2" : "#fff", color: !isAsrDone ? "#555" : "#000" }} />
                 <div style={{ fontSize: "0.7rem", color: "#999", marginBottom: "0.6rem" }}>
                   {videoPrompt.length} / 5000
                 </div>
-                <div style={{ display: "flex", gap: "0.6rem" }}>
-                  <button onClick={generateVideoPrompt} disabled={videoPromptGen}
-                    style={{
-                      padding: "0.6rem 1rem",
-                      background: videoPromptGen ? "#ccc" : "#fff",
-                      color: "#0d6efd", border: "1px solid #0d6efd", borderRadius: 10,
-                      cursor: videoPromptGen ? "not-allowed" : "pointer",
-                      fontSize: "0.85rem", fontWeight: 500,
-                    }}>
-                    {videoPromptGen ? t("oral.videoPromptGenerating") : t("oral.videoPromptRegenerate")}
-                  </button>
-                  <button onClick={saveVideoPrompt} disabled={videoPromptSaving}
-                    style={{
-                      padding: "0.6rem 1rem",
-                      background: videoPromptSaving ? "#ccc" : "#0d0d0d",
-                      color: "#fff", border: "none", borderRadius: 10,
-                      cursor: videoPromptSaving ? "not-allowed" : "pointer",
-                      fontSize: "0.85rem", fontWeight: 500,
-                    }}>
-                    {videoPromptSaving ? t("oral.submitting") : t("oral.videoPromptSave")}
-                  </button>
-                </div>
+                {isAsrDone && (
+                  <div style={{ display: "flex", gap: "0.6rem" }}>
+                    <button onClick={generateVideoPrompt} disabled={videoPromptGen}
+                      style={{
+                        padding: "0.6rem 1rem",
+                        background: videoPromptGen ? "#ccc" : "#fff",
+                        color: "#0d6efd", border: "1px solid #0d6efd", borderRadius: 10,
+                        cursor: videoPromptGen ? "not-allowed" : "pointer",
+                        fontSize: "0.85rem", fontWeight: 500,
+                      }}>
+                      {videoPromptGen ? t("oral.videoPromptGenerating") : t("oral.videoPromptRegenerate")}
+                    </button>
+                    <button onClick={saveVideoPrompt} disabled={videoPromptSaving}
+                      style={{
+                        padding: "0.6rem 1rem",
+                        background: videoPromptSaving ? "#ccc" : "#0d0d0d",
+                        color: "#fff", border: "none", borderRadius: 10,
+                        cursor: videoPromptSaving ? "not-allowed" : "pointer",
+                        fontSize: "0.85rem", fontWeight: 500,
+                      }}>
+                      {videoPromptSaving ? t("oral.submitting") : t("oral.videoPromptSave")}
+                    </button>
+                  </div>
+                )}
               </>
             )}
           </section>

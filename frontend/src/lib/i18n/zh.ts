@@ -626,6 +626,8 @@ export const zh = {
     videoPromptRegenerate: "重新生成",
     videoPromptSave: "保存分镜",
     videoPromptPlaceholder: "AI 生成的分镜会显示在这里...",
+    videoPromptReadonly: "只读 · pipeline 已用此 prompt",
+    videoPromptPending: "上传 driving 视频后,在 ASR 完成阶段(② 编辑文案)可点「自动生成分镜」生成 + 编辑",
     errVideoPromptGenFail: "生成分镜失败,请重试",
     errVideoPromptSaveFail: "保存分镜失败,请重试",
     s4Waiting: "AI 生成中",
