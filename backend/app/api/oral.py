@@ -74,10 +74,10 @@ _ASSET_TYPES = ("image", "video", "audio")
 # P41:Step B 引擎白名单 — 用户可在 /start 显式指定;None/空串走 env(默认 kling-o1-edit)
 # 各引擎 fal schema 真值见 _drive_one 各分支(2026-05-03 openapi 实查)
 _STEP_B_ENGINES = (
-    # P58 清理(删 wan-2-2-animate-replace,实测脸/光/字漂):
+    # 核心档(全 verified 真复刻 + 多图原图直喂):
     "aliyun-wan2.7-r2v",        # 🆓 阿里通义万相(免费 + multi-reference + 70% 概率)
     "kling-o3-standard-v2v",    # ⭐ Kling O3 standard v2v edit(¥5.73/5s,element 多图 verified)
-    "auto-cheap",               # P47-B 免费优先链:阿里→kling-standard
+    "auto-cheap",               # 免费优先链:阿里→kling-standard
     # 老引擎保留向后兼容(老 session 重做时 backend 仍能跑,前端 dropdown 不露出):
     "i2v",
     "kling-o1-edit",
@@ -95,7 +95,7 @@ _STEP_B_ENGINES = (
 # 顺序基于"NSFW 友好度 + 速度":pixverse 最稳 → seedance 多素材 → wan 慢但通 NSFW → kling-o1-edit 兜底
 FALLBACK_CHAIN_AUTO = ("pixverse-swap", "seedance-2-r2v", "kling-o1-edit")
 
-# P58 清理:auto-cheap 免费优先链(全 verified 真复刻,删 Wan 2.2 实测漂):
+# auto-cheap 免费优先链(全 verified 真复刻):
 # 阿里 wan(免费,70% 概率)→ Kling O3 standard v2v edit($0.126/s 多图 verified)
 FALLBACK_CHAIN_CHEAP = ("aliyun-wan2.7-r2v", "kling-o3-standard-v2v")
 
@@ -728,168 +728,17 @@ async def _run_inpainting_step(session_id: str) -> None:
         user_id = str(session["user_id"])
         original_video_path = session["original_video_path"]
 
-        # ---------- Step A:Seedream v4 edit 多图融合 ----------
-        from app.api.video_studio import _run_ffmpeg, _get_video_duration
-        # P29:首帧可能是露肤 / 撩衣等被 Seedream content checker 拒的瞬间,
-        # 改用候选帧池(中点优先 + 两侧分散),逐帧送 Seedream,遇 content_policy
-        # 自动换下一帧。视频是合规的不代表第 0 帧是合规静图。
-        frame_tmpdir = Path(tempfile.mkdtemp(prefix=f"oral_frames_{session_id}_"))
-        try:
-            duration_for_frames = float(session.get("duration_seconds") or 0)
-            if duration_for_frames <= 0:
-                duration_for_frames = _get_video_duration(original_video_path) or 0
-            # P44-2:候选帧池 5→10 帧(中点 + 三层分散),NSFW 过审率 + 选帧多样性提升
-            # 顺序按"被拒概率从低到高"排:中点最稳,接近端点最容易撩衣/露肤被拒
-            FRAME_POS_RATIOS = [0.5, 0.4, 0.6, 0.35, 0.65, 0.25, 0.75, 0.15, 0.85, 0.5]
-            frame_paths: List[Path] = []
-            for i, ratio in enumerate(FRAME_POS_RATIOS):
-                pos = max(0.0, duration_for_frames * ratio - 0.05)
-                fp = frame_tmpdir / f"f_{i:02d}.jpg"
-                ok_f, ferr = _run_ffmpeg([
-                    "ffmpeg", "-y", "-ss", f"{pos:.2f}", "-i", original_video_path,
-                    "-vframes", "1", "-q:v", "2", str(fp),
-                ])
-                if ok_f and fp.exists() and fp.stat().st_size > 0:
-                    frame_paths.append(fp)
-            if not frame_paths:
-                raise RuntimeError("Step A 候选帧抽取全失败")
-
-            # 决定 Seedream 输出尺寸:用户在 /start 选的 aspect_ratio 优先,
-            # 否则按原视频比例自动跟随(P16)
-            user_aspect = (session.get("aspect_ratio") or "").strip().lower()
-            ASPECT_PRESETS = {
-                "9:16": {"width": 720,  "height": 1280},
-                "16:9": {"width": 1280, "height": 720},
-                "1:1":  {"width": 1024, "height": 1024},
-            }
-            if user_aspect in ASPECT_PRESETS:
-                seed_size = ASPECT_PRESETS[user_aspect]
-            else:
-                seed_size = "portrait_16_9"
-                try:
-                    probe = subprocess.run(
-                        ["ffprobe", "-v", "error", "-select_streams", "v:0",
-                         "-show_entries", "stream=width,height",
-                         "-of", "csv=s=x:p=0", original_video_path],
-                        capture_output=True, text=True, timeout=10,
-                    )
-                    w_str, h_str = probe.stdout.strip().split("x")
-                    w_i, h_i = int(w_str), int(h_str)
-                    scale = min(1.0, 2048 / max(w_i, h_i))
-                    seed_size = {"width": int(w_i * scale), "height": int(h_i * scale)}
-                except Exception as probe_err:
-                    _log(f"_run_inpainting_step probe size 失败,用 portrait_16_9 兜底: {probe_err}")
-
-            # P56:提前算 anchor_model_extra / anchor_product_extra(prompt_parts 拼接需要)
-            anchor_model_extra = [a["url"] for a in session_assets if a.get("role") == "anchor_model" and a.get("url")]
-            anchor_product_extra = [a["url"] for a in session_assets if a.get("role") == "anchor_product" and a.get("url")]
-
-            # 拼中文 prompt(Seedream 是字节模型,中文准)。prompt 与具体帧无关,
-            # 候选帧循环里复用同一份。
-            prompt_parts = [
-                "保留第 1 张图作为画面的整体背景、光线、构图与相机角度,",
-                "把画面里的人物替换为第 2 张图中的模特(完整保留模特的面部特征、发型、肤色),",
-            ]
-            garment_url: Optional[str] = None
-            if products and products[0].get("image_url"):
-                garment_url = products[0]["image_url"]
-                garment_name = (products[0].get("name") or "").strip()
-                garment_desc = f"({garment_name})" if garment_name else ""
-                prompt_parts.append(
-                    f"让模特身穿第 3 张图所示的服装{garment_desc},"
-                    "服装款式、颜色、细节与图 3 完全一致,"
-                )
-            prompt_parts.append(
-                "整体风格与第 1 张图保持一致(同一场景、同一采光、同一镜头距离),"
-                "禁止改成白底、棚景、纯色背景或其他场景。"
-            )
-            # P56:多角度信息融合 — 让 Flux/Seedream 把模特多角度 + 产品多角度的细节融合进首帧
-            # 核心指令:模特身份多视角参考(让模型从多张图理解模特长什么样)
-            #          产品反面/材质/logo 细节(让模型知道产品的完整形态,避免单角度漂)
-            n_model_extra = len(anchor_model_extra)
-            n_product_extra = len(anchor_product_extra)
-            if n_model_extra > 0 or n_product_extra > 0:
-                base_idx = 3 if garment_url else 2
-                multi_parts = []
-                if n_model_extra > 0:
-                    extra_idxs = list(range(base_idx + 1, base_idx + 1 + n_model_extra))
-                    multi_parts.append(
-                        f"参考第 {','.join(str(i) for i in extra_idxs)} 张图中模特的其他角度(侧面/全身/背面/特写),"
-                        f"综合理解模特的完整面部和身材特征,"
-                    )
-                if n_product_extra > 0:
-                    p_start = base_idx + 1 + n_model_extra
-                    p_idxs = list(range(p_start, p_start + n_product_extra))
-                    multi_parts.append(
-                        f"参考第 {','.join(str(i) for i in p_idxs)} 张图中产品的其他角度(反面/侧面/材质/logo/标签),"
-                        f"综合理解产品的完整形态、纹理、文字、品牌标识,"
-                        f"在合成画面中即使只能看到产品的一面,也要保留所有正确的颜色/材质/logo 细节。"
-                    )
-                prompt_parts.append("".join(multi_parts))
-            full_prompt = "".join(prompt_parts)
-
-            # 候选帧逐张送 Seedream,content_policy 类错误自动换下一帧;
-            # 其他错误(网络/422/输入校验)直接 raise 走原 fail_step4 退款链路
-            seed_url: Optional[str] = None
-            last_seed_err: Optional[str] = None
-            CONTENT_POLICY_KEYS = (
-                "content_policy", "content_policy_violation",
-                "partner_validation_failed", "content checker",
-            )
-            # P56:Step A 强化 — 多角度图融合(P53 anchor_model + anchor_product)进 Seedream/Flux 多图编辑
-            # 让单图引擎也能从多张图汇聚"立体感多角度信息"
-            # anchor_model_extra / anchor_product_extra 已在 prompt_parts 之前定义
-            for idx, fp in enumerate(frame_paths):
-                frame_fal_url = await fal_upload_with_retry(str(fp))
-                image_urls = [frame_fal_url, model_url]
-                if garment_url:
-                    image_urls.append(garment_url)
-                # 加多角度图(去重 + 上限 9 张图给 Seedream/Flux)
-                for u in anchor_model_extra:
-                    if u not in image_urls and len(image_urls) < 9:
-                        image_urls.append(u)
-                for u in anchor_product_extra:
-                    if u not in image_urls and len(image_urls) < 9:
-                        image_urls.append(u)
-                try:
-                    seed_result = await fal_client.run_async(
-                        "fal-ai/bytedance/seedream/v4/edit",
-                        arguments={
-                            "prompt": full_prompt,
-                            "image_urls": image_urls,
-                            "image_size": seed_size,
-                        },
-                    )
-                    images = seed_result.get("images") if isinstance(seed_result, dict) else None
-                    if not images or not images[0].get("url"):
-                        raise RuntimeError("Seedream Step A 未返图")
-                    seed_url = images[0]["url"]
-                    _log(f"_run_inpainting_step Seedream Step A OK frame_idx={idx} ratio={FRAME_POS_RATIOS[idx]} session={session_id}")
-                    break
-                except Exception as se:
-                    msg = str(se)
-                    last_seed_err = msg[:300]
-                    is_content = any(kw in msg for kw in CONTENT_POLICY_KEYS)
-                    _log(f"_run_inpainting_step Seedream frame_idx={idx} ratio={FRAME_POS_RATIOS[idx]} 失败 content_policy={is_content} err={msg[:200]}")
-                    if not is_content:
-                        raise
-            if seed_url is None:
-                raise RuntimeError(
-                    f"Seedream Step A 所有 {len(frame_paths)} 帧均被内容审核拒,"
-                    f"建议换一段视频或换装更保守的模特图。最后一次错误: {last_seed_err}"
-                )
-
-            # 归档防 fal.media 30 天过期,失败不阻塞
-            try:
-                seed_url = await archive_url(seed_url, user_id, "image")
-            except Exception as arch_err:
-                _log(f"_run_inpainting_step Seedream archive failed (continuing): {arch_err}")
-
-            _update_session(session_id, vton_image_url=seed_url)
-            _log(f"_run_inpainting_step Seedream Step A 归档 OK session={session_id} url={seed_url[:80]}")
-            reference_image = seed_url
-        finally:
-            shutil.rmtree(frame_tmpdir, ignore_errors=True)
+        # ---------- Step A:跳过 Seedream(P60)— 多图引擎直接吃用户原图 ----------
+        # P29-P56 的 Seedream 多图融合会产出"含 driving 场景"的合成图,
+        # 信息丢失 + 失真,让 Kling/阿里 wan 看到的不是用户原图,导致脸/光/字漂。
+        # P59 改 image_urls 用原图;P60 进一步:整段跳过 Seedream,
+        # garment_url 单纯定义,reference_image = 用户原模特图,各 Step B 引擎从用户原图直读。
+        garment_url: Optional[str] = (
+            products[0].get("image_url") if products and products[0].get("image_url") else None
+        )
+        reference_image = model_url
+        _update_session(session_id, vton_image_url=model_url)  # 写库为 thumbnail / 历史页向后兼容
+        _log(f"_run_inpainting_step P60 Step A 跳过 Seedream session={session_id} reference=model_url garment={'yes' if garment_url else 'no'}")
 
         # ---------- Step B:拆段 + 并发驱动 + concat ----------
         # 八十四续 P15:i2v 引擎从 seedance 切 kling/o3/standard
