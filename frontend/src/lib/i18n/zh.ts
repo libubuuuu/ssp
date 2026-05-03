@@ -641,6 +641,7 @@ export const zh = {
       kling3ProI2v: "⚡ 模型 B · Kling 3.0 Pro(快速 5min · ¥2.97/5s · 跟阿里同档质量)",
       klingO3V2vCore: "⚡ 模型 B · Kling O3 v2v(真复刻原视频动作 · ¥3.4/5s · 5min 出片 · similarity 0.464 实测最强)",
       pixverseSwapCore: "⚡ 模型 B · Pixverse Swap(¥1.4/5s · 2min 出片 · 吃 driving 视频复刻动作 · NSFW 友好)",
+      klingO3R2vCore: "⭐ 模型 A+ · Kling O3 r2v 全能参考保证(¥4/5s · element 多图实测真区分模特/产品/动作 · 推荐)",
       autoBest: "⭐ 精修档 · 阿里 + Kling 双引擎并发 + InsightFace 自动选最像(¥3-4/5s · 95 分逼近即梦)",
       aliyunWan27R2v: "阿里通义万相 Wan2.7 r2v · 即梦同档免费 180 天 · 8 分钟/段 · NSFW 友好",
       pixverseSwap: "Pixverse Swap · 人/物/背景替换 · NSFW 友好 · ~14s/s · $0.20/5s",

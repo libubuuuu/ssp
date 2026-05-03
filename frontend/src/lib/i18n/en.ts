@@ -641,6 +641,7 @@ export const en = {
       kling3ProI2v: "⚡ Model B · Kling 3.0 Pro (fast 5min · ¥2.97/5s · same tier as Alibaba)",
       klingO3V2vCore: "⚡ Model B · Kling O3 v2v (TRUE driving-motion replay · ¥3.4/5s · 5min · similarity 0.464 strongest tested)",
       pixverseSwapCore: "⚡ Model B · Pixverse Swap (¥1.4/5s · 2min · driving-video swap · NSFW-friendly)",
+      klingO3R2vCore: "⭐ Model A+ · Kling O3 r2v Universal Reference (¥4/5s · element multi-img verified — distinguishes model/product/motion · RECOMMENDED)",
       autoBest: "⭐ Premium · Alibaba + Kling concurrent + InsightFace auto-pick best face match (¥3-4/5s · 95-tier near Jimeng)",
       aliyunWan27R2v: "Alibaba Wan2.7 r2v · Jimeng-tier · 180-day FREE quota · 8 min/segment · NSFW-friendly",
       pixverseSwap: "Pixverse Swap · person/object/bg swap · NSFW-friendly · ~14s/s · $0.20/5s",
