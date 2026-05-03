@@ -834,22 +834,28 @@ async def _run_inpainting_step(session_id: str) -> None:
                 elif qwenvl_svc and qwenvl_svc.is_available():
                     qwen_t0 = time.time()
                     qwen_instruction = (
-                        "请描述视频内容用于 AI 复刻。敏感词替换:'内衣/文胸/bra/胸罩/balconette' → '内层物品';"
+                        "请按以下结构详细描述视频内容,用于 AI 视频复刻参考。"
+                        "敏感词替换:'内衣/文胸/bra/胸罩/balconette' → '内层物品';"
                         "'拉起/露出/掀起/撩起' → '动作变化/出现'。\n\n"
-                        "【精准原则】\n"
-                        "1. 必须分清分体两件 vs 连体连衣裙(看腰部是否有分隔线/接缝/不同颜色);分不清写'分体(待确认)',严禁猜。\n"
-                        "2. 上衣精准:T恤/长袖T/Tank top/细吊带/V领/方领/衬衫/连衣裙。\n"
+                        "【精准分析原则】\n"
+                        "1. 服装结构必须分清分体两件 vs 连体连衣裙(看腰部是否有分隔线);"
+                        "分不清写'分体(待确认)',严禁猜。\n"
+                        "2. 上衣款式精准:T恤/长袖T/Tank top/细吊带/V领/方领/衬衫/连衣裙。\n"
                         "3. 下装精准:短裤/长裤/高腰短裤/半身裙/紧身裤。\n"
-                        "4. 不确定标'(待确认)'。\n\n"
-                        "【服装层次】(必输出,1-2 行)\n"
+                        "4. 不确定标'(待确认)'。**精确 > 流畅**,严禁脑补。\n\n"
+                        "【画面构图】景别/镜头角度/镜头运动/画面比例/焦点位置。\n\n"
+                        "【场景背景】环境/家具/光线/色温/氛围。\n\n"
+                        "【模特特征】身材/肤色/发型/发色/表情/年龄段/配饰(精确材质和位置)。\n\n"
+                        "【服装层次】(必精准)\n"
                         "- 是否分体:'分体两件(上身=X,下身=Y)' 或 '连体连衣裙' 或 '分体(待确认)';\n"
-                        "- 外层款式/颜色;内层物品款式/颜色/出现时刻。\n\n"
-                        "【时间分镜】按每 1 秒一段,每段 30-50 字,只写关键信息:"
-                        "动作 + 服装层次状态 + 服装变化(用中性词) + 出现的文字。"
-                        "格式:'0-1s:[简短]' / '1-2s:[简短]' / ...\n\n"
-                        "【关键时刻】1-2 行精确标注外层位移 / 内层物品出现的时间点(精确到 0.1s)+ 触发动作。\n\n"
-                        "要求:总输出 500-800 字精简版(VACE Fun text encoder 限制),**精确 > 详尽**。"
-                        "不要描述画面构图/场景背景/模特特征/产品材质等冗余信息(VACE 看 mask + 产品图本身识别)。"
+                        "- 外层服装:款式/颜色/材质/长度;\n"
+                        "- 内层物品(若有):款式/颜色/材质/出现时刻。\n\n"
+                        "【产品特征】颜色、材质、款式、关键细节(纹理/线条/支撑结构),敏感词用'内层物品'。\n\n"
+                        "【时间分镜】按每 1 秒一段精细描述,每段 100-150 字,内容包括:"
+                        "模特身体姿态、双手位置、面部朝向、当前帧服装层次状态、服装变化(中性词)、镜头位置、文字 OCR。"
+                        "格式:'0-1s:[详细]' / '1-2s:[详细]' / ...\n\n"
+                        "【关键时刻】精确标注外层位移 / 内层物品出现的时间点(精确到 0.1s)+ 触发动作。\n\n"
+                        "要求:总输出 1500-2500 字详细版,**精确 > 流畅**,不确定标'(待确认)'。"
                     )
                     qwen_res = await qwenvl_svc.analyze_video(seg5_fal, qwen_instruction)
                     if "error" not in qwen_res and qwen_res.get("text"):
@@ -869,10 +875,28 @@ async def _run_inpainting_step(session_id: str) -> None:
                 }
                 for k, v in NSFW_WORD_MAP.items():
                     scene_breakdown = scene_breakdown.replace(k, v)
-                # VACE Fun 中文 prompt(中性化版本)
+                # P79:从 scene_breakdown 只提取【服装层次】+【关键时刻】两段送 VACE,
+                # 完整 prompt(画面构图/场景/模特/产品/时间分镜)用户在 ②-bis 看完整版,
+                # VACE 不被超长 prompt 卡(text encoder token 限制)。
+                import re as _re
+                vace_essence_parts: List[str] = []
+                # 提取【服装层次】整段(从【服装层次】到下一个【】)
+                m_layer = _re.search(r"【服装层次】[^【]*", scene_breakdown)
+                if m_layer:
+                    vace_essence_parts.append(m_layer.group(0).strip())
+                # 提取【关键时刻】整段
+                m_key = _re.search(r"【关键时刻】[^【]*", scene_breakdown)
+                if m_key:
+                    vace_essence_parts.append(m_key.group(0).strip())
+                # 如果两段都没找到(qwen 输出格式不标准),fallback 用前 600 字
+                if not vace_essence_parts and scene_breakdown:
+                    vace_essence_parts.append(scene_breakdown[:600])
+                vace_scene_essence = "\n\n".join(vace_essence_parts)
+                _log(f"vace-mask P79 VACE prompt essence len={len(vace_scene_essence)} (full={len(scene_breakdown)})")
+                # VACE Fun prompt(只送核心层次 + 关键时刻 + 英文中性指令)
                 cn_prompt_parts = []
-                if scene_breakdown:
-                    cn_prompt_parts.append(f"视频分镜分析:\n{scene_breakdown}\n\n")
+                if vace_scene_essence:
+                    cn_prompt_parts.append(f"{vace_scene_essence}\n\n")
                 cn_prompt_parts.append(
                     "Layered region replacement task: strictly replace only the masked region "
                     "with the reference image item, while keeping all other pixels identical to the source video.\n"
@@ -882,10 +906,10 @@ async def _run_inpainting_step(session_id: str) -> None:
                     "Do NOT place inner item over outer layer. Only replace within the mask-specified region."
                 )
                 cn_prompt = "".join(cn_prompt_parts)
-                # P77:截 cn_prompt 到 1500 字防 VACE Fun 卡(text encoder token 上限)
-                if len(cn_prompt) > 1500:
-                    cn_prompt = cn_prompt[:1500]
-                    _log(f"vace-mask P77 cn_prompt 截到 1500 字 session={session_id}")
+                # P77:截 cn_prompt 到 800 字防 VACE Fun 卡(text encoder token 上限,降到 800 更稳)
+                if len(cn_prompt) > 800:
+                    cn_prompt = cn_prompt[:800]
+                    _log(f"vace-mask P77 cn_prompt 截到 800 字 session={session_id}")
                 vace_t0 = time.time()
                 # P77:fal_client.run_async 默认无 timeout,VACE Fun 卡死时无限等。
                 # 包 asyncio.wait_for(20 min 上限),超时自动 raise TimeoutError → fail_step4 退款。
