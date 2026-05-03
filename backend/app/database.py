@@ -86,6 +86,9 @@ def _patch_oral_columns(cursor):
         ("use_face_enhance", "ALTER TABLE oral_sessions ADD COLUMN use_face_enhance INTEGER NOT NULL DEFAULT 1"),
         # P46-L2 — 本地 InsightFace inswapper 生成的视频缩略图(免费,前端列表/历史页用)
         ("thumbnail_url", "ALTER TABLE oral_sessions ADD COLUMN thumbnail_url TEXT"),
+        # P72 — qwen-vl 视频理解自动生成的分镜 prompt(展示给用户看)+ 用户编辑后的版本
+        ("auto_video_prompt", "ALTER TABLE oral_sessions ADD COLUMN auto_video_prompt TEXT"),
+        ("user_video_prompt", "ALTER TABLE oral_sessions ADD COLUMN user_video_prompt TEXT"),
     ]
     for col_name, sql in patches:
         try:

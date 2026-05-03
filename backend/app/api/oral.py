@@ -819,9 +819,17 @@ async def _run_inpainting_step(session_id: str) -> None:
                     raise RuntimeError(f"SAM2 fail: {sam_res['error']}")
                 mask_url = sam_res["mask_video_url"]
                 _log(f"vace-mask SAM2 OK session={session_id} elapsed={int(time.time()-sam_t0)}s")
-                # P71:qwen-vl 视频理解 → 自动分镜 prompt(每秒一段动作描述)
+                # P72:优先用用户编辑的 prompt → 已有的自动分镜 → P71 即时生成
                 scene_breakdown = ""
-                if qwenvl_svc and qwenvl_svc.is_available():
+                user_prompt = (session.get("user_video_prompt") or "").strip()
+                auto_prompt_cached = (session.get("auto_video_prompt") or "").strip()
+                if user_prompt:
+                    scene_breakdown = user_prompt[:3000]
+                    _log(f"vace-mask P72 用用户编辑 prompt session={session_id} len={len(scene_breakdown)}")
+                elif auto_prompt_cached:
+                    scene_breakdown = auto_prompt_cached[:3000]
+                    _log(f"vace-mask P72 用 cached auto prompt session={session_id} len={len(scene_breakdown)}")
+                elif qwenvl_svc and qwenvl_svc.is_available():
                     qwen_t0 = time.time()
                     qwen_instruction = (
                         "请按时间分段(每 1 秒一段)精炼描述视频画面动作和服装层次,"
@@ -831,7 +839,8 @@ async def _run_inpainting_step(session_id: str) -> None:
                     )
                     qwen_res = await qwenvl_svc.analyze_video(seg5_fal, qwen_instruction)
                     if "error" not in qwen_res and qwen_res.get("text"):
-                        scene_breakdown = qwen_res["text"][:1500]  # 截断防 prompt 超长
+                        scene_breakdown = qwen_res["text"][:3000]
+                        _update_session(session_id, auto_video_prompt=scene_breakdown)
                         _log(f"vace-mask P71 qwen-vl OK session={session_id} elapsed={int(time.time()-qwen_t0)}s len={len(scene_breakdown)}")
                     else:
                         _log(f"vace-mask P71 qwen-vl 失败,用通用 prompt: {qwen_res.get('error','?')}")
@@ -2964,6 +2973,84 @@ async def submit_edited_transcript(
     return {"status": "edit_submitted"}
 
 
+# ==================== P72:视频 prompt 自动生成 + 用户编辑 ====================
+
+
+class GenerateVideoPromptRequest(BaseModel):
+    session_id: str
+
+
+@router.post("/generate-video-prompt")
+async def generate_video_prompt(
+    req: GenerateVideoPromptRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """P72:用 qwen-vl-max-latest 自动分析 driving 视频生成精细分镜 prompt。
+
+    返回:{ "auto_prompt": "0-1s:...\n1-2s:...\n【关键时刻】..." }
+    前端 Step 2 调用展示 + 让用户编辑。
+    """
+    user_id = str(current_user["id"])
+    session = _get_session(req.session_id)
+    if not session:
+        raise HTTPException(404, "session not found")
+    if session["user_id"] != user_id:
+        raise HTTPException(403, "无权限")
+    if not session.get("original_video_path"):
+        raise HTTPException(400, "driving 视频未上传")
+
+    # 已有自动 prompt 直接返回(避免重复 qwen-vl 调用)
+    if session.get("auto_video_prompt"):
+        return {"auto_prompt": session["auto_video_prompt"]}
+
+    from app.services.fal_service import get_aliyun_qwenvl_service
+    qwen = get_aliyun_qwenvl_service()
+    if qwen is None or not qwen.is_available():
+        raise HTTPException(503, "qwen-vl 视频理解服务不可用(DASHSCOPE_API_KEY 未配置)")
+
+    # 上传 driving 视频拿公网 URL(qwen-vl 需要可访问 URL)
+    driving_url = await fal_upload_with_retry(session["original_video_path"])
+    instruction = (
+        "请按时间分段(每 1 秒一段)精炼描述视频画面动作和服装层次,"
+        "重点标注外层服装、内层服装、动作变化时机。"
+        "格式严格:每行 '0-1s:[动作+服装]' < 50 字。"
+        "末尾加一行【关键时刻】描述外层拉起 / 内层露出的时间点。"
+    )
+    res = await qwen.analyze_video(driving_url, instruction)
+    if "error" in res or not res.get("text"):
+        raise HTTPException(502, f"qwen-vl 失败: {res.get('error', '?')[:200]}")
+
+    auto_prompt = res["text"][:3000]
+    _update_session(req.session_id, auto_video_prompt=auto_prompt)
+    return {"auto_prompt": auto_prompt}
+
+
+class UpdateVideoPromptRequest(BaseModel):
+    session_id: str
+    user_video_prompt: str
+
+
+@router.post("/update-video-prompt")
+async def update_video_prompt(
+    req: UpdateVideoPromptRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """P72:用户编辑后保存视频 prompt。vace-mask 路径会优先用这个。"""
+    user_id = str(current_user["id"])
+    session = _get_session(req.session_id)
+    if not session:
+        raise HTTPException(404, "session not found")
+    if session["user_id"] != user_id:
+        raise HTTPException(403, "无权限")
+
+    text = (req.user_video_prompt or "").strip()
+    if len(text) > 5000:
+        raise HTTPException(400, "user_video_prompt 不超过 5000 字符")
+
+    _update_session(req.session_id, user_video_prompt=text or None)
+    return {"status": "ok"}
+
+
 # ==================== 端点 4:GET /status/{session_id} ====================
 
 
@@ -3061,6 +3148,9 @@ def _build_status_payload(session: dict) -> dict:
             "person_mask_uploaded": True,
             "product_mask_uploaded": True,
             "vton_image_url": session.get("vton_image_url"),
+            # P72 — qwen-vl 自动分镜 prompt + 用户编辑后版本
+            "auto_video_prompt": session.get("auto_video_prompt"),
+            "user_video_prompt": session.get("user_video_prompt"),
         },
         "error": session.get("error_message") if session["status"].startswith("failed_") else None,
     }

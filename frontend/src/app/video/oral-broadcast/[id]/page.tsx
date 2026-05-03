@@ -30,6 +30,9 @@ interface SessionStatus {
     mask_uploaded: boolean;          // legacy:= person_mask_uploaded
     person_mask_uploaded: boolean;
     product_mask_uploaded: boolean;
+    // P72 — qwen-vl 自动分镜 prompt + 用户编辑版
+    auto_video_prompt?: string | null;
+    user_video_prompt?: string | null;
   };
   error: string | null;
 }
@@ -91,6 +94,11 @@ export default function OralBroadcastWorkbench() {
   // Step 2 文案编辑
   const [editedText, setEditedText] = useState("");
 
+  // P72:视频复刻 prompt(分镜脚本)
+  const [videoPrompt, setVideoPrompt] = useState("");
+  const [videoPromptGen, setVideoPromptGen] = useState(false);
+  const [videoPromptSaving, setVideoPromptSaving] = useState(false);
+
   // 行为标志
   const [starting, setStarting] = useState(false);
   const [editingSubmitting, setEditingSubmitting] = useState(false);
@@ -131,6 +139,14 @@ export default function OralBroadcastWorkbench() {
       setEditedText(sess.products.edited_transcript ?? sess.products.asr_transcript);
     }
   }, [sess?.products.asr_transcript, sess?.products.edited_transcript, editedText]);
+
+  // P72:视频 prompt 初值同步(用户编辑过用 user,否则用 auto)
+  useEffect(() => {
+    const u = sess?.products.user_video_prompt ?? "";
+    const a = sess?.products.auto_video_prompt ?? "";
+    if (u && !videoPrompt) setVideoPrompt(u);
+    else if (!u && a && !videoPrompt) setVideoPrompt(a);
+  }, [sess?.products.user_video_prompt, sess?.products.auto_video_prompt, videoPrompt]);
 
   // WS 实时进度推送(取代 4s 轮询);WS 失败 / 关闭(非终态)自动 fallback 到轮询
   useEffect(() => {
@@ -231,6 +247,49 @@ export default function OralBroadcastWorkbench() {
       setError(e instanceof Error ? e.message : t("oral.errEditFail"));
     } finally {
       setEditingSubmitting(false);
+    }
+  };
+
+  // P72:自动生成视频复刻分镜 prompt
+  const generateVideoPrompt = async () => {
+    setVideoPromptGen(true);
+    setError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/oral/generate-video-prompt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
+        credentials: "include",
+        body: JSON.stringify({ session_id: sessionId }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.detail || t("oral.errVideoPromptGenFail")); return; }
+      setVideoPrompt(data.auto_prompt || "");
+      await loadStatus();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : t("oral.errVideoPromptGenFail"));
+    } finally {
+      setVideoPromptGen(false);
+    }
+  };
+
+  // P72:保存用户编辑后的视频 prompt
+  const saveVideoPrompt = async () => {
+    setVideoPromptSaving(true);
+    setError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/oral/update-video-prompt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
+        credentials: "include",
+        body: JSON.stringify({ session_id: sessionId, user_video_prompt: videoPrompt }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.detail || t("oral.errVideoPromptSaveFail")); return; }
+      await loadStatus();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : t("oral.errVideoPromptSaveFail"));
+    } finally {
+      setVideoPromptSaving(false);
     }
   };
 
@@ -823,6 +882,64 @@ export default function OralBroadcastWorkbench() {
               }}>
               {editingSubmitting ? t("oral.submitting") : t("oral.startGen")}
             </button>
+          </section>
+        )}
+
+        {/* ============ P72: 视频复刻分镜 prompt 编辑(Step 2 副) ============ */}
+        {isAsrDone && (
+          <section style={{ background: "#fff", padding: "1.5rem", borderRadius: 12, marginBottom: "1rem" }}>
+            <h2 style={{ fontSize: "1.1rem", fontWeight: 600, marginTop: 0 }}>
+              {t("oral.videoPromptTitle")}
+            </h2>
+            <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: "0.8rem", lineHeight: 1.6 }}>
+              {t("oral.videoPromptHint")}
+            </div>
+            {!videoPrompt && (
+              <button onClick={generateVideoPrompt} disabled={videoPromptGen}
+                style={{
+                  padding: "0.7rem 1.2rem",
+                  background: videoPromptGen ? "#ccc" : "#0d6efd",
+                  color: "#fff", border: "none", borderRadius: 10,
+                  cursor: videoPromptGen ? "not-allowed" : "pointer",
+                  fontSize: "0.9rem", fontWeight: 500,
+                  marginBottom: "0.8rem",
+                }}>
+                {videoPromptGen ? t("oral.videoPromptGenerating") : t("oral.videoPromptGenerate")}
+              </button>
+            )}
+            {videoPrompt && (
+              <>
+                <textarea value={videoPrompt} onChange={e => setVideoPrompt(e.target.value)}
+                  rows={12}
+                  placeholder={t("oral.videoPromptPlaceholder")}
+                  style={{ width: "100%", padding: "0.8rem", border: "1px solid #ddd", borderRadius: 8, fontFamily: "inherit", fontSize: "0.85rem", resize: "vertical", marginBottom: "0.6rem" }} />
+                <div style={{ fontSize: "0.7rem", color: "#999", marginBottom: "0.6rem" }}>
+                  {videoPrompt.length} / 5000
+                </div>
+                <div style={{ display: "flex", gap: "0.6rem" }}>
+                  <button onClick={generateVideoPrompt} disabled={videoPromptGen}
+                    style={{
+                      padding: "0.6rem 1rem",
+                      background: videoPromptGen ? "#ccc" : "#fff",
+                      color: "#0d6efd", border: "1px solid #0d6efd", borderRadius: 10,
+                      cursor: videoPromptGen ? "not-allowed" : "pointer",
+                      fontSize: "0.85rem", fontWeight: 500,
+                    }}>
+                    {videoPromptGen ? t("oral.videoPromptGenerating") : t("oral.videoPromptRegenerate")}
+                  </button>
+                  <button onClick={saveVideoPrompt} disabled={videoPromptSaving}
+                    style={{
+                      padding: "0.6rem 1rem",
+                      background: videoPromptSaving ? "#ccc" : "#0d0d0d",
+                      color: "#fff", border: "none", borderRadius: 10,
+                      cursor: videoPromptSaving ? "not-allowed" : "pointer",
+                      fontSize: "0.85rem", fontWeight: 500,
+                    }}>
+                    {videoPromptSaving ? t("oral.submitting") : t("oral.videoPromptSave")}
+                  </button>
+                </div>
+              </>
+            )}
           </section>
         )}
 
