@@ -782,6 +782,10 @@ async def _run_inpainting_step(session_id: str) -> None:
                 except Exception as probe_err:
                     _log(f"_run_inpainting_step probe size 失败,用 portrait_16_9 兜底: {probe_err}")
 
+            # P56:提前算 anchor_model_extra / anchor_product_extra(prompt_parts 拼接需要)
+            anchor_model_extra = [a["url"] for a in session_assets if a.get("role") == "anchor_model" and a.get("url")]
+            anchor_product_extra = [a["url"] for a in session_assets if a.get("role") == "anchor_product" and a.get("url")]
+
             # 拼中文 prompt(Seedream 是字节模型,中文准)。prompt 与具体帧无关,
             # 候选帧循环里复用同一份。
             prompt_parts = [
@@ -836,8 +840,7 @@ async def _run_inpainting_step(session_id: str) -> None:
             )
             # P56:Step A 强化 — 多角度图融合(P53 anchor_model + anchor_product)进 Seedream/Flux 多图编辑
             # 让 Wan 2.2 animate-replace 单图模式获得"立体感多角度信息"
-            anchor_model_extra = [a["url"] for a in session_assets if a.get("role") == "anchor_model" and a.get("url")]
-            anchor_product_extra = [a["url"] for a in session_assets if a.get("role") == "anchor_product" and a.get("url")]
+            # anchor_model_extra / anchor_product_extra 已在 prompt_parts 之前定义
             for idx, fp in enumerate(frame_paths):
                 frame_fal_url = await fal_upload_with_retry(str(fp))
                 image_urls = [frame_fal_url, model_url]
