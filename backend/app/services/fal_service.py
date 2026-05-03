@@ -522,6 +522,115 @@ class FalVTONService:
             return {"error": str(e)}
 
 
+class AliyunWanService:
+    """P47-B 主路候选(白嫖优先):阿里云通义万相 Wan2.7 r2v。
+
+    跟 fal seedance-2-r2v 是同档级竞品,但走阿里官方 API。
+    新用户开通百炼自动送 180 天免费配额(成功秒数计费,失败/异常不扣)。
+
+    DashScope 异步任务模式(不是 fal 那套 submit/status/result):
+      POST .../video-synthesis → output.task_id
+      GET .../tasks/{task_id} → output.task_status (PENDING/RUNNING/SUCCEEDED/FAILED)
+      SUCCEEDED → output.video_url(24h 有效,要立即下载或 fal 上传)
+
+    端点:wan2.7-r2v(参考生视频)
+    输入:media 数组 [{type: reference_image, url}, {type: reference_video, url}]
+    输出:5/10/15s,720P/1080P,9:16/16:9/1:1/4:3/3:4
+
+    probe 真值(2026-05-03,14c390bb 内衣场景):
+      ✅ 520s 出 5s 视频,内衣 NSFW 通过(fal seedance enterprise 同场景被拒)
+      ⚠ 比 fal pixverse-swap(70-120s)慢 4-7 倍,但免费 + 即梦同档质量
+
+    env DASHSCOPE_API_KEY 必须设置,否则该 service 整体禁用(返 disabled)。
+    """
+    BASE_URL = "https://dashscope.aliyuncs.com/api/v1"
+    WAN27_R2V_ENDPOINT = f"{BASE_URL}/services/aigc/video-generation/video-synthesis"
+
+    def __init__(self):
+        self.api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
+
+    def is_available(self) -> bool:
+        return bool(self.api_key)
+
+    async def wan27_r2v_submit(
+        self,
+        reference_image_url: str,
+        reference_video_url: Optional[str],
+        prompt: str,
+        duration: int = 5,
+        resolution: str = "720P",
+        ratio: str = "9:16",
+    ) -> dict:
+        """提交 wan2.7-r2v 任务,返 {"task_id": ...} 或 {"error": ...}"""
+        if not self.api_key:
+            return {"error": "DASHSCOPE_API_KEY 未配置"}
+        cb = get_circuit_breaker()
+        if not cb.is_available("aliyun-wan2.7-r2v"):
+            return {"error": "aliyun-wan2.7-r2v 已熔断"}
+        media = [{"type": "reference_image", "url": reference_image_url}]
+        if reference_video_url:
+            media.append({"type": "reference_video", "url": reference_video_url})
+        body = {
+            "model": "wan2.7-r2v",
+            "input": {"media": media, "prompt": prompt},
+            "parameters": {
+                "resolution": resolution,
+                "duration": int(duration),
+                "ratio": ratio,
+            },
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "X-DashScope-Async": "enable",
+        }
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                r = await client.post(self.WAN27_R2V_ENDPOINT, headers=headers, json=body)
+            if r.status_code != 200:
+                await cb.record_failure("aliyun-wan2.7-r2v")
+                return {"error": f"submit {r.status_code}: {r.text[:300]}"}
+            task_id = r.json().get("output", {}).get("task_id")
+            if not task_id:
+                await cb.record_failure("aliyun-wan2.7-r2v")
+                return {"error": f"no task_id: {r.text[:300]}"}
+            return {"task_id": task_id}
+        except Exception as e:
+            await cb.record_failure("aliyun-wan2.7-r2v")
+            return {"error": str(e)[:300]}
+
+    async def poll_task(self, task_id: str) -> dict:
+        """单次 poll。返 {"status": "PENDING|RUNNING|SUCCEEDED|FAILED", "video_url": ...}"""
+        if not self.api_key:
+            return {"error": "DASHSCOPE_API_KEY 未配置"}
+        url = f"{self.BASE_URL}/tasks/{task_id}"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                r = await client.get(url, headers=headers)
+            if r.status_code != 200:
+                return {"error": f"poll {r.status_code}: {r.text[:200]}"}
+            data = r.json().get("output", {})
+            status = data.get("task_status")
+            out = {"status": status}
+            if status == "SUCCEEDED":
+                video_url = data.get("video_url") or (
+                    data.get("results", [{}])[0].get("url") if data.get("results") else None
+                )
+                out["video_url"] = video_url
+                cb = get_circuit_breaker()
+                await cb.record_success("aliyun-wan2.7-r2v")
+            elif status == "FAILED":
+                out["error"] = (data.get("message") or "FAILED")[:300]
+                cb = get_circuit_breaker()
+                await cb.record_failure("aliyun-wan2.7-r2v")
+            return out
+        except Exception as e:
+            return {"error": str(e)[:300]}
+
+
 class FalCodeformerService:
     """P45 工作流:CodeFormer 单图人脸修复(身份保真)。
 
@@ -786,11 +895,12 @@ _audio_separator_service: Optional["FalAudioSeparatorService"] = None
 _pixverse_swap_service: Optional["FalPixverseSwapService"] = None
 _codeformer_service: Optional["FalCodeformerService"] = None
 _pulid_service: Optional["FalPuLIDService"] = None
+_aliyun_wan_service: Optional["AliyunWanService"] = None
 
 
 def init_fal_services(fal_key: str):
     os.environ["FAL_KEY"] = fal_key
-    global _image_service, _video_service, _avatar_service, _voice_service, _asr_service, _inpainting_service, _vton_service, _lipsync_service, _audio_separator_service, _pixverse_swap_service, _codeformer_service, _pulid_service
+    global _image_service, _video_service, _avatar_service, _voice_service, _asr_service, _inpainting_service, _vton_service, _lipsync_service, _audio_separator_service, _pixverse_swap_service, _codeformer_service, _pulid_service, _aliyun_wan_service
     _image_service = FalImageService(fal_key)
     _video_service = FalVideoService(fal_key)
     _avatar_service = FalAvatarService(fal_key)
@@ -803,6 +913,8 @@ def init_fal_services(fal_key: str):
     _pixverse_swap_service = FalPixverseSwapService(fal_key)
     _codeformer_service = FalCodeformerService(fal_key)
     _pulid_service = FalPuLIDService(fal_key)
+    # P47-B:阿里通义万相 Wan2.7(读 DASHSCOPE_API_KEY env,缺失时 service 整体禁用)
+    _aliyun_wan_service = AliyunWanService()
 
 def get_image_service() -> FalImageService:
     return _image_service
@@ -839,6 +951,9 @@ def get_codeformer_service() -> "FalCodeformerService":
 
 def get_pulid_service() -> "FalPuLIDService":
     return _pulid_service
+
+def get_aliyun_wan_service() -> "AliyunWanService":
+    return _aliyun_wan_service
 
 
 # ============== fal storage upload retry helper (P33 2026-05-01) ==============

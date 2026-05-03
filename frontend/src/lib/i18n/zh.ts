@@ -635,6 +635,8 @@ export const zh = {
     engine: {
       default: "默认(系统选择,当前 Kling o1 Edit)",
       auto: "智能 + 多引擎自动 fallback(P47 推荐 · pixverse → seedance → wan → kling 自动切换 · 一家挂了切下一家)",
+      autoCheap: "免费优先 · 阿里通义万相 Wan2.7 r2v 主路 + fal 兜底(P47-B · 180 天免费,慢但白嫖)",
+      aliyunWan27R2v: "阿里通义万相 Wan2.7 r2v · 即梦同档免费 180 天 · 8 分钟/段 · NSFW 友好",
       pixverseSwap: "Pixverse Swap · 人/物/背景替换 · NSFW 友好 · ~14s/s · $0.20/5s",
       klingO1Edit: "Kling o1 Edit · 真 v2v 复刻动作 · NSFW 已过审",
       klingO3V2v: "Kling o3 v2v/Reference · 真 v2v + 多元素图 · $0.168/s",

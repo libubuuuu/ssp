@@ -83,11 +83,17 @@ _STEP_B_ENGINES = (
     "wan-2-2-animate-replace",  # fal-ai/wan/v2.2-14b/animate/replace(P43 新,单图+driving,17 min/段,质量更高)
     "pixverse-swap",            # fal-ai/pixverse/swap(P44 新主路,NSFW 友好,5s/段 ~14s/s 出片)
     "auto",                     # P44 智能 fallback 链:pixverse → seedance-2-r2v → wan-2-2-animate-replace
+    "aliyun-wan2.7-r2v",        # P47-B 阿里通义万相 Wan2.7 r2v(免费 180 天 + 即梦同档,慢 520s/段)
+    "auto-cheap",               # P47-B 免费优先:阿里 wan2.7-r2v 主路 + fal pixverse 失败兜底(慢但便宜)
 )
 
 # P47-A:auto 模式段级 fallback 链(主引擎失败 → 切下一个)
 # 顺序基于"NSFW 友好度 + 速度":pixverse 最稳 → seedance 多素材 → wan 慢但通 NSFW → kling-o1-edit 兜底
 FALLBACK_CHAIN_AUTO = ("pixverse-swap", "seedance-2-r2v", "wan-2-2-animate-replace", "kling-o1-edit")
+
+# P47-B:auto-cheap 免费优先链。阿里 wan2.7-r2v 主路(免费 180 天)→ fal 兜底
+# 用户开通百炼 + 设了 DASHSCOPE_API_KEY 才生效;否则整链降级到 FALLBACK_CHAIN_AUTO
+FALLBACK_CHAIN_CHEAP = ("aliyun-wan2.7-r2v", "pixverse-swap", "seedance-2-r2v", "wan-2-2-animate-replace")
 
 # fallback 时统一用的通用 prompt(主引擎用 P46-L1 完整 prompt 工程,fallback 降级)
 FALLBACK_PROMPT = (
@@ -806,10 +812,17 @@ async def _run_inpainting_step(session_id: str) -> None:
         engine = engine_session or engine_env
         # P44:auto = pixverse-swap 主路 alias
         # P47-A:auto 时启用段级 fallback 链(主引擎失败自动切下一个)
+        # P47-B:auto-cheap 时启用免费优先链(阿里 wan2.7-r2v 主路)
         auto_fallback = False
+        cheap_fallback = False
         if engine == "auto":
             engine = "pixverse-swap"
             auto_fallback = True
+        elif engine == "auto-cheap":
+            # 主路是阿里 wan,但闭包外层 prepare config 走 pixverse(因为 prompt 等仅 fallback 用,
+            # 阿里 wan 自己内部 prepare,不依赖外层 endpoint_default/prompt)
+            engine = "pixverse-swap"
+            cheap_fallback = True
         # 兼容老配置:seedance-i2v 别名归一
         if engine == "seedance-i2v":
             engine = "i2v"
@@ -1038,7 +1051,7 @@ async def _run_inpainting_step(session_id: str) -> None:
             # P30:kling-o1-edit 也吃原视频段(真 v2v),加入切段路径
             # P41:seedance-2-r2v(吃 video_urls 当参考)、kling-o3-v2v(吃 video_url driving)也切段
             seg_paths: List[Optional[Path]] = []
-            if engine in ("ltx", "kling-v2v", "kling-o1-edit", "seedance-2-r2v", "kling-o3-v2v", "wan-2-2-animate-replace", "pixverse-swap"):
+            if engine in ("ltx", "kling-v2v", "kling-o1-edit", "seedance-2-r2v", "kling-o3-v2v", "wan-2-2-animate-replace", "pixverse-swap", "aliyun-wan2.7-r2v") or cheap_fallback:
                 for i in range(n_segments):
                     start = i * SEG_LEN_S
                     seg_path = seg_root / f"seg_{i:02d}.mp4"
@@ -1315,8 +1328,61 @@ async def _run_inpainting_step(session_id: str) -> None:
                             return url
                     raise RuntimeError(f"seg {seg_idx} {engine} 超时({seg_timeout_loops*10//60} min)")
 
+            # P47-B:阿里通义万相 wan2.7-r2v 段级跑通(可作主路或 fallback)
+            # 走 DashScope 异步 API,不是 fal_client。需要本地 driving video 段
+            async def _drive_one_aliyun_wan(seg_idx: int, seg_path: Optional[Path]) -> str:
+                from app.services.fal_service import get_aliyun_wan_service
+                aliyun = get_aliyun_wan_service()
+                if not aliyun or not aliyun.is_available():
+                    raise RuntimeError("aliyun-wan2.7-r2v 不可用(DASHSCOPE_API_KEY 未配置)")
+                if seg_path is None:
+                    raise RuntimeError(f"aliyun-wan2.7-r2v seg {seg_idx} 需 driving video,主路是 i2v")
+                # driving 段先上传 fal storage 拿公开 URL(阿里只接公网 URL)
+                seg_fal_url = await fal_upload_with_retry(str(seg_path))
+                # 提交任务
+                seg_dur = max(2, min(15, int(seg_durations[seg_idx])))
+                ratio_for_aliyun = (session.get("aspect_ratio") or "9:16").strip().lower()
+                if ratio_for_aliyun not in ("9:16", "16:9", "1:1", "4:3", "3:4"):
+                    ratio_for_aliyun = "9:16"
+                wan_prompt = (
+                    f"图1中的女性按照视频1中的动作和姿态自然展示,"
+                    f"保留视频1的背景、光线和镜头角度。"
+                    f"严格保持图1中模特的面部特征、五官比例、发型、肤色不变。"
+                )
+                if product_names:
+                    wan_prompt = (
+                        f"图1中的女性穿着 {', '.join(product_names)},"
+                        + wan_prompt
+                    )
+                submit = await aliyun.wan27_r2v_submit(
+                    reference_image_url=reference_image,
+                    reference_video_url=seg_fal_url,
+                    prompt=wan_prompt,
+                    duration=seg_dur,
+                    resolution="720P",
+                    ratio=ratio_for_aliyun,
+                )
+                if "error" in submit:
+                    raise RuntimeError(f"aliyun-wan submit: {submit['error']}")
+                task_id = submit["task_id"]
+                # poll 上限 90 次 × 10s = 15 分钟(实测 520s/段,留余量)
+                for _ in range(90):
+                    await asyncio.sleep(10)
+                    pr = await aliyun.poll_task(task_id)
+                    status = pr.get("status")
+                    if status == "SUCCEEDED":
+                        url = pr.get("video_url")
+                        if not url:
+                            raise RuntimeError("aliyun-wan 未返 video URL")
+                        return url
+                    if status == "FAILED":
+                        raise RuntimeError(f"aliyun-wan FAILED: {pr.get('error', '?')[:200]}")
+                raise RuntimeError("aliyun-wan 超时(15 min)")
+
             # P47-A:简化版 fallback 引擎(主路失败后用,降级运行,不依赖外层 prompt 工程)
             async def _drive_one_simple_fallback(seg_idx: int, seg_path: Optional[Path], try_engine: str) -> str:
+                if try_engine == "aliyun-wan2.7-r2v":
+                    return await _drive_one_aliyun_wan(seg_idx, seg_path)
                 if seg_path is None:
                     # 主路是 i2v 类(无 driving),fallback 时也无 driving 输入,直接抛
                     raise RuntimeError(f"seg {seg_idx} fallback 需 seg_path,但主路是 i2v")
@@ -1381,18 +1447,30 @@ async def _run_inpainting_step(session_id: str) -> None:
             async def _drive_one_with_fallback(seg_idx: int, seg_path: Optional[Path]) -> tuple:
                 """段级 auto fallback 链。
                 主路用现有 _drive_one(P46-L1 完整 prompt 工程);
-                失败 → 按 FALLBACK_CHAIN_AUTO 顺序切下一个引擎(简化降级)。
+                失败 → 按 chain 顺序切下一个引擎(简化降级)。
                 返回 (url, engine_used)。
+
+                P47-B:auto-cheap 模式用 FALLBACK_CHAIN_CHEAP(阿里 wan 主路 + fal 兜底)
                 """
-                if not auto_fallback:
-                    url = await _drive_one(seg_idx, seg_path)
+                # 选 chain
+                if cheap_fallback:
+                    use_chain = FALLBACK_CHAIN_CHEAP
+                elif auto_fallback:
+                    use_chain = FALLBACK_CHAIN_AUTO
+                else:
+                    # 显式选了某引擎,不走 fallback
+                    if engine == "aliyun-wan2.7-r2v":
+                        url = await _drive_one_aliyun_wan(seg_idx, seg_path)
+                    else:
+                        url = await _drive_one(seg_idx, seg_path)
                     return (url, engine)
-                # auto 模式:主路 pixverse-swap 已是 chain[0],失败后用 simple_fallback 跑剩余
+
                 last_err: Optional[Exception] = None
-                for try_idx, try_engine in enumerate(FALLBACK_CHAIN_AUTO):
+                for try_idx, try_engine in enumerate(use_chain):
                     try:
-                        if try_idx == 0:
-                            # 主路:用闭包 engine(已 alias 为 pixverse-swap)+ 完整 prepare config
+                        # 主路逻辑:auto = pixverse 用现有 _drive_one;auto-cheap = 阿里直接走 _drive_one_aliyun_wan
+                        if try_idx == 0 and not cheap_fallback:
+                            # auto 模式主路:pixverse-swap(用闭包 engine + 完整 prepare config)
                             url = await _drive_one(seg_idx, seg_path)
                         else:
                             url = await _drive_one_simple_fallback(seg_idx, seg_path, try_engine)
@@ -1452,8 +1530,8 @@ async def _run_inpainting_step(session_id: str) -> None:
                 session_id,
                 swap_fal_request_id=endpoint_default,
                 swapped_video_url=swapped_url,
-                # P47-A:auto 模式下记主导引擎(可能多段跑了不同 fallback 引擎,合并写)
-                step_b_engine_used=(predominant_engine if auto_fallback else engine),
+                # P47-A/B:auto / auto-cheap 模式下记主导引擎(可能多段跑了不同 fallback 引擎,合并写)
+                step_b_engine_used=(predominant_engine if (auto_fallback or cheap_fallback) else engine),
             )
             _log(f"_run_inpainting_step Step B OK session={session_id} segments={n_segments} → {swapped_url}")
         finally:
