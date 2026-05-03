@@ -779,9 +779,10 @@ async def _run_inpainting_step(session_id: str) -> None:
         if _engine_pre == "vace-mask":
             if not garment_url:
                 raise RuntimeError("vace-mask 引擎必须有产品图")
-            from app.services.fal_service import get_sam2_video_service, get_vace_fun_service
+            from app.services.fal_service import get_sam2_video_service, get_vace_fun_service, get_aliyun_qwenvl_service
             sam2_svc = get_sam2_video_service()
             vace_svc = get_vace_fun_service()
+            qwenvl_svc = get_aliyun_qwenvl_service()  # P71 视频理解
             if sam2_svc is None or vace_svc is None:
                 raise RuntimeError("SAM2/VACE Fun service 未初始化")
             from app.api.video_studio import _run_ffmpeg
@@ -818,16 +819,36 @@ async def _run_inpainting_step(session_id: str) -> None:
                     raise RuntimeError(f"SAM2 fail: {sam_res['error']}")
                 mask_url = sam_res["mask_video_url"]
                 _log(f"vace-mask SAM2 OK session={session_id} elapsed={int(time.time()-sam_t0)}s")
-                # VACE Fun 中文 prompt
-                cn_prompt = (
+                # P71:qwen-vl 视频理解 → 自动分镜 prompt(每秒一段动作描述)
+                scene_breakdown = ""
+                if qwenvl_svc and qwenvl_svc.is_available():
+                    qwen_t0 = time.time()
+                    qwen_instruction = (
+                        "请按时间分段(每 1 秒一段)精炼描述视频画面动作和服装层次,"
+                        "重点标注外层服装、内层服装、动作变化时机。"
+                        "格式严格:每行 '0-1s:[动作+服装]' < 50 字。"
+                        "末尾加一行【关键时刻】描述外层拉起 / 内层露出的时间点。"
+                    )
+                    qwen_res = await qwenvl_svc.analyze_video(seg5_fal, qwen_instruction)
+                    if "error" not in qwen_res and qwen_res.get("text"):
+                        scene_breakdown = qwen_res["text"][:1500]  # 截断防 prompt 超长
+                        _log(f"vace-mask P71 qwen-vl OK session={session_id} elapsed={int(time.time()-qwen_t0)}s len={len(scene_breakdown)}")
+                    else:
+                        _log(f"vace-mask P71 qwen-vl 失败,用通用 prompt: {qwen_res.get('error','?')}")
+                # VACE Fun 中文 prompt(qwen-vl 分镜 + 层次约束)
+                cn_prompt_parts = []
+                if scene_breakdown:
+                    cn_prompt_parts.append(f"视频分镜分析:\n{scene_breakdown}\n\n")
+                cn_prompt_parts.append(
                     "层次替换任务:严格按照mask区域替换内层服装为参考图所示产品。\n"
                     "外层服装完整保留,不修改,不替换。\n"
                     "内层(mask区域)替换为参考图中的产品。\n"
-                    "动作、背景、光线、镜头、模特身材完全保留视频原样。\n"
+                    "动作、背景、光线、镜头、模特身材完全保留视频原样,严格按上述分镜分析的时序复刻。\n"
                     "严格层次:外层永远在最外面,内层永远在内层(被外层盖住,只在拉起时露出)。\n"
                     "禁止内层覆盖在外层上面,禁止任何层次混乱。\n"
                     "仅替换mask指定的内层区域,其他像素保留视频原值。"
                 )
+                cn_prompt = "".join(cn_prompt_parts)
                 vace_t0 = time.time()
                 vace_res = await vace_svc.inpaint(
                     video_url=seg5_fal,

@@ -641,6 +641,62 @@ class AliyunWanService:
             return {"error": str(e)[:300]}
 
 
+class AliyunQwenVLVideoService:
+    """P71:阿里 DashScope qwen-vl-max-latest 视频理解 → 自动分镜 prompt。
+
+    给 P70 vace-mask 引擎前置,自动分析 driving 视频生成精细时序描述
+    (每秒一段动作 + 服装层次 + 关键时刻识别),拼到 VACE 中文 prompt
+    让 VACE 看到时序信息更精确按时间轴 inpaint。
+
+    成本:¥0.11/段 5s 视频(12K tokens),probe 实测准确识别"外层服装拉起
+    + 内层文胸露出"分层时刻 + 广告文字 OCR。
+
+    schema(2026-05-04 probe verified):
+      input  : video_url(公网可访问 MP4)+ text instruction
+      output : choices[0].message.content(分镜描述文本)
+    """
+    BASE_URL = "https://dashscope.aliyuncs.com/api/v1"
+    ENDPOINT = f"{BASE_URL}/services/aigc/multimodal-generation/generation"
+
+    def __init__(self):
+        self.api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
+
+    def is_available(self) -> bool:
+        return bool(self.api_key)
+
+    async def analyze_video(self, video_url: str, instruction: str) -> dict:
+        if not self.api_key:
+            return {"error": "DASHSCOPE_API_KEY 未配置"}
+        body = {
+            "model": "qwen-vl-max-latest",
+            "input": {
+                "messages": [{"role": "user", "content": [
+                    {"video": video_url}, {"text": instruction},
+                ]}]
+            },
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                r = await client.post(self.ENDPOINT, headers=headers, json=body)
+            if r.status_code != 200:
+                return {"error": f"qwen-vl {r.status_code}: {r.text[:300]}"}
+            data = r.json()
+            choices = data.get("output", {}).get("choices") or []
+            content = choices[0].get("message", {}).get("content") if choices else ""
+            if isinstance(content, list):
+                text = "\n".join(c.get("text", "") for c in content if isinstance(c, dict))
+            else:
+                text = str(content or "")
+            return {"text": text.strip()}
+        except Exception as e:
+            return {"error": str(e)[:300]}
+
+
 class AliyunASRService:
     """P47-C 免费替代 fal whisper:阿里 paraformer-v2 录音文件识别。
 
@@ -892,6 +948,99 @@ class FalAudioSeparatorService:
         return {"error": "音轨分离主路 + 备胎全部失败"}
 
 
+class FalSAM2VideoService:
+    """P70:fal-ai/sam2/video — 视频 mask 自动追踪传播。
+
+    schema(2026-05-04 probe verified):
+      input  : video_url + prompts/box_prompts
+               prompts: [{x,y,label,frame_index}](point prompt 单点种子)
+               box_prompts: [{x1,y1,x2,y2,frame_index}](矩形框定区域)
+               label=1 include / label=0 exclude
+      output : video.url(黑白 binary mask 视频,白=追踪区域,黑=背景)
+
+    用法:用户在某帧画 box 圈定"内层服装可见区域" → SAM2 自动 propagate
+    到所有帧 → 输出 mask 视频喂 VACE Fun inpainting。
+    """
+    ENDPOINT = "fal-ai/sam2/video"
+
+    def __init__(self, fal_key: str):
+        self.fal_key = fal_key
+
+    async def segment(
+        self,
+        video_url: str,
+        box_prompts: Optional[List[Dict[str, int]]] = None,
+        point_prompts: Optional[List[Dict[str, Any]]] = None,
+    ) -> dict:
+        cb = get_circuit_breaker()
+        model_key = "sam2-video"
+        if not cb.is_available(model_key):
+            return {"error": f"模型 {model_key} 已熔断"}
+        try:
+            args: Dict[str, Any] = {"video_url": video_url}
+            if box_prompts:
+                args["box_prompts"] = box_prompts
+            elif point_prompts:
+                args["prompts"] = point_prompts
+            else:
+                return {"error": "SAM2 必须提供 box_prompts 或 point_prompts"}
+            result = await fal_client.run_async(self.ENDPOINT, arguments=args)
+            await cb.record_success(model_key)
+            v = result.get("video") if isinstance(result, dict) else None
+            url = v.get("url") if isinstance(v, dict) else None
+            if not url:
+                return {"error": "SAM2 未返 mask video URL"}
+            return {"mask_video_url": url, "model": self.ENDPOINT}
+        except Exception as e:
+            await cb.record_failure(model_key)
+            return {"error": str(e)}
+
+
+class FalVaceFunInpaintingService:
+    """P70:fal-ai/wan-22-vace-fun-a14b/inpainting — Wan 2.2 VACE Fun
+    支持 mask_video_url(逐帧 mask)的视频 inpainting。
+
+    schema(2026-05-04 probe verified):
+      input  : video_url + mask_video_url + ref_image_urls + prompt
+      output : video(720p,5.0625s,81 帧 16fps,4-5MB)
+      pricing: $0.13 / 视频(固定价,非按秒)
+      verified: 中文 prompt + 用户素材 probe 真换 mask 区域 + NSFW 通过
+    """
+    ENDPOINT = "fal-ai/wan-22-vace-fun-a14b/inpainting"
+
+    def __init__(self, fal_key: str):
+        self.fal_key = fal_key
+
+    async def inpaint(
+        self,
+        video_url: str,
+        mask_video_url: str,
+        ref_image_urls: List[str],
+        prompt: str,
+    ) -> dict:
+        cb = get_circuit_breaker()
+        model_key = "wan-22-vace-fun-inpaint"
+        if not cb.is_available(model_key):
+            return {"error": f"模型 {model_key} 已熔断"}
+        try:
+            args: Dict[str, Any] = {
+                "video_url": video_url,
+                "mask_video_url": mask_video_url,
+                "ref_image_urls": ref_image_urls,
+                "prompt": prompt,
+            }
+            result = await fal_client.run_async(self.ENDPOINT, arguments=args)
+            await cb.record_success(model_key)
+            v = result.get("video") if isinstance(result, dict) else None
+            url = v.get("url") if isinstance(v, dict) else None
+            if not url:
+                return {"error": "Wan VACE Fun 未返 video URL"}
+            return {"video_url": url, "model": self.ENDPOINT}
+        except Exception as e:
+            await cb.record_failure(model_key)
+            return {"error": str(e)}
+
+
 class FalPixverseSwapService:
     """P44 工作流 Step B 主路:Pixverse Swap。
 
@@ -1000,11 +1149,14 @@ _codeformer_service: Optional["FalCodeformerService"] = None
 _pulid_service: Optional["FalPuLIDService"] = None
 _aliyun_wan_service: Optional["AliyunWanService"] = None
 _aliyun_asr_service: Optional["AliyunASRService"] = None
+_aliyun_qwenvl_service: Optional["AliyunQwenVLVideoService"] = None
+_sam2_video_service: Optional["FalSAM2VideoService"] = None
+_vace_fun_service: Optional["FalVaceFunInpaintingService"] = None
 
 
 def init_fal_services(fal_key: str):
     os.environ["FAL_KEY"] = fal_key
-    global _image_service, _video_service, _avatar_service, _voice_service, _asr_service, _inpainting_service, _vton_service, _lipsync_service, _audio_separator_service, _pixverse_swap_service, _codeformer_service, _pulid_service, _aliyun_wan_service, _aliyun_asr_service
+    global _image_service, _video_service, _avatar_service, _voice_service, _asr_service, _inpainting_service, _vton_service, _lipsync_service, _audio_separator_service, _pixverse_swap_service, _codeformer_service, _pulid_service, _aliyun_wan_service, _aliyun_asr_service, _aliyun_qwenvl_service, _sam2_video_service, _vace_fun_service
     _image_service = FalImageService(fal_key)
     _video_service = FalVideoService(fal_key)
     _avatar_service = FalAvatarService(fal_key)
@@ -1021,6 +1173,11 @@ def init_fal_services(fal_key: str):
     _aliyun_wan_service = AliyunWanService()
     # P47-C:阿里 paraformer-v2 ASR(替代 fal whisper)
     _aliyun_asr_service = AliyunASRService()
+    # P71:阿里 qwen-vl-max-latest 视频理解(给 vace-mask 自动分镜 prompt)
+    _aliyun_qwenvl_service = AliyunQwenVLVideoService()
+    # P70:Wan 2.2 VACE Fun mask inpainting + SAM2 video segmentation
+    _sam2_video_service = FalSAM2VideoService(fal_key)
+    _vace_fun_service = FalVaceFunInpaintingService(fal_key)
 
 def get_image_service() -> FalImageService:
     return _image_service
@@ -1063,6 +1220,15 @@ def get_aliyun_wan_service() -> "AliyunWanService":
 
 def get_aliyun_asr_service() -> "AliyunASRService":
     return _aliyun_asr_service
+
+def get_aliyun_qwenvl_service() -> "AliyunQwenVLVideoService":
+    return _aliyun_qwenvl_service
+
+def get_sam2_video_service() -> "FalSAM2VideoService":
+    return _sam2_video_service
+
+def get_vace_fun_service() -> "FalVaceFunInpaintingService":
+    return _vace_fun_service
 
 
 # ============== fal storage upload retry helper (P33 2026-05-01) ==============
