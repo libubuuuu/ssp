@@ -652,7 +652,6 @@ export const en = {
       seedance2R2v: "Seedance 2.0 r2v · 9 imgs + 3 vids + audio refs · multi-ref nerfed for real-people since Feb",
       kling26I2v: "Kling 2.6 Pro i2v · native-audio focused · $0.07–$0.168/s",
       i2v: "Kling o3 Standard i2v · static first-frame · legacy",
-      wan22Replace: "💰 Wan 2.2 Animate Replace · TRUE replace + scene preserved verified · single-img · $0.04/s @480p ¥11/30s · NSFW OK",
       note: "Default is fine. For A/B comparison only. NSFW / motion fidelity / audio differ; pricing differs.",
     },
     topaz: {

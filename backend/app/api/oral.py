@@ -74,11 +74,10 @@ _ASSET_TYPES = ("image", "video", "audio")
 # P41:Step B 引擎白名单 — 用户可在 /start 显式指定;None/空串走 env(默认 kling-o1-edit)
 # 各引擎 fal schema 真值见 _drive_one 各分支(2026-05-03 openapi 实查)
 _STEP_B_ENGINES = (
-    # P56 清理后的核心档(只留真复刻 + 便宜 verified):
+    # P58 清理(删 wan-2-2-animate-replace,实测脸/光/字漂):
     "aliyun-wan2.7-r2v",        # 🆓 阿里通义万相(免费 + multi-reference + 70% 概率)
-    "wan-2-2-animate-replace",  # 💰 fal 真复刻 + 保留场景(¥2.63/5s @480p,单图)
     "kling-o3-standard-v2v",    # ⭐ Kling O3 standard v2v edit(¥5.73/5s,element 多图 verified)
-    "auto-cheap",               # P47-B 免费优先链:阿里→wan-animate→kling-standard
+    "auto-cheap",               # P47-B 免费优先链:阿里→kling-standard
     # 老引擎保留向后兼容(老 session 重做时 backend 仍能跑,前端 dropdown 不露出):
     "i2v",
     "kling-o1-edit",
@@ -94,12 +93,11 @@ _STEP_B_ENGINES = (
 
 # P47-A:auto 模式段级 fallback 链(主引擎失败 → 切下一个)
 # 顺序基于"NSFW 友好度 + 速度":pixverse 最稳 → seedance 多素材 → wan 慢但通 NSFW → kling-o1-edit 兜底
-FALLBACK_CHAIN_AUTO = ("pixverse-swap", "seedance-2-r2v", "wan-2-2-animate-replace", "kling-o1-edit")
+FALLBACK_CHAIN_AUTO = ("pixverse-swap", "seedance-2-r2v", "kling-o1-edit")
 
-# P56 清理:auto-cheap 免费优先链(全 verified 真复刻):
-# 阿里 wan(免费,70% 概率)→ Wan 2.2 animate-replace($0.04/s 单图 verified)
-# → Kling O3 standard v2v edit($0.126/s 多图 verified)
-FALLBACK_CHAIN_CHEAP = ("aliyun-wan2.7-r2v", "wan-2-2-animate-replace", "kling-o3-standard-v2v")
+# P58 清理:auto-cheap 免费优先链(全 verified 真复刻,删 Wan 2.2 实测漂):
+# 阿里 wan(免费,70% 概率)→ Kling O3 standard v2v edit($0.126/s 多图 verified)
+FALLBACK_CHAIN_CHEAP = ("aliyun-wan2.7-r2v", "kling-o3-standard-v2v")
 
 # P48-B:Best-of-2 同段并发引擎(InsightFace 选 max similarity)
 # probe 真值(2026-05-03,14c390bb 内衣场景):阿里 wan 0.4165, kling-3-pro 0.4096(均 0.41+ 强档),
@@ -839,7 +837,7 @@ async def _run_inpainting_step(session_id: str) -> None:
                 "partner_validation_failed", "content checker",
             )
             # P56:Step A 强化 — 多角度图融合(P53 anchor_model + anchor_product)进 Seedream/Flux 多图编辑
-            # 让 Wan 2.2 animate-replace 单图模式获得"立体感多角度信息"
+            # 让单图引擎也能从多张图汇聚"立体感多角度信息"
             # anchor_model_extra / anchor_product_extra 已在 prompt_parts 之前定义
             for idx, fp in enumerate(frame_paths):
                 frame_fal_url = await fal_upload_with_retry(str(fp))
@@ -892,37 +890,6 @@ async def _run_inpainting_step(session_id: str) -> None:
             reference_image = seed_url
         finally:
             shutil.rmtree(frame_tmpdir, ignore_errors=True)
-
-        # P57:Wan 2.2 animate-replace 路径用 cat-vton 输出(纯人物穿产品图)覆盖 Seedream 复合图。
-        # Why: Wan 2.2 是单图换人模型,reference 含 driving 场景信息会让它困惑
-        # (脸变形 / 光线乱 / 文字 garbled);cat-vton 出纯人物图无场景干扰,Wan 2.2
-        # 在它设计任务上工作 → 真换人保留 driving 场景。cat-vton 失败降级 Seedream,不阻塞。
-        if (session.get("step_b_engine") or "").strip().lower() == "wan-2-2-animate-replace":
-            from app.services.fal_service import get_vton_service
-            if products and products[0].get("image_url"):
-                _cv_svc = get_vton_service()
-                if _cv_svc is not None:
-                    _cv_t0 = time.time()
-                    _cv_res = await _cv_svc.try_on(
-                        human_image_url=model_url,
-                        garment_image_url=products[0]["image_url"],
-                        cloth_type="upper",
-                    )
-                    if "error" not in _cv_res and _cv_res.get("image_url"):
-                        _cv_url = _cv_res["image_url"]
-                        try:
-                            _cv_url = await archive_url(_cv_url, user_id, "image")
-                        except Exception as _arch_err:
-                            _log(f"_run_inpainting_step P57 cat-vton archive failed: {_arch_err}")
-                        _update_session(session_id, vton_image_url=_cv_url)
-                        _log(f"_run_inpainting_step P57 cat-vton OK (overrides seedream) session={session_id} elapsed={time.time()-_cv_t0:.1f}s url={_cv_url[:80]}")
-                        reference_image = _cv_url
-                    else:
-                        _log(f"_run_inpainting_step P57 cat-vton 失败,降级 Seedream: {_cv_res.get('error','?')}")
-                else:
-                    _log("_run_inpainting_step P57 cat-vton 服务未初始化,降级 Seedream")
-            else:
-                _log("_run_inpainting_step P57 无产品图,降级 Seedream(cat-vton garment 必填)")
 
         # ---------- Step B:拆段 + 并发驱动 + concat ----------
         # 八十四续 P15:i2v 引擎从 seedance 切 kling/o3/standard
@@ -1132,14 +1099,6 @@ async def _run_inpainting_step(session_id: str) -> None:
                     "Preserve the original motion, gestures, and camera movement."
                     f"{NEG}"
                 )
-        elif engine == "wan-2-2-animate-replace":
-            # P43:fal-ai/wan/v2.2-14b/animate/replace — Apache 2.0 阿里开源,无 partner validation
-            # 单图(image_url 取 vton 合成图,带产品+模特)+ driving video → 复刻动作
-            # safety_checker 默认关,内衣类 probe ✅;17 分钟/段(~慢但质量高)
-            endpoint_default = "fal-ai/wan/v2.2-14b/animate/replace"
-            seg_timeout_loops = 180  # 30 min cap(实测 17 min/段)
-            SEG_LEN_S = 8.0          # 跟 driving video 切段一致
-            prompt = ""              # Wan Animate 无 prompt 字段,纯视觉驱动
         elif engine == "pixverse-swap":
             # P44:fal-ai/pixverse/swap — 专门做 person/object/bg 替换
             # 输入:video_url(driving) + image_url(reference,单图);无 prompt;无 multi-ref
@@ -1212,7 +1171,7 @@ async def _run_inpainting_step(session_id: str) -> None:
             # P30:kling-o1-edit 也吃原视频段(真 v2v),加入切段路径
             # P41:seedance-2-r2v(吃 video_urls 当参考)、kling-o3-v2v(吃 video_url driving)也切段
             seg_paths: List[Optional[Path]] = []
-            if engine in ("ltx", "kling-v2v", "kling-o1-edit", "seedance-2-r2v", "kling-o3-v2v", "kling-o3-standard-v2v", "wan-2-2-animate-replace", "pixverse-swap", "aliyun-wan2.7-r2v") or cheap_fallback:
+            if engine in ("ltx", "kling-v2v", "kling-o1-edit", "seedance-2-r2v", "kling-o3-v2v", "kling-o3-standard-v2v", "pixverse-swap", "aliyun-wan2.7-r2v") or cheap_fallback:
                 for i in range(n_segments):
                     start = i * SEG_LEN_S
                     seg_path = seg_root / f"seg_{i:02d}.mp4"
@@ -1426,24 +1385,6 @@ async def _run_inpainting_step(session_id: str) -> None:
                             task_id = handler.request_id
                         except Exception as e:
                             raise RuntimeError(f"kling-2-6-i2v seg {seg_idx} submit: {e}")
-                    elif engine == "wan-2-2-animate-replace":
-                        # P43:Wan 2.2 Animate Replace — image_url(vton 合成图,带产品+模特)+ video_url(driving)
-                        # safety_checker 默认关,内衣类 probe 实测过审 ✅;17 min/段
-                        # P56:resolution 720p → 480p(便宜 50% ¥2.88→¥1.44/段,商家可开 Topaz 升 1440p)
-                        seg_fal_url = await fal_upload_with_retry(str(seg_path))
-                        args = {
-                            "video_url": seg_fal_url,
-                            "image_url": reference_image,  # vton 合成图(模特+产品)
-                            "resolution": "480p",
-                            "enable_safety_checker": False,
-                            "enable_output_safety_checker": False,
-                        }
-                        endpoint = endpoint_default
-                        try:
-                            handler = await fal_client.submit_async(endpoint, arguments=args)
-                            task_id = handler.request_id
-                        except Exception as e:
-                            raise RuntimeError(f"wan-2-2-animate-replace seg {seg_idx} submit: {e}")
                     elif engine == "pixverse-swap":
                         # P44:Pixverse Swap — driving 视频 + 单 ref 图,无 prompt
                         # 内部 schema 已通过 probe 验过(probe_seedance_enterprise_pixverse.py)
@@ -1609,17 +1550,6 @@ async def _run_inpainting_step(session_id: str) -> None:
                     }
                     fb_endpoint = "fal-ai/bytedance/seedance-2.0/reference-to-video"
                     fb_loops = 60
-                elif try_engine == "wan-2-2-animate-replace":
-                    # P56:480p 默认(¥1.43/段 vs 720p ¥2.88/段,便宜 50%)
-                    args = {
-                        "video_url": seg_fal_url,
-                        "image_url": reference_image,
-                        "resolution": "480p",
-                        "enable_safety_checker": False,
-                        "enable_output_safety_checker": False,
-                    }
-                    fb_endpoint = "fal-ai/wan/v2.2-14b/animate/replace"
-                    fb_loops = 180
                 elif try_engine == "kling-o1-edit":
                     elements = [{"frontal_image_url": model_url, "reference_image_urls": [model_url]}]
                     if garment_url:

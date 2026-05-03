@@ -652,7 +652,6 @@ export const zh = {
       seedance2R2v: "Seedance 2.0 r2v · 9 图 + 3 视频 + 音频参考 · 真人多参考 2 月起阉割",
       kling26I2v: "Kling 2.6 Pro i2v · 主打原生音频 · $0.07–$0.168/s",
       i2v: "Kling o3 Standard i2v · 静图首帧 · 老路保留",
-      wan22Replace: "💰 Wan 2.2 Animate Replace · 真换人保留场景 verified · 单图模式 · $0.04/s @480p ¥11/30s · NSFW 通过",
       note: "默认即可。仅用于对比实测,各模型 NSFW/复刻/音频能力不同,价格也不同。",
     },
     topaz: {

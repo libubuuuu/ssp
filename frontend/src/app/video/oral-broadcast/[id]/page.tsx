@@ -57,7 +57,7 @@ export default function OralBroadcastWorkbench() {
   // P16:成片比例(空字符串表示跟随原视频)
   const [aspectRatio, setAspectRatio] = useState<"" | "9:16" | "16:9" | "1:1">("");
   // P41:Step B 引擎覆盖(空字符串=后端默认 kling-o1-edit;其余多个用户实测对比)
-  type StepBEngine = "" | "auto-cheap" | "aliyun-wan2.7-r2v" | "wan-2-2-animate-replace" | "kling-o3-standard-v2v"
+  type StepBEngine = "" | "auto-cheap" | "aliyun-wan2.7-r2v" | "kling-o3-standard-v2v"
     // 老引擎(后端兼容,UI 不露)
     | "auto" | "auto-best" | "pixverse-swap" | "kling-o1-edit" | "i2v" | "seedance-2-r2v" | "kling-o3-r2v" | "kling-o3-v2v" | "kling-2-6-i2v";
   // P47-C:默认 "auto-cheap"(阿里 wan 主路 + fal 兜底,180 天免费 ¥0,慢但白嫖)
@@ -488,10 +488,9 @@ export default function OralBroadcastWorkbench() {
               <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>{t("oral.engineTitle")}</div>
               <select value={stepBEngine} onChange={e => setStepBEngine(e.target.value as StepBEngine)}
                 style={{ width: "100%", padding: "0.6rem 0.8rem", border: "1px solid #ddd", borderRadius: 10, background: "#fff", fontSize: "0.9rem", cursor: "pointer" }}>
-                {/* P56 清理后只 4 选 — 全部真复刻 verified */}
+                {/* P58 清理后 3 选(删 Wan 2.2 实测漂):全部真复刻 verified */}
                 <option value="auto-cheap">{t("oral.engine.autoCheap")}</option>
                 <option value="aliyun-wan2.7-r2v">{t("oral.engine.aliyunWan27R2v")}</option>
-                <option value="wan-2-2-animate-replace">{t("oral.engine.wan22Replace")}</option>
                 <option value="kling-o3-standard-v2v">{t("oral.engine.klingO3StandardV2v")}</option>
               </select>
               <div style={{ fontSize: "0.7rem", color: "#999", marginTop: 4 }}>
