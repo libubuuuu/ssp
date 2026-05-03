@@ -634,7 +634,7 @@ export const zh = {
     engineTitle: "Step B 视频生成引擎(实测对比)",
     engine: {
       default: "默认(系统选择,当前 Kling o1 Edit)",
-      auto: "智能(P44 推荐 · 主路 Pixverse Swap · NSFW 友好 · 5s/段)",
+      auto: "智能 + 多引擎自动 fallback(P47 推荐 · pixverse → seedance → wan → kling 自动切换 · 一家挂了切下一家)",
       pixverseSwap: "Pixverse Swap · 人/物/背景替换 · NSFW 友好 · ~14s/s · $0.20/5s",
       klingO1Edit: "Kling o1 Edit · 真 v2v 复刻动作 · NSFW 已过审",
       klingO3V2v: "Kling o3 v2v/Reference · 真 v2v + 多元素图 · $0.168/s",

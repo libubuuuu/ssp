@@ -634,7 +634,7 @@ export const en = {
     engineTitle: "Step B video engine (A/B testing)",
     engine: {
       default: "Default (system pick, currently Kling o1 Edit)",
-      auto: "Smart (P44 recommended · primary Pixverse Swap · NSFW-friendly · 5s/seg)",
+      auto: "Smart + multi-engine auto-fallback (P47 recommended · pixverse → seedance → wan → kling chain · one fails, switch to next)",
       pixverseSwap: "Pixverse Swap · person/object/bg swap · NSFW-friendly · ~14s/s · $0.20/5s",
       klingO1Edit: "Kling o1 Edit · true v2v motion clone · NSFW probed OK",
       klingO3V2v: "Kling o3 v2v/Reference · true v2v + multi-elements · $0.168/s",

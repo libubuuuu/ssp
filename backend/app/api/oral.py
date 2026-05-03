@@ -85,6 +85,19 @@ _STEP_B_ENGINES = (
     "auto",                     # P44 智能 fallback 链:pixverse → seedance-2-r2v → wan-2-2-animate-replace
 )
 
+# P47-A:auto 模式段级 fallback 链(主引擎失败 → 切下一个)
+# 顺序基于"NSFW 友好度 + 速度":pixverse 最稳 → seedance 多素材 → wan 慢但通 NSFW → kling-o1-edit 兜底
+FALLBACK_CHAIN_AUTO = ("pixverse-swap", "seedance-2-r2v", "wan-2-2-animate-replace", "kling-o1-edit")
+
+# fallback 时统一用的通用 prompt(主引擎用 P46-L1 完整 prompt 工程,fallback 降级)
+FALLBACK_PROMPT = (
+    "Primary identity anchor: the woman in the reference image. "
+    "Do NOT alter facial proportions, eye spacing, nose shape, jawline, hair, or skin tone. "
+    "Performing the same actions, gestures, and movements as in the reference video. "
+    "Preserve the original background, lighting, and camera angle. "
+    "No face distortion, no wardrobe changes, no color palette shift."
+)
+
 # 状态机 — 详见规划文档 §4.2
 STATUS_INITIAL = "uploaded"
 STATUS_TERMINAL_OK = "completed"
@@ -791,9 +804,12 @@ async def _run_inpainting_step(session_id: str) -> None:
         engine_session = (session.get("step_b_engine") or "").strip().lower()
         engine_env = (os.getenv("ORAL_STEP_B_ENGINE", "i2v") or "i2v").lower()
         engine = engine_session or engine_env
-        # P44:auto = pixverse-swap 主路。真 fallback 链(失败切 seedance/wan)留 P44.5
+        # P44:auto = pixverse-swap 主路 alias
+        # P47-A:auto 时启用段级 fallback 链(主引擎失败自动切下一个)
+        auto_fallback = False
         if engine == "auto":
             engine = "pixverse-swap"
+            auto_fallback = True
         # 兼容老配置:seedance-i2v 别名归一
         if engine == "seedance-i2v":
             engine = "i2v"
@@ -1299,8 +1315,105 @@ async def _run_inpainting_step(session_id: str) -> None:
                             return url
                     raise RuntimeError(f"seg {seg_idx} {engine} 超时({seg_timeout_loops*10//60} min)")
 
-            seg_urls = await asyncio.gather(*[_drive_one(i, p) for i, p in enumerate(seg_paths)])
-            _log(f"_run_inpainting_step Step B {n_segments} 段全部完成 session={session_id}")
+            # P47-A:简化版 fallback 引擎(主路失败后用,降级运行,不依赖外层 prompt 工程)
+            async def _drive_one_simple_fallback(seg_idx: int, seg_path: Optional[Path], try_engine: str) -> str:
+                if seg_path is None:
+                    # 主路是 i2v 类(无 driving),fallback 时也无 driving 输入,直接抛
+                    raise RuntimeError(f"seg {seg_idx} fallback 需 seg_path,但主路是 i2v")
+                seg_fal_url = await fal_upload_with_retry(str(seg_path))
+                if try_engine == "pixverse-swap":
+                    args = {"video_url": seg_fal_url, "image_url": reference_image}
+                    fb_endpoint = "fal-ai/pixverse/swap"
+                    fb_loops = 60
+                elif try_engine == "seedance-2-r2v":
+                    image_urls_arg = [reference_image]
+                    if garment_url:
+                        image_urls_arg.append(garment_url)
+                    args = {
+                        "prompt": FALLBACK_PROMPT,
+                        "image_urls": image_urls_arg,
+                        "video_urls": [seg_fal_url],
+                        "duration": "5",
+                        "resolution": "720p",
+                        "aspect_ratio": "auto",
+                        "generate_audio": True,
+                    }
+                    fb_endpoint = "fal-ai/bytedance/seedance-2.0/reference-to-video"
+                    fb_loops = 60
+                elif try_engine == "wan-2-2-animate-replace":
+                    args = {
+                        "video_url": seg_fal_url,
+                        "image_url": reference_image,
+                        "resolution": "720p",
+                        "enable_safety_checker": False,
+                        "enable_output_safety_checker": False,
+                    }
+                    fb_endpoint = "fal-ai/wan/v2.2-14b/animate/replace"
+                    fb_loops = 180
+                elif try_engine == "kling-o1-edit":
+                    elements = [{"frontal_image_url": model_url, "reference_image_urls": [model_url]}]
+                    if garment_url:
+                        elements.append({"frontal_image_url": garment_url, "reference_image_urls": [garment_url]})
+                    args = {
+                        "video_url": seg_fal_url,
+                        "prompt": FALLBACK_PROMPT,
+                        "elements": elements,
+                        "keep_audio": False,
+                    }
+                    fb_endpoint = "fal-ai/kling-video/o1/video-to-video/edit"
+                    fb_loops = 60
+                else:
+                    raise RuntimeError(f"fallback engine 不支持: {try_engine}")
+                handler = await fal_client.submit_async(fb_endpoint, arguments=args)
+                tid = handler.request_id
+                for _ in range(fb_loops):
+                    await asyncio.sleep(10)
+                    s = await fal_client.status_async(fb_endpoint, tid, with_logs=False)
+                    if type(s).__name__ == "Completed":
+                        final = await fal_client.result_async(fb_endpoint, tid)
+                        v = final.get("video") if isinstance(final, dict) else None
+                        url = v.get("url") if isinstance(v, dict) else None
+                        if not url:
+                            raise RuntimeError(f"fallback {try_engine} 未返 video URL")
+                        return url
+                raise RuntimeError(f"fallback {try_engine} 超时")
+
+            async def _drive_one_with_fallback(seg_idx: int, seg_path: Optional[Path]) -> tuple:
+                """段级 auto fallback 链。
+                主路用现有 _drive_one(P46-L1 完整 prompt 工程);
+                失败 → 按 FALLBACK_CHAIN_AUTO 顺序切下一个引擎(简化降级)。
+                返回 (url, engine_used)。
+                """
+                if not auto_fallback:
+                    url = await _drive_one(seg_idx, seg_path)
+                    return (url, engine)
+                # auto 模式:主路 pixverse-swap 已是 chain[0],失败后用 simple_fallback 跑剩余
+                last_err: Optional[Exception] = None
+                for try_idx, try_engine in enumerate(FALLBACK_CHAIN_AUTO):
+                    try:
+                        if try_idx == 0:
+                            # 主路:用闭包 engine(已 alias 为 pixverse-swap)+ 完整 prepare config
+                            url = await _drive_one(seg_idx, seg_path)
+                        else:
+                            url = await _drive_one_simple_fallback(seg_idx, seg_path, try_engine)
+                        return (url, try_engine)
+                    except Exception as fb_e:
+                        last_err = fb_e
+                        _log(f"_drive_one_with_fallback seg {seg_idx} engine={try_engine} 失败 → 切下一个: {str(fb_e)[:200]}")
+                raise RuntimeError(f"seg {seg_idx} fallback 链全失败: {str(last_err)[:200]}")
+
+            seg_results = await asyncio.gather(*[_drive_one_with_fallback(i, p) for i, p in enumerate(seg_paths)])
+            seg_urls = [r[0] for r in seg_results]
+            seg_engines_used = [r[1] for r in seg_results]
+            # 多段可能跑了不同引擎,按使用次数最多的当主导记录
+            from collections import Counter as _Counter
+            engines_count = _Counter(seg_engines_used)
+            if len(engines_count) == 1:
+                predominant_engine = list(engines_count.keys())[0]
+            else:
+                # 多引擎混跑,记 "engineA+engineB"
+                predominant_engine = "+".join(e for e, _ in engines_count.most_common())
+            _log(f"_run_inpainting_step Step B {n_segments} 段全部完成 session={session_id} engines={engines_count}")
 
             # 下载所有段到本地 + ffmpeg concat
             import httpx
@@ -1339,7 +1452,8 @@ async def _run_inpainting_step(session_id: str) -> None:
                 session_id,
                 swap_fal_request_id=endpoint_default,
                 swapped_video_url=swapped_url,
-                step_b_engine_used=engine,
+                # P47-A:auto 模式下记主导引擎(可能多段跑了不同 fallback 引擎,合并写)
+                step_b_engine_used=(predominant_engine if auto_fallback else engine),
             )
             _log(f"_run_inpainting_step Step B OK session={session_id} segments={n_segments} → {swapped_url}")
         finally:
