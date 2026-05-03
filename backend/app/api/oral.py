@@ -74,31 +74,32 @@ _ASSET_TYPES = ("image", "video", "audio")
 # P41:Step B 引擎白名单 — 用户可在 /start 显式指定;None/空串走 env(默认 kling-o1-edit)
 # 各引擎 fal schema 真值见 _drive_one 各分支(2026-05-03 openapi 实查)
 _STEP_B_ENGINES = (
-    "i2v",              # fal-ai/kling-video/o3/standard/image-to-video(P15 老路)
-    "kling-o1-edit",    # fal-ai/kling-video/o1/video-to-video/edit(P30 当前默认)
-    "seedance-2-r2v",   # fal-ai/bytedance/seedance-2.0/reference-to-video(P41 新,内衣 partner_validation 拒)
-    "kling-o3-r2v",     # fal-ai/kling-video/o3/pro/reference-to-video(P41 新)
-    "kling-o3-v2v",     # fal-ai/kling-video/o3/pro/video-to-video/reference(P41 新)
-    "kling-2-6-i2v",    # fal-ai/kling-video/v2.6/pro/image-to-video(P41 新,native audio)
-    "wan-2-2-animate-replace",  # fal-ai/wan/v2.2-14b/animate/replace(P43 新,单图+driving,17 min/段,质量更高)
-    "pixverse-swap",            # fal-ai/pixverse/swap(P44 新主路,NSFW 友好,5s/段 ~14s/s 出片)
-    "auto",                     # P44 智能 fallback 链:pixverse → seedance-2-r2v → wan-2-2-animate-replace
-    "aliyun-wan2.7-r2v",        # P47-B 阿里通义万相 Wan2.7 r2v(免费 180 天 + 即梦同档,慢 520s/段)
-    "auto-cheap",               # P47-B 免费优先:阿里 wan2.7-r2v 主路 + fal pixverse 失败兜底(慢但便宜)
-    "auto-best",                # P48-B 高质量:阿里 wan + fal kling-3-pro 并发出片 + InsightFace 选优(¥3-4/5s)
-    "kling-3-pro-i2v",          # P49 单引擎档 fal-ai/kling-video/v3/pro/image-to-video(快速 + 同档质量,¥2.5/5s)
+    # P56 清理后的核心档(只留真复刻 + 便宜 verified):
+    "aliyun-wan2.7-r2v",        # 🆓 阿里通义万相(免费 + multi-reference + 70% 概率)
+    "wan-2-2-animate-replace",  # 💰 fal 真复刻 + 保留场景(¥2.63/5s @480p,单图)
+    "kling-o3-standard-v2v",    # ⭐ Kling O3 standard v2v edit(¥5.73/5s,element 多图 verified)
+    "auto-cheap",               # P47-B 免费优先链:阿里→wan-animate→kling-standard
+    # 老引擎保留向后兼容(老 session 重做时 backend 仍能跑,前端 dropdown 不露出):
+    "i2v",
+    "kling-o1-edit",
+    "seedance-2-r2v",
+    "kling-o3-r2v",
+    "kling-o3-v2v",
+    "kling-2-6-i2v",
+    "pixverse-swap",
+    "auto",
+    "auto-best",
+    "kling-3-pro-i2v",
 )
 
 # P47-A:auto 模式段级 fallback 链(主引擎失败 → 切下一个)
 # 顺序基于"NSFW 友好度 + 速度":pixverse 最稳 → seedance 多素材 → wan 慢但通 NSFW → kling-o1-edit 兜底
 FALLBACK_CHAIN_AUTO = ("pixverse-swap", "seedance-2-r2v", "wan-2-2-animate-replace", "kling-o1-edit")
 
-# P47-B:auto-cheap 免费优先链。阿里 wan2.7-r2v 主路(免费 180 天)→ fal 兜底
-# P52 修复:移除 pixverse-swap(swap 模式不参考 image,导致"看不到模特+分不清产品"),
-# 移除 seedance-2-r2v(fal endpoint result 404 bug),
-# 移除 wan-2-2-animate-replace(单图模式,无 multi-reference)。
-# 只保留真 multi-reference 引擎(element 多图 / reference 多图):
-FALLBACK_CHAIN_CHEAP = ("aliyun-wan2.7-r2v", "kling-o3-r2v", "kling-o1-edit")
+# P56 清理:auto-cheap 免费优先链(全 verified 真复刻):
+# 阿里 wan(免费,70% 概率)→ Wan 2.2 animate-replace($0.04/s 单图 verified)
+# → Kling O3 standard v2v edit($0.126/s 多图 verified)
+FALLBACK_CHAIN_CHEAP = ("aliyun-wan2.7-r2v", "wan-2-2-animate-replace", "kling-o3-standard-v2v")
 
 # P48-B:Best-of-2 同段并发引擎(InsightFace 选 max similarity)
 # probe 真值(2026-05-03,14c390bb 内衣场景):阿里 wan 0.4165, kling-3-pro 0.4096(均 0.41+ 强档),
@@ -800,6 +801,29 @@ async def _run_inpainting_step(session_id: str) -> None:
                 "整体风格与第 1 张图保持一致(同一场景、同一采光、同一镜头距离),"
                 "禁止改成白底、棚景、纯色背景或其他场景。"
             )
+            # P56:多角度信息融合 — 让 Flux/Seedream 把模特多角度 + 产品多角度的细节融合进首帧
+            # 核心指令:模特身份多视角参考(让模型从多张图理解模特长什么样)
+            #          产品反面/材质/logo 细节(让模型知道产品的完整形态,避免单角度漂)
+            n_model_extra = len(anchor_model_extra)
+            n_product_extra = len(anchor_product_extra)
+            if n_model_extra > 0 or n_product_extra > 0:
+                base_idx = 3 if garment_url else 2
+                multi_parts = []
+                if n_model_extra > 0:
+                    extra_idxs = list(range(base_idx + 1, base_idx + 1 + n_model_extra))
+                    multi_parts.append(
+                        f"参考第 {','.join(str(i) for i in extra_idxs)} 张图中模特的其他角度(侧面/全身/背面/特写),"
+                        f"综合理解模特的完整面部和身材特征,"
+                    )
+                if n_product_extra > 0:
+                    p_start = base_idx + 1 + n_model_extra
+                    p_idxs = list(range(p_start, p_start + n_product_extra))
+                    multi_parts.append(
+                        f"参考第 {','.join(str(i) for i in p_idxs)} 张图中产品的其他角度(反面/侧面/材质/logo/标签),"
+                        f"综合理解产品的完整形态、纹理、文字、品牌标识,"
+                        f"在合成画面中即使只能看到产品的一面,也要保留所有正确的颜色/材质/logo 细节。"
+                    )
+                prompt_parts.append("".join(multi_parts))
             full_prompt = "".join(prompt_parts)
 
             # 候选帧逐张送 Seedream,content_policy 类错误自动换下一帧;
@@ -810,11 +834,22 @@ async def _run_inpainting_step(session_id: str) -> None:
                 "content_policy", "content_policy_violation",
                 "partner_validation_failed", "content checker",
             )
+            # P56:Step A 强化 — 多角度图融合(P53 anchor_model + anchor_product)进 Seedream/Flux 多图编辑
+            # 让 Wan 2.2 animate-replace 单图模式获得"立体感多角度信息"
+            anchor_model_extra = [a["url"] for a in session_assets if a.get("role") == "anchor_model" and a.get("url")]
+            anchor_product_extra = [a["url"] for a in session_assets if a.get("role") == "anchor_product" and a.get("url")]
             for idx, fp in enumerate(frame_paths):
                 frame_fal_url = await fal_upload_with_retry(str(fp))
                 image_urls = [frame_fal_url, model_url]
                 if garment_url:
                     image_urls.append(garment_url)
+                # 加多角度图(去重 + 上限 9 张图给 Seedream/Flux)
+                for u in anchor_model_extra:
+                    if u not in image_urls and len(image_urls) < 9:
+                        image_urls.append(u)
+                for u in anchor_product_extra:
+                    if u not in image_urls and len(image_urls) < 9:
+                        image_urls.append(u)
                 try:
                     seed_result = await fal_client.run_async(
                         "fal-ai/bytedance/seedream/v4/edit",
@@ -1010,6 +1045,32 @@ async def _run_inpainting_step(session_id: str) -> None:
                     "photorealistic UGC selfie style."
                     f"{NEG}"
                 )
+        elif engine == "kling-o3-standard-v2v":
+            # P56:fal-ai/kling-video/o3/standard/video-to-video/edit
+            # 真 v2v + element 多图(up to 4)+ "preserves motion structure" verbatim
+            # 价格 $0.126/s = ¥4.5/5s 段(比 pro 便宜 25%)
+            endpoint_default = "fal-ai/kling-video/o3/standard/video-to-video/edit"
+            seg_timeout_loops = 60
+            SEG_LEN_S = 5.0
+            ID_LOCK = (
+                "Primary identity anchor: @Element1. Do NOT alter facial proportions, "
+                "eye spacing, nose shape, jawline, hair, or skin tone. "
+            )
+            NEG = " No face distortion, no unintended wardrobe changes."
+            if product_names:
+                prompt = (
+                    f"{ID_LOCK}"
+                    f"Replace the person in @Video1 with @Element1, wearing @Element2 "
+                    f"({', '.join(product_names)}). Preserve the original motion, gestures, and camera movement."
+                    f"{NEG}"
+                )
+            else:
+                prompt = (
+                    f"{ID_LOCK}"
+                    "Replace the person in @Video1 with @Element1. "
+                    "Preserve the original motion, gestures, and camera movement."
+                    f"{NEG}"
+                )
         elif engine == "kling-o3-v2v":
             # P41:fal-ai/kling-video/o3/pro/video-to-video/reference
             # 真 v2v + element 多图;keep_audio 默认 true,我们 lipsync 接管所以关掉
@@ -1117,7 +1178,7 @@ async def _run_inpainting_step(session_id: str) -> None:
             # P30:kling-o1-edit 也吃原视频段(真 v2v),加入切段路径
             # P41:seedance-2-r2v(吃 video_urls 当参考)、kling-o3-v2v(吃 video_url driving)也切段
             seg_paths: List[Optional[Path]] = []
-            if engine in ("ltx", "kling-v2v", "kling-o1-edit", "seedance-2-r2v", "kling-o3-v2v", "wan-2-2-animate-replace", "pixverse-swap", "aliyun-wan2.7-r2v") or cheap_fallback:
+            if engine in ("ltx", "kling-v2v", "kling-o1-edit", "seedance-2-r2v", "kling-o3-v2v", "kling-o3-standard-v2v", "wan-2-2-animate-replace", "pixverse-swap", "aliyun-wan2.7-r2v") or cheap_fallback:
                 for i in range(n_segments):
                     start = i * SEG_LEN_S
                     seg_path = seg_root / f"seg_{i:02d}.mp4"
@@ -1278,17 +1339,23 @@ async def _run_inpainting_step(session_id: str) -> None:
                             task_id = handler.request_id
                         except Exception as e:
                             raise RuntimeError(f"kling-o3-r2v seg {seg_idx} submit: {e}")
-                    elif engine == "kling-o3-v2v":
-                        # P41:Kling o3 v2v/reference — 顶层 video_url 必填(driving 3-10s)
+                    elif engine == "kling-o3-v2v" or engine == "kling-o3-standard-v2v":
+                        # P41 / P56:Kling o3 v2v reference/edit — 顶层 video_url 必填(driving 3-10s)
                         # element 多图 + image_urls(reference_image)
+                        # P56:加 anchor_model + anchor_product 多角度图进 element reference_image_urls
                         seg_fal_url = await fal_upload_with_retry(str(seg_path))
+                        # 模特 element:主图 + 多角度
+                        anchor_model_urls = [a["url"] for a in session_assets if a.get("role") == "anchor_model" and a.get("url")]
+                        model_refs = [model_url] + [u for u in anchor_model_urls if u != model_url][:3]
                         elements = [
-                            {"frontal_image_url": model_url, "reference_image_urls": [model_url]},
+                            {"frontal_image_url": model_url, "reference_image_urls": model_refs},
                         ]
                         if garment_url:
+                            anchor_product_urls = [a["url"] for a in session_assets if a.get("role") == "anchor_product" and a.get("url")]
+                            product_refs = [garment_url] + [u for u in anchor_product_urls if u != garment_url][:3]
                             elements.append({
                                 "frontal_image_url": garment_url,
-                                "reference_image_urls": [garment_url],
+                                "reference_image_urls": product_refs,
                             })
                         v2v_aspect = (session.get("aspect_ratio") or "auto").strip().lower()
                         if v2v_aspect not in ("16:9", "9:16", "1:1"):
@@ -1308,7 +1375,7 @@ async def _run_inpainting_step(session_id: str) -> None:
                             handler = await fal_client.submit_async(endpoint, arguments=args)
                             task_id = handler.request_id
                         except Exception as e:
-                            raise RuntimeError(f"kling-o3-v2v seg {seg_idx} submit: {e}")
+                            raise RuntimeError(f"{engine} seg {seg_idx} submit: {e}")
                     elif engine == "kling-2-6-i2v":
                         # P41:Kling 2.6 Pro i2v(Native Audio)— start_image_url + duration "5"/"10"
                         # 不切原视频段;generate_audio 默认 true,我们 lipsync 接管所以关掉
@@ -1328,11 +1395,12 @@ async def _run_inpainting_step(session_id: str) -> None:
                     elif engine == "wan-2-2-animate-replace":
                         # P43:Wan 2.2 Animate Replace — image_url(vton 合成图,带产品+模特)+ video_url(driving)
                         # safety_checker 默认关,内衣类 probe 实测过审 ✅;17 min/段
+                        # P56:resolution 720p → 480p(便宜 50% ¥2.88→¥1.44/段,商家可开 Topaz 升 1440p)
                         seg_fal_url = await fal_upload_with_retry(str(seg_path))
                         args = {
                             "video_url": seg_fal_url,
                             "image_url": reference_image,  # vton 合成图(模特+产品)
-                            "resolution": "720p",
+                            "resolution": "480p",
                             "enable_safety_checker": False,
                             "enable_output_safety_checker": False,
                         }
@@ -1508,10 +1576,11 @@ async def _run_inpainting_step(session_id: str) -> None:
                     fb_endpoint = "fal-ai/bytedance/seedance-2.0/reference-to-video"
                     fb_loops = 60
                 elif try_engine == "wan-2-2-animate-replace":
+                    # P56:480p 默认(¥1.43/段 vs 720p ¥2.88/段,便宜 50%)
                     args = {
                         "video_url": seg_fal_url,
                         "image_url": reference_image,
-                        "resolution": "720p",
+                        "resolution": "480p",
                         "enable_safety_checker": False,
                         "enable_output_safety_checker": False,
                     }
@@ -1531,7 +1600,6 @@ async def _run_inpainting_step(session_id: str) -> None:
                     fb_loops = 60
                 elif try_engine == "kling-o3-r2v":
                     # P52:阿里 wan 失败后切 fal kling-o3-r2v(真 multi-reference,$0.112/s)
-                    # element 多图明确分离模特/产品,跟阿里 wan multi-reference 对齐
                     elements = [{"frontal_image_url": model_url, "reference_image_urls": [model_url]}]
                     if garment_url:
                         elements.append({"frontal_image_url": garment_url, "reference_image_urls": [garment_url]})
@@ -1541,13 +1609,37 @@ async def _run_inpainting_step(session_id: str) -> None:
                         o3_aspect = "9:16"
                     args = {
                         "prompt": FALLBACK_PROMPT,
-                        "start_image_url": model_url,  # 主参考用模特图
+                        "start_image_url": model_url,
                         "elements": elements,
                         "duration": seg_dur_str,
                         "aspect_ratio": o3_aspect,
                         "generate_audio": False,
                     }
                     fb_endpoint = "fal-ai/kling-video/o3/pro/reference-to-video"
+                    fb_loops = 60
+                elif try_engine == "kling-o3-standard-v2v":
+                    # P56:Kling O3 standard v2v edit($0.126/s,真复刻 + element 多图 verified)
+                    # 加 P53 多角度图(anchor_model + anchor_product)进 reference_image_urls
+                    anchor_model_urls = [a["url"] for a in session_assets if a.get("role") == "anchor_model" and a.get("url")]
+                    model_refs = [model_url] + [u for u in anchor_model_urls if u != model_url][:3]
+                    elements = [{"frontal_image_url": model_url, "reference_image_urls": model_refs}]
+                    if garment_url:
+                        anchor_product_urls = [a["url"] for a in session_assets if a.get("role") == "anchor_product" and a.get("url")]
+                        product_refs = [garment_url] + [u for u in anchor_product_urls if u != garment_url][:3]
+                        elements.append({"frontal_image_url": garment_url, "reference_image_urls": product_refs})
+                    v2v_aspect = (session.get("aspect_ratio") or "9:16").strip().lower()
+                    if v2v_aspect not in ("16:9", "9:16", "1:1"):
+                        v2v_aspect = "9:16"
+                    args = {
+                        "prompt": FALLBACK_PROMPT,
+                        "video_url": seg_fal_url,
+                        "image_urls": [reference_image],
+                        "elements": elements,
+                        "duration": "5",
+                        "aspect_ratio": v2v_aspect,
+                        "keep_audio": False,
+                    }
+                    fb_endpoint = "fal-ai/kling-video/o3/standard/video-to-video/edit"
                     fb_loops = 60
                 else:
                     raise RuntimeError(f"fallback engine 不支持: {try_engine}")

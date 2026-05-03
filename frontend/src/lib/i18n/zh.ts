@@ -643,7 +643,8 @@ export const zh = {
       pixverseSwapCore: "⚡ 模型 B · Pixverse Swap(¥1.4/5s · 2min 出片 · swap 模式不区分多图 · 仅适合简单换人场景)",
       klingO3R2vCore: "Kling O3 r2v(高级 · 多图区分但不复刻 driving · ¥4/5s)",
       autoBest: "⭐ 精修档 · 阿里 + Kling 双引擎并发 + InsightFace 自动选最像(¥3-4/5s · 95 分逼近即梦)",
-      aliyunWan27R2v: "阿里通义万相 Wan2.7 r2v · 即梦同档免费 180 天 · 8 分钟/段 · NSFW 友好",
+      aliyunWan27R2v: "🆓 阿里通义万相 Wan2.7 r2v · 免费 180 天 · 多图参考 + reference 视频 · ¥2.39/30s",
+      klingO3StandardV2v: "⭐ Kling O3 standard v2v edit · 真复刻 + element 多图 verified · $0.126/s ¥29.61/30s",
       pixverseSwap: "Pixverse Swap · 人/物/背景替换 · NSFW 友好 · ~14s/s · $0.20/5s",
       klingO1Edit: "Kling o1 Edit · 真 v2v 复刻动作 · NSFW 已过审",
       klingO3V2v: "💎 精修档 Kling o3 v2v(真复刻 + 多元素图 · $0.168/s = ¥6/5s · similarity 0.464 实测最强 · 高质量贵)",
@@ -651,7 +652,7 @@ export const zh = {
       seedance2R2v: "Seedance 2.0 r2v · 9 图 + 3 视频 + 音频参考 · 真人多参考 2 月起阉割",
       kling26I2v: "Kling 2.6 Pro i2v · 主打原生音频 · $0.07–$0.168/s",
       i2v: "Kling o3 Standard i2v · 静图首帧 · 老路保留",
-      wan22Replace: "Wan 2.2 Animate Replace · 阿里开源 · 内衣过审 · 单图复刻 · $0.04-0.08/s · 慢但质量高(17 min/段)",
+      wan22Replace: "💰 Wan 2.2 Animate Replace · 真换人保留场景 verified · 单图模式 · $0.04/s @480p ¥11/30s · NSFW 通过",
       note: "默认即可。仅用于对比实测,各模型 NSFW/复刻/音频能力不同,价格也不同。",
     },
     topaz: {

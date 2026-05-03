@@ -57,7 +57,9 @@ export default function OralBroadcastWorkbench() {
   // P16:成片比例(空字符串表示跟随原视频)
   const [aspectRatio, setAspectRatio] = useState<"" | "9:16" | "16:9" | "1:1">("");
   // P41:Step B 引擎覆盖(空字符串=后端默认 kling-o1-edit;其余多个用户实测对比)
-  type StepBEngine = "" | "auto" | "auto-cheap" | "auto-best" | "aliyun-wan2.7-r2v" | "pixverse-swap" | "kling-o1-edit" | "i2v" | "seedance-2-r2v" | "kling-o3-r2v" | "kling-o3-v2v" | "kling-2-6-i2v" | "wan-2-2-animate-replace";
+  type StepBEngine = "" | "auto-cheap" | "aliyun-wan2.7-r2v" | "wan-2-2-animate-replace" | "kling-o3-standard-v2v"
+    // 老引擎(后端兼容,UI 不露)
+    | "auto" | "auto-best" | "pixverse-swap" | "kling-o1-edit" | "i2v" | "seedance-2-r2v" | "kling-o3-r2v" | "kling-o3-v2v" | "kling-2-6-i2v";
   // P47-C:默认 "auto-cheap"(阿里 wan 主路 + fal 兜底,180 天免费 ¥0,慢但白嫖)
   // 商家用户要快可改 "auto"(fal 主路,~¥17/30s 但 5min 出片)
   const [stepBEngine, setStepBEngine] = useState<StepBEngine>("auto-cheap");
@@ -486,30 +488,11 @@ export default function OralBroadcastWorkbench() {
               <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>{t("oral.engineTitle")}</div>
               <select value={stepBEngine} onChange={e => setStepBEngine(e.target.value as StepBEngine)}
                 style={{ width: "100%", padding: "0.6rem 0.8rem", border: "1px solid #ddd", borderRadius: 10, background: "#fff", fontSize: "0.9rem", cursor: "pointer" }}>
-                {/* P49→P55:核心档 3 选,真值 verified
-                    模型 A    阿里 wan2.7-r2v  免费 + multi-ref + reference_video(70% 全能参考)
-                    模型 B    pixverse-swap    swap 模式不区分参考(快但弱)
-                    模型 A+   kling-o3-v2v     **真复刻 driving + element 多图**(100% verified) */}
-                <optgroup label={t("oral.engine.groupCore")}>
-                  <option value="auto-cheap">{t("oral.engine.autoCheap")}</option>
-                  <option value="pixverse-swap">{t("oral.engine.pixverseSwapCore")}</option>
-                  <option value="kling-o3-v2v">{t("oral.engine.klingO3V2vCore")}</option>
-                </optgroup>
-                {/* 高级:精修档 + 多引擎 fallback + 单独引擎选择 */}
-                <optgroup label={t("oral.engine.groupAdvanced")}>
-                  <option value="auto-best">{t("oral.engine.autoBest")}</option>
-                  <option value="auto">{t("oral.engine.auto")}</option>
-                  <option value="">{t("oral.engine.default")}</option>
-                  <option value="aliyun-wan2.7-r2v">{t("oral.engine.aliyunWan27R2v")}</option>
-                  <option value="pixverse-swap">{t("oral.engine.pixverseSwap")}</option>
-                  <option value="kling-o1-edit">{t("oral.engine.klingO1Edit")}</option>
-                  <option value="wan-2-2-animate-replace">{t("oral.engine.wan22Replace")}</option>
-                  <option value="kling-o3-v2v">{t("oral.engine.klingO3V2v")}</option>
-                  <option value="kling-o3-r2v">{t("oral.engine.klingO3R2v")}</option>
-                  <option value="seedance-2-r2v">{t("oral.engine.seedance2R2v")}</option>
-                  <option value="kling-2-6-i2v">{t("oral.engine.kling26I2v")}</option>
-                  <option value="i2v">{t("oral.engine.i2v")}</option>
-                </optgroup>
+                {/* P56 清理后只 4 选 — 全部真复刻 verified */}
+                <option value="auto-cheap">{t("oral.engine.autoCheap")}</option>
+                <option value="aliyun-wan2.7-r2v">{t("oral.engine.aliyunWan27R2v")}</option>
+                <option value="wan-2-2-animate-replace">{t("oral.engine.wan22Replace")}</option>
+                <option value="kling-o3-standard-v2v">{t("oral.engine.klingO3StandardV2v")}</option>
               </select>
               <div style={{ fontSize: "0.7rem", color: "#999", marginTop: 4 }}>
                 {t("oral.engine.note")}

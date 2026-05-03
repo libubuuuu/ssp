@@ -643,7 +643,8 @@ export const en = {
       pixverseSwapCore: "⚡ Model B · Pixverse Swap (¥1.4/5s · 2min · swap mode no multi-ref distinction · simple swap only)",
       klingO3R2vCore: "Kling O3 r2v (Advanced · multi-img distinguish but no driving replay · ¥4/5s)",
       autoBest: "⭐ Premium · Alibaba + Kling concurrent + InsightFace auto-pick best face match (¥3-4/5s · 95-tier near Jimeng)",
-      aliyunWan27R2v: "Alibaba Wan2.7 r2v · Jimeng-tier · 180-day FREE quota · 8 min/segment · NSFW-friendly",
+      aliyunWan27R2v: "🆓 Alibaba Wan2.7 r2v · 180-day FREE · multi-img + reference video · ¥2.39/30s",
+      klingO3StandardV2v: "⭐ Kling O3 standard v2v edit · TRUE replication + element multi-img · $0.126/s ¥29.61/30s",
       pixverseSwap: "Pixverse Swap · person/object/bg swap · NSFW-friendly · ~14s/s · $0.20/5s",
       klingO1Edit: "Kling o1 Edit · true v2v motion clone · NSFW probed OK",
       klingO3V2v: "💎 Premium Kling o3 v2v (TRUE driving replay + multi-elements · $0.168/s = ¥6/5s · similarity 0.464 strongest · expensive)",
@@ -651,7 +652,7 @@ export const en = {
       seedance2R2v: "Seedance 2.0 r2v · 9 imgs + 3 vids + audio refs · multi-ref nerfed for real-people since Feb",
       kling26I2v: "Kling 2.6 Pro i2v · native-audio focused · $0.07–$0.168/s",
       i2v: "Kling o3 Standard i2v · static first-frame · legacy",
-      wan22Replace: "Wan 2.2 Animate Replace · Alibaba open · NSFW OK · single-image · $0.04-0.08/s · slow but higher quality (17 min/seg)",
+      wan22Replace: "💰 Wan 2.2 Animate Replace · TRUE replace + scene preserved verified · single-img · $0.04/s @480p ¥11/30s · NSFW OK",
       note: "Default is fine. For A/B comparison only. NSFW / motion fidelity / audio differ; pricing differs.",
     },
     topaz: {
