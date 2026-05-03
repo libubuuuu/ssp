@@ -26,7 +26,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict, Any
 
 from app.services.fal_service import fal_upload_with_retry
 
@@ -937,8 +937,10 @@ async def _run_inpainting_step(session_id: str) -> None:
                         if km:
                             key_lines_all.append((float(km.group(1)), kline))
 
-                # P80:切段并发 VACE Fun
-                async def _drive_one_vace_seg(seg_idx: int) -> str:
+                # P81:不再自动并发跑 VACE,改成准备每段 metadata(driving 段 + mask 段 + prompt)
+                # 写 segments_json 后等用户手动按 /generate-segment 一段段生成,最后 /merge-segments 合并
+                segments_meta: List[Dict[str, Any]] = []
+                for seg_idx in range(n_segs):
                     start_s = seg_idx * SEG_LEN_S
                     end_s = min((seg_idx + 1) * SEG_LEN_S, full_duration)
                     seg_dur = end_s - start_s
@@ -950,7 +952,6 @@ async def _run_inpainting_step(session_id: str) -> None:
                     ])
                     if not ok or not seg_path.exists():
                         raise RuntimeError(f"vace-mask seg {seg_idx} ffmpeg driving 失败: {ferr}")
-                    seg_fal = await fal_upload_with_retry(str(seg_path))
                     # ffmpeg 拆 mask 段
                     mask_seg_path = vace_tmpdir / f"mask_{seg_idx:02d}.mp4"
                     ok, ferr = _run_ffmpeg([
@@ -959,11 +960,12 @@ async def _run_inpainting_step(session_id: str) -> None:
                     ])
                     if not ok or not mask_seg_path.exists():
                         raise RuntimeError(f"vace-mask seg {seg_idx} ffmpeg mask 失败: {ferr}")
-                    mask_seg_fal = await fal_upload_with_retry(str(mask_seg_path))
+                    # 上传 driving + mask 段到 fal
+                    seg_driving_fal = await fal_upload_with_retry(str(seg_path))
+                    seg_mask_fal = await fal_upload_with_retry(str(mask_seg_path))
                     # 切片本段对应的时间分镜
                     seg_timeline = [t[2] for t in timeline_lines_all if int(start_s) <= t[0] < int(end_s)]
                     seg_keys = [k[1] for k in key_lines_all if start_s <= k[0] < end_s]
-                    # 拼本段 prompt(800 字内)
                     sp_parts: List[str] = []
                     if layer_text_seg:
                         sp_parts.append(layer_text_seg)
@@ -975,59 +977,28 @@ async def _run_inpainting_step(session_id: str) -> None:
                         "Replace only the masked region with the reference image item. "
                         "Preserve outer garment, action, background, layering exactly."
                     )
-                    seg_prompt = "\n\n".join(sp_parts)
-                    if len(seg_prompt) > 800:
-                        seg_prompt = seg_prompt[:800]
-                    _log(f"vace-mask P80 seg {seg_idx} {start_s:.1f}-{end_s:.1f}s prompt_len={len(seg_prompt)}")
-                    # VACE Fun(20min timeout)
-                    try:
-                        vres = await asyncio.wait_for(
-                            vace_svc.inpaint(
-                                video_url=seg_fal,
-                                mask_video_url=mask_seg_fal,
-                                ref_image_urls=[garment_url],
-                                prompt=seg_prompt,
-                            ),
-                            timeout=20 * 60,
-                        )
-                    except asyncio.TimeoutError:
-                        raise RuntimeError(f"VACE Fun seg {seg_idx} 超时 20 min")
-                    if "error" in vres:
-                        raise RuntimeError(f"VACE Fun seg {seg_idx} fail: {vres['error']}")
-                    return vres["video_url"]
-
-                # 并发跑 N 段
-                vace_t0 = time.time()
-                seg_urls = await asyncio.gather(*[_drive_one_vace_seg(i) for i in range(n_segs)])
-                _log(f"vace-mask P80 {n_segs} 段全部完成 elapsed={int(time.time()-vace_t0)}s")
-
-                # 下载所有段 + ffmpeg concat
-                seg_local_paths: List[Path] = []
-                for i, url in enumerate(seg_urls):
-                    local_p = vace_tmpdir / f"swapped_{i:02d}.mp4"
-                    try:
-                        urllib.request.urlretrieve(url, str(local_p))
-                    except Exception as dl_err:
-                        raise RuntimeError(f"vace-mask 下载 seg {i} 失败: {dl_err}")
-                    seg_local_paths.append(local_p)
-                concat_list = vace_tmpdir / "concat.txt"
-                concat_list.write_text("\n".join(f"file '{p}'" for p in seg_local_paths))
-                final_path = vace_tmpdir / "swapped.mp4"
-                ok, ferr = _run_ffmpeg([
-                    "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
-                    "-c", "copy", str(final_path),
-                ])
-                if not ok or not final_path.exists():
-                    raise RuntimeError(f"vace-mask concat 失败: {ferr}")
-                # 上传 fal + 归档
-                swapped_url = await fal_upload_with_retry(str(final_path))
-                try:
-                    swapped_url = await archive_url(swapped_url, user_id, "video")
-                except Exception as arch_err:
-                    _log(f"vace-mask archive failed: {arch_err}")
-                _update_session(session_id, swapped_video_url=swapped_url)
-                _log(f"vace-mask P80 Step B OK n_segs={n_segs} session={session_id} → {swapped_url[:80]}")
-                await _try_advance_to_lipsync(session_id)
+                    seg_prompt_text = "\n\n".join(sp_parts)
+                    if len(seg_prompt_text) > 800:
+                        seg_prompt_text = seg_prompt_text[:800]
+                    segments_meta.append({
+                        "idx": seg_idx,
+                        "start_s": round(start_s, 2),
+                        "end_s": round(end_s, 2),
+                        "duration_s": round(seg_dur, 2),
+                        "driving_url": seg_driving_fal,
+                        "mask_url": seg_mask_fal,
+                        "prompt": seg_prompt_text,
+                        "fal_url": None,
+                        "status": "pending",  # pending → generating → generated → failed
+                        "summary": "\n".join(seg_timeline[:3])[:200] if seg_timeline else f"{int(start_s)}-{int(end_s)}s",
+                    })
+                # 写 segments_json + vace_full_mask_url + 不触发 lipsync(等用户手动)
+                _update_session(session_id,
+                    segments_json=json.dumps(segments_meta, ensure_ascii=False),
+                    vace_full_mask_url=mask_url,
+                )
+                _log(f"vace-mask P81 segments 准备完成 session={session_id} n_segs={n_segs} (等用户手动按段生成)")
+                # 不调 _try_advance_to_lipsync,等 /merge-segments 触发
                 return
             finally:
                 shutil.rmtree(vace_tmpdir, ignore_errors=True)
@@ -3195,6 +3166,158 @@ class UpdateVideoPromptRequest(BaseModel):
     user_video_prompt: str
 
 
+class GenerateSegmentRequest(BaseModel):
+    session_id: str
+    seg_idx: int
+
+
+@router.post("/generate-segment")
+async def generate_segment(
+    req: GenerateSegmentRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """P81 vace-mask 手动模式 — 用户按某段生成按钮触发该段 VACE Fun。
+
+    需 session 处于 swap_running 且 segments_json 已写入(_run_inpainting_step 已准备完毕)。
+    """
+    user_id = str(current_user["id"])
+    session = _get_session(req.session_id)
+    if not session:
+        raise HTTPException(404, "session not found")
+    if session["user_id"] != user_id:
+        raise HTTPException(403, "无权限")
+    seg_json_raw = session.get("segments_json")
+    if not seg_json_raw:
+        raise HTTPException(400, "segments 未准备(等 _run_inpainting_step 完成)")
+    segments: List[Dict[str, Any]] = json.loads(seg_json_raw)
+    if req.seg_idx < 0 or req.seg_idx >= len(segments):
+        raise HTTPException(400, f"seg_idx {req.seg_idx} 越界(段数 {len(segments)})")
+    seg = segments[req.seg_idx]
+    if seg.get("status") == "generating":
+        raise HTTPException(409, "该段正在生成中,请等当前完成")
+
+    products = json.loads(session.get("selected_products") or "[]")
+    garment_url = products[0].get("image_url") if products and products[0].get("image_url") else None
+    if not garment_url:
+        raise HTTPException(400, "缺少产品图")
+
+    # 标记 generating + 写库
+    seg["status"] = "generating"
+    seg["fal_url"] = None
+    seg["error"] = None
+    segments[req.seg_idx] = seg
+    _update_session(req.session_id, segments_json=json.dumps(segments, ensure_ascii=False))
+
+    # 跑 VACE Fun(20min timeout)
+    from app.services.fal_service import get_vace_fun_service
+    vace_svc = get_vace_fun_service()
+    if vace_svc is None:
+        raise HTTPException(503, "VACE Fun service 未初始化")
+    try:
+        vres = await asyncio.wait_for(
+            vace_svc.inpaint(
+                video_url=seg["driving_url"],
+                mask_video_url=seg["mask_url"],
+                ref_image_urls=[garment_url],
+                prompt=seg["prompt"],
+            ),
+            timeout=20 * 60,
+        )
+    except asyncio.TimeoutError:
+        seg["status"] = "failed"
+        seg["error"] = "VACE Fun 超时 20min"
+        segments[req.seg_idx] = seg
+        _update_session(req.session_id, segments_json=json.dumps(segments, ensure_ascii=False))
+        raise HTTPException(504, "VACE Fun 超时 20min")
+    except Exception as e:
+        seg["status"] = "failed"
+        seg["error"] = str(e)[:300]
+        segments[req.seg_idx] = seg
+        _update_session(req.session_id, segments_json=json.dumps(segments, ensure_ascii=False))
+        raise HTTPException(502, f"VACE Fun 失败: {str(e)[:200]}")
+
+    if "error" in vres:
+        seg["status"] = "failed"
+        seg["error"] = vres["error"][:300]
+        segments[req.seg_idx] = seg
+        _update_session(req.session_id, segments_json=json.dumps(segments, ensure_ascii=False))
+        raise HTTPException(502, f"VACE Fun 失败: {vres['error'][:200]}")
+
+    # 归档防 fal.media 30d 过期
+    fal_url = vres["video_url"]
+    try:
+        fal_url = await archive_url(fal_url, user_id, "video")
+    except Exception as arch_err:
+        _log(f"vace-mask P81 seg {req.seg_idx} archive failed: {arch_err}")
+    seg["status"] = "generated"
+    seg["fal_url"] = fal_url
+    segments[req.seg_idx] = seg
+    _update_session(req.session_id, segments_json=json.dumps(segments, ensure_ascii=False))
+    _log(f"vace-mask P81 seg {req.seg_idx} OK url={fal_url[:80]}")
+    return {"seg_idx": req.seg_idx, "fal_url": fal_url, "status": "generated"}
+
+
+class MergeSegmentsRequest(BaseModel):
+    session_id: str
+
+
+@router.post("/merge-segments")
+async def merge_segments(
+    req: MergeSegmentsRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """P81 vace-mask 手动模式 — 全部段生成完成后用户按合并,ffmpeg concat → 触发 lipsync。"""
+    user_id = str(current_user["id"])
+    session = _get_session(req.session_id)
+    if not session:
+        raise HTTPException(404, "session not found")
+    if session["user_id"] != user_id:
+        raise HTTPException(403, "无权限")
+    seg_json_raw = session.get("segments_json")
+    if not seg_json_raw:
+        raise HTTPException(400, "segments 未准备")
+    segments: List[Dict[str, Any]] = json.loads(seg_json_raw)
+    not_done = [s["idx"] for s in segments if s.get("status") != "generated"]
+    if not_done:
+        raise HTTPException(400, f"段 {not_done} 还未生成,先全部生成完再合并")
+
+    # 下载所有段 + ffmpeg concat
+    from app.api.video_studio import _run_ffmpeg
+    import urllib.request
+    merge_tmpdir = Path(tempfile.mkdtemp(prefix=f"vace_merge_{req.session_id}_"))
+    try:
+        seg_local_paths: List[Path] = []
+        for seg in segments:
+            local_p = merge_tmpdir / f"swapped_{seg['idx']:02d}.mp4"
+            try:
+                urllib.request.urlretrieve(seg["fal_url"], str(local_p))
+            except Exception as dl_err:
+                raise HTTPException(502, f"下载 seg {seg['idx']} 失败: {dl_err}")
+            seg_local_paths.append(local_p)
+        concat_list = merge_tmpdir / "concat.txt"
+        concat_list.write_text("\n".join(f"file '{p}'" for p in seg_local_paths))
+        final_path = merge_tmpdir / "swapped.mp4"
+        ok, ferr = _run_ffmpeg([
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
+            "-c", "copy", str(final_path),
+        ])
+        if not ok or not final_path.exists():
+            raise HTTPException(502, f"concat 失败: {ferr}")
+        merged_url = await fal_upload_with_retry(str(final_path))
+        try:
+            merged_url = await archive_url(merged_url, user_id, "video")
+        except Exception as arch_err:
+            _log(f"vace-mask P81 merge archive failed: {arch_err}")
+    finally:
+        shutil.rmtree(merge_tmpdir, ignore_errors=True)
+
+    _update_session(req.session_id, swapped_video_url=merged_url)
+    _log(f"vace-mask P81 merge OK session={req.session_id} → {merged_url[:80]}")
+    # 触发 lipsync
+    await _try_advance_to_lipsync(req.session_id)
+    return {"swapped_video_url": merged_url, "status": "merged"}
+
+
 @router.post("/update-video-prompt")
 async def update_video_prompt(
     req: UpdateVideoPromptRequest,
@@ -3316,6 +3439,8 @@ def _build_status_payload(session: dict) -> dict:
             # P72 — qwen-vl 自动分镜 prompt + 用户编辑后版本
             "auto_video_prompt": session.get("auto_video_prompt"),
             "user_video_prompt": session.get("user_video_prompt"),
+            # P81 — 段列表(每段 idx/start_s/end_s/prompt/status/fal_url)
+            "segments_json": session.get("segments_json"),
         },
         "error": session.get("error_message") if session["status"].startswith("failed_") else None,
     }

@@ -33,6 +33,8 @@ interface SessionStatus {
     // P72 — qwen-vl 自动分镜 prompt + 用户编辑版
     auto_video_prompt?: string | null;
     user_video_prompt?: string | null;
+    // P81 — vace-mask 手动按段生成的段列表 JSON
+    segments_json?: string | null;
   };
   error: string | null;
 }
@@ -98,6 +100,26 @@ export default function OralBroadcastWorkbench() {
   const [videoPrompt, setVideoPrompt] = useState("");
   const [videoPromptGen, setVideoPromptGen] = useState(false);
   const [videoPromptSaving, setVideoPromptSaving] = useState(false);
+
+  // P81:vace-mask 段列表 + 各段生成中标志
+  type SegmentMeta = {
+    idx: number;
+    start_s: number;
+    end_s: number;
+    duration_s: number;
+    prompt: string;
+    fal_url: string | null;
+    status: "pending" | "generating" | "generated" | "failed";
+    summary?: string;
+    error?: string;
+  };
+  const [genSegIdx, setGenSegIdx] = useState<number | null>(null);
+  const [merging, setMerging] = useState(false);
+  const segments: SegmentMeta[] = (() => {
+    try {
+      return sess?.products.segments_json ? JSON.parse(sess.products.segments_json) : [];
+    } catch { return []; }
+  })();
 
   // 行为标志
   const [starting, setStarting] = useState(false);
@@ -247,6 +269,48 @@ export default function OralBroadcastWorkbench() {
       setError(e instanceof Error ? e.message : t("oral.errEditFail"));
     } finally {
       setEditingSubmitting(false);
+    }
+  };
+
+  // P81:生成单段
+  const generateSegment = async (segIdx: number) => {
+    setGenSegIdx(segIdx);
+    setError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/oral/generate-segment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
+        credentials: "include",
+        body: JSON.stringify({ session_id: sessionId, seg_idx: segIdx }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.detail || t("oral.errSegGenFail")); return; }
+      await loadStatus();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : t("oral.errSegGenFail"));
+    } finally {
+      setGenSegIdx(null);
+    }
+  };
+
+  // P81:合并所有段
+  const mergeSegments = async () => {
+    setMerging(true);
+    setError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/oral/merge-segments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
+        credentials: "include",
+        body: JSON.stringify({ session_id: sessionId }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.detail || t("oral.errMergeFail")); return; }
+      await loadStatus();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : t("oral.errMergeFail"));
+    } finally {
+      setMerging(false);
     }
   };
 
@@ -957,8 +1021,87 @@ export default function OralBroadcastWorkbench() {
           </section>
         )}
 
-        {/* ============ Step 4: 等待 ============ */}
-        {isRunning && status !== "asr_done" && (
+        {/* ============ P81: vace-mask 段列表(用户手动按段生成 + 合并)============ */}
+        {segments.length > 0 && !sess.products.swapped_video_url && (
+          <section style={{ background: "#fff", padding: "1.5rem", borderRadius: 12, marginBottom: "1rem" }}>
+            <h2 style={{ fontSize: "1.1rem", fontWeight: 600, marginTop: 0 }}>
+              🎬 {t("oral.segmentsTitle")} ({segments.filter(s => s.status === "generated").length}/{segments.length})
+            </h2>
+            <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: "1rem", lineHeight: 1.6 }}>
+              {t("oral.segmentsHint")}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.8rem", marginBottom: "1rem" }}>
+              {segments.map(seg => (
+                <div key={seg.idx} style={{
+                  border: "1px solid #ddd", borderRadius: 10, padding: "0.8rem",
+                  background: seg.status === "generated" ? "#f0fdf4" :
+                    seg.status === "generating" ? "#fef9c3" :
+                    seg.status === "failed" ? "#fef2f2" : "#fafaf7",
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4rem" }}>
+                    <div style={{ fontSize: "0.95rem", fontWeight: 600 }}>
+                      {t("oral.segmentLabel")} {seg.idx + 1}({seg.start_s.toFixed(1)}s - {seg.end_s.toFixed(1)}s)
+                    </div>
+                    <div style={{ fontSize: "0.75rem", padding: "0.15rem 0.5rem", borderRadius: 6,
+                      background: seg.status === "generated" ? "#16a34a" :
+                        seg.status === "generating" ? "#eab308" :
+                        seg.status === "failed" ? "#dc2626" : "#888",
+                      color: "#fff" }}>
+                      {seg.status === "generated" ? t("oral.segStatusGenerated") :
+                        seg.status === "generating" ? t("oral.segStatusGenerating") :
+                        seg.status === "failed" ? t("oral.segStatusFailed") : t("oral.segStatusPending")}
+                    </div>
+                  </div>
+                  {seg.summary && (
+                    <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: "0.5rem", whiteSpace: "pre-wrap" }}>
+                      {seg.summary}
+                    </div>
+                  )}
+                  {seg.fal_url && (
+                    <video src={seg.fal_url} controls style={{ width: "100%", maxWidth: 360, borderRadius: 8, marginBottom: "0.5rem" }} />
+                  )}
+                  {seg.error && (
+                    <div style={{ fontSize: "0.75rem", color: "#dc2626", marginBottom: "0.5rem" }}>{seg.error}</div>
+                  )}
+                  <button onClick={() => generateSegment(seg.idx)}
+                    disabled={genSegIdx !== null || merging}
+                    style={{
+                      padding: "0.5rem 1rem",
+                      background: (genSegIdx === seg.idx) ? "#ccc" :
+                        seg.status === "generated" ? "#fff" : "#0d6efd",
+                      color: seg.status === "generated" ? "#0d6efd" : "#fff",
+                      border: seg.status === "generated" ? "1px solid #0d6efd" : "none",
+                      borderRadius: 8,
+                      cursor: (genSegIdx !== null || merging) ? "not-allowed" : "pointer",
+                      fontSize: "0.85rem", fontWeight: 500,
+                    }}>
+                    {genSegIdx === seg.idx ? t("oral.segGenerating") :
+                      seg.status === "generated" ? t("oral.segRegenerate") : t("oral.segGenerate")}
+                  </button>
+                </div>
+              ))}
+            </div>
+            {segments.every(s => s.status === "generated") && (
+              <button onClick={mergeSegments} disabled={merging || genSegIdx !== null}
+                style={{
+                  padding: "0.8rem 1.5rem",
+                  background: merging ? "#ccc" : "#0d0d0d",
+                  color: "#fff", border: "none", borderRadius: 10,
+                  cursor: (merging || genSegIdx !== null) ? "not-allowed" : "pointer",
+                  fontWeight: 500, fontSize: "0.95rem",
+                }}>
+                {merging ? t("oral.merging") : t("oral.mergeBtn")}
+              </button>
+            )}
+            <button onClick={cancelSession}
+              style={{ marginLeft: "0.6rem", padding: "0.5rem 1rem", background: "#fff", color: "#c33", border: "1px solid #c33", borderRadius: 8, cursor: "pointer", fontSize: "0.85rem" }}>
+              {t("oral.cancelBtn")}
+            </button>
+          </section>
+        )}
+
+        {/* ============ Step 4: 等待(非 vace-mask 引擎走原路径)============ */}
+        {isRunning && status !== "asr_done" && segments.length === 0 && (
           <section style={{ background: "#fff", padding: "1.5rem", borderRadius: 12, marginBottom: "1rem" }}>
             <h2 style={{ fontSize: "1.1rem", fontWeight: 600, marginTop: 0 }}>⏳ {t("oral.s4Waiting")}</h2>
             <div style={{ color: "#666", marginBottom: "1rem" }}>{t("oral.waitHint")}</div>

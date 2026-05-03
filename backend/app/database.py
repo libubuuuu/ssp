@@ -89,6 +89,11 @@ def _patch_oral_columns(cursor):
         # P72 — qwen-vl 视频理解自动生成的分镜 prompt(展示给用户看)+ 用户编辑后的版本
         ("auto_video_prompt", "ALTER TABLE oral_sessions ADD COLUMN auto_video_prompt TEXT"),
         ("user_video_prompt", "ALTER TABLE oral_sessions ADD COLUMN user_video_prompt TEXT"),
+        # P81 — vace-mask 手动按段生成模式
+        # segments_json 存每段 metadata(JSON):[{idx,start_s,end_s,prompt,driving_url,mask_url,fal_url,status}]
+        # vace_full_mask_url 存 SAM2 整段 mask 视频(段间共享)
+        ("segments_json", "ALTER TABLE oral_sessions ADD COLUMN segments_json TEXT"),
+        ("vace_full_mask_url", "ALTER TABLE oral_sessions ADD COLUMN vace_full_mask_url TEXT"),
     ]
     for col_name, sql in patches:
         try:
