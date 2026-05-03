@@ -75,6 +75,7 @@ _ASSET_TYPES = ("image", "video", "audio")
 # 各引擎 fal schema 真值见 _drive_one 各分支(2026-05-03 openapi 实查)
 _STEP_B_ENGINES = (
     # 核心档(全 verified 真复刻 + 多图原图直喂):
+    "vace-mask",                # 🌟 P70 SAM2+VACE Fun+中文 prompt 真分层(¥1.29/5s,行业唯一近似分层)
     "catvton-pixverse",         # 🏆 P66 cat-vton + pixverse-swap(¥1.83/5s,probe 实测最对路:用户脸+用户产品+driving 动作+背景)
     "aliyun-wan2.7-r2v",        # 🆓 阿里通义万相(免费 + multi-reference + 70% 概率)
     "kling-o3-standard-v2v",    # ⭐ Kling O3 standard v2v edit(¥5.73/5s,element 多图 verified)
@@ -771,6 +772,84 @@ async def _run_inpainting_step(session_id: str) -> None:
                     _log(f"_run_inpainting_step P66 cat-vton 失败,降级 model_url: {_vton_res.get('error','?')}")
             else:
                 _log("_run_inpainting_step P66 cat-vton 服务未初始化,降级 model_url")
+
+        # P70 vace-mask 引擎 — SAM2 自动 mask + Wan VACE Fun + 中文 prompt 真分层。
+        # 自给自足,不走 Step B 拆段(VACE Fun 单次 5.0625s/81 帧 16fps,简化版限 5s driving)。
+        # 行业唯一近似分层路径:driving 视频"穿 T恤拉起露内衣"过程被保留,mask 区域换成用户产品。
+        if _engine_pre == "vace-mask":
+            if not garment_url:
+                raise RuntimeError("vace-mask 引擎必须有产品图")
+            from app.services.fal_service import get_sam2_video_service, get_vace_fun_service
+            sam2_svc = get_sam2_video_service()
+            vace_svc = get_vace_fun_service()
+            if sam2_svc is None or vace_svc is None:
+                raise RuntimeError("SAM2/VACE Fun service 未初始化")
+            from app.api.video_studio import _run_ffmpeg
+            vace_tmpdir = Path(tempfile.mkdtemp(prefix=f"vace_{session_id}_"))
+            try:
+                # 抽 driving 前 5s 段(VACE Fun 默认 81 帧 16fps ≈ 5s)
+                seg5_path = vace_tmpdir / "seg5.mp4"
+                ok, ferr = _run_ffmpeg([
+                    "ffmpeg", "-y", "-i", original_video_path, "-t", "5", "-c", "copy", str(seg5_path)
+                ])
+                if not ok or not seg5_path.exists():
+                    raise RuntimeError(f"vace-mask 抽 5s 段失败: {ferr}")
+                seg5_fal = await fal_upload_with_retry(str(seg5_path))
+                # 解析用户 mask box(可选,无则用默认胸部 box)
+                mask_box_raw = session.get("mask_box")
+                box_prompts = None
+                if mask_box_raw:
+                    try:
+                        box = json.loads(mask_box_raw) if isinstance(mask_box_raw, str) else mask_box_raw
+                        box_prompts = [{
+                            "x1": int(box["x1"]), "y1": int(box["y1"]),
+                            "x2": int(box["x2"]), "y2": int(box["y2"]),
+                            "frame_index": int(box.get("frame_index", 0)),
+                        }]
+                    except Exception as bx_err:
+                        _log(f"vace-mask 解析 mask_box 失败,用默认: {bx_err}")
+                if not box_prompts:
+                    # 默认 box(胸部/上身,720x1280 假设),前端 UI 后续补
+                    box_prompts = [{"x1": 150, "y1": 350, "x2": 570, "y2": 800, "frame_index": 80}]
+                # SAM2 自动 mask 追踪
+                sam_t0 = time.time()
+                sam_res = await sam2_svc.segment(seg5_fal, box_prompts=box_prompts)
+                if "error" in sam_res:
+                    raise RuntimeError(f"SAM2 fail: {sam_res['error']}")
+                mask_url = sam_res["mask_video_url"]
+                _log(f"vace-mask SAM2 OK session={session_id} elapsed={int(time.time()-sam_t0)}s")
+                # VACE Fun 中文 prompt
+                cn_prompt = (
+                    "层次替换任务:严格按照mask区域替换内层服装为参考图所示产品。\n"
+                    "外层服装完整保留,不修改,不替换。\n"
+                    "内层(mask区域)替换为参考图中的产品。\n"
+                    "动作、背景、光线、镜头、模特身材完全保留视频原样。\n"
+                    "严格层次:外层永远在最外面,内层永远在内层(被外层盖住,只在拉起时露出)。\n"
+                    "禁止内层覆盖在外层上面,禁止任何层次混乱。\n"
+                    "仅替换mask指定的内层区域,其他像素保留视频原值。"
+                )
+                vace_t0 = time.time()
+                vace_res = await vace_svc.inpaint(
+                    video_url=seg5_fal,
+                    mask_video_url=mask_url,
+                    ref_image_urls=[garment_url],
+                    prompt=cn_prompt,
+                )
+                if "error" in vace_res:
+                    raise RuntimeError(f"VACE Fun fail: {vace_res['error']}")
+                swapped_url = vace_res["video_url"]
+                _log(f"vace-mask VACE Fun OK session={session_id} elapsed={int(time.time()-vace_t0)}s")
+                # 归档防 fal.media 30d 过期
+                try:
+                    swapped_url = await archive_url(swapped_url, user_id, "video")
+                except Exception as arch_err:
+                    _log(f"vace-mask archive failed: {arch_err}")
+                _update_session(session_id, swapped_video_url=swapped_url)
+                _log(f"vace-mask Step B OK session={session_id} → {swapped_url[:80]}")
+                await _try_advance_to_lipsync(session_id)
+                return
+            finally:
+                shutil.rmtree(vace_tmpdir, ignore_errors=True)
 
         # ---------- Step B:拆段 + 并发驱动 + concat ----------
         # 八十四续 P15:i2v 引擎从 seedance 切 kling/o3/standard
