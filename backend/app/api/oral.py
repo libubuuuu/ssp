@@ -119,6 +119,7 @@ class StartRequest(BaseModel):
     step_b_engine: Optional[str] = None  # P41:Step B 引擎覆盖,白名单见 _STEP_B_ENGINES;None=跟随 env
     assets: Optional[List[AssetItem]] = None  # P42:多素材编排(场景图/运镜视频/节奏音频),None=老路单素材
     use_topaz_upscale: Optional[bool] = False  # P43-2:出片过 fal Topaz 超分(720p×2),+$0.02/秒
+    use_face_enhance: Optional[bool] = True  # P45:模特图过 codeformer 修脸 + 成片首尾帧修脸,默认开
 
 
 class EditRequest(BaseModel):
@@ -618,6 +619,27 @@ async def _run_inpainting_step(session_id: str) -> None:
         model_url = models[0].get("image_url")
         if not model_url:
             raise RuntimeError("模特图 image_url 缺失")
+
+        # P45:Step 0 — codeformer 增强模特图(预处理,补回 fal r2v 真人保身份残差)
+        # fidelity=0.7 平衡画质 + 身份;失败降级用原图,不阻塞 pipeline
+        # 真值:probe 实测 74s/张出 1024+ 分辨率,upscale=2 自带
+        if session.get("use_face_enhance"):
+            try:
+                from app.services.fal_service import get_codeformer_service
+                cf_svc = get_codeformer_service()
+                if cf_svc:
+                    cf_t0 = time.time()
+                    cf_res = await cf_svc.restore(image_url=model_url, fidelity=0.7, upscale=2)
+                    if "error" not in cf_res and cf_res.get("image_url"):
+                        enhanced_url = cf_res["image_url"]
+                        _update_session(session_id, enhanced_model_url=enhanced_url)
+                        # 后续所有用 model_url 的地方都切到增强版(vton + 各引擎 frontal_image_url)
+                        model_url = enhanced_url
+                        _log(f"_run_inpainting_step P45 codeformer OK session={session_id} elapsed={time.time()-cf_t0:.1f}s")
+                    else:
+                        _log(f"_run_inpainting_step P45 codeformer 失败(降级原图): {cf_res.get('error','?')}")
+            except Exception as cf_e:
+                _log(f"_run_inpainting_step P45 codeformer 异常(降级原图): {cf_e}")
 
         vid_svc = get_video_service()
         if not vid_svc:
@@ -2202,6 +2224,7 @@ async def start_pipeline(
         aspect_ratio=(aspect or None),
         step_b_engine=(step_b_engine or None),
         use_topaz_upscale=1 if req.use_topaz_upscale else 0,
+        use_face_enhance=1 if (req.use_face_enhance is None or req.use_face_enhance) else 0,
     )
 
     # P42:写入多素材编排表(可选,空跳过)

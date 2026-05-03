@@ -61,6 +61,8 @@ export default function OralBroadcastWorkbench() {
   const [stepBEngine, setStepBEngine] = useState<StepBEngine>("");
   // P43-2:可选 Topaz 超分到 1440p(默认关,+$0.02/秒)
   const [useTopazUpscale, setUseTopazUpscale] = useState(false);
+  // P45:模特图过 codeformer 修脸预处理(默认开,补 fal r2v 真人保身份残差)
+  const [useFaceEnhance, setUseFaceEnhance] = useState(true);
   // P43-3:模特/产品多角度图(每个最多 2 张额外,+ 主图共 3 张,Kling O1 elements ref 上限)
   const [modelExtraUrls, setModelExtraUrls] = useState<string[]>([]);
   const [productExtraUrls, setProductExtraUrls] = useState<string[]>([]);
@@ -191,7 +193,7 @@ export default function OralBroadcastWorkbench() {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
         credentials: "include",
-        body: JSON.stringify({ session_id: sessionId, tier, models, products, legal_consent: legalConsent, aspect_ratio: aspectRatio || null, step_b_engine: stepBEngine || null, assets: assets.length ? assets : null, use_topaz_upscale: useTopazUpscale }),
+        body: JSON.stringify({ session_id: sessionId, tier, models, products, legal_consent: legalConsent, aspect_ratio: aspectRatio || null, step_b_engine: stepBEngine || null, assets: assets.length ? assets : null, use_topaz_upscale: useTopazUpscale, use_face_enhance: useFaceEnhance }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.detail || t("oral.errStartFail")); return; }
@@ -502,6 +504,26 @@ export default function OralBroadcastWorkbench() {
                   <strong style={{ fontSize: "0.85rem" }}>{t("oral.topaz.title")}</strong>
                   <div style={{ fontSize: "0.7rem", color: "#999", marginTop: 2 }}>
                     {t("oral.topaz.desc")}
+                  </div>
+                </div>
+              </label>
+            </div>
+
+            {/* P45:模特图 codeformer 修脸预处理 */}
+            <div style={{ marginBottom: "1.5rem" }}>
+              <label style={{
+                display: "flex", alignItems: "center", padding: "0.6rem 0.8rem",
+                border: useFaceEnhance ? "2px solid #0d0d0d" : "1px solid #ddd",
+                background: useFaceEnhance ? "#f9f7f2" : "#fff",
+                borderRadius: 10, cursor: "pointer",
+              }}>
+                <input type="checkbox" checked={useFaceEnhance}
+                  onChange={e => setUseFaceEnhance(e.target.checked)}
+                  style={{ marginRight: "0.5rem" }} />
+                <div style={{ flex: 1 }}>
+                  <strong style={{ fontSize: "0.85rem" }}>{t("oral.faceEnhance.title")}</strong>
+                  <div style={{ fontSize: "0.7rem", color: "#999", marginTop: 2 }}>
+                    {t("oral.faceEnhance.desc")}
                   </div>
                 </div>
               </label>

@@ -522,6 +522,95 @@ class FalVTONService:
             return {"error": str(e)}
 
 
+class FalCodeformerService:
+    """P45 工作流:CodeFormer 单图人脸修复(身份保真)。
+
+    probe 实测 2026-05-03:fal-ai/codeformer 74s 出 1024×1844 图,fidelity 可调。
+    输入只接 image_url(无 video_url 变体),所以视频用法是"抽帧修复 + overlay"。
+
+    fidelity_weight 语义:
+      0.0 = 最高画质(可能丢身份特征)
+      1.0 = 最大保身份(画质增益小)
+      0.7-0.85 推荐(平衡画质 + 身份)
+
+    我们用法:
+      - 预处理:用户原模特图 → fidelity=0.7 → 修脸增强,喂 cat-vton + 后续引擎
+      - 后处理:成片首帧/末帧 → fidelity=0.85 → overlay 回视频
+    """
+    ENDPOINT = "fal-ai/codeformer"
+
+    def __init__(self, fal_key: str):
+        self.fal_key = fal_key
+
+    async def restore(
+        self,
+        image_url: str,
+        fidelity: float = 0.7,
+        upscale: int = 2,
+        only_center_face: bool = False,
+    ) -> dict:
+        cb = get_circuit_breaker()
+        if not cb.is_available("codeformer"):
+            return {"error": "模型 codeformer 已熔断"}
+        try:
+            args = {
+                "image_url": image_url,
+                "fidelity_weight": float(fidelity),
+                "upscale_factor": int(upscale),
+                "only_center_face": bool(only_center_face),
+            }
+            result = await fal_client.run_async(self.ENDPOINT, arguments=args)
+            await cb.record_success("codeformer")
+            image_obj = result.get("image") if isinstance(result, dict) else None
+            url = image_obj.get("url") if isinstance(image_obj, dict) else None
+            if not url:
+                return {"error": "codeformer 未返 image URL"}
+            return {"image_url": url, "model": self.ENDPOINT}
+        except Exception as e:
+            await cb.record_failure("codeformer")
+            return {"error": str(e)}
+
+
+class FalPuLIDService:
+    """P45 可选:Flux-PuLID 身份保持图生成(2026 业界 SOTA)。
+
+    与 codeformer 区别:
+      - codeformer 是"修复"(只动人脸,不改图)
+      - PuLID 是"重生成"(按 prompt + reference face 生成新图,身份保持)
+    用途:用户原模特图质量极低(模糊/噪声多),codeformer 修不动 → PuLID 重生成
+    一张摄影写真级图。默认关,用户显式开。
+
+    probe 实测 2026-05-03:29.5s 出 1024×768 图(摄影写真级)。
+    schema(probe 实查):reference_image_url + prompt
+    """
+    ENDPOINT = "fal-ai/flux-pulid"
+
+    def __init__(self, fal_key: str):
+        self.fal_key = fal_key
+
+    async def regenerate(self, reference_image_url: str, prompt: str) -> dict:
+        cb = get_circuit_breaker()
+        if not cb.is_available("flux-pulid"):
+            return {"error": "模型 flux-pulid 已熔断"}
+        try:
+            args = {
+                "reference_image_url": reference_image_url,
+                "prompt": prompt,
+            }
+            result = await fal_client.run_async(self.ENDPOINT, arguments=args)
+            await cb.record_success("flux-pulid")
+            images = result.get("images") if isinstance(result, dict) else None
+            if isinstance(images, list) and images:
+                first = images[0]
+                url = first.get("url") if isinstance(first, dict) else None
+                if url:
+                    return {"image_url": url, "model": self.ENDPOINT}
+            return {"error": "flux-pulid 未返 image URL"}
+        except Exception as e:
+            await cb.record_failure("flux-pulid")
+            return {"error": str(e)}
+
+
 class FalAudioSeparatorService:
     """P44 工作流:音轨分离(BGM ⊥ 人声)。
 
@@ -695,11 +784,13 @@ _vton_service: Optional["FalVTONService"] = None
 _lipsync_service: Optional[FalLipsyncService] = None
 _audio_separator_service: Optional["FalAudioSeparatorService"] = None
 _pixverse_swap_service: Optional["FalPixverseSwapService"] = None
+_codeformer_service: Optional["FalCodeformerService"] = None
+_pulid_service: Optional["FalPuLIDService"] = None
 
 
 def init_fal_services(fal_key: str):
     os.environ["FAL_KEY"] = fal_key
-    global _image_service, _video_service, _avatar_service, _voice_service, _asr_service, _inpainting_service, _vton_service, _lipsync_service, _audio_separator_service, _pixverse_swap_service
+    global _image_service, _video_service, _avatar_service, _voice_service, _asr_service, _inpainting_service, _vton_service, _lipsync_service, _audio_separator_service, _pixverse_swap_service, _codeformer_service, _pulid_service
     _image_service = FalImageService(fal_key)
     _video_service = FalVideoService(fal_key)
     _avatar_service = FalAvatarService(fal_key)
@@ -710,6 +801,8 @@ def init_fal_services(fal_key: str):
     _lipsync_service = FalLipsyncService(fal_key)
     _audio_separator_service = FalAudioSeparatorService(fal_key)
     _pixverse_swap_service = FalPixverseSwapService(fal_key)
+    _codeformer_service = FalCodeformerService(fal_key)
+    _pulid_service = FalPuLIDService(fal_key)
 
 def get_image_service() -> FalImageService:
     return _image_service
@@ -740,6 +833,12 @@ def get_audio_separator_service() -> "FalAudioSeparatorService":
 
 def get_pixverse_swap_service() -> "FalPixverseSwapService":
     return _pixverse_swap_service
+
+def get_codeformer_service() -> "FalCodeformerService":
+    return _codeformer_service
+
+def get_pulid_service() -> "FalPuLIDService":
+    return _pulid_service
 
 
 # ============== fal storage upload retry helper (P33 2026-05-01) ==============

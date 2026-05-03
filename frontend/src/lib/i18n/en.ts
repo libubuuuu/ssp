@@ -649,6 +649,10 @@ export const en = {
       title: "1440p upscale output (+$0.02/sec)",
       desc: "Default 720p. Enable to run fal Topaz upscale to 1440p — sharper output, close to Jimeng quality tier.",
     },
+    faceEnhance: {
+      title: "AI face restore on model image (+$0.002/img, recommended)",
+      desc: "Run fal CodeFormer on the model image to restore facial detail (identity-preserving + sharper) before feeding to video gen. Compensates fal r2v's nerfed real-person multi-ref. Adds ~30s.",
+    },
     angle: {
       modelHint: "Optional: + add 1-2 multi-angle model photos (side/full body) to improve identity preservation",
       productHint: "Optional: + add 1-2 multi-angle product photos (back/material/logo) to reduce detail drift",

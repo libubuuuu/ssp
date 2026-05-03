@@ -81,6 +81,9 @@ def _patch_oral_columns(cursor):
         ("bgm_path", "ALTER TABLE oral_sessions ADD COLUMN bgm_path TEXT"),
         # P44 — Step B 实际跑通的引擎(可能是 fallback 后的,跟 step_b_engine 用户选项不同)
         ("step_b_engine_used", "ALTER TABLE oral_sessions ADD COLUMN step_b_engine_used TEXT"),
+        # P45 — codeformer 增强后的模特图(预处理产物);use_face_enhance 用户开关(默认 1 开启)
+        ("enhanced_model_url", "ALTER TABLE oral_sessions ADD COLUMN enhanced_model_url TEXT"),
+        ("use_face_enhance", "ALTER TABLE oral_sessions ADD COLUMN use_face_enhance INTEGER NOT NULL DEFAULT 1"),
     ]
     for col_name, sql in patches:
         try:
