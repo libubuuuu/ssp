@@ -1412,33 +1412,43 @@ async def _run_inpainting_step(session_id: str) -> None:
                     ratio_for_aliyun = "9:16"
 
                 # P52:multi-reference 修复 — 不传 vton 合成图,改传【模特原图 + 产品原图】两张独立 reference
-                # 让阿里 wan 用中文 prompt"图1的人穿图2的产品"明确引用,避免"分不清模特/产品"
+                # P53:用户上传时标注 angle(正面/反面/侧面/材质/logo),拼到 prompt 让模型明确引用
                 ref_imgs: List[str] = []
+                ref_descs: List[str] = []  # 每张图的中文描述,prompt 引用用
                 # 图1:用户原模特图(P45 codeformer 修脸增强,如有)
                 main_model_url = session.get("enhanced_model_url") or model_url
                 if main_model_url:
                     ref_imgs.append(main_model_url)
-                # 图2:用户原产品图
+                    ref_descs.append("模特正面")
+                # 图2:用户原产品图(主图默认正面)
                 if garment_url:
                     ref_imgs.append(garment_url)
-                # 图3-N:多角度 reference(P43-3 anchor_model + anchor_product role)
+                    ref_descs.append("产品正面")
+                # 图3-N:多角度 reference(P43-3 anchor_model + anchor_product role,P53 alias 存 angle)
                 for a in session_assets:
-                    if a.get("role") in ("anchor_model", "anchor_product") and a.get("url"):
+                    role = a.get("role")
+                    if role in ("anchor_model", "anchor_product") and a.get("url"):
                         if a["url"] not in ref_imgs and len(ref_imgs) < 9:
                             ref_imgs.append(a["url"])
+                            angle = (a.get("alias") or "").strip() or ("侧面" if role == "anchor_model" else "反面")
+                            kind = "模特" if role == "anchor_model" else "产品"
+                            ref_descs.append(f"{kind}{angle}")
 
-                # 中文 prompt:"图1是模特,图2是产品,视频1是动作"明确引用
+                # 中文 prompt 拼接:每张图明确角色 + 角度
+                img_intro = "、".join(f"图{i+1}({d})" for i, d in enumerate(ref_descs))
                 if len(ref_imgs) >= 2 and garment_url:
                     wan_prompt = (
+                        f"参考素材:{img_intro};视频1是动作参考。"
                         f"图1中的女性穿着图2所示的产品(产品名称:{', '.join(product_names) if product_names else '商品'}),"
                         f"按照视频1中的动作、姿态、镜头运动和场景自然展示。"
                         f"严格保持图1中模特的面部特征、五官比例、发型、肤色不变。"
-                        f"严格保留图2中产品的颜色、材质、文字、logo 等细节,产品款式不变。"
+                        f"严格保留图2中产品的颜色、材质、文字、logo 等细节,产品款式不变(参考其他角度图获得完整产品形态)。"
                         f"完整保留视频1的背景、光线、机位、构图。"
                     )
                 else:
                     # 单图 fallback(无产品时)
                     wan_prompt = (
+                        f"参考素材:{img_intro};视频1是动作参考。"
                         f"图1中的女性按照视频1中的动作、姿态、镜头运动自然展示,"
                         f"保留视频1的背景、光线和镜头角度。"
                         f"严格保持图1中模特的面部特征、五官比例、发型、肤色不变。"

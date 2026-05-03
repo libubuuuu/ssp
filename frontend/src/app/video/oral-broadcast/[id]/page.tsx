@@ -66,8 +66,11 @@ export default function OralBroadcastWorkbench() {
   // P45:模特图过 codeformer 修脸预处理(默认开,补 fal r2v 真人保身份残差)
   const [useFaceEnhance, setUseFaceEnhance] = useState(true);
   // P43-3:模特/产品多角度图(每个最多 2 张额外,+ 主图共 3 张,Kling O1 elements ref 上限)
+  // P53:加 angle 标签(正面/反面/侧面/材质/logo),让模型 prompt 里明确"图N 是 模特/产品 的 角度"
   const [modelExtraUrls, setModelExtraUrls] = useState<string[]>([]);
+  const [modelExtraAngles, setModelExtraAngles] = useState<string[]>([]);  // P53 并行数组,默认"侧面"
   const [productExtraUrls, setProductExtraUrls] = useState<string[]>([]);
+  const [productExtraAngles, setProductExtraAngles] = useState<string[]>([]);  // P53 并行数组,默认"反面"
   const [uploadingExtraIdx, setUploadingExtraIdx] = useState<"model_extra" | "product_extra" | null>(null);
   // P42:多素材编排 MVP — 仅 seedance-2-r2v 引擎使用,其他引擎忽略
   // scene_ref:场景定调参考图(背景/光感),shot_ref:运镜参考视频(独立于 driving)
@@ -189,8 +192,9 @@ export default function OralBroadcastWorkbench() {
       if (sceneRefUrl) assets.push({ role: "scene_ref", type: "image", url: sceneRefUrl, alias: "scene", ord: 0 });
       if (shotRefUrl) assets.push({ role: "shot_ref", type: "video", url: shotRefUrl, alias: "shot", ord: 1 });
       // P43-3:模特/产品多角度图(后端 Kling o1 edit 用到 elements.reference_image_urls)
-      modelExtraUrls.forEach((u, i) => assets.push({ role: "anchor_model", type: "image", url: u, alias: `model_${i+2}`, ord: 10 + i }));
-      productExtraUrls.forEach((u, i) => assets.push({ role: "anchor_product", type: "image", url: u, alias: `product_${i+2}`, ord: 20 + i }));
+      // P53:alias 存 angle("正面/反面/侧面/材质/logo"),后端 prompt 用此拼"图N 是模特/产品的 X"
+      modelExtraUrls.forEach((u, i) => assets.push({ role: "anchor_model", type: "image", url: u, alias: modelExtraAngles[i] || "侧面", ord: 10 + i }));
+      productExtraUrls.forEach((u, i) => assets.push({ role: "anchor_product", type: "image", url: u, alias: productExtraAngles[i] || "反面", ord: 20 + i }));
       const res = await fetch(`${API_BASE}/api/oral/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
@@ -306,8 +310,15 @@ export default function OralBroadcastWorkbench() {
       });
       const data = await res.json();
       if (!res.ok || !data.url) { setError(data.detail ?? t("oral.picker.uploadFail")); return; }
-      if (kind === "model_extra") setModelExtraUrls(prev => [...prev, data.url].slice(0, 2));
-      else setProductExtraUrls(prev => [...prev, data.url].slice(0, 2));
+      if (kind === "model_extra") {
+        setModelExtraUrls(prev => [...prev, data.url].slice(0, 2));
+        // P53:默认 angle 标签 — 第一张额外图默认"侧面",第二张默认"全身"
+        setModelExtraAngles(prev => [...prev, prev.length === 0 ? "侧面" : "全身"].slice(0, 2));
+      } else {
+        setProductExtraUrls(prev => [...prev, data.url].slice(0, 2));
+        // P53:产品默认 angle — 第一张默认"反面",第二张默认"材质"
+        setProductExtraAngles(prev => [...prev, prev.length === 0 ? "反面" : "材质"].slice(0, 2));
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : t("oral.picker.uploadFail"));
     } finally {
@@ -475,13 +486,14 @@ export default function OralBroadcastWorkbench() {
               <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>{t("oral.engineTitle")}</div>
               <select value={stepBEngine} onChange={e => setStepBEngine(e.target.value as StepBEngine)}
                 style={{ width: "100%", padding: "0.6rem 0.8rem", border: "1px solid #ddd", borderRadius: 10, background: "#fff", fontSize: "0.9rem", cursor: "pointer" }}>
-                {/* P49:核心两个产品级模型 — 一个挂另一个能用
-                    P51:模型 B 从 Kling O3 v2v(¥6/5s 太贵)换 pixverse-swap(¥1.4/5s,P44 已稳定运行)
-                    P54:加 kling-o3-r2v(全能参考保证档) — P41 element 多图实测真区分模特/产品 */}
+                {/* P49→P55:核心档 3 选,真值 verified
+                    模型 A    阿里 wan2.7-r2v  免费 + multi-ref + reference_video(70% 全能参考)
+                    模型 B    pixverse-swap    swap 模式不区分参考(快但弱)
+                    模型 A+   kling-o3-v2v     **真复刻 driving + element 多图**(100% verified) */}
                 <optgroup label={t("oral.engine.groupCore")}>
                   <option value="auto-cheap">{t("oral.engine.autoCheap")}</option>
                   <option value="pixverse-swap">{t("oral.engine.pixverseSwapCore")}</option>
-                  <option value="kling-o3-r2v">{t("oral.engine.klingO3R2vCore")}</option>
+                  <option value="kling-o3-v2v">{t("oral.engine.klingO3V2vCore")}</option>
                 </optgroup>
                 {/* 高级:精修档 + 多引擎 fallback + 单独引擎选择 */}
                 <optgroup label={t("oral.engine.groupAdvanced")}>
@@ -633,11 +645,22 @@ export default function OralBroadcastWorkbench() {
               {modelUrl && (
                 <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
                   <img src={modelUrl} alt="" style={{ height: 60, borderRadius: 6, objectFit: "cover" }} />
-                  {/* P43-3:多角度模特图(侧面/全身),最多 2 张 */}
+                  {/* P43-3 + P53:多角度模特图(每张可选角度),最多 2 张 */}
                   {modelExtraUrls.map((u, i) => (
-                    <div key={i} style={{ position: "relative" }}>
+                    <div key={i} style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
                       <img src={u} alt="" style={{ height: 60, borderRadius: 6, objectFit: "cover", opacity: 0.85 }} />
-                      <button type="button" onClick={() => setModelExtraUrls(prev => prev.filter((_, idx) => idx !== i))}
+                      <select value={modelExtraAngles[i] || "侧面"}
+                        onChange={e => setModelExtraAngles(prev => { const c = [...prev]; c[i] = e.target.value; return c; })}
+                        style={{ fontSize: "0.65rem", padding: "1px 2px", border: "1px solid #ddd", borderRadius: 4, width: 60 }}>
+                        <option value="侧面">侧面</option>
+                        <option value="全身">全身</option>
+                        <option value="背面">背面</option>
+                        <option value="特写">特写</option>
+                      </select>
+                      <button type="button" onClick={() => {
+                        setModelExtraUrls(prev => prev.filter((_, idx) => idx !== i));
+                        setModelExtraAngles(prev => prev.filter((_, idx) => idx !== i));
+                      }}
                         style={{ position: "absolute", top: -6, right: -6, width: 18, height: 18, borderRadius: "50%", border: "1px solid #ddd", background: "#fff", fontSize: "0.7rem", cursor: "pointer", lineHeight: 1, padding: 0 }}>×</button>
                     </div>
                   ))}
@@ -692,11 +715,24 @@ export default function OralBroadcastWorkbench() {
               {productUrl && (
                 <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
                   <img src={productUrl} alt="" style={{ height: 60, borderRadius: 6, objectFit: "cover" }} />
-                  {/* P43-3:多角度产品图(反面/材质/logo),最多 2 张 */}
+                  {/* P43-3 + P53:多角度产品图(每张可选角度),最多 2 张 */}
                   {productExtraUrls.map((u, i) => (
-                    <div key={i} style={{ position: "relative" }}>
+                    <div key={i} style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
                       <img src={u} alt="" style={{ height: 60, borderRadius: 6, objectFit: "cover", opacity: 0.85 }} />
-                      <button type="button" onClick={() => setProductExtraUrls(prev => prev.filter((_, idx) => idx !== i))}
+                      <select value={productExtraAngles[i] || "反面"}
+                        onChange={e => setProductExtraAngles(prev => { const c = [...prev]; c[i] = e.target.value; return c; })}
+                        style={{ fontSize: "0.65rem", padding: "1px 2px", border: "1px solid #ddd", borderRadius: 4, width: 60 }}>
+                        <option value="反面">反面</option>
+                        <option value="侧面">侧面</option>
+                        <option value="材质">材质</option>
+                        <option value="logo">logo</option>
+                        <option value="标签">标签</option>
+                        <option value="细节">细节</option>
+                      </select>
+                      <button type="button" onClick={() => {
+                        setProductExtraUrls(prev => prev.filter((_, idx) => idx !== i));
+                        setProductExtraAngles(prev => prev.filter((_, idx) => idx !== i));
+                      }}
                         style={{ position: "absolute", top: -6, right: -6, width: 18, height: 18, borderRadius: "50%", border: "1px solid #ddd", background: "#fff", fontSize: "0.7rem", cursor: "pointer", lineHeight: 1, padding: 0 }}>×</button>
                     </div>
                   ))}
