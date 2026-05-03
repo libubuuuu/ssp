@@ -354,60 +354,95 @@ async def _run_asr_step(session_id: str) -> None:
         if result is None:
             raise RuntimeError(f"ASR 重试 3 次仍失败: {str(last_err)[:300]}")
 
-        # P44:demucs 音轨分离(vocals + BGM 4 stem)。失败不阻塞主链路,降级用原音轨当 vocals。
-        # 真值:probe 实测 demucs 19.6s/15s 段,vocals -18.5dB,bgm 4 stem 各 -36~-39dB(piano 静音)。
+        # P44:demucs 音轨分离(vocals + BGM)。失败不阻塞主链路,降级用原音轨当 vocals。
+        # P47-D:cheap 模式优先用本地 demucs worker(0 元 + 30s 处理 17s 音频),
+        #         失败降级 fal demucs($0.05/段)。
         vocals_path: Optional[str] = None
         bgm_path: Optional[str] = None
-        try:
-            from app.services.fal_service import get_audio_separator_service
-            sep_svc = get_audio_separator_service()
-            if sep_svc:
-                sep_t0 = time.time()
-                sep_result = await sep_svc.separate(audio_fal_url)
-                if "error" not in sep_result:
-                    vocals_url = sep_result.get("vocals_url")
-                    bgm_stem_urls = sep_result.get("bgm_stem_urls") or []
-                    sep_model = sep_result.get("model", "?")
-                    if vocals_url:
-                        vp = str(session_dir / "vocals.mp3")
-                        await _download_url_to(vocals_url, Path(vp))
-                        vocals_path = vp
-                    if bgm_stem_urls:
-                        # 下载 4 stem → ffmpeg amix → bgm.mp3
-                        from app.api.video_studio import _run_ffmpeg
-                        stem_locals: List[str] = []
-                        for i, url in enumerate(bgm_stem_urls):
-                            sp = str(session_dir / f"bgm_stem_{i}.mp3")
-                            await _download_url_to(url, Path(sp))
-                            stem_locals.append(sp)
-                        bp = str(session_dir / "bgm.mp3")
-                        amix_cmd = ["ffmpeg", "-y"]
-                        for sp in stem_locals:
-                            amix_cmd += ["-i", sp]
-                        amix_cmd += [
-                            "-filter_complex",
-                            f"amix=inputs={len(stem_locals)}:duration=longest:dropout_transition=0:normalize=0",
-                            "-c:a", "libmp3lame", "-q:a", "2", bp,
-                        ]
-                        ok_m, err_m = _run_ffmpeg(amix_cmd)
-                        if ok_m:
+
+        # P47-D 本地 demucs 优先(cheap 模式)
+        local_demucs_ok = False
+        if prefer_aliyun_asr:  # cheap 模式标志,P47-C 已加
+            try:
+                local_worker = "/opt/ssp/scripts/audio_separator_worker.py"
+                local_venv_py = "/opt/ssp/face_venv/bin/python"
+                if Path(local_worker).is_file() and Path(local_venv_py).is_file():
+                    sep_t0 = time.time()
+                    vp = str(session_dir / "vocals.mp3")
+                    bp = str(session_dir / "bgm.mp3")
+                    proc = await asyncio.create_subprocess_exec(
+                        local_venv_py, local_worker, audio_path, vp, bp,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    try:
+                        sout, serr = await asyncio.wait_for(proc.communicate(), timeout=600)
+                    except asyncio.TimeoutError:
+                        proc.kill()
+                        _log(f"_run_asr_step P47-D 本地 demucs 600s 超时")
+                    else:
+                        if proc.returncode == 0 and Path(vp).exists() and Path(bp).exists():
+                            vocals_path = vp
                             bgm_path = bp
+                            local_demucs_ok = True
+                            _log(f"_run_asr_step P47-D 本地 demucs OK session={session_id} elapsed={time.time()-sep_t0:.1f}s "
+                                 f"vocals={Path(vp).stat().st_size//1024}KB bgm={Path(bp).stat().st_size//1024}KB")
                         else:
-                            _log(f"_run_asr_step BGM amix 失败(不阻塞): {err_m[:200]}")
-                        # 清理 stem 临时文件
-                        for sp in stem_locals:
-                            try:
-                                Path(sp).unlink(missing_ok=True)
-                            except Exception:
-                                pass
-                    _log(f"_run_asr_step audio-sep OK session={session_id} model={sep_model} "
-                         f"vocals={'yes' if vocals_path else 'no'} bgm={'yes' if bgm_path else 'no'} "
-                         f"elapsed={time.time()-sep_t0:.1f}s")
-                else:
-                    _log(f"_run_asr_step audio-sep 失败(不阻塞,降级原音轨): {sep_result.get('error')}")
-        except Exception as sep_e:
-            # 不阻塞 ASR step,vocals_path/bgm_path 留 None,Step 5 自动降级用原音轨
-            _log(f"_run_asr_step audio-sep 异常(不阻塞): {sep_e}")
+                            err = (serr or b"").decode(errors="replace")[:300]
+                            _log(f"_run_asr_step P47-D 本地 demucs rc={proc.returncode} err={err}")
+            except Exception as e:
+                _log(f"_run_asr_step P47-D 本地 demucs 异常,降级 fal: {e}")
+
+        if not local_demucs_ok:
+            # 本地 demucs 没跑 / 失败 → 走 fal demucs 主路 / 兜底
+            try:
+                from app.services.fal_service import get_audio_separator_service
+                sep_svc = get_audio_separator_service()
+                if sep_svc:
+                    sep_t0 = time.time()
+                    sep_result = await sep_svc.separate(audio_fal_url)
+                    if "error" not in sep_result:
+                        vocals_url = sep_result.get("vocals_url")
+                        bgm_stem_urls = sep_result.get("bgm_stem_urls") or []
+                        sep_model = sep_result.get("model", "?")
+                        if vocals_url:
+                            vp = str(session_dir / "vocals.mp3")
+                            await _download_url_to(vocals_url, Path(vp))
+                            vocals_path = vp
+                        if bgm_stem_urls:
+                            # 下载 4 stem → ffmpeg amix → bgm.mp3
+                            from app.api.video_studio import _run_ffmpeg
+                            stem_locals: List[str] = []
+                            for i, url in enumerate(bgm_stem_urls):
+                                sp = str(session_dir / f"bgm_stem_{i}.mp3")
+                                await _download_url_to(url, Path(sp))
+                                stem_locals.append(sp)
+                            bp = str(session_dir / "bgm.mp3")
+                            amix_cmd = ["ffmpeg", "-y"]
+                            for sp in stem_locals:
+                                amix_cmd += ["-i", sp]
+                            amix_cmd += [
+                                "-filter_complex",
+                                f"amix=inputs={len(stem_locals)}:duration=longest:dropout_transition=0:normalize=0",
+                                "-c:a", "libmp3lame", "-q:a", "2", bp,
+                            ]
+                            ok_m, err_m = _run_ffmpeg(amix_cmd)
+                            if ok_m:
+                                bgm_path = bp
+                            else:
+                                _log(f"_run_asr_step BGM amix 失败(不阻塞): {err_m[:200]}")
+                            for sp in stem_locals:
+                                try:
+                                    Path(sp).unlink(missing_ok=True)
+                                except Exception:
+                                    pass
+                        _log(f"_run_asr_step fal audio-sep OK session={session_id} model={sep_model} "
+                             f"vocals={'yes' if vocals_path else 'no'} bgm={'yes' if bgm_path else 'no'} "
+                             f"elapsed={time.time()-sep_t0:.1f}s")
+                    else:
+                        _log(f"_run_asr_step fal audio-sep 失败(不阻塞,降级原音轨): {sep_result.get('error')}")
+            except Exception as sep_e:
+                _log(f"_run_asr_step fal audio-sep 异常(不阻塞): {sep_e}")
 
         # 4) 写库,推进状态
         _update_session(
