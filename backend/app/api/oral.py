@@ -893,6 +893,37 @@ async def _run_inpainting_step(session_id: str) -> None:
         finally:
             shutil.rmtree(frame_tmpdir, ignore_errors=True)
 
+        # P57:Wan 2.2 animate-replace 路径用 cat-vton 输出(纯人物穿产品图)覆盖 Seedream 复合图。
+        # Why: Wan 2.2 是单图换人模型,reference 含 driving 场景信息会让它困惑
+        # (脸变形 / 光线乱 / 文字 garbled);cat-vton 出纯人物图无场景干扰,Wan 2.2
+        # 在它设计任务上工作 → 真换人保留 driving 场景。cat-vton 失败降级 Seedream,不阻塞。
+        if (session.get("step_b_engine") or "").strip().lower() == "wan-2-2-animate-replace":
+            from app.services.fal_service import get_vton_service
+            if products and products[0].get("image_url"):
+                _cv_svc = get_vton_service()
+                if _cv_svc is not None:
+                    _cv_t0 = time.time()
+                    _cv_res = await _cv_svc.try_on(
+                        human_image_url=model_url,
+                        garment_image_url=products[0]["image_url"],
+                        cloth_type="upper",
+                    )
+                    if "error" not in _cv_res and _cv_res.get("image_url"):
+                        _cv_url = _cv_res["image_url"]
+                        try:
+                            _cv_url = await archive_url(_cv_url, user_id, "image")
+                        except Exception as _arch_err:
+                            _log(f"_run_inpainting_step P57 cat-vton archive failed: {_arch_err}")
+                        _update_session(session_id, vton_image_url=_cv_url)
+                        _log(f"_run_inpainting_step P57 cat-vton OK (overrides seedream) session={session_id} elapsed={time.time()-_cv_t0:.1f}s url={_cv_url[:80]}")
+                        reference_image = _cv_url
+                    else:
+                        _log(f"_run_inpainting_step P57 cat-vton 失败,降级 Seedream: {_cv_res.get('error','?')}")
+                else:
+                    _log("_run_inpainting_step P57 cat-vton 服务未初始化,降级 Seedream")
+            else:
+                _log("_run_inpainting_step P57 无产品图,降级 Seedream(cat-vton garment 必填)")
+
         # ---------- Step B:拆段 + 并发驱动 + concat ----------
         # 八十四续 P15:i2v 引擎从 seedance 切 kling/o3/standard
         # 字节家 seedance-2.0 fast 对内衣类硬拒 NSFW(content_policy_violation),
