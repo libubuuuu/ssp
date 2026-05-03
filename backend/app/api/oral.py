@@ -905,23 +905,32 @@ async def _run_inpainting_step(session_id: str) -> None:
             endpoint_default = "fal-ai/kling-video/o3/standard/video-to-video/edit"
             seg_timeout_loops = 60
             SEG_LEN_S = 5.0
+            # P61:prompt 必须强锁"背景+场景+光线",否则 Kling 自由发挥换背景。
+            # 实测 P60 没说保留背景 → 生成视频背景跟 driving 视频不一致(用户报)。
             ID_LOCK = (
                 "Primary identity anchor: @Element1. Do NOT alter facial proportions, "
                 "eye spacing, nose shape, jawline, hair, or skin tone. "
             )
-            NEG = " No face distortion, no unintended wardrobe changes."
+            BG_LOCK = (
+                "CRITICAL: keep the entire @Video1 unchanged — its background, scene, location, "
+                "props, lighting, color tone, camera framing, camera movement, and body posture "
+                "must all stay exactly identical to @Video1. Do NOT change the environment, "
+                "do NOT generate a new background, do NOT alter the scene. "
+            )
+            NEG = " No face distortion, no unintended wardrobe changes, no background change, no scene drift."
             if product_names:
                 prompt = (
-                    f"{ID_LOCK}"
-                    f"Replace the person in @Video1 with @Element1, wearing @Element2 "
-                    f"({', '.join(product_names)}). Preserve the original motion, gestures, and camera movement."
+                    f"{ID_LOCK}{BG_LOCK}"
+                    f"Replace ONLY the person in @Video1 with @Element1, wearing @Element2 "
+                    f"({', '.join(product_names)}). Adjust @Element1 and @Element2 lighting "
+                    f"to match @Video1 background naturally."
                     f"{NEG}"
                 )
             else:
                 prompt = (
-                    f"{ID_LOCK}"
-                    "Replace the person in @Video1 with @Element1. "
-                    "Preserve the original motion, gestures, and camera movement."
+                    f"{ID_LOCK}{BG_LOCK}"
+                    "Replace ONLY the person in @Video1 with @Element1. "
+                    "Adjust @Element1 lighting to match @Video1 background naturally."
                     f"{NEG}"
                 )
         elif engine == "kling-o3-v2v":
@@ -932,23 +941,31 @@ async def _run_inpainting_step(session_id: str) -> None:
             endpoint_default = "fal-ai/kling-video/o3/pro/video-to-video/reference"
             seg_timeout_loops = 60
             SEG_LEN_S = 5.0
+            # P61:同 standard-v2v,强锁背景
             ID_LOCK = (
                 "Primary identity anchor: @Element1. Do NOT alter facial proportions, "
                 "eye spacing, nose shape, jawline, hair, or skin tone. "
             )
-            NEG = " No face distortion, no wardrobe changes from @Element2, no color palette shift."
+            BG_LOCK = (
+                "CRITICAL: keep the entire @Video1 unchanged — its background, scene, location, "
+                "props, lighting, color tone, camera framing, camera movement, and body posture "
+                "must all stay exactly identical to @Video1. Do NOT change the environment, "
+                "do NOT generate a new background, do NOT alter the scene. "
+            )
+            NEG = " No face distortion, no wardrobe changes from @Element2, no color palette shift, no background change, no scene drift."
             if product_names:
                 prompt = (
-                    f"{ID_LOCK}"
-                    f"Replace the person in @Video1 with @Element1, wearing @Element2 "
-                    f"({', '.join(product_names)}). Preserve the original motion, gestures, and camera movement."
+                    f"{ID_LOCK}{BG_LOCK}"
+                    f"Replace ONLY the person in @Video1 with @Element1, wearing @Element2 "
+                    f"({', '.join(product_names)}). Adjust @Element1 and @Element2 lighting "
+                    f"to match @Video1 background naturally."
                     f"{NEG}"
                 )
             else:
                 prompt = (
-                    f"{ID_LOCK}"
-                    "Replace the person in @Video1 with @Element1. "
-                    "Preserve the original motion, gestures, and camera movement."
+                    f"{ID_LOCK}{BG_LOCK}"
+                    "Replace ONLY the person in @Video1 with @Element1. "
+                    "Adjust @Element1 lighting to match @Video1 background naturally."
                     f"{NEG}"
                 )
         elif engine == "pixverse-swap":
