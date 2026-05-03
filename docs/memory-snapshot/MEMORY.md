@@ -3,3 +3,9 @@
 - [SSP 生产 bug 立即修复约定](feedback_ssp_bug_fix.md) — 用户报 bug 时立刻动手改代码,不只是诊断/指引
 - [SSP 前端改动必须独立复核](feedback_ssp_frontend_verify.md) — Edit 工具返"成功"不算数,必须 grep 看真值 + npm run build 才能 commit/deploy
 - [SSP 用户时间 > 算力](feedback_ssp_user_time.md) — 别列选项菜单让用户挑,自己想清楚直接干
+- [SSP rsync 后必须 chown](feedback_ssp_deploy_chown.md) — rsync /root → /opt 用 root 跑后,文件 owner 变 root,backend 起不来
+- [SSP rsync 严禁多 source 形式](feedback_ssp_rsync_safety.md) — 多 source 把目录内容污染 prod,P16 已踩(blue EXITED)
+- [SSP 多文件批量替换不用 sed -i](feedback_ssp_no_sed_batch.md) — sed -i 偶发清空文件已踩 2 次,用 Edit 单处替换
+- [SSP 口播 V3 P15 最终架构](project_ssp_oral_v3.md) — Seedream 首帧 + kling i2v + 无水印,2026-04-30 实测 4 分 16 秒出 19s 成片
+- [SSP fal 端点切换前必须 probe](feedback_ssp_fal_probe_first.md) — 改 fal endpoint/引擎前用真 KEY 实测 submit+result+NSFW,不要 deploy 打地鼠
+- [SSP 不脑补,verify 而后说](feedback_ssp_no_pattern_match.md) — fal 引擎能力/schema 等技术事实,实测 verify 后才能下结论,不许 pattern-match 推断
