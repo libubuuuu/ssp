@@ -901,7 +901,7 @@ export default function OralBroadcastWorkbench() {
               {t("oral.videoPromptHint")}
             </div>
             {!videoPrompt && isAsrDone && (
-              <button onClick={generateVideoPrompt} disabled={videoPromptGen}
+              <button onClick={() => generateVideoPrompt(false)} disabled={videoPromptGen}
                 style={{
                   padding: "0.7rem 1.2rem",
                   background: videoPromptGen ? "#ccc" : "#0d6efd",
