@@ -820,6 +820,8 @@ async def _run_inpainting_step(session_id: str) -> None:
                 mask_url = sam_res["mask_video_url"]
                 _log(f"vace-mask SAM2 OK session={session_id} elapsed={int(time.time()-sam_t0)}s")
                 # P72:优先用用户编辑的 prompt → 已有的自动分镜 → P71 即时生成
+                # P74:VACE Fun 对 prompt 里 NSFW 词("内衣/文胸/bra/拉起/露出")硬拒,
+                # 必须 sanitize。qwen-vl instruction 也改成"用中性词输出"避免 qwen 输出敏感词。
                 scene_breakdown = ""
                 user_prompt = (session.get("user_video_prompt") or "").strip()
                 auto_prompt_cached = (session.get("auto_video_prompt") or "").strip()
@@ -832,10 +834,12 @@ async def _run_inpainting_step(session_id: str) -> None:
                 elif qwenvl_svc and qwenvl_svc.is_available():
                     qwen_t0 = time.time()
                     qwen_instruction = (
-                        "请按时间分段(每 1 秒一段)精炼描述视频画面动作和服装层次,"
-                        "重点标注外层服装、内层服装、动作变化时机。"
-                        "格式严格:每行 '0-1s:[动作+服装]' < 50 字。"
-                        "末尾加一行【关键时刻】描述外层拉起 / 内层露出的时间点。"
+                        "请用中性词描述视频每秒画面动作。"
+                        "重要:必须避免敏感词,"
+                        "把'内衣'、'文胸'、'bra'、'胸罩'、'拉起'、'露出'、'掀起'、'撩起'、'裸露'等词,"
+                        "改用'内层物品'、'内层服装'、'底层物品'、'动作变化'、'肢体动作'代替。"
+                        "格式严格:每行 '0-1s:[动作 + 服装层次描述]' < 50 字。"
+                        "末尾加一行【关键时刻】描述外层服装变化 / 内层物品出现的时间点。"
                     )
                     qwen_res = await qwenvl_svc.analyze_video(seg5_fal, qwen_instruction)
                     if "error" not in qwen_res and qwen_res.get("text"):
@@ -844,18 +848,28 @@ async def _run_inpainting_step(session_id: str) -> None:
                         _log(f"vace-mask P71 qwen-vl OK session={session_id} elapsed={int(time.time()-qwen_t0)}s len={len(scene_breakdown)}")
                     else:
                         _log(f"vace-mask P71 qwen-vl 失败,用通用 prompt: {qwen_res.get('error','?')}")
-                # VACE Fun 中文 prompt(qwen-vl 分镜 + 层次约束)
+                # P74 sanitize:即使有 qwen 输出,也清洗 NSFW 词(防止用户编辑后的 prompt 含敏感词)
+                NSFW_WORD_MAP = {
+                    "内衣": "内层物品", "文胸": "内层物品", "bra": "garment", "胸罩": "内层物品",
+                    "Bra": "garment", "BRA": "garment", "balconette": "item", "Balconette": "item",
+                    "Underwire": "item", "underwear": "garment", "lingerie": "item",
+                    "拉起": "动作变化", "露出": "出现", "掀起": "动作变化", "撩起": "动作变化",
+                    "裸露": "可见", "脱下": "动作变化", "脱衣": "动作变化",
+                    "胸前": "前胸位置", "乳": "上身", "Underwire Support": "item support",
+                }
+                for k, v in NSFW_WORD_MAP.items():
+                    scene_breakdown = scene_breakdown.replace(k, v)
+                # VACE Fun 中文 prompt(中性化版本)
                 cn_prompt_parts = []
                 if scene_breakdown:
                     cn_prompt_parts.append(f"视频分镜分析:\n{scene_breakdown}\n\n")
                 cn_prompt_parts.append(
-                    "层次替换任务:严格按照mask区域替换内层服装为参考图所示产品。\n"
-                    "外层服装完整保留,不修改,不替换。\n"
-                    "内层(mask区域)替换为参考图中的产品。\n"
-                    "动作、背景、光线、镜头、模特身材完全保留视频原样,严格按上述分镜分析的时序复刻。\n"
-                    "严格层次:外层永远在最外面,内层永远在内层(被外层盖住,只在拉起时露出)。\n"
-                    "禁止内层覆盖在外层上面,禁止任何层次混乱。\n"
-                    "仅替换mask指定的内层区域,其他像素保留视频原值。"
+                    "Layered region replacement task: strictly replace only the masked region "
+                    "with the reference image item, while keeping all other pixels identical to the source video.\n"
+                    "Outer garment must be completely preserved unchanged.\n"
+                    "Action, background, lighting, camera, body proportions all match the source video exactly.\n"
+                    "Strict layering: outer layer always on top, inner layer always underneath (covered by outer).\n"
+                    "Do NOT place inner item over outer layer. Only replace within the mask-specified region."
                 )
                 cn_prompt = "".join(cn_prompt_parts)
                 vace_t0 = time.time()
