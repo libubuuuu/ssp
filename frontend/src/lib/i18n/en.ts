@@ -650,6 +650,7 @@ export const en = {
       klingO3V2v: "💎 Premium Kling o3 v2v (TRUE driving replay + multi-elements · $0.168/s = ¥6/5s · similarity 0.464 strongest · expensive)",
       klingO3R2v: "Kling o3 r2v · multi-elements + native audio · $0.14/s",
       seedance2R2v: "Seedance 2.0 r2v · 9 imgs + 3 vids + audio refs · multi-ref nerfed for real-people since Feb",
+      catvtonPixverse: "🏆 Recommended · cat-vton + Pixverse Swap · user face+user product+driving motion/bg · ¥1.83/5s · 5min · NSFW OK",
       kling26I2v: "Kling 2.6 Pro i2v · native-audio focused · $0.07–$0.168/s",
       i2v: "Kling o3 Standard i2v · static first-frame · legacy",
       note: "Default is fine. For A/B comparison only. NSFW / motion fidelity / audio differ; pricing differs.",

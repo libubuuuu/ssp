@@ -650,6 +650,7 @@ export const zh = {
       klingO3V2v: "💎 精修档 Kling o3 v2v(真复刻 + 多元素图 · $0.168/s = ¥6/5s · similarity 0.464 实测最强 · 高质量贵)",
       klingO3R2v: "Kling o3 r2v · 多元素图 + 原生音频 · $0.14/s",
       seedance2R2v: "Seedance 2.0 r2v · 9 图 + 3 视频 + 音频参考 · 真人多参考 2 月起阉割",
+      catvtonPixverse: "🏆 推荐 · cat-vton + Pixverse Swap · 用户脸+用户产品+driving 动作背景 · ¥1.83/5s · 5min 出片 · NSFW 通过",
       kling26I2v: "Kling 2.6 Pro i2v · 主打原生音频 · $0.07–$0.168/s",
       i2v: "Kling o3 Standard i2v · 静图首帧 · 老路保留",
       note: "默认即可。仅用于对比实测,各模型 NSFW/复刻/音频能力不同,价格也不同。",

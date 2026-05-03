@@ -75,6 +75,7 @@ _ASSET_TYPES = ("image", "video", "audio")
 # 各引擎 fal schema 真值见 _drive_one 各分支(2026-05-03 openapi 实查)
 _STEP_B_ENGINES = (
     # 核心档(全 verified 真复刻 + 多图原图直喂):
+    "catvton-pixverse",         # 🏆 P66 cat-vton + pixverse-swap(¥1.83/5s,probe 实测最对路:用户脸+用户产品+driving 动作+背景)
     "aliyun-wan2.7-r2v",        # 🆓 阿里通义万相(免费 + multi-reference + 70% 概率)
     "kling-o3-standard-v2v",    # ⭐ Kling O3 standard v2v edit(¥5.73/5s,element 多图 verified)
     "auto-cheap",               # 免费优先链:阿里→kling-standard
@@ -743,6 +744,34 @@ async def _run_inpainting_step(session_id: str) -> None:
         _update_session(session_id, vton_image_url=model_url)  # 写库为 thumbnail / 历史页向后兼容
         _log(f"_run_inpainting_step P60 Step A 跳过 Seedream session={session_id} reference=model_url garment={'yes' if garment_url else 'no'}")
 
+        # P66:catvton-pixverse 引擎 — Step A 跑 cat-vton 出"用户模特真穿用户产品"图当 reference,
+        # Step B pixverse-swap 用 vton 图换 driving 视频里的人 → 用户脸+用户产品+driving 动作/背景。
+        # probe 实测 ¥1.83/5s,效果对路。
+        _engine_pre = (session.get("step_b_engine") or "").strip().lower()
+        if _engine_pre == "catvton-pixverse" and garment_url:
+            from app.services.fal_service import get_vton_service
+            _vton_svc = get_vton_service()
+            if _vton_svc is not None:
+                _vton_t0 = time.time()
+                _vton_res = await _vton_svc.try_on(
+                    human_image_url=model_url,
+                    garment_image_url=garment_url,
+                    cloth_type="upper",
+                )
+                if "error" not in _vton_res and _vton_res.get("image_url"):
+                    _vton_url = _vton_res["image_url"]
+                    try:
+                        _vton_url = await archive_url(_vton_url, user_id, "image")
+                    except Exception as _arch_err:
+                        _log(f"_run_inpainting_step P66 cat-vton archive failed: {_arch_err}")
+                    _update_session(session_id, vton_image_url=_vton_url)
+                    _log(f"_run_inpainting_step P66 cat-vton OK session={session_id} elapsed={time.time()-_vton_t0:.1f}s url={_vton_url[:80]}")
+                    reference_image = _vton_url
+                else:
+                    _log(f"_run_inpainting_step P66 cat-vton 失败,降级 model_url: {_vton_res.get('error','?')}")
+            else:
+                _log("_run_inpainting_step P66 cat-vton 服务未初始化,降级 model_url")
+
         # ---------- Step B:拆段 + 并发驱动 + concat ----------
         # 八十四续 P15:i2v 引擎从 seedance 切 kling/o3/standard
         # 字节家 seedance-2.0 fast 对内衣类硬拒 NSFW(content_policy_violation),
@@ -777,6 +806,10 @@ async def _run_inpainting_step(session_id: str) -> None:
             # 主路是 Best-of-2(阿里 wan + kling-3-pro 并发),InsightFace 评分选最高
             engine = "pixverse-swap"  # 闭包外层 prepare 占位,真路径在 _drive_one_best_of_2
             best_n_mode = True
+        # P66:catvton-pixverse → pixverse-swap 走 prepare_config + _drive_one 同 pixverse 路径
+        # cat-vton 已在 Step A 跑过(reference_image 已是 vton 图),Step B 直接复用 pixverse-swap
+        if engine == "catvton-pixverse":
+            engine = "pixverse-swap"
         # 兼容老配置:seedance-i2v 别名归一
         if engine == "seedance-i2v":
             engine = "i2v"
