@@ -555,20 +555,29 @@ class AliyunWanService:
 
     async def wan27_r2v_submit(
         self,
-        reference_image_url: str,
+        reference_image_url: str,  # 兼容老调用,主路用 reference_image_urls
         reference_video_url: Optional[str],
         prompt: str,
         duration: int = 5,
         resolution: str = "720P",
         ratio: str = "9:16",
+        reference_image_urls: Optional[List[str]] = None,  # P52:多 reference 图(模特+产品分开)
     ) -> dict:
-        """提交 wan2.7-r2v 任务,返 {"task_id": ...} 或 {"error": ...}"""
+        """提交 wan2.7-r2v 任务,返 {"task_id": ...} 或 {"error": ...}
+
+        P52 修复:阿里 wan2.7-r2v media 数组支持多张 reference_image,
+        单 vton 合成图传不出"模特+产品独立参考"语义,导致模型分不清。
+        新参数 reference_image_urls 可传 [模特原图, 产品原图] 让模型用
+        prompt"图1的人穿图2的产品"明确引用。
+        """
         if not self.api_key:
             return {"error": "DASHSCOPE_API_KEY 未配置"}
         cb = get_circuit_breaker()
         if not cb.is_available("aliyun-wan2.7-r2v"):
             return {"error": "aliyun-wan2.7-r2v 已熔断"}
-        media = [{"type": "reference_image", "url": reference_image_url}]
+        # P52:优先用 reference_image_urls(多图);回落到老 reference_image_url(单图)兼容
+        urls = reference_image_urls if reference_image_urls else ([reference_image_url] if reference_image_url else [])
+        media = [{"type": "reference_image", "url": u} for u in urls if u]
         if reference_video_url:
             media.append({"type": "reference_video", "url": reference_video_url})
         body = {

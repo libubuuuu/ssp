@@ -94,8 +94,11 @@ _STEP_B_ENGINES = (
 FALLBACK_CHAIN_AUTO = ("pixverse-swap", "seedance-2-r2v", "wan-2-2-animate-replace", "kling-o1-edit")
 
 # P47-B:auto-cheap 免费优先链。阿里 wan2.7-r2v 主路(免费 180 天)→ fal 兜底
-# 用户开通百炼 + 设了 DASHSCOPE_API_KEY 才生效;否则整链降级到 FALLBACK_CHAIN_AUTO
-FALLBACK_CHAIN_CHEAP = ("aliyun-wan2.7-r2v", "pixverse-swap", "seedance-2-r2v", "wan-2-2-animate-replace")
+# P52 修复:移除 pixverse-swap(swap 模式不参考 image,导致"看不到模特+分不清产品"),
+# 移除 seedance-2-r2v(fal endpoint result 404 bug),
+# 移除 wan-2-2-animate-replace(单图模式,无 multi-reference)。
+# 只保留真 multi-reference 引擎(element 多图 / reference 多图):
+FALLBACK_CHAIN_CHEAP = ("aliyun-wan2.7-r2v", "kling-o3-r2v", "kling-o1-edit")
 
 # P48-B:Best-of-2 同段并发引擎(InsightFace 选 max similarity)
 # probe 真值(2026-05-03,14c390bb 内衣场景):阿里 wan 0.4165, kling-3-pro 0.4096(均 0.41+ 强档),
@@ -1407,18 +1410,43 @@ async def _run_inpainting_step(session_id: str) -> None:
                 ratio_for_aliyun = (session.get("aspect_ratio") or "9:16").strip().lower()
                 if ratio_for_aliyun not in ("9:16", "16:9", "1:1", "4:3", "3:4"):
                     ratio_for_aliyun = "9:16"
-                wan_prompt = (
-                    f"图1中的女性按照视频1中的动作和姿态自然展示,"
-                    f"保留视频1的背景、光线和镜头角度。"
-                    f"严格保持图1中模特的面部特征、五官比例、发型、肤色不变。"
-                )
-                if product_names:
+
+                # P52:multi-reference 修复 — 不传 vton 合成图,改传【模特原图 + 产品原图】两张独立 reference
+                # 让阿里 wan 用中文 prompt"图1的人穿图2的产品"明确引用,避免"分不清模特/产品"
+                ref_imgs: List[str] = []
+                # 图1:用户原模特图(P45 codeformer 修脸增强,如有)
+                main_model_url = session.get("enhanced_model_url") or model_url
+                if main_model_url:
+                    ref_imgs.append(main_model_url)
+                # 图2:用户原产品图
+                if garment_url:
+                    ref_imgs.append(garment_url)
+                # 图3-N:多角度 reference(P43-3 anchor_model + anchor_product role)
+                for a in session_assets:
+                    if a.get("role") in ("anchor_model", "anchor_product") and a.get("url"):
+                        if a["url"] not in ref_imgs and len(ref_imgs) < 9:
+                            ref_imgs.append(a["url"])
+
+                # 中文 prompt:"图1是模特,图2是产品,视频1是动作"明确引用
+                if len(ref_imgs) >= 2 and garment_url:
                     wan_prompt = (
-                        f"图1中的女性穿着 {', '.join(product_names)},"
-                        + wan_prompt
+                        f"图1中的女性穿着图2所示的产品(产品名称:{', '.join(product_names) if product_names else '商品'}),"
+                        f"按照视频1中的动作、姿态、镜头运动和场景自然展示。"
+                        f"严格保持图1中模特的面部特征、五官比例、发型、肤色不变。"
+                        f"严格保留图2中产品的颜色、材质、文字、logo 等细节,产品款式不变。"
+                        f"完整保留视频1的背景、光线、机位、构图。"
                     )
+                else:
+                    # 单图 fallback(无产品时)
+                    wan_prompt = (
+                        f"图1中的女性按照视频1中的动作、姿态、镜头运动自然展示,"
+                        f"保留视频1的背景、光线和镜头角度。"
+                        f"严格保持图1中模特的面部特征、五官比例、发型、肤色不变。"
+                    )
+
                 submit = await aliyun.wan27_r2v_submit(
-                    reference_image_url=reference_image,
+                    reference_image_url=ref_imgs[0] if ref_imgs else reference_image,  # 兼容老 API
+                    reference_image_urls=ref_imgs,  # P52 多图 reference
                     reference_video_url=seg_fal_url,
                     prompt=wan_prompt,
                     duration=seg_dur,
@@ -1490,6 +1518,26 @@ async def _run_inpainting_step(session_id: str) -> None:
                         "keep_audio": False,
                     }
                     fb_endpoint = "fal-ai/kling-video/o1/video-to-video/edit"
+                    fb_loops = 60
+                elif try_engine == "kling-o3-r2v":
+                    # P52:阿里 wan 失败后切 fal kling-o3-r2v(真 multi-reference,$0.112/s)
+                    # element 多图明确分离模特/产品,跟阿里 wan multi-reference 对齐
+                    elements = [{"frontal_image_url": model_url, "reference_image_urls": [model_url]}]
+                    if garment_url:
+                        elements.append({"frontal_image_url": garment_url, "reference_image_urls": [garment_url]})
+                    seg_dur_str = "5"
+                    o3_aspect = (session.get("aspect_ratio") or "9:16").strip().lower()
+                    if o3_aspect not in ("16:9", "9:16", "1:1"):
+                        o3_aspect = "9:16"
+                    args = {
+                        "prompt": FALLBACK_PROMPT,
+                        "start_image_url": model_url,  # 主参考用模特图
+                        "elements": elements,
+                        "duration": seg_dur_str,
+                        "aspect_ratio": o3_aspect,
+                        "generate_audio": False,
+                    }
+                    fb_endpoint = "fal-ai/kling-video/o3/pro/reference-to-video"
                     fb_loops = 60
                 else:
                     raise RuntimeError(f"fallback engine 不支持: {try_engine}")
