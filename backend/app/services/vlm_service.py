@@ -245,7 +245,11 @@ def _build_analysis_prompt(total_duration: int = 15, region: str = "CN") -> str:
             "- ❌ Forbidden: absolutes (best/first/100%), medical claims (lose weight/cure/enhance), violations"
         )
 
-    return f"""你是抖音/TikTok 顶级带货达人,学习过上千条爆款脚本(单条带货过千万 GMV)。请分析用户上传的产品图,完成两件事:
+    return f"""你是抖音/TikTok 顶级带货达人,学习过上千条爆款脚本(单条带货过千万 GMV)。请分析用户上传的图片,完成两件事:
+
+**输入图说明**(用户最多上传 1-2 张):
+- 第 1 张:产品图(必有)— 重点识别品类/颜色/材质/卖点
+- 第 2 张:背景场景图(可选,不一定有)— 这是用户期望的拍摄场景/使用环境/氛围,**写脚本时 overall_setting 必须基于第 2 张场景图来定**(光线/地点/氛围),speech 话术里也可以引用场景元素(比如"在这种场景下穿"),让脚本和场景对得上。如果没有第 2 张图,overall_setting 自由发挥。
 
 【任务一:审核】
 - 图片质量(清晰度/光线/白底)
@@ -369,6 +373,7 @@ class VLMService:
         model: Optional[str] = None,
         total_duration: int = 15,
         region: str = "CN",
+        background_image_url: Optional[str] = None,
     ) -> dict:
         """
         分析产品图 + 生成脚本
@@ -378,6 +383,9 @@ class VLMService:
             model: 可选,指定 VLM 模型;默认走 DEFAULT_MODEL
             total_duration: P31 总时长(秒),默认 15 维持向后兼容。
                             > 15 时 VLM 会按 split_segments(total) 出 N 段 scenes。
+            background_image_url: P111 可选 — 背景场景图 URL,VLM 用第 2 张图
+                            决定 overall_setting / speech 话术情境,让脚本和用户期望
+                            的拍摄场景对得上(否则脚本完全脱离用户上传的场景图)
 
         返回:
             {"audit": {...}, "script": {...}}  成功
@@ -390,12 +398,17 @@ class VLMService:
         chosen_model = model or DEFAULT_MODEL
         prompt = _build_analysis_prompt(total_duration, region=region)
 
+        # P111: 拼图列表(产品图必有 + 背景图可选作为第 2 张)
+        image_urls = [image_url]
+        if background_image_url:
+            image_urls.append(background_image_url)
+
         # 调用 fal OpenRouter Vision
         try:
             result = await fal_client.run_async(
                 VISION_ENDPOINT,
                 arguments={
-                    "image_urls": [image_url],
+                    "image_urls": image_urls,
                     "prompt": prompt,
                     "system_prompt": _SYSTEM_PROMPT,
                     "model": chosen_model,
@@ -411,7 +424,7 @@ class VLMService:
                     result = await fal_client.run_async(
                         VISION_ENDPOINT,
                         arguments={
-                            "image_urls": [image_url],
+                            "image_urls": image_urls,
                             "prompt": prompt,
                             "system_prompt": _SYSTEM_PROMPT,
                             "model": FALLBACK_MODEL,

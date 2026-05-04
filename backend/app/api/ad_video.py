@@ -91,6 +91,7 @@ class SceneRegenerateRequest(BaseModel):
 async def analyze_product(
     file: UploadFile = File(...),
     back_file: Optional[UploadFile] = File(None),  # P34: 产品反面图(可选)
+    background_file: Optional[UploadFile] = File(None),  # P111: 背景场景图(可选,VLM 也看这张定脚本场景)
     total_duration: int = 15,
     region: str = Form("CN"),  # P99: CN(国内抖音/亚洲模特/中文话术)/ Global(海外 TikTok/西方模特/英文话术)
     current_user: dict = Depends(get_current_user),
@@ -152,6 +153,35 @@ async def analyze_product(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"图片处理失败: {str(e)[:200]}")
 
+    # P111: 背景场景图(可选,VLM 写脚本时参考场景定 overall_setting + 话术情境)
+    background_image_url: Optional[str] = None
+    if background_file is not None and background_file.filename:
+        try:
+            bg_contents = await read_bounded(background_file, 10 * 1024 * 1024, IMAGE_MIMES, "ad-video 背景场景图")
+            img_bg = Image.open(io.BytesIO(bg_contents))
+            if img_bg.mode in ("RGBA", "P", "LA"):
+                bg_bg = Image.new("RGB", img_bg.size, (255, 255, 255))
+                if img_bg.mode in ("RGBA", "LA"):
+                    bg_bg.paste(img_bg, mask=img_bg.split()[-1])
+                else:
+                    bg_bg.paste(img_bg.convert("RGBA"), mask=img_bg.convert("RGBA").split()[-1])
+                img_bg = bg_bg
+            elif img_bg.mode != "RGB":
+                img_bg = img_bg.convert("RGB")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_bg:
+                img_bg.save(tmp_bg.name, "JPEG", quality=90, optimize=True)
+                if os.path.getsize(tmp_bg.name) > 10 * 1024 * 1024:
+                    img_bg.save(tmp_bg.name, "JPEG", quality=75, optimize=True)
+                tmp_bg_path = tmp_bg.name
+            try:
+                background_image_url = await fal_upload_with_retry(tmp_bg_path)
+            finally:
+                os.unlink(tmp_bg_path)
+        except Exception as e:
+            # 背景图失败不阻塞主流程,降级到不传背景给 VLM
+            log_info(f"ad_video/analyze 背景图处理失败,VLM 走单图: {str(e)[:150]}")
+            background_image_url = None
+
     # P34: 第二张产品图(反面/侧面),可选,流程同正面
     product_back_image_url: Optional[str] = None
     if back_file is not None and back_file.filename:
@@ -190,7 +220,12 @@ async def analyze_product(
     # P99:region 透传(CN=国内/Global=海外),VLM 按 region 出对应模特+话术
     safe_duration = max(5, min(300, int(total_duration)))
     safe_region = "Global" if region.lower() in ("global", "en", "international", "海外") else "CN"
-    result = await service.analyze_product(product_image_url, total_duration=safe_duration, region=safe_region)
+    result = await service.analyze_product(
+        product_image_url,
+        total_duration=safe_duration,
+        region=safe_region,
+        background_image_url=background_image_url,  # P111
+    )
 
     if "error" in result:
         # 服务故障 → 返还积分(装饰器会处理)
@@ -224,13 +259,15 @@ async def analyze_product(
 
     log_info(
         f"ad_video/analyze ok user={current_user.get('id')} "
-        f"category={audit.get('category')} back={'yes' if product_back_image_url else 'no'}"
+        f"category={audit.get('category')} back={'yes' if product_back_image_url else 'no'} "
+        f"bg={'yes' if background_image_url else 'no'}"
     )
     return {
         "success": True,
         **result,
         "product_image_url": product_image_url,  # 给后续 /preview 复用
         "product_back_image_url": product_back_image_url,  # P34
+        "background_image_url": background_image_url,  # P111: 给后续 /preview 复用,免重传
         "description": f"AI 带货视频分析: {audit.get('category', '产品')}",
     }
 

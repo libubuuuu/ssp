@@ -120,6 +120,11 @@ export default function AdVideoPage() {
         const compressedBack = await compressImage(productBackFile);
         fd.append("back_file", compressedBack);
       }
+      // P111: 背景场景图(可选)同时上传 — VLM 写脚本时也要看,定 overall_setting / 话术情境
+      if (bgFile) {
+        const compressedBg = await compressImage(bgFile);
+        fd.append("background_file", compressedBg);
+      }
       // P100: region 透传(国内抖音 / 海外 TikTok)
       fd.append("region", region);
       const r = await fetch(`${API_BASE}/api/ad-video/analyze?total_duration=${duration}`, {
@@ -140,6 +145,10 @@ export default function AdVideoPage() {
       // P34: 反面图(若上传了)
       if (d.product_back_image_url) {
         setProductBackImageUrl(d.product_back_image_url);
+      }
+      // P111: 背景图 URL(若上传了)— /preview 阶段直接复用,免重传
+      if (d.background_image_url) {
+        setBgImageUrl(d.background_image_url);
       }
       setStep(2);
     } catch (e) {
