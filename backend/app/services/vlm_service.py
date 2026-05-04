@@ -293,6 +293,31 @@ visual_prompt **必须**显式指明产品穿戴/使用位置(英文),按产品�
 
 每段字段:shot_language(中文镜头语言) / content(中文场景内容) / visual_prompt(英文视频模型提示词,**必含穿戴位置**) / speech({"中文带货话术(国内抖音风)" if region == "CN" else "英文 TikTok 带货话术"})
 
+**P113 爆款镜头/动作公式(每段 visual_prompt + shot_language 必须组合 1-2 个公式,不要每段都"模特微笑站着"这种单调描述)**:
+
+- 钩子镜头(0-1s,通常用在第 1 段):
+  ⭐ 大特写 + 痛点表情:`extreme close-up of model's face/hands, shocked/concerned expression, eyebrows raised, mouth slightly open` + 中文 shot:"大特写,模特惊讶/痛苦表情,眉毛上挑"
+  ⭐ 反差对比 split-screen:`split-screen contrast: left side showing pain point (X without product), right side showing solution (X with product)` + "split 分屏对比,左痛点右解决"
+  ⭐ 数字/痛点字幕硬冲:`bold text overlay flashing big number or shocking claim, like '23%↓ INSTANT' or '5 mins to fix'` + "大字幕硬冲,加粗数字闪烁"
+  ⭐ 动作冲击:`model violently throws away old/competitor product, then shows new product` + "甩开旧物,亮出新品"
+
+- 卖点镜头(中段,通常第 2-N-1 段):
+  ⭐ Product macro 360°:`smooth camera orbit 360 around product, macro close-up showing material/texture/details` + "镜头环绕产品 360°,微距特写材质"
+  ⭐ 数字数据字幕悬浮:`floating text bubbles around model showing data points like '+2 inches slimmer', '0 chemicals', '5x stronger'` + "数据气泡悬浮,具体数字"
+  ⭐ 用前/用后对比:`split-frame before/after using the product, with arrow or 'AFTER' label` + "用前用后对比,带箭头或 AFTER 标签"
+  ⭐ 模特动作演示:`model dynamic movement (walking confidently, twirling, bending to show fit), one hand pointing at product key feature` + "模特动态走台/转身/弯腰展贴合度,手指点产品卖点"
+  ⭐ 用户证言镜头:`split-screen showing customer reviews / 5-star ratings / before-after photos popping in` + "客户评价/五星好评/对比图弹入"
+
+- CTA 镜头(末段,最后 1 段):
+  ⭐ 字幕硬上 + 倒计时:`big text overlay 'LIMITED 50 LEFT' or 'TODAY ONLY' with red/yellow color and pulse animation, plus countdown timer ticking` + "大字幕硬上,红黄色脉冲,带倒计时"
+  ⭐ 模特看镜头 + 字幕同步:`model staring directly into camera, finger pointing at viewer, urgent expression, with text overlay matching speech keywords` + "模特直视镜头,手指观众,紧迫表情,字幕同步关键词"
+  ⭐ 产品居中 + 加购按钮特写:`product centered on screen, animated 'ADD TO CART' or 'SHOP NOW' button pulsing below, price tag flashing` + "产品居中,加购按钮脉冲动画,价签闪烁"
+
+⚠️ 反面例子(不要写这种单调 visual_prompt):
+- ✗ "model wearing the waist trainer, smiling at camera, standing in studio"(只有静态站姿,没动作没构图,看一眼就划走)
+- ✗ "model showing the product to camera"(空话,什么是 showing?要写具体动作)
+✅ 正例:"extreme close-up of model's waist before/after wearing trainer, split-screen contrast, dynamic camera push-in, with bold '−2 inches' text flashing in red"
+
 **P110 抖音/TikTok 真爆款话术(从 db 实时抽样,每次不同样本,库可无限扩展)**:
 {viral_lang_label}
 
