@@ -54,6 +54,9 @@ export default function AdVideoPage() {
   const [bgPreview, setBgPreview] = useState("");
   // P32:用户自定义视频总时长(5-300s),analyze 时透传给 VLM 出 N 段脚本
   const [duration, setDuration] = useState(12);  // P40: v1.5/pro 单段上限
+  const [region, setRegion] = useState<"CN" | "Global">("CN");  // P100: 国内抖音 / 海外 TikTok
+  // P105: talking head 模型选择(默认 omnihuman 老版表情收敛)
+  const [talkingHead, setTalkingHead] = useState<string>("fal-ai/bytedance/omnihuman");
 
   // Step 2: 审核 + 脚本(从 /analyze 返回)
   const [audit, setAudit] = useState<Audit | null>(null);
@@ -117,6 +120,8 @@ export default function AdVideoPage() {
         const compressedBack = await compressImage(productBackFile);
         fd.append("back_file", compressedBack);
       }
+      // P100: region 透传(国内抖音 / 海外 TikTok)
+      fd.append("region", region);
       const r = await fetch(`${API_BASE}/api/ad-video/analyze?total_duration=${duration}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token()}` },
@@ -256,6 +261,7 @@ export default function AdVideoPage() {
           aspect_ratio: "9:16",
           resolution: "720p",
           enable_audio: true,
+          talking_head_endpoint: talkingHead,  // P105: 对口型模型选择
         }),
       });
       const d = await r.json();
@@ -444,6 +450,57 @@ export default function AdVideoPage() {
               </select>
               <div style={{ fontSize: "0.8rem", color: "#888", marginTop: 6 }}>
                 超过 15 秒会自动拆段并发生成,每段独立首帧 + 独立视频,最后拼接
+              </div>
+            </div>
+            {/* P100: 国内 / 海外 region 选择 */}
+            <div style={{ marginTop: 20 }}>
+              <label style={{ display: "block", fontSize: "0.9rem", color: "#444", marginBottom: 8, fontWeight: 500 }}>
+                目标市场
+              </label>
+              <select
+                value={region}
+                onChange={(e) => setRegion(e.target.value as "CN" | "Global")}
+                style={{
+                  width: "100%",
+                  padding: "0.7rem 0.9rem",
+                  border: "1px solid #ddd",
+                  borderRadius: 8,
+                  fontSize: "0.95rem",
+                  background: "#fff",
+                  cursor: "pointer",
+                }}
+              >
+                <option value="CN">🇨🇳 国内抖音(亚洲模特 + 中文带货话术 · 姐妹们/YYDS/链接挂车)</option>
+                <option value="Global">🌍 海外 TikTok(西方/多元模特 + 英文 TikTok 话术 · POV/snatched/link in bio)</option>
+              </select>
+              <div style={{ fontSize: "0.8rem", color: "#888", marginTop: 6 }}>
+                影响模特面孔 + 脚本话术风格 + 拍摄场景。选错模特/话术不匹配市场。
+              </div>
+            </div>
+            {/* P105: 对口型模型选择(talking head endpoint) */}
+            <div style={{ marginTop: 20 }}>
+              <label style={{ display: "block", fontSize: "0.9rem", color: "#444", marginBottom: 8, fontWeight: 500 }}>
+                对口型模型
+              </label>
+              <select
+                value={talkingHead}
+                onChange={(e) => setTalkingHead(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "0.7rem 0.9rem",
+                  border: "1px solid #ddd",
+                  borderRadius: 8,
+                  fontSize: "0.95rem",
+                  background: "#fff",
+                  cursor: "pointer",
+                }}
+              >
+                <option value="fal-ai/bytedance/omnihuman">字节 Omnihuman 老版(表情收敛 · 推荐)</option>
+                <option value="fal-ai/bytedance/omnihuman/v1.5">字节 Omnihuman v1.5(强表情 · 老笑+牙齿可能糟)</option>
+                <option value="fal-ai/hunyuan-avatar">腾讯 Hunyuan Avatar(实测 5s 段)</option>
+              </select>
+              <div style={{ fontSize: "0.8rem", color: "#888", marginTop: 6 }}>
+                决定嘴型 / 牙齿 / 表情自然度。直接 image+audio→对口型说话视频(取代 i2v+lipsync 老路)。
               </div>
             </div>
             <PrimaryButton onClick={callAnalyze} disabled={!productFile} marginTop>

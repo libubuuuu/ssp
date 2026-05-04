@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from app.services.fal_service import get_image_service, get_video_service, fal_upload_with_retry
 from app.services.billing import get_task_cost, check_user_credits, deduct_credits, add_credits, create_consumption_record
+from app.services.logger import log_info, log_warning  # P101: ad_video TTS+lipsync 日志
 from app.api.auth import get_current_user
 
 router = APIRouter()
@@ -168,34 +169,55 @@ async def _run_ad_video_job(params: dict):
         raise Exception(f"首帧合成失败: {base_result.get('error', '?')}")
     base_image_url = base_result["image_url"]
 
-    # ---------- 单段模式(<=12s,P40) — v1.5/pro duration 上限 12 ----------
+    # ---------- 单段模式(<=12s) ----------
+    # P104(2026-05-05):去掉 Seedance i2v + 后置 lipsync 两步浪费钱方案,
+    # 改用 omnihuman talking head 一步到位(image + audio → 模特对口型说音频内容)
+    # omnihuman 设计就是 talking,嘴型 + 表情比 i2v + 后置 lipsync 自然得多
+    # 流程:TTS speech → audio_url → omnihuman(first_frame + audio)→ talking video
     if duration <= 12 or len(scenes) <= 1:
-        single_script = {
-            "overall_setting": overall,
-            "model_description": model_desc,
-            "scenes": [first_scene] if first_scene else [],
-        }
-        sub = await ad_video_models.submit_seedance_video(
-            image_url=base_image_url,
-            script=single_script,
-            duration=min(12, max(4, duration)),  # P40: v1.5/pro 上限 12
-            aspect_ratio=aspect_ratio,
-            resolution=resolution,
-            enable_audio=params.get("enable_audio", True),
+        speech_text = (first_scene.get("speech") or "").strip() if first_scene else ""
+        if not speech_text:
+            raise Exception("scene speech 为空,无法生成 talking video")
+
+        import fal_client as _fc
+
+        # Step 1: TTS speech → audio
+        log_info(f"ad_video P104 TTS speech_len={len(speech_text)}")
+        tts_result = await _fc.run_async(
+            "fal-ai/elevenlabs/tts/multilingual-v2",
+            arguments={"text": speech_text[:500]},
         )
-        if sub.get("error"):
-            raise Exception(sub["error"])
-        task_id = sub.get("task_id")
-        if not task_id:
-            raise Exception("Seedance 未返回 task_id")
-        for _ in range(180):
+        audio_obj = tts_result.get("audio") if isinstance(tts_result.get("audio"), dict) else None
+        audio_url = audio_obj.get("url") if audio_obj else tts_result.get("audio_url")
+        if not audio_url:
+            raise Exception("TTS 未返 audio_url")
+
+        # Step 2: omnihuman(image + audio → talking video)
+        # 默认老版(memory:v1.5 标"强表情",老版表情更收敛);用户 params 可改
+        omnihuman_endpoint = params.get("talking_head_endpoint", "fal-ai/bytedance/omnihuman")
+        log_info(f"ad_video P104 omnihuman endpoint={omnihuman_endpoint}")
+        h = await _fc.submit_async(
+            omnihuman_endpoint,
+            arguments={
+                "image_url": base_image_url,
+                "audio_url": audio_url,
+            },
+        )
+        task_id = h.request_id
+        for _ in range(120):  # 20 min cap
             await asyncio.sleep(5)
-            st = await ad_video_models.poll_seedance_status(task_id)
-            if st.get("status") == "completed" and st.get("video_url"):
-                return {"video_url": st["video_url"], "type": "video"}
-            if st.get("status") == "failed":
-                raise Exception(st.get("error", "Seedance 失败"))
-        raise Exception("AI 带货视频生成超时(15 分钟)")
+            try:
+                s = await _fc.status_async(omnihuman_endpoint, task_id)
+            except Exception:
+                continue
+            if type(s).__name__ == "Completed":
+                res = await _fc.result_async(omnihuman_endpoint, task_id)
+                v = (res.get("video") or {}).get("url") if isinstance(res.get("video"), dict) else res.get("video_url")
+                if not v:
+                    raise Exception("omnihuman 未返 video_url")
+                log_info(f"ad_video P104 omnihuman OK url={v[:80]}")
+                return {"video_url": v, "type": "video"}
+        raise Exception("AI 带货视频生成超时(20 分钟)")
 
     # ---------- 多段模式(>15s):N 段独立首帧 + N 段 i2v 并发 + ffmpeg concat ----------
     seg_durs = split_segments(duration)

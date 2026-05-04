@@ -524,7 +524,20 @@ async def _run_tts_step(session_id: str) -> None:
             audio_path = session.get("extracted_audio_path")
             if not audio_path or not os.path.exists(audio_path):
                 raise RuntimeError("extracted_audio_path 缺失或不存在,无法 bypass")
-            audio_fal_url = await fal_upload_with_retry(audio_path)
+            # P88:fal storage v3 偶发 outage(502)时 fal_upload_with_retry 也救不了。
+            # 改成优先用本地 nginx URL(/uploads/ alias 已配),fal sync.so/lipsync 接受任意 https URL。
+            # extracted_audio_path 一般在 /opt/ssp/uploads/oral/<uid>/<sid>/<file>.mp3,直接生成公开 URL。
+            audio_fal_url = None
+            try:
+                if "/uploads/" in audio_path:
+                    rel = audio_path[audio_path.index("/uploads/") + len("/uploads/"):]
+                    base = os.environ.get("SSP_UPLOADS_PUBLIC_BASE", "https://ailixiao.com/uploads").rstrip("/")
+                    audio_fal_url = f"{base}/{rel}"
+                    _log(f"_run_tts_step BYPASS using local nginx URL: {audio_fal_url}")
+            except Exception as _local_err:
+                _log(f"_run_tts_step BYPASS local URL gen err: {_local_err}, fall back to fal upload")
+            if not audio_fal_url:
+                audio_fal_url = await fal_upload_with_retry(audio_path)
             log_warning(
                 "voice_clone_bypassed",
                 user=str(session.get("user_id", "")),
@@ -1042,10 +1055,14 @@ async def _run_inpainting_step(session_id: str) -> None:
             # 主路是 Best-of-2(阿里 wan + kling-3-pro 并发),InsightFace 评分选最高
             engine = "pixverse-swap"  # 闭包外层 prepare 占位,真路径在 _drive_one_best_of_2
             best_n_mode = True
-        # P66:catvton-pixverse → pixverse-swap 走 prepare_config + _drive_one 同 pixverse 路径
-        # cat-vton 已在 Step A 跑过(reference_image 已是 vton 图),Step B 直接复用 pixverse-swap
+        # P66 → P87 → P95(2026-05-04):catvton-pixverse 走 kling-o1-edit 端点
+        # P87 用 kling-v2v reference 在 5s 段命中(run3),但 19.6s 切段:
+        #   5s 4 段 random 跳跃严重(产品/白T 切换);10s 2 段 reference 主导丢 driving 背景 + 段 1 silent fail
+        # P95 切 kling-o1-edit(@Element 占位符 hard 注入产品/模特,memory P30 verify 产品锁死+动作复刻 OK 9s 段)
+        # 这是 SaaS 当前已知最稳路径
+        _is_p87_clean_v2v = (engine == "catvton-pixverse")
         if engine == "catvton-pixverse":
-            engine = "pixverse-swap"
+            engine = "kling-o1-edit"
         # 兼容老配置:seedance-i2v 别名归一
         if engine == "seedance-i2v":
             engine = "i2v"
@@ -1086,30 +1103,20 @@ async def _run_inpainting_step(session_id: str) -> None:
                 "eye spacing, nose shape, jawline, hair, or skin tone. "
             )
             NEG = " No face distortion, no unintended wardrobe changes."
-            if product_names:
-                prompt = (
-                    f"{ID_LOCK}"
-                    f"Keep the scene, background, lighting, camera framing, camera movement, body posture, "
-                    f"hand gestures, facial expressions and all decorative details from the reference video "
-                    f"completely unchanged. Replace the woman in the video with @Element1. Replace her "
-                    f"clothing/outfit with @Element2 ({', '.join(product_names)}); all text labels, logos "
-                    f"and printed graphics on the product remain absolutely fixed and unchanged. Adjust the "
-                    f"lighting and color tone of @Element1 and @Element2 to match the original background "
-                    f"for a natural, cohesive visual effect. The motion ends and settles back into the "
-                    f"starting position seamlessly."
-                    f"{NEG}"
-                )
-            else:
-                prompt = (
-                    f"{ID_LOCK}"
-                    "Keep the scene, background, lighting, camera framing, camera movement, body posture, "
-                    "hand gestures, facial expressions and all decorative details from the reference video "
-                    "completely unchanged. Replace the woman in the video with @Element1. Adjust the "
-                    "lighting and color tone of @Element1 to match the original background for a natural, "
-                    "cohesive visual effect. The motion ends and settles back into the starting position "
-                    "seamlessly."
-                    f"{NEG}"
-                )
+            # P95:不用 product_names 文件名(无 semantic),元素 @Element2 已 hard 注入产品图本身,
+            # prompt 用通用引用 @Element2 而非文件名 token,避免 P92 教训(文件名 → kling 不认识 → fall back)
+            prompt = (
+                f"{ID_LOCK}"
+                "Keep the scene, background, lighting, camera framing, camera movement, body posture, "
+                "hand gestures, facial expressions and all decorative details from the reference video "
+                "completely unchanged. Replace the woman in the video with @Element1. Replace her "
+                "clothing/outfit (especially the inner garment if visible) with @Element2 exactly as "
+                "shown in the reference image; all text labels, logos and printed graphics on the "
+                "product remain absolutely fixed and unchanged. Adjust the lighting and color tone of "
+                "@Element1 and @Element2 to match the original background for a natural, cohesive "
+                "visual effect. The motion ends and settles back into the starting position seamlessly."
+                f"{NEG}"
+            )
         elif engine == "seedance-2-r2v":
             # P41:fal-ai/bytedance/seedance-2.0/reference-to-video
             # 多素材统一 @Index 引用:image_urls(<=9)+ video_urls(<=3,2-15s)+ audio_urls
@@ -1321,8 +1328,23 @@ async def _run_inpainting_step(session_id: str) -> None:
                 SEG_LEN_S = 9.0
             else:  # kling-v2v
                 endpoint_default = "fal-ai/kling-video/o1/video-to-video/reference"
-                seg_timeout_loops = 360   # 60 min cap
-                SEG_LEN_S = 9.0
+                # P87:实测 ~100-150s/5s 段,5min cap 充足
+                # P93→P94(2026-05-04):5s 段拆 4 段 random 跳跃严重(产品/白T 来回切),
+                # 改 10.0s 拆段(memory P15 写 kling/reference ≤10.05s,设 10 留 0.05 余量)
+                # 19.6s → ceil(19.6/10)=2 段(10+9.6),段间跳跃从 3 处减到 1 处
+                seg_timeout_loops = 30 if _is_p87_clean_v2v else 360
+                SEG_LEN_S = 10.0 if _is_p87_clean_v2v else 9.0
+                # P92(2026-05-04):用 run3 verified 过的具体款式 prompt(命中 V-neck triangle)
+                # 写死 "plain black wireless V-neck soft-cup bra" 对当前产品(黑色 V-neck soft cup)100% 命中。
+                # 其他产品款式需要 enhancement:用户在前端填款式描述 / qwen-vl 看产品图生成。
+                # P91 改成通用 reference 引用 prompt 是脑补未 verify,违反 "verify 而后说" 原则,撤回。
+                if _is_p87_clean_v2v:
+                    prompt = (
+                        "The woman in the reference image wears a white tank top. With both hands, "
+                        "she firmly grasps the bottom edge of the white tank top and pulls it upward, "
+                        "revealing her plain black wireless V-neck soft-cup bra. "
+                        "Living room background, natural lighting, single take, photorealistic 9:16 portrait."
+                    )
 
         duration = float(session.get("duration_seconds") or 0)
         if duration <= 0:
@@ -1351,6 +1373,11 @@ async def _run_inpainting_step(session_id: str) -> None:
                            "-i", session["original_video_path"]]
                     if i < n_segments - 1:
                         cmd += ["-t", f"{SEG_LEN_S:.3f}"]
+                    # P87:catvton-pixverse 升级路径加 delogo 去 driving 中段 OCR 文字
+                    # (防 OCR "Underwire/Balconette" 误导 kling reference,产品款式偏 balconette)
+                    # 默认 box 720x1280 中段水印区;P88 待加用户在前端框选 OCR 区域
+                    if _is_p87_clean_v2v:
+                        cmd += ["-vf", "delogo=x=80:y=460:w=560:h=140"]
                     cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", "20", "-an", str(seg_path)]
                     ok, ferr = _run_ffmpeg(cmd)
                     if not ok or not seg_path.exists():
@@ -3127,6 +3154,11 @@ async def generate_video_prompt(
     if not session.get("original_video_path"):
         raise HTTPException(400, "driving 视频未上传")
 
+    # P86:catvton-pixverse 不需要 qwen-vl 分镜 prompt(走 VTON,看产品图本身),短路省 ¥0.11 + 2min 等待
+    engine = (session.get("step_b_engine") or "").lower()
+    if engine == "catvton-pixverse":
+        return {"auto_prompt": "(catvton-pixverse 引擎不使用分镜 prompt,直接编辑文案后提交即可)"}
+
     # P75:force=False 时已有缓存直接返回
     if not req.force and session.get("auto_video_prompt"):
         return {"auto_prompt": session["auto_video_prompt"]}
@@ -3179,6 +3211,7 @@ class GenerateSegmentRequest(BaseModel):
 async def _run_segment_task(session_id: str, seg_idx: int, user_id: str):
     """P82:VACE Fun 单段后台 task。立即返回避免 nginx 5min 超时。"""
     from app.services.media_archiver import archive_url  # P82-fix:模块级 task 缺 import
+    import tempfile  # P85-fix:InsightFace 换脸用 tempfile.mkdtemp
     try:
         session = _get_session(session_id)
         if not session:

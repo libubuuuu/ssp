@@ -16,7 +16,7 @@ AI 带货视频 API
 - VLM 走 fal OpenRouter Vision(零新 API key,复用 FAL_KEY)
 """
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 from pydantic import BaseModel, Field
 from app.api.auth import get_current_user
 from app.services.decorators import require_credits
@@ -74,6 +74,7 @@ class GenerateRequest(BaseModel):
     aspect_ratio: str = Field("9:16", description="9:16 / 16:9 / 1:1")
     resolution: str = Field("1080p", description="720p / 1080p")
     enable_audio: bool = Field(True, description="是否启用原生音频(>15 多段模式自动关,各段独立配音会跳)")
+    talking_head_endpoint: Optional[str] = Field(None, description="P105: 对口型模型选择(默认 fal-ai/bytedance/omnihuman 老版表情收敛)")
 
 
 class SceneRegenerateRequest(BaseModel):
@@ -91,6 +92,7 @@ async def analyze_product(
     file: UploadFile = File(...),
     back_file: Optional[UploadFile] = File(None),  # P34: 产品反面图(可选)
     total_duration: int = 15,
+    region: str = Form("CN"),  # P99: CN(国内抖音/亚洲模特/中文话术)/ Global(海外 TikTok/西方模特/英文话术)
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -185,8 +187,10 @@ async def analyze_product(
         raise HTTPException(status_code=503, detail="VLM 视觉服务未初始化")
 
     # P31:total_duration 透传,VLM 按段长动态出 N 段 scenes
+    # P99:region 透传(CN=国内/Global=海外),VLM 按 region 出对应模特+话术
     safe_duration = max(5, min(300, int(total_duration)))
-    result = await service.analyze_product(product_image_url, total_duration=safe_duration)
+    safe_region = "Global" if region.lower() in ("global", "en", "international", "海外") else "CN"
+    result = await service.analyze_product(product_image_url, total_duration=safe_duration, region=safe_region)
 
     if "error" in result:
         # 服务故障 → 返还积分(装饰器会处理)
@@ -442,6 +446,7 @@ async def generate_ad_video(
             "aspect_ratio": req.aspect_ratio,
             "resolution": "720p",  # P32:reference-to-video 也强 720p
             "enable_audio": req.enable_audio,
+            "talking_head_endpoint": req.talking_head_endpoint or "fal-ai/bytedance/omnihuman",  # P105
         },
         "module": module,
         "cost": cost,

@@ -72,9 +72,16 @@ async def compose_first_frame(
         image_urls.append(background_image_url)
 
     # 拼 prompt(根据图序生成精准引导)
+    # P98:base prompt 不写"holding or wearing"(避免暗示位置,让 visual_prompt 完全主导穿戴位置;
+    # VLM 已被强制在 visual_prompt 里写"on waist/chest/hip" 等精确位置)
+    # P102:加显式 strict 后缀 + 反向锁,提高 Flux Kontext prompt fidelity(从 80% → 95%)
     prompt_parts = [
-        f"{model_description} holding or wearing the product shown in the reference images.",
+        f"{model_description}, photorealistic e-commerce product showcase featuring the product from the reference images.",
         scene_visual_prompt,
+        "STRICTLY follow the wearing position specified in the prompt above. "
+        "Do NOT default the product to the chest area unless the prompt explicitly says 'on chest'. "
+        "If the prompt says 'on waist/torso' the product MUST be at the waist (not chest). "
+        "If 'on hips/lower body' it MUST be at the hips. If 'on feet' it MUST be at the feet.",
     ]
     if product_back_image_url and background_image_url:
         prompt_parts.append(

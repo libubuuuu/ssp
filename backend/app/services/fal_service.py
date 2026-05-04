@@ -1233,15 +1233,16 @@ def get_vace_fun_service() -> "FalVaceFunInpaintingService":
 
 # ============== fal storage upload retry helper (P33 2026-05-01) ==============
 
-async def fal_upload_with_retry(local_path: str, max_retries: int = 3) -> str:
+async def fal_upload_with_retry(local_path: str, max_retries: int = 10) -> str:
     """
-    fal storage upload 带 transient retry。
+    fal storage upload 带 transient retry + P89 本地 fallback。
 
-    实测 fal 自家 nginx 偶发 5xx(2026-05-01 video.py:416 踩到一次)。
-    本封装在 5xx / network timeout / connection reset 时退避重试 1s/2s/4s,
-    其他错误立刻抛(避免吞用户输入级错误)。
+    P90(2026-05-04 fal storage v3 30min outage 后):max_retries 3 → 10,退避 1s/2s/4s/8s/16s/32s/60s/60s/60s/60s
+    总抗压时间 ~5-10 分钟,扛住短时 fal outage 用户不感知。
+    最后一次仍失败 → P89 本地 fallback。
 
-    所有 fal_client.upload_file_async 调用点应改用此 helper。
+    P89(2026-05-04):fal storage v3 长时间 outage retry 救不了 → fallback 本地 nginx URL。
+    cat-vton / kling / VACE 等 fal 端点接受任意 https URL,本地 ailixiao.com URL 一样能用。
     """
     last_err: Optional[Exception] = None
     for attempt in range(max_retries):
@@ -1261,13 +1262,48 @@ async def fal_upload_with_retry(local_path: str, max_retries: int = 3) -> str:
                 "temporarily" in err_low
             )
             if not is_transient or attempt == max_retries - 1:
+                # P89 最后一次 retry 仍失败:transient 错误时 fallback 本地 nginx URL
+                if is_transient:
+                    try:
+                        local_url = _fallback_local_upload(local_path)
+                        log_warning(
+                            f"fal_upload exhausted retries, P89 fallback to local nginx URL: {local_url}"
+                        )
+                        return local_url
+                    except Exception as fb_err:
+                        log_warning(f"P89 fallback local upload also failed: {fb_err}")
                 raise
             last_err = e
             log_warning(
                 f"fal_upload retry {attempt + 1}/{max_retries} "
                 f"path={local_path[-60:]} err={err_str[:120]}"
             )
-            await asyncio.sleep(1.0 * (2 ** attempt))
+            # P90:退避 1s/2s/4s/8s/16s/32s/60s/60s/60s,总 ~5-10min 抗 outage
+            backoff = min(60.0, 1.0 * (2 ** attempt))
+            await asyncio.sleep(backoff)
     if last_err:
         raise last_err
     raise RuntimeError("fal_upload_with_retry: unreachable")
+
+
+def _fallback_local_upload(local_path: str) -> str:
+    """
+    P89:fal storage outage 时本地 nginx fallback。
+    把文件拷到 /opt/ssp/uploads/fal_fallback/<yyyy-mm>/<uuid>.<ext> 返回 https URL。
+    """
+    import shutil
+    import uuid as _uuid
+    from datetime import datetime
+    from pathlib import Path
+    src = Path(local_path)
+    if not src.is_file():
+        raise FileNotFoundError(f"local_path 不存在: {local_path}")
+    yyyymm = datetime.utcnow().strftime("%Y-%m")
+    target_dir = Path("/opt/ssp/uploads/fal_fallback") / yyyymm
+    target_dir.mkdir(parents=True, exist_ok=True)
+    ext = src.suffix.lower() or ".bin"
+    target = target_dir / f"{_uuid.uuid4().hex}{ext}"
+    shutil.copy2(src, target)
+    os.chmod(target, 0o644)
+    base = os.environ.get("SSP_UPLOADS_PUBLIC_BASE", "https://ailixiao.com/uploads").rstrip("/")
+    return f"{base}/fal_fallback/{yyyymm}/{target.name}"
