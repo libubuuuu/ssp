@@ -56,9 +56,9 @@ export default function AdVideoPage() {
   const [duration, setDuration] = useState(12);  // P40: v1.5/pro 单段上限
   const [region, setRegion] = useState<"CN" | "Global">("CN");  // P100: 国内抖音 / 海外 TikTok
   // P105: talking head 模型选择(默认 omnihuman 老版表情收敛)
-  // P114(2026-05-05):默认改 Kling Avatar v2 Standard($0.056/秒,比 omnihuman $0.14/秒 省 60%)
-  // schema 完全兼容(image_url+audio_url),且 Kling 多支持 optional prompt 引导动作
-  const [talkingHead, setTalkingHead] = useState<string>("fal-ai/kling-video/ai-avatar/v2/standard");
+  // P114-r1(2026-05-05):Kling Avatar v2 实测对"产品+模特"合成首帧拒输入(要求纯人脸主体),
+  // 默认回 omnihuman 兜底。Kling 选项保留供"用户上传纯人脸场景"省钱用。
+  const [talkingHead, setTalkingHead] = useState<string>("fal-ai/bytedance/omnihuman");
 
   // Step 2: 审核 + 脚本(从 /analyze 返回)
   const [audit, setAudit] = useState<Audit | null>(null);
@@ -506,10 +506,10 @@ export default function AdVideoPage() {
                   cursor: "pointer",
                 }}
               >
-                <option value="fal-ai/kling-video/ai-avatar/v2/standard">快手 Kling Avatar v2 标准版(¥0.4/秒 · 省 60% · 推荐)</option>
-                <option value="fal-ai/kling-video/ai-avatar/v2/pro">快手 Kling Avatar v2 Pro(¥0.8/秒 · 高质量)</option>
-                <option value="fal-ai/bytedance/omnihuman">字节 Omnihuman 老版(¥1/秒 · 表情收敛)</option>
+                <option value="fal-ai/bytedance/omnihuman">字节 Omnihuman 老版(¥1/秒 · 兼容产品+模特图 · 推荐)</option>
                 <option value="fal-ai/bytedance/omnihuman/v1.5">字节 Omnihuman v1.5(¥1.1/秒 · 强表情但牙齿易糟)</option>
+                <option value="fal-ai/kling-video/ai-avatar/v2/standard">快手 Kling Avatar v2 标准版(¥0.4/秒 · 省 60% · 仅纯人脸图可用)</option>
+                <option value="fal-ai/kling-video/ai-avatar/v2/pro">快手 Kling Avatar v2 Pro(¥0.8/秒 · 仅纯人脸图可用)</option>
                 <option value="fal-ai/hunyuan-avatar">腾讯 Hunyuan Avatar(实测 5s 段)</option>
               </select>
               <div style={{ fontSize: "0.8rem", color: "#888", marginTop: 6 }}>

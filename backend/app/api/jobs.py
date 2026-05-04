@@ -207,10 +207,12 @@ async def _run_ad_video_job(params: dict):
             raise Exception("TTS 未返 audio_url")
 
         # Step 2: talking head(image + audio → 对口型视频)
-        # P114(2026-05-05):默认改 Kling Avatar v2 Standard($0.056/秒,省 60%),
-        # schema 完全兼容(image_url+audio_url)。用户前端可改回 omnihuman/Pro 等。
-        # Kling 多支持 optional prompt 引导动作 — 把 visual_prompt 透传过去更精细
-        omnihuman_endpoint = params.get("talking_head_endpoint", "fal-ai/kling-video/ai-avatar/v2/standard")
+        # P114-r1(2026-05-05):本想默认 Kling 省 60%,但 Kling Avatar v2 实测要求
+        # "图里必须有清晰可见的人脸/主体",而我们 Seedream 合的"产品+模特+背景"
+        # 首帧产品占主导,Kling 直接拒"No recognizable elements"。omnihuman 能容忍
+        # 小人脸场景。所以默认改回 omnihuman,Kling 仅作前端可选(用户上传纯人脸
+        # 场景才用)。memory feedback_ssp_fal_probe_first 教训:schema 兼容 ≠ 行为兼容。
+        omnihuman_endpoint = params.get("talking_head_endpoint", "fal-ai/bytedance/omnihuman")
         log_info(f"ad_video P104 talking_head endpoint={omnihuman_endpoint}")
         _args = {
             "image_url": base_image_url,
