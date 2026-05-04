@@ -207,26 +207,75 @@ async def _run_ad_video_job(params: dict):
             raise Exception("TTS 未返 audio_url")
 
         # Step 2: talking head(image + audio → 对口型视频)
-        # P114-r1(2026-05-05):本想默认 Kling 省 60%,但 Kling Avatar v2 实测要求
-        # "图里必须有清晰可见的人脸/主体",而我们 Seedream 合的"产品+模特+背景"
-        # 首帧产品占主导,Kling 直接拒"No recognizable elements"。omnihuman 能容忍
-        # 小人脸场景。所以默认改回 omnihuman,Kling 仅作前端可选(用户上传纯人脸
-        # 场景才用)。memory feedback_ssp_fal_probe_first 教训:schema 兼容 ≠ 行为兼容。
+        # P115(2026-05-05):Kling Avatar v2 拒"产品+模特"合成首帧(要求纯人脸主体),
+        # 加 Kling 专用通道:先调 Flux Kontext reframe 重构成"模特肖像式"再喂 Kling。
+        # probe verify 走通(probe_kling_channel.py),Kling 通道总成本约 omnihuman 51%。
+        # 失败自动 fallback omnihuman 兜底。
         omnihuman_endpoint = params.get("talking_head_endpoint", "fal-ai/bytedance/omnihuman")
         log_info(f"ad_video P104 talking_head endpoint={omnihuman_endpoint}")
+
+        # P115 Kling 通道:Kontext reframe → 喂 Kling
+        kling_image_url = base_image_url
+        if "kling" in omnihuman_endpoint:
+            try:
+                log_info("ad_video P115 Kling 通道:Flux Kontext reframe → portrait")
+                _kontext = await _fc.run_async(
+                    "fal-ai/flux-pro/kontext/max/multi",
+                    arguments={
+                        "prompt": (
+                            "Reframe and recompose this image into a clean upper-body portrait of the model. "
+                            "Model facing camera directly with a clear, well-lit face occupying the upper-center "
+                            "of the frame. Soft studio background, neutral color. The product can stay visible "
+                            "but smaller in scale - worn naturally on the body or held lightly in hands - "
+                            "do not let the product dominate the composition. Photorealistic, high quality, "
+                            "TikTok creator headshot style."
+                        ),
+                        "image_urls": [base_image_url],
+                        "guidance_scale": 3.5,
+                        "num_images": 1,
+                        "output_format": "jpeg",
+                        "safety_tolerance": "5",
+                    },
+                )
+                _imgs = _kontext.get("images") or []
+                if _imgs and _imgs[0].get("url"):
+                    kling_image_url = _imgs[0]["url"]
+                    log_info(f"ad_video P115 Kontext reframe OK url={kling_image_url[:80]}")
+                else:
+                    log_warning("ad_video P115 Kontext 无 image,fallback omnihuman")
+                    omnihuman_endpoint = "fal-ai/bytedance/omnihuman"
+            except Exception as e:
+                log_warning(f"ad_video P115 Kontext 失败,fallback omnihuman: {str(e)[:200]}")
+                omnihuman_endpoint = "fal-ai/bytedance/omnihuman"
+                kling_image_url = base_image_url
+
         _args = {
-            "image_url": base_image_url,
+            "image_url": kling_image_url,
             "audio_url": audio_url,
         }
-        # Kling Avatar 支持 prompt 字段引导动作 — 拼 visual_prompt 增强 P113 镜头公式落地
+        # Kling Avatar 支持 optional prompt 字段引导动作 — 拼 visual_prompt 增强 P113 镜头公式
         if "kling" in omnihuman_endpoint and first_scene:
             _vp = (first_scene.get("visual_prompt") or "").strip()
             if _vp:
                 _args["prompt"] = _vp[:500]
-        h = await _fc.submit_async(
-            omnihuman_endpoint,
-            arguments=_args,
-        )
+        try:
+            h = await _fc.submit_async(
+                omnihuman_endpoint,
+                arguments=_args,
+            )
+        except Exception as e:
+            # P115 fallback:Kling 拒输入(如 reframe 仍不够纯人脸),自动 fallback omnihuman
+            if "kling" in omnihuman_endpoint:
+                log_warning(f"ad_video P115 Kling 拒输入,fallback omnihuman: {str(e)[:200]}")
+                omnihuman_endpoint = "fal-ai/bytedance/omnihuman"
+                _args.pop("prompt", None)
+                _args["image_url"] = base_image_url  # 用回原首帧
+                h = await _fc.submit_async(
+                    omnihuman_endpoint,
+                    arguments=_args,
+                )
+            else:
+                raise
         task_id = h.request_id
         for _ in range(120):  # 20 min cap
             await asyncio.sleep(5)
