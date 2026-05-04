@@ -1,0 +1,122 @@
+{
+  "results": [
+    {
+      "endpoint": "fal-ai/evf-sam-2",
+      "args_keys": [
+        "video_url",
+        "prompt"
+      ],
+      "ok": false,
+      "error": "Application \"evf-sam-2\" not found",
+      "reason": "endpoint_not_found"
+    },
+    {
+      "endpoint": "fal-ai/evf-sam2",
+      "args_keys": [
+        "video_url",
+        "prompt"
+      ],
+      "ok": false,
+      "error": "Application \"evf-sam2\" not found",
+      "reason": "endpoint_not_found"
+    },
+    {
+      "endpoint": "fal-ai/grounded-sam-2",
+      "args_keys": [
+        "video_url",
+        "prompt"
+      ],
+      "ok": false,
+      "error": "Application \"grounded-sam-2\" not found",
+      "reason": "endpoint_not_found"
+    },
+    {
+      "endpoint": "fal-ai/grounded-sam",
+      "args_keys": [
+        "video_url",
+        "prompt"
+      ],
+      "ok": false,
+      "error": "Application \"grounded-sam\" not found",
+      "reason": "endpoint_not_found"
+    },
+    {
+      "endpoint": "fal-ai/sam-2/text",
+      "args_keys": [
+        "video_url",
+        "prompt"
+      ],
+      "ok": false,
+      "error": "Application \"sam-2\" not found",
+      "reason": "endpoint_not_found"
+    },
+    {
+      "endpoint": "fal-ai/sam2/auto",
+      "args_keys": [
+        "video_url"
+      ],
+      "ok": false,
+      "request_id": "019df1bd-66dd-7761-8bd7-55b77296b39a",
+      "error": "Path /auto not found",
+      "reason": "endpoint_not_found"
+    },
+    {
+      "endpoint": "fal-ai/lang-sam",
+      "args_keys": [
+        "video_url",
+        "prompt"
+      ],
+      "ok": false,
+      "error": "Application \"lang-sam\" not found",
+      "reason": "endpoint_not_found"
+    },
+    {
+      "endpoint": "fal-ai/birefnet/v2",
+      "args_keys": [
+        "video_url"
+      ],
+      "ok": false,
+      "request_id": "019df1bd-8050-7710-81ef-6b2a5a04c343",
+      "error": "[{'type': 'missing', 'loc': ['body', 'image_url'], 'msg': 'Field required', 'input': {'video_url': 'https://v3b.fal.media/files/b/0a98c690/TvvnB_ZkVX5vHEz7bD8FS_seg_00.mp4'}}]",
+      "reason": "schema_mismatch"
+    },
+    {
+      "endpoint": "fal-ai/segment-anything-2",
+      "args_keys": [
+        "video_url",
+        "prompt"
+      ],
+      "ok": false,
+      "error": "Application \"segment-anything-2\" not found",
+      "reason": "endpoint_not_found"
+    },
+    {
+      "endpoint": "fal-ai/segment-anything-2-video",
+      "args_keys": [
+        "video_url",
+        "prompt"
+      ],
+      "ok": false,
+      "error": "Application \"segment-anything-2-video\" not found",
+      "reason": "endpoint_not_found"
+    },
+    {
+      "endpoint": "fal-ai/yolov11-segmentation",
+      "args_keys": [
+        "video_url"
+      ],
+      "ok": false,
+      "error": "Application \"yolov11-segmentation\" not found",
+      "reason": "endpoint_not_found"
+    },
+    {
+      "endpoint": "fal-ai/cascadepsp",
+      "args_keys": [
+        "video_url"
+      ],
+      "ok": false,
+      "error": "Application \"cascadepsp\" not found",
+      "reason": "endpoint_not_found"
+    }
+  ]
+}

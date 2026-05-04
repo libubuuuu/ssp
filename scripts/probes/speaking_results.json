@@ -1,0 +1,44 @@
+{
+  "image": "https://v3b.fal.media/files/b/0a9880fd/gsr4oDYkANkwwh-bFOMl6_id1Gn9cs.png",
+  "audio": "https://v3b.fal.media/files/b/0a98a5a3/LGhjiDE9Eku4TuNGcV5oz_audio.mp3",
+  "results": [
+    {
+      "engine": "OmniHuman v1.5",
+      "endpoint": "fal-ai/bytedance/omnihuman/v1.5",
+      "filename": "01_omnihuman.mp4",
+      "elapsed_s": 498.4,
+      "ok": true,
+      "fal_url": "https://fal.media/files/monkey/XqNLAvjQArJhv28gGHgrA_video.mp4",
+      "video_dur_s": 19.7,
+      "size_mb": 17.6
+    },
+    {
+      "engine": "Hunyuan Avatar",
+      "endpoint": "fal-ai/hunyuan-avatar",
+      "filename": "02_hunyuan_avatar.mp4",
+      "elapsed_s": 1147.6,
+      "ok": false,
+      "reason": "other_error",
+      "error": "[{'type': 'missing', 'loc': ['body', 'image_url'], 'msg': 'Field required', 'input': {'character_image_url': 'https://v3b.fal.media/files/b/0a9880fd/gsr4oDYkANkwwh-bFOMl6_id1Gn9cs.png', 'audio_url': 'https://v3b.fal.media/files/b/0a98a5a3/LGhjiDE9Eku4TuNGcV5oz_audio.mp3'}}]"
+    },
+    {
+      "engine": "Creatify Aurora",
+      "endpoint": "fal-ai/creatify/aurora",
+      "filename": "03_creatify_aurora.mp4",
+      "elapsed_s": 603.1,
+      "ok": true,
+      "fal_url": "https://v3b.fal.media/files/b/0a98a5df/HVNhz33BQRHIvPwxjRB4Z_RETSuSXi.mp4",
+      "video_dur_s": 19.6,
+      "size_mb": 4.77
+    },
+    {
+      "engine": "Pixverse Lipsync",
+      "endpoint": "fal-ai/pixverse/lipsync",
+      "filename": "04_pixverse.mp4",
+      "elapsed_s": 1.1,
+      "ok": false,
+      "reason": "other_error",
+      "error": "[{'type': 'missing', 'loc': ['body', 'video_url'], 'msg': 'Field required', 'input': {'character_image_url': 'https://v3b.fal.media/files/b/0a9880fd/gsr4oDYkANkwwh-bFOMl6_id1Gn9cs.png', 'audio_url': 'https://v3b.fal.media/files/b/0a98a5a3/LGhjiDE9Eku4TuNGcV5oz_audio.mp3'}}]"
+    }
+  ]
+}

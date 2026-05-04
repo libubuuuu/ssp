@@ -1,0 +1,32 @@
+{
+  "driving_url": "https://v3b.fal.media/files/b/0a98aee9/FADIvK--d7hR-nv2ogcIr_driving_8s.mp4",
+  "ref_url": "https://v3b.fal.media/files/b/0a98aee9/TSfPqBlIwUoey6rbVPUuL_ref_frame.jpg",
+  "results": [
+    {
+      "engine": "seedance-enterprise-r2v",
+      "endpoint": "fal-ai/seedance-2/enterprise/reference-to-video",
+      "ok": false,
+      "reason": "exception",
+      "error": "[{'loc': ['body', 'image'], 'msg': 'The content could not be processed because it contained material flagged by a content checker.', 'type': 'content_policy_violation', 'url': 'https://docs.fal.ai/errors#content_policy_violation', 'ctx': {'extra_info': {'reason': 'partner_validation_failed'}}, 'input': {'prompt': '@Image1 performing the same actions and movements as in @Video1. Preserve the original background and camera angle from @Video1 exactly.', 'image_urls': ['https://v3b.fal.media/files/b/0a98aee9/TSfPqBlIwUoey6rbVPUuL_ref_frame.jpg'], 'video_urls': ['https://v3b.fal.media/files/b/0a98aee9/FADIvK--d7hR-nv2ogcIr_driving_8s.mp4'], 'audio_urls': [], 'resolution': '720p', 'duration': 'auto', 'generate_audio': False, 'aspect_ratio': 'auto', 'seed': None, 'end_user_id': None}}]"
+    },
+    {
+      "engine": "pixverse-swap",
+      "endpoint": "fal-ai/pixverse/swap",
+      "elapsed_s": 111.8,
+      "ok": true,
+      "raw_keys": [
+        "video"
+      ],
+      "fal_url": "https://v3b.fal.media/files/b/0a98aef6/Tk1EXTVFMJDe9Ab2Cr6fs_output.mp4",
+      "local": "/opt/ssp/uploads/probe-results/sd-enterprise-pixverse/pixverse-swap.mp4",
+      "size_mb": 2.28
+    },
+    {
+      "engine": "seedance-fast-r2v",
+      "endpoint": "fal-ai/bytedance/seedance-2.0/fast/reference-to-video",
+      "ok": false,
+      "reason": "exception",
+      "error": "Path /seedance-2.0/fast/reference-to-video not found"
+    }
+  ]
+}

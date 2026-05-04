@@ -1,0 +1,43 @@
+{
+  "fixture": "/opt/ssp/uploads/64402546-9ead-4263-b881-a26d8ba6d5b6/2026-04/image_0ace9f1a22a44a7e86e9388e3fdb2333.png",
+  "fixture_uploaded_url": "https://v3b.fal.media/files/b/0a988090/15DPaBh3cay4kx85LsoP0_image_0ace9f1a22a44a7e86e9388e3fdb2333.png",
+  "prompt": "An Asian woman in her 30s holding the product shown in the reference image, photorealistic UGC selfie style, vertical 9:16 composition, natural lighting, preserve the exact product details from reference.",
+  "results": [
+    {
+      "engine": "Flux Kontext multi (P39 current)",
+      "endpoint": "fal-ai/flux-pro/kontext/max/multi",
+      "elapsed_s": 13.0,
+      "url": "https://v3b.fal.media/files/b/0a988092/Cs1mGt0IUy2yhc-XvvSTh_e2379495562e4757bd1e70529b29b6e9.png",
+      "ok": true,
+      "raw_keys": [
+        "images",
+        "timings",
+        "seed",
+        "has_nsfw_concepts",
+        "prompt"
+      ]
+    },
+    {
+      "engine": "Nano Banana edit",
+      "endpoint": "fal-ai/nano-banana-2/edit",
+      "elapsed_s": 26.2,
+      "url": "https://v3b.fal.media/files/b/0a988092/YuxPqNb8m1o5UpLHJb7q7_rNDnv9YZ.png",
+      "ok": true,
+      "raw_keys": [
+        "images",
+        "description"
+      ]
+    },
+    {
+      "engine": "Seedream v4 edit",
+      "endpoint": "fal-ai/bytedance/seedream/v4/edit",
+      "elapsed_s": 13.1,
+      "url": "https://v3b.fal.media/files/b/0a988095/TdIDRv6hkC_2RPkD1olrL_d306b6b7e4d54940b07b7571d0ee453f.png",
+      "ok": true,
+      "raw_keys": [
+        "images",
+        "seed"
+      ]
+    }
+  ]
+}

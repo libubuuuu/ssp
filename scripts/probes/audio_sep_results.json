@@ -1,0 +1,147 @@
+{
+  "input_url": "https://v3b.fal.media/files/b/0a98aea4/m-wnO-nzguIuII0Z9oDH3_probe_audio_15s.wav",
+  "input_local": "/tmp/probe_audio_15s.wav",
+  "results": [
+    {
+      "engine": "PlayHT audio-isolator",
+      "endpoint": "fal-ai/playht/audio-isolator",
+      "ok": false,
+      "reason": "timeout_180s"
+    },
+    {
+      "engine": "ElevenLabs audio-isolation",
+      "endpoint": "fal-ai/elevenlabs/audio-isolation",
+      "elapsed_s": 4.5,
+      "ok": true,
+      "raw_keys": [
+        "audio",
+        "timestamps"
+      ],
+      "raw_sample": "{\"audio\": {\"url\": \"https://v3b.fal.media/files/b/0a98aeb0/Pj-DE-h1U6fNHUrUsr6bK_isolated.mp3\", \"content_type\": \"audio/mpeg\", \"file_name\": \"isolated.mp3\", \"file_size\": 597726}, \"timestamps\": null}",
+      "downloads": [
+        {
+          "key": "audio",
+          "url": "https://v3b.fal.media/files/b/0a98aeb0/Pj-DE-h1U6fNHUrUsr6bK_isolated.mp3",
+          "local": "/opt/ssp/uploads/probe-results/audio-sep/ElevenLabs_audio-isolation__audio.mpeg"
+        }
+      ]
+    },
+    {
+      "engine": "demucs",
+      "endpoint": "fal-ai/demucs",
+      "elapsed_s": 19.6,
+      "ok": true,
+      "raw_keys": [
+        "vocals",
+        "drums",
+        "bass",
+        "other",
+        "guitar",
+        "piano"
+      ],
+      "raw_sample": "{\"vocals\": {\"url\": \"https://v3b.fal.media/files/b/0a98aeb2/MD_MqvTpOp0XAqKSETO_u_vocals.mp3\", \"content_type\": \"audio/mpeg\", \"file_name\": \"vocals.mp3\", \"file_size\": 599815}, \"drums\": {\"url\": \"https://v3b.fal.media/files/b/0a98aeb2/DJMuLr8wOE9y5z6DPuiR1_drums.mp3\", \"content_type\": \"audio/mpeg\", \"file_name\": \"drums.mp3\", \"file_size\": 599815}, \"bass\": {\"url\": \"https://v3b.fal.media/files/b/0a98aeb2/xrOx7v-kHcXOTD0aXkDdw_bass.mp3\", \"content_type\": \"audio/mpeg\", \"file_name\": \"bass.mp3\", \"file_size\": 599815}, \"other\": {\"url\": \"https://v3b.fal.media/files/b/0a98aeb2/cU4Noh7r_SbuTg21zzBkF_other.mp3\", \"content_type\": \"audio/mpeg\", \"file_name\": \"other.mp3\", \"file_size\": 599815}, \"guitar\": {\"url\": \"https://v3b.fal.media/files/b/0a98aeb2/NYVx4yxx9wgY1o6rzHiFB_guitar.mp3\", \"content_type\": \"audio/mpeg\", \"file_name\": \"guitar.mp3\", \"file_size\": 599815}, \"piano\": {\"url\": \"https://v3b.fal.media/files/b/0a98aeb2/tq0e0L1YB6ifz9ay6kiaS_piano.mp3\", \"content_type\": \"audio/mpeg\", \"file_name\": \"piano.mp3\", \"file_size\": 599815}}",
+      "downloads": [
+        {
+          "key": "vocals",
+          "url": "https://v3b.fal.media/files/b/0a98aeb2/MD_MqvTpOp0XAqKSETO_u_vocals.mp3",
+          "local": "/opt/ssp/uploads/probe-results/audio-sep/demucs__vocals.mpeg"
+        },
+        {
+          "key": "drums",
+          "url": "https://v3b.fal.media/files/b/0a98aeb2/DJMuLr8wOE9y5z6DPuiR1_drums.mp3",
+          "local": "/opt/ssp/uploads/probe-results/audio-sep/demucs__drums.mpeg"
+        },
+        {
+          "key": "bass",
+          "url": "https://v3b.fal.media/files/b/0a98aeb2/xrOx7v-kHcXOTD0aXkDdw_bass.mp3",
+          "local": "/opt/ssp/uploads/probe-results/audio-sep/demucs__bass.mpeg"
+        },
+        {
+          "key": "other",
+          "url": "https://v3b.fal.media/files/b/0a98aeb2/cU4Noh7r_SbuTg21zzBkF_other.mp3",
+          "local": "/opt/ssp/uploads/probe-results/audio-sep/demucs__other.mpeg"
+        },
+        {
+          "key": "guitar",
+          "url": "https://v3b.fal.media/files/b/0a98aeb2/NYVx4yxx9wgY1o6rzHiFB_guitar.mp3",
+          "local": "/opt/ssp/uploads/probe-results/audio-sep/demucs__guitar.mpeg"
+        },
+        {
+          "key": "piano",
+          "url": "https://v3b.fal.media/files/b/0a98aeb2/tq0e0L1YB6ifz9ay6kiaS_piano.mp3",
+          "local": "/opt/ssp/uploads/probe-results/audio-sep/demucs__piano.mpeg"
+        }
+      ]
+    },
+    {
+      "engine": "demucs-v4",
+      "endpoint": "fal-ai/demucs-v4",
+      "ok": false,
+      "reason": "exception",
+      "error": "Application \"demucs-v4\" not found"
+    },
+    {
+      "engine": "spleeter",
+      "endpoint": "fal-ai/spleeter",
+      "ok": false,
+      "reason": "exception",
+      "error": "Application \"spleeter\" not found"
+    },
+    {
+      "engine": "stable-audio/source-separation",
+      "endpoint": "fal-ai/stable-audio/source-separation",
+      "ok": false,
+      "reason": "exception",
+      "error": "Path /source-separation not found"
+    },
+    {
+      "engine": "voice-isolator",
+      "endpoint": "fal-ai/voice-isolator",
+      "ok": false,
+      "reason": "exception",
+      "error": "Application \"voice-isolator\" not found"
+    },
+    {
+      "engine": "lalal-ai",
+      "endpoint": "fal-ai/lalal-ai",
+      "ok": false,
+      "reason": "exception",
+      "error": "Application \"lalal-ai\" not found"
+    },
+    {
+      "engine": "lalal-ai/stem-splitter",
+      "endpoint": "fal-ai/lalal-ai/stem-splitter",
+      "ok": false,
+      "reason": "exception",
+      "error": "Application \"lalal-ai\" not found"
+    },
+    {
+      "engine": "audio-extract-vocals",
+      "endpoint": "fal-ai/audio-extract-vocals",
+      "ok": false,
+      "reason": "exception",
+      "error": "Application \"audio-extract-vocals\" not found"
+    },
+    {
+      "engine": "vocal-remover",
+      "endpoint": "fal-ai/vocal-remover",
+      "ok": false,
+      "reason": "exception",
+      "error": "Application \"vocal-remover\" not found"
+    },
+    {
+      "engine": "moseca",
+      "endpoint": "fal-ai/moseca",
+      "ok": false,
+      "reason": "exception",
+      "error": "Application \"moseca\" not found"
+    },
+    {
+      "engine": "mdx-net",
+      "endpoint": "fal-ai/mdx-net",
+      "ok": false,
+      "reason": "exception",
+      "error": "Application \"mdx-net\" not found"
+    }
+  ]
+}

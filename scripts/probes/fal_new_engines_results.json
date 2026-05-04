@@ -1,0 +1,89 @@
+{
+  "results": [
+    {
+      "engine": "wan-2.7 r2v",
+      "endpoint": "fal-ai/wan-2.7/reference-to-video",
+      "ok": false,
+      "reason": "endpoint_not_found",
+      "error": "Application \"wan-2.7\" not found"
+    },
+    {
+      "engine": "wan-2.7 r2v (alt schema)",
+      "endpoint": "fal-ai/wan-2.7/reference-to-video",
+      "ok": false,
+      "reason": "endpoint_not_found",
+      "error": "Application \"wan-2.7\" not found"
+    },
+    {
+      "engine": "wan-2.7 i2v",
+      "endpoint": "fal-ai/wan-2.7/image-to-video",
+      "ok": false,
+      "reason": "endpoint_not_found",
+      "error": "Application \"wan-2.7\" not found"
+    },
+    {
+      "engine": "kling-o3-standard r2v",
+      "endpoint": "fal-ai/kling-video/o3/standard/reference-to-video",
+      "elapsed_s": 101.3,
+      "ok": true,
+      "raw_keys": [
+        "video"
+      ],
+      "fal_url": "https://v3b.fal.media/files/b/0a98b113/0lXef1CgQ1B3_B-kqB0Xg_output.mp4",
+      "local": "/opt/ssp/uploads/probe-results/fal-new/kling-o3-standard_r2v.mp4",
+      "size_mb": 2.78
+    },
+    {
+      "engine": "kling-3 pro i2v",
+      "endpoint": "fal-ai/kling-video/v3/pro/image-to-video",
+      "elapsed_s": 94.0,
+      "ok": true,
+      "raw_keys": [
+        "video"
+      ],
+      "fal_url": "https://v3b.fal.media/files/b/0a98b11c/DnPQdqVBJ2naPLHH6msVR_output.mp4",
+      "local": "/opt/ssp/uploads/probe-results/fal-new/kling-3_pro_i2v.mp4",
+      "size_mb": 5.67
+    },
+    {
+      "engine": "kling-o3 4k i2v",
+      "endpoint": "fal-ai/kling-video/o3/4k/image-to-video",
+      "elapsed_s": 84.6,
+      "ok": true,
+      "raw_keys": [
+        "video"
+      ],
+      "fal_url": "https://v3b.fal.media/files/b/0a98b126/ayoVAPf6koozvfqCQ2jzr_output.mp4",
+      "local": "/opt/ssp/uploads/probe-results/fal-new/kling-o3_4k_i2v.mp4",
+      "size_mb": 7.88
+    },
+    {
+      "engine": "minimax hailuo-02 i2v",
+      "endpoint": "fal-ai/minimax/hailuo-02/standard/image-to-video",
+      "ok": false,
+      "reason": "other",
+      "error": "[{'type': 'literal_error', 'loc': ['body', 'duration'], 'msg': \"Input should be '6' or '10'\", 'input': '5', 'ctx': {'expected': \"'6' or '10'\"}}]"
+    },
+    {
+      "engine": "minimax hailuo-02 i2v (alt)",
+      "endpoint": "fal-ai/minimax/hailuo-02-pro/image-to-video",
+      "ok": false,
+      "reason": "endpoint_not_found",
+      "error": "Path /hailuo-02-pro/image-to-video not found"
+    },
+    {
+      "engine": "alibaba happy-horse i2v",
+      "endpoint": "fal-ai/alibaba/happy-horse/image-to-video",
+      "ok": false,
+      "reason": "endpoint_not_found",
+      "error": "Application \"alibaba\" not found"
+    },
+    {
+      "engine": "seedance-2.0 fast i2v",
+      "endpoint": "fal-ai/bytedance/seedance-2.0/fast/image-to-video",
+      "ok": false,
+      "reason": "endpoint_not_found",
+      "error": "Path /seedance-2.0/fast/image-to-video not found"
+    }
+  ]
+}

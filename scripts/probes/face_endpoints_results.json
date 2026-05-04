@@ -1,0 +1,135 @@
+{
+  "results": [
+    {
+      "engine": "codeformer (image only?)",
+      "endpoint": "fal-ai/codeformer",
+      "elapsed_s": 74.0,
+      "ok": true,
+      "raw_keys": [
+        "image",
+        "seed"
+      ],
+      "raw_sample": "{\"image\": {\"url\": \"https://v3b.fal.media/files/b/0a98af78/i-YPC09eS5SQgcdcPPquY_7e7237f86ed341919bef3cfd18913242.png\", \"content_type\": \"image/png\", \"file_name\": \"7e7237f86ed341919bef3cfd18913242.png\", \"file_size\": 1023908, \"width\": 1024, \"height\": 1844}, \"seed\": 1960564843}"
+    },
+    {
+      "engine": "codeformer + video_url 试",
+      "endpoint": "fal-ai/codeformer",
+      "ok": false,
+      "reason": "schema_mismatch",
+      "error": "[{'type': 'missing', 'loc': ['body', 'image_url'], 'msg': 'Field required', 'input': {'video_url': 'https://v3b.fal.media/files/b/0a98aee9/FADIvK--d7hR-nv2ogcIr_driving_8s.mp4', 'fidelity_weight': 0.7}}]"
+    },
+    {
+      "engine": "face-swap (image)",
+      "endpoint": "fal-ai/face-swap",
+      "ok": false,
+      "reason": "schema_mismatch",
+      "error": "[{'type': 'missing', 'loc': ['body', 'base_image_url'], 'msg': 'Field required', 'input': {'source_image_url': 'https://v3b.fal.media/files/b/0a98aee9/TSfPqBlIwUoey6rbVPUuL_ref_frame.jpg', 'target_image_url': 'https://v3b.fal.media/files/b/0a98aee9/TSfPqBlIwUoey6rbVPUuL_ref_frame.jpg'}}, {'type': 'missing', 'loc': ['body', 'swap_image_url'], 'msg': 'Field required', 'input': {'source_image_url': '"
+    },
+    {
+      "engine": "face-swap (alt fields)",
+      "endpoint": "fal-ai/face-swap",
+      "ok": false,
+      "reason": "schema_mismatch",
+      "error": "[{'type': 'missing', 'loc': ['body', 'base_image_url'], 'msg': 'Field required', 'input': {'face_image_url': 'https://v3b.fal.media/files/b/0a98aee9/TSfPqBlIwUoey6rbVPUuL_ref_frame.jpg', 'target_image_url': 'https://v3b.fal.media/files/b/0a98aee9/TSfPqBlIwUoey6rbVPUuL_ref_frame.jpg'}}, {'type': 'missing', 'loc': ['body', 'swap_image_url'], 'msg': 'Field required', 'input': {'face_image_url': 'http"
+    },
+    {
+      "engine": "insightface-face-swap",
+      "endpoint": "fal-ai/insightface-face-swap",
+      "ok": false,
+      "reason": "endpoint_not_found",
+      "error": "Application \"insightface-face-swap\" not found"
+    },
+    {
+      "engine": "easel/advanced-face-swap",
+      "endpoint": "easel-ai/advanced-face-swap",
+      "ok": false,
+      "reason": "schema_mismatch",
+      "error": "[{'loc': ['body', 'face_image_0'], 'msg': 'field required', 'type': 'value_error.missing'}, {'loc': ['body', 'gender_0'], 'msg': 'field required', 'type': 'value_error.missing'}, {'loc': ['body', 'workflow_type'], 'msg': 'field required', 'type': 'value_error.missing'}]"
+    },
+    {
+      "engine": "instant-id",
+      "endpoint": "fal-ai/instant-id",
+      "ok": false,
+      "reason": "endpoint_not_found",
+      "error": "Application \"instant-id\" not found"
+    },
+    {
+      "engine": "instant-character",
+      "endpoint": "fal-ai/instant-character",
+      "elapsed_s": 130.0,
+      "ok": true,
+      "raw_keys": [
+        "images",
+        "timings",
+        "seed",
+        "has_nsfw_concepts",
+        "prompt"
+      ],
+      "raw_sample": "{\"images\": [{\"url\": \"https://v3b.fal.media/files/b/0a98af84/8gumxvb_88h0eSLl23gRv.jpg\", \"content_type\": \"image/jpeg\", \"file_name\": null, \"file_size\": null, \"width\": 1024, \"height\": 1024}], \"timings\": {\"inference\": 9.797187068499625}, \"seed\": 12983017577222599212, \"has_nsfw_concepts\": [false], \"prompt\": \"a portrait, photorealistic\"}"
+    },
+    {
+      "engine": "ip-adapter-face-id",
+      "endpoint": "fal-ai/ip-adapter-face-id",
+      "elapsed_s": 37.8,
+      "ok": true,
+      "raw_keys": [
+        "image",
+        "seed"
+      ],
+      "raw_sample": "{\"image\": {\"url\": \"https://v3b.fal.media/files/b/0a98af89/C8wEi0Wk2mYvVaODoOjBK_327c201f3bf74b65a16b008071eb9d73.png\", \"content_type\": \"image/png\", \"file_name\": \"327c201f3bf74b65a16b008071eb9d73.png\", \"file_size\": 352355, \"width\": 512, \"height\": 512}, \"seed\": 1489620314507268}"
+    },
+    {
+      "engine": "pulid",
+      "endpoint": "fal-ai/pulid",
+      "ok": false,
+      "reason": "schema_mismatch",
+      "error": "[{'type': 'missing', 'loc': ['body', 'reference_images'], 'msg': 'Field required', 'input': {'reference_image_url': 'https://v3b.fal.media/files/b/0a98aee9/TSfPqBlIwUoey6rbVPUuL_ref_frame.jpg', 'prompt': 'a portrait, photorealistic'}}]"
+    },
+    {
+      "engine": "flux-pulid",
+      "endpoint": "fal-ai/flux-pulid",
+      "elapsed_s": 29.5,
+      "ok": true,
+      "raw_keys": [
+        "images",
+        "timings",
+        "seed",
+        "has_nsfw_concepts",
+        "prompt"
+      ],
+      "raw_sample": "{\"images\": [{\"url\": \"https://v3b.fal.media/files/b/0a98af8c/1qAacvPX9_MLQ-BLJwibw.png\", \"width\": 1024, \"height\": 768, \"content_type\": \"image/png\"}], \"timings\": {\"inference\": 10.192703758832067}, \"seed\": 2787596757, \"has_nsfw_concepts\": [false], \"prompt\": \"a portrait, photorealistic\"}"
+    },
+    {
+      "engine": "photomaker",
+      "endpoint": "fal-ai/photomaker",
+      "elapsed_s": 217.4,
+      "ok": true,
+      "raw_keys": [
+        "images",
+        "seed"
+      ],
+      "raw_sample": "{\"images\": [{\"url\": \"https://v3b.fal.media/files/b/0a98afa3/FmjYUH88pd32S8B0anrtb_e18bc6aa32a040b3bf8993b96f8c01e0.png\", \"content_type\": \"image/png\", \"file_name\": \"e18bc6aa32a040b3bf8993b96f8c01e0.png\", \"file_size\": 2050294, \"width\": 1024, \"height\": 1024}], \"seed\": 53205462}"
+    },
+    {
+      "engine": "reactor",
+      "endpoint": "fal-ai/reactor",
+      "ok": false,
+      "reason": "endpoint_not_found",
+      "error": "Application \"reactor\" not found"
+    },
+    {
+      "engine": "video-face-swap",
+      "endpoint": "fal-ai/video-face-swap",
+      "ok": false,
+      "reason": "endpoint_not_found",
+      "error": "Application \"video-face-swap\" not found"
+    },
+    {
+      "engine": "easel/face-swap-video",
+      "endpoint": "easel-ai/face-swap-video",
+      "ok": false,
+      "reason": "endpoint_not_found",
+      "error": "Application \"face-swap-video\" not found"
+    }
+  ]
+}

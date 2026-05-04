@@ -1,0 +1,32 @@
+{
+  "results": [
+    {
+      "engine": "kling-o3-v2v",
+      "endpoint": "fal-ai/kling-video/o3/pro/video-to-video/reference",
+      "ok": true,
+      "url": "https://v3b.fal.media/files/b/0a98b5d2/DBV79WwjZ7T1Jw0uvpCL5_output.mp4",
+      "elapsed_s": 128.85157942771912,
+      "local": "/opt/ssp/uploads/probe-results/kling-v2v-vs-seedance/kling-o3-v2v.mp4",
+      "size_mb": 9.32,
+      "similarity": 0.464
+    },
+    {
+      "engine": "seedance-2-r2v",
+      "endpoint": "fal-ai/bytedance/seedance-2.0/reference-to-video",
+      "ok": false,
+      "elapsed_s": 11.714956045150757,
+      "error": "Path /seedance-2.0/reference-to-video not found",
+      "similarity": -1.0
+    },
+    {
+      "engine": "kling-3-pro-i2v",
+      "endpoint": "fal-ai/kling-video/v3/pro/image-to-video",
+      "ok": true,
+      "url": "https://v3b.fal.media/files/b/0a98b5ce/VwwU71RTWwANqbzRu3_qV_output.mp4",
+      "elapsed_s": 107.49991106987,
+      "local": "/opt/ssp/uploads/probe-results/kling-v2v-vs-seedance/kling-3-pro-i2v.mp4",
+      "size_mb": 6.18,
+      "similarity": 0.4233
+    }
+  ]
+}

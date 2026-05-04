@@ -1,0 +1,23 @@
+{
+  "results": [
+    {
+      "engine": "wan2.7-r2v",
+      "ok": true,
+      "task_id": "bd417025-9e73-420c-9071-2313c31902f0",
+      "video_url": "https://dashscope-a717.oss-accelerate.aliyuncs.com/1d/55/20260503/7652dcb7/46197638-metadata_user_0d2b67187e2f292a.mp4?Expires=1777880766&OSSAccessKeyId=LTAI5tPxpiCM2hjmWrFXrym1&Signature=PAAw%2FHfvSMPNbju3KHngEnZC8R4%3D",
+      "elapsed_s": 519.8797097206116,
+      "local": "/opt/ssp/uploads/probe-results/aliyun-wan/wan2.7-r2v.mp4"
+    },
+    {
+      "engine": "wan2.2-animate-mix",
+      "error": "submit 400: {\"request_id\":\"0b35f2ce-b7fc-95c3-a835-a0220887f18f\",\"code\":\"InvalidParameter\",\"message\":\"url error, please check url！ For details, see: https://help.aliyun.com/zh/model-studio/error-code#error-url\"}",
+      "elapsed_s": 0.9830384254455566
+    },
+    {
+      "engine": "wanx2.1-vace-plus",
+      "error": "FAILED: InternalError.Algo",
+      "task_id": "c6a65633-f818-4a69-8bce-57e127f91792",
+      "elapsed_s": 11.074122667312622
+    }
+  ]
+}

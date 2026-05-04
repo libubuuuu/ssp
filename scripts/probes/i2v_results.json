@@ -1,0 +1,93 @@
+{
+  "input_image": "https://v3b.fal.media/files/b/0a9880fd/gsr4oDYkANkwwh-bFOMl6_id1Gn9cs.png",
+  "prompt": "The woman gently smiles and turns her head slightly while showing the product to camera. UGC vlog selfie style, natural micro-movements, advertisement video. Preserve the product's exact details and the model's identity throughout.",
+  "results": [
+    {
+      "engine": "Seedance v1.5/pro i2v (生产)",
+      "endpoint": "fal-ai/bytedance/seedance/v1.5/pro/image-to-video",
+      "filename": "01_seedance_v15_pro.mp4",
+      "elapsed_s": 78.1,
+      "ok": false,
+      "reason": "nsfw_rejected",
+      "error": "[{'loc': ['body', 'generated_video'], 'msg': 'The content could not be processed because it contained material flagged by a content checker.', 'type': 'content_policy_violation', 'url': 'https://docs.fal.ai/errors#content_policy_violation', 'input': {'prompt': \"The woman gently smiles and turns her "
+    },
+    {
+      "engine": "Kling o3 standard i2v (生产)",
+      "endpoint": "fal-ai/kling-video/o3/standard/image-to-video",
+      "filename": "02_kling_o3.mp4",
+      "elapsed_s": 54.0,
+      "ok": true,
+      "fal_url": "https://v3b.fal.media/files/b/0a988147/aS3QhENATVptLGHPQN9j3_output.mp4",
+      "local_path": "/opt/ssp/uploads/probe-results/i2v/02_kling_o3.mp4",
+      "video_dur_s": 5.0,
+      "size_mb": 4.37
+    },
+    {
+      "engine": "LTX-2.3 distilled i2v",
+      "endpoint": "fal-ai/ltx-2.3-22b/distilled/image-to-video",
+      "filename": "03_ltx23_distilled.mp4",
+      "elapsed_s": 22.2,
+      "ok": true,
+      "fal_url": "https://v3b.fal.media/files/b/0a988141/u9Qt65ZI2Xy9KgV9N32wR_4ZZIo57l.mp4",
+      "local_path": "/opt/ssp/uploads/probe-results/i2v/03_ltx23_distilled.mp4",
+      "video_dur_s": 4.9,
+      "size_mb": 6.3
+    },
+    {
+      "engine": "Kling 1.6 standard i2v",
+      "endpoint": "fal-ai/kling-video/v1.6/standard/image-to-video",
+      "filename": "04_kling_v16.mp4",
+      "elapsed_s": 113.7,
+      "ok": true,
+      "fal_url": "https://v3b.fal.media/files/b/0a98814d/gHd6RicvduLmtQvIejNiv_output.mp4",
+      "local_path": "/opt/ssp/uploads/probe-results/i2v/04_kling_v16.mp4",
+      "video_dur_s": 5.1,
+      "size_mb": 7.9
+    },
+    {
+      "engine": "Pika v2.0 i2v",
+      "endpoint": "fal-ai/pika/v2.0/image-to-video",
+      "filename": "05_pika.mp4",
+      "elapsed_s": 1.3,
+      "ok": false,
+      "reason": "endpoint_404",
+      "error": "Path /v2.0/image-to-video not found"
+    },
+    {
+      "engine": "Luma Dream Machine i2v",
+      "endpoint": "fal-ai/luma-dream-machine/image-to-video",
+      "filename": "06_luma.mp4",
+      "elapsed_s": 4.3,
+      "ok": false,
+      "reason": "other_error",
+      "error": "[{'loc': ['body'], 'msg': 'This endpoint is deprecated and no longer supported. You can still enable fallbacks to use this endpoint.', 'type': 'internal_server_error', 'url': 'https://docs.fal.ai/errors#internal_server_error', 'input': None}]"
+    },
+    {
+      "engine": "Wan 2.1 14b i2v",
+      "endpoint": "fal-ai/wan-2.1-14b/image-to-video",
+      "filename": "07_wan21.mp4",
+      "elapsed_s": 0.6,
+      "ok": false,
+      "reason": "endpoint_404",
+      "error": "Application \"wan-2.1-14b\" not found"
+    },
+    {
+      "engine": "Hunyuan video i2v",
+      "endpoint": "fal-ai/hunyuan-video/image-to-video",
+      "filename": "08_hunyuan.mp4",
+      "elapsed_s": 544.9,
+      "ok": false,
+      "reason": "endpoint_404",
+      "error": "Path /image-to-video not found"
+    },
+    {
+      "engine": "Seedance v1.5/fast i2v",
+      "endpoint": "fal-ai/bytedance/seedance/v1.5/fast/image-to-video",
+      "filename": "09_seedance_v15_fast.mp4",
+      "elapsed_s": 1.3,
+      "ok": false,
+      "reason": "endpoint_404",
+      "error": "Path /seedance/v1.5/fast/image-to-video not found"
+    }
+  ]
+}

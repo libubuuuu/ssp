@@ -1,0 +1,82 @@
+{
+  "fixture": "/opt/ssp/uploads/64402546-9ead-4263-b881-a26d8ba6d5b6/2026-04/image_0ace9f1a22a44a7e86e9388e3fdb2333.png",
+  "fixture_url": "https://v3b.fal.media/files/b/0a9880fd/o6s6vnf-28txGP2-3spYA_image_0ace9f1a22a44a7e86e9388e3fdb2333.png",
+  "prompt": "A Caucasian woman in her 30s holding the product shown in the reference image, in a cozy bedroom home setting with soft natural light from window and warm tones, photorealistic UGC selfie style, vertical 9:16 composition, natural lighting, preserve the exact product details from reference.",
+  "results": [
+    {
+      "engine": "Nano Banana edit (re-probe)",
+      "endpoint": "fal-ai/nano-banana-2/edit",
+      "filename": "01_nanobanana.png",
+      "elapsed_s": 30.5,
+      "ok": true,
+      "fal_url": "https://v3b.fal.media/files/b/0a9880fd/gsr4oDYkANkwwh-bFOMl6_id1Gn9cs.png",
+      "local_path": "/opt/ssp/uploads/probe-results/round2/01_nanobanana.png",
+      "size_kb": 1663
+    },
+    {
+      "engine": "Qwen-Image-Edit Plus",
+      "endpoint": "fal-ai/qwen-image-edit-plus",
+      "filename": "02_qwen.png",
+      "elapsed_s": 263.0,
+      "ok": true,
+      "fal_url": "https://v3b.fal.media/files/b/0a988116/ZtGHhG5JsLd-okWQvOFgQ.png",
+      "local_path": "/opt/ssp/uploads/probe-results/round2/02_qwen.png",
+      "size_kb": 894
+    },
+    {
+      "engine": "HiDream-I1 Edit",
+      "endpoint": "fal-ai/hidream-i1/edit",
+      "filename": "03_hidream.png",
+      "elapsed_s": 0.7,
+      "ok": false,
+      "reason": "endpoint_404",
+      "error": "Application 'hidream-i1' not found"
+    },
+    {
+      "engine": "Bria Genfill",
+      "endpoint": "fal-ai/bria/genfill",
+      "filename": "04_bria.png",
+      "elapsed_s": 0.7,
+      "ok": false,
+      "reason": "schema_mismatch",
+      "error": "[{'type': 'missing', 'loc': ['body', 'image_url'], 'msg': 'Field required', 'input': {'prompt': 'A Caucasian woman in her 30s holding the product shown in the reference image, in a cozy bedroom home setting with soft natural light from window and warm tones, photorealistic UGC selfie style, vertical"
+    },
+    {
+      "engine": "Ideogram v3 Edit",
+      "endpoint": "fal-ai/ideogram/v3/edit",
+      "filename": "05_ideogram.png",
+      "elapsed_s": 0.7,
+      "ok": false,
+      "reason": "schema_mismatch",
+      "error": "[{'type': 'missing', 'loc': ['body', 'image_url'], 'msg': 'Field required', 'input': {'prompt': 'A Caucasian woman in her 30s holding the product shown in the reference image, in a cozy bedroom home setting with soft natural light from window and warm tones, photorealistic UGC selfie style, vertical"
+    },
+    {
+      "engine": "OmniGen v2",
+      "endpoint": "fal-ai/omnigen-v2",
+      "filename": "06_omnigen.png",
+      "elapsed_s": 375.6,
+      "ok": true,
+      "fal_url": "https://v3b.fal.media/files/b/0a98811f/xulLkwCOLBv7tZqg8k33Q.png",
+      "local_path": "/opt/ssp/uploads/probe-results/round2/06_omnigen.png",
+      "size_kb": 1243
+    },
+    {
+      "engine": "Recraft v3 image-to-image",
+      "endpoint": "fal-ai/recraft/v3/image-to-image",
+      "filename": "07_recraft.png",
+      "elapsed_s": 0.7,
+      "ok": false,
+      "reason": "schema_mismatch",
+      "error": "[{'type': 'missing', 'loc': ['body', 'image_url'], 'msg': 'Field required', 'input': {'prompt': 'A Caucasian woman in her 30s holding the product shown in the reference image, in a cozy bedroom home setting with soft natural light from window and warm tones, photorealistic UGC selfie style, vertical"
+    },
+    {
+      "engine": "Wan VACE 14b inpainting",
+      "endpoint": "fal-ai/wan-vace-14b/inpainting",
+      "filename": "08_wan_vace.png",
+      "elapsed_s": 219.3,
+      "ok": false,
+      "reason": "schema_mismatch",
+      "error": "[{'type': 'missing', 'loc': ['body', 'video_url'], 'msg': 'Field required', 'input': {'prompt': 'A Caucasian woman in her 30s holding the product shown in the reference image, in a cozy bedroom home setting with soft natural light from window and warm tones, photorealistic UGC selfie style, vertical"
+    }
+  ]
+}
