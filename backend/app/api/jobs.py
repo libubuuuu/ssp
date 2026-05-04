@@ -180,6 +180,20 @@ async def _run_ad_video_job(params: dict):
             raise Exception("scene speech 为空,无法生成 talking video")
 
         import fal_client as _fc
+        import re as _re
+
+        # P112(2026-05-05):VLM 偶尔不听话写超 duration 的 speech,导致 TTS 念出
+        # 比 duration 长得多的音频,omnihuman 用音频驱动出"5s 选项 → 13s 视频"。
+        # 双保险:按 duration 算 max_chars 截断,防 VLM 写超。
+        # elevenlabs multilingual-v2 实测速率:中文 ~5 字/秒,英文 ~14 字符/秒。
+        _has_cn = bool(_re.search(r"[一-鿿]", speech_text))
+        _max_chars = int(duration * (5 if _has_cn else 14))
+        if len(speech_text) > _max_chars:
+            log_warning(
+                f"ad_video P112 speech 超长 {len(speech_text)} > {_max_chars} "
+                f"(duration={duration}s, lang={'CN' if _has_cn else 'EN'}),截断"
+            )
+            speech_text = speech_text[:_max_chars]
 
         # Step 1: TTS speech → audio
         log_info(f"ad_video P104 TTS speech_len={len(speech_text)}")

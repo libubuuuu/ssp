@@ -181,11 +181,16 @@ def _build_analysis_prompt(total_duration: int = 15, region: str = "CN") -> str:
     else:
         purpose_hint = f"前 1 段开场,中间 {n-2} 段从不同角度展示卖点,最后 1 段促单 CTA"
 
-    # 拼时间戳
+    # 拼时间戳 + P112 speech 字数硬上限(elevenlabs 实测速率:CN 5 字/s, EN 14 字符/s)
+    char_per_sec = 5 if region == "CN" else 14
+    char_unit = "字" if region == "CN" else "字符"
     time_lines = []
     cum = 0
     for i, d in enumerate(seg_durs):
-        time_lines.append(f"  - 镜头{i+1}({cum}-{cum+d}s,共 {d} 秒)")
+        max_chars = int(d * char_per_sec)
+        time_lines.append(
+            f"  - 镜头{i+1}({cum}-{cum+d}s,共 {d} 秒,**speech 严格 ≤ {max_chars} {char_unit}**,超字会被截断)"
+        )
         cum += d
 
     scenes_example_parts = []
@@ -266,6 +271,12 @@ def _build_analysis_prompt(total_duration: int = 15, region: str = "CN") -> str:
 1. overall_setting + model_description 是 N 段共享的锁定描述(模特长相、发型、肤色、服装风格、拍摄场景、灯光),N 段 visual_prompt 不要写跟它们冲突的内容
 2. 每段 visual_prompt 只写"这段独有的"动作/构图/卖点,**不要重复写模特外貌或场景**(由 overall + model 锁住)
 3. 每段 speech 是这段独立的口播台词,串起来要逻辑连贯
+
+**P112 speech 字数硬约束(必须严格遵守,否则视频时长会跑飞)**:
+- TTS 实测速率:中文 elevenlabs ≈ 5 字/秒, 英文 ≈ 14 字符/秒
+- 每段 speech **必须** ≤ 上面"镜头时间戳"里标注的字数上限
+- 超字 = 视频时长 > 用户选的总时长,体验严重错误
+- 宁可 speech 短一点(留点呼吸感),也不要写满或超出
 
 **P98 产品穿戴位置强制约束(否则 AI 默认贴胸口出错)**:
 visual_prompt **必须**显式指明产品穿戴/使用位置(英文),按产品类型严格遵守:
