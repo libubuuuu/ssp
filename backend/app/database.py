@@ -399,6 +399,25 @@ def init_db():
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_oral_assets_session ON oral_session_assets(session_id, ord)")
 
+        # P110: ad-video 爆款话术库(替代 vlm_service.py 硬编码 prompt 素材)
+        # kind: hook(钩子) / selling(卖点 3 件套) / cta(促单) / example(品类完整示例)
+        # category: 服装/塑身/内衣/裤子/鞋/箱包/美妆/护肤/母婴/食品/家电/数码/家居/健身/宠物/办公/旅行 等;NULL=通用
+        # region: CN(国内中文) / GLOBAL(海外英文)
+        # text 加 UNIQUE 防同句重复 INSERT
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS viral_scripts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            region TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            category TEXT,
+            text TEXT NOT NULL UNIQUE,
+            source_url TEXT,
+            scraped_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_viral_scripts_region_kind ON viral_scripts(region, kind)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_viral_scripts_category ON viral_scripts(category)")
+
         # 创建索引优化查询性能
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
