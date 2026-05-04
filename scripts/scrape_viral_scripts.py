@@ -37,25 +37,58 @@ TIMEOUT = 15
 # ============== 源 URL 配置 ==============
 # (url, region, kind 推断 hint:None=自动按句子内容分类,优先按 url 默认 hint)
 SOURCES_CN = [
+    # opp2.com 系列(青瓜传媒)— 主力源,WebFetch 100% 通,博客偶尔更新
     ("https://www.opp2.com/348214.html", "hook"),       # 33 个开头模板
     ("https://www.opp2.com/360571.html", "hook"),       # 9 大类 41 条
     ("https://www.opp2.com/350800.html", "cta"),        # 标准话术模板
     ("https://www.opp2.com/351178.html", "hook"),
-    ("https://www.opp2.com/356582.html", "hook"),
+    ("https://www.opp2.com/356582.html", "hook"),       # 8 种模板
     ("https://www.opp2.com/361531.html", "selling"),    # 2025 技巧多品类
+    ("https://www.opp2.com/361543.html", "hook"),       # 10 个模板
     ("https://www.opp2.com/343864.html", "hook"),
     ("https://www.opp2.com/310534.html", "selling"),
     ("https://www.opp2.com/329945.html", "selling"),
+    ("https://www.opp2.com/329943.html", "cta"),
+    ("https://www.opp2.com/295136.html", "selling"),    # 美妆爆单话术
+    ("https://www.opp2.com/277699.html", "hook"),       # 月销百万 SOP
+    ("https://www.opp2.com/283343.html", "selling"),    # 8 种脚本
+    ("https://www.opp2.com/290287.html", "hook"),       # 套路
+    ("https://www.opp2.com/256674.html", "selling"),    # 5 大方法
+    ("https://www.opp2.com/252423.html", "selling"),    # 完整脚本
+    ("https://www.opp2.com/215139.html", "hook"),       # 流程模板
+    ("https://www.opp2.com/311861.html", "hook"),
+    ("https://www.opp2.com/266986.html", "cta"),        # 互动话术真例
+    # 其他源
     ("https://www.27sem.com/article/8355", "hook"),     # 100 条
     ("https://www.doukeplus.com/9696.html", "hook"),    # 400 条
+    ("https://www.yunxi.tv/information/detail/104", "hook"),
+    ("https://m.maijiaw.com/article/607736", "hook"),
 ]
 
 SOURCES_GLOBAL = [
+    # 已验证通源
     ("https://www.heyorca.com/blog/best-tiktok-hooks", "hook"),
+    ("https://www.heyorca.com/blog/the-best-social-media-hooks-for-2026", "hook"),
     ("https://www.minta.ai/blog-post/tiktok-hooks", "hook"),
     ("https://www.lyfemarketing.com/blog/tiktok-hook-ideas/", "hook"),
     ("https://sendshort.ai/guides/tiktok-hooks/", "hook"),
     ("https://usevisuals.com/blog/scroll-stopping-tiktok-hook-examples", "hook"),
+    ("https://www.viralfinder.ai/blog/tiktok-hook-examples", "hook"),
+    ("https://www.submagic.co/blog/best-hooks-for-tiktok-and-instagram", "hook"),
+    ("https://www.opus.pro/blog/tiktok-hooks-that-go-viral-2026", "hook"),
+    ("https://www.marketingblocks.ai/50-viral-hook-templates-for-ads-reels-tiktok-or-captions-2026-frameworks-examples-ai-prompts-included/", "hook"),
+    ("https://www.demandcurve.com/playbooks/tiktok-ads-best-practices", "selling"),
+    ("https://megadigital.ai/en/blog/tiktok-call-to-action/", "cta"),
+    ("https://www.theindiepractice.com/blog/short-form-video-call-to-actions-cta-ideas", "cta"),
+    ("https://adsby.co/blog/how-to-write-the-best-cta-21-call-to-action-examples/", "cta"),
+    ("https://tikadtools.com/blog/tiktok-ads-cta/", "cta"),
+    ("https://tikadtools.com/blog/tiktok-ads-copywriting/", "selling"),
+    ("https://tikadsuite.com/blog/tiktok-ad-copywriting-formulas/", "selling"),
+    ("https://www.selfstorming.com/guides/social-media-hooks/tiktok-video-hooks", "hook"),
+    ("https://www.webfx.com/blog/social-media/tiktok-ad-examples/", "selling"),
+    ("https://localiq.com/blog/tiktok-ad-examples/", "hook"),
+    ("https://leadsbridge.com/blog/tiktok-ads-examples/", "selling"),
+    ("https://embedsocial.com/blog/tiktok-ugc/", "selling"),
 ]
 
 
@@ -103,9 +136,75 @@ NEGATIVE = [
     "in this post", "let's dive", "step by step", "framework",
     # escape 残留
     "\\\\", "\\\"", "&nbsp;", "&amp;", "&quot;",
+    # === 2026-05-05 加严:扒博客踩到的 JS/CSS/UI 残渣 ===
+    # JS / CSS 选择器残片
+    "[type", "[data-", "[href", "[class", "$('",
+    "naturalWidth", "removeAttr", "et_pb_", "wistia",
+    "react.suspense", "react.fragment", ".fragment",
+    "rocketlazyloadscript", "lazyload",
+    "Popover", "popover", "popoverContent", "silentAutoPlay",
+    "Bio Page", "bio page", "Link in Bio",
+    "embedsocial", "vibe code",
+    "scriptType", "module et_", "w-embed",
+    # 表单/UI 提示文(不是话术)
+    "Country code", "optional plus", "valid email", "input field",
+    "click here", "click the", "form input", "drop-down",
+    # HTML 属性残渣 / 文章标题 / SEO 描述
+    "alt=", "src=", "href=", "title=",
+    "都错了", "通过抖音", "通过短视频", "拍短视频养家", "短视频养家",
+    "建立良好", "例如", "比如", "也就是说",
+    "%新手", "%粉丝", "新手直播间互动话术", "话术：", "话术:",
+    # SEO/文章 meta(博客文章描述、标题、关键词组)
+    "Discover ", "Learn AIDA", "Copy these viral", "proven TikTok hooks",
+    "got millions of views", "viral openers for",
+    "Forbidden fruit effect", "Authority transfer",
+    "monitor both", "campaign objectives",
+    "话术营销技巧", "话术大全,", "话术怎么说",
+    "本期文章", "前面文章", "今天给大家分享", "如何塑造",
+    "月销百万直播间话术SOP",
 ]
 # 海外句子最大长度收紧(超过 = 段落而非 hook/CTA)
 EN_MAX_LEN = 180
+
+# === 2026-05-05 加严:结构性代码模式正则拒 ===
+# 句子含这些就 100% 是 JS/CSS/jQuery 代码片段或 react 内部字符串,直接丢
+CODE_PATTERN = re.compile(
+    r"(\]'\)|\$\{|\}\)|\$\(|=>|\.attr\(|\.css\(|\.height\(|\.length\)"
+    r"|w-script|^\$S|^\$L|::after|::before|::placeholder"
+    r"|\.replace\(|\\s\+|/\\|\\s\*|\\d\+|http[s]?://"
+    r"|\.[a-z]+\(.*\)|\\$|\\\\)"
+)
+# 文章 meta 的句子末有 \ 转义残留(博客作者评注、SEO 描述)
+META_TAIL = re.compile(r"\\$")
+# 文章作者评注模式:这种句子讲"hooks 怎么样/为什么"而非"hook 内容本身"
+META_PATTERN = re.compile(
+    r"hooks (put|grab|make|create|deliver|work|are|drive|stand|increase|come)|"
+    r"(hooks|examples|templates|copy) (that|which|to)|"
+    r"because|effect[\.\,]|reasons why",
+    re.IGNORECASE
+)
+
+
+def looks_like_code(s: str) -> bool:
+    """检测 JS/CSS 代码片段 + 文章 meta 评注。"""
+    if CODE_PATTERN.search(s):
+        return True
+    if META_TAIL.search(s.rstrip()):
+        return True
+    if META_PATTERN.search(s):
+        return True
+    # 含 4+ 个括号 [ ] ( ) { } 等代码符号 = 高度疑似代码
+    bracket_count = sum(s.count(c) for c in "[](){}")
+    if bracket_count >= 4:
+        return True
+    # 含 2+ 中文字符之外的括号 ( ) — 中文话术括号少见
+    paren_count = s.count("(") + s.count(")")
+    if paren_count >= 3:
+        return True
+    # 关键词列表(逗号分隔,5+ 段,无完整句末标点)
+    if s.count(",") >= 4 and not any(p in s for p in ["。", "？", "！", ". ", "? ", "! "]):
+        return True
+    return False
 
 CN_RE = re.compile(r"[一-鿿]")  # 含中文字符
 
@@ -171,6 +270,8 @@ def extract(html: str, region: str) -> list:
         if len(s) < 12 or len(s) > 260:
             continue
         if has_negative(s):
+            continue
+        if looks_like_code(s):
             continue
         if region == "CN":
             if not is_chinese(s):

@@ -1,14 +1,6 @@
 PRAGMA foreign_keys=OFF;
 BEGIN TRANSACTION;
-CREATE TABLE viral_scripts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            region TEXT NOT NULL,
-            kind TEXT NOT NULL,
-            category TEXT,
-            text TEXT NOT NULL UNIQUE,
-            source_url TEXT,
-            scraped_at TEXT DEFAULT CURRENT_TIMESTAMP
-        );
+CREATE TABLE viral_scripts (id INTEGER PRIMARY KEY AUTOINCREMENT, region TEXT NOT NULL, kind TEXT NOT NULL, category TEXT, text TEXT NOT NULL UNIQUE, source_url TEXT, scraped_at TEXT DEFAULT CURRENT_TIMESTAMP);
 INSERT INTO viral_scripts VALUES(1,'CN','hook',NULL,'如何才能穿的显高?','seed_p110','2026-05-04 17:46:26');
 INSERT INTO viral_scripts VALUES(2,'CN','hook',NULL,'你知道为什么你容易长胖吗?','seed_p110','2026-05-04 17:46:26');
 INSERT INTO viral_scripts VALUES(3,'CN','hook',NULL,'你有没有发现:十元的快餐,只有男人在吃?','seed_p110','2026-05-04 17:46:26');
@@ -752,7 +744,6 @@ INSERT INTO viral_scripts VALUES(770,'CN','hook','新品','消费者不但希望
 INSERT INTO viral_scripts VALUES(771,'CN','hook','通用','关注主播后就有机会获得抽奖资格，参与我们的福袋活动赚取抖币','webfetch_2026_05_05_batch5','2026-05-04 18:26:46');
 INSERT INTO viral_scripts VALUES(772,'CN','hook','直播技巧','像跑马拉松一样，发令枪刚响我们慢慢上节奏，不能一开始就用百米冲刺的速度。直播也是，所以正式开场前的热场互动很必要。','webfetch_2026_05_05_batch5','2026-05-04 18:26:46');
 INSERT INTO viral_scripts VALUES(773,'CN','selling','产品组合','直播间带货需要宠粉款，也就是超高性价比商品、活动促销，还要加上利润款和组合产品等综合搭配销售。','webfetch_2026_05_05_batch5','2026-05-04 18:26:46');
-INSERT INTO viral_scripts VALUES(774,'CN','cta','促单话术','这种时候往往会有很多捡漏的订单生成。把整场直播的产品再快速回顾一遍，能够激发那些之前没下单但感兴趣的粉丝购买欲望。','webfetch_2026_05_05_batch5','2026-05-04 18:26:46');
 INSERT INTO viral_scripts VALUES(775,'CN','selling','产品策略','在三四小时的直播里面，把产品按照宠粉、利润主打款等组合玩法，循环播几遍。也就是同一款产品在一场直播里循环卖了三遍。','webfetch_2026_05_05_batch5','2026-05-04 18:26:46');
 INSERT INTO viral_scripts VALUES(776,'CN','hook','话术技巧','话术一定要是产品特点、功效、材质的口语化表达。可以照着话术念稿，但一定要有情绪表达，千万别按照说明书去念。','webfetch_2026_05_05_batch5','2026-05-04 18:26:46');
 INSERT INTO viral_scripts VALUES(777,'CN','selling','箱包','姐妹们看过来，我手里的这款包，它的荔枝纹看起来就很高级，我摸上去能感觉到纹路质感。是真的能摸得到的品质感，荔枝皮的包包是最耐用的！','webfetch_2026_05_05_batch5','2026-05-04 18:26:46');
@@ -1010,4 +1001,5 @@ INSERT INTO viral_scripts VALUES(1036,'GLOBAL','selling','pet','Stops shedding c
 INSERT INTO viral_scripts VALUES(1037,'GLOBAL','selling','home','Memory foam that actually remembers — 7-zone support, ships compressed, sets up in 60 seconds.','manual_2026_05_05_round1000','2026-05-04 18:32:30');
 INSERT INTO viral_scripts VALUES(1038,'GLOBAL','selling','beauty','Vegan, fragrance-free, dermatologist-tested — and it''s $14, not $80.','manual_2026_05_05_round1000','2026-05-04 18:32:30');
 INSERT INTO viral_scripts VALUES(1039,'GLOBAL','selling','fashion','True-to-size, four-way stretch, holds shape after 50 washes — yes, we tested.','manual_2026_05_05_round1000','2026-05-04 18:32:30');
+INSERT INTO viral_scripts VALUES(1059,'GLOBAL','hook',NULL,'Stop scrolling.','https://www.opus.pro/blog/tiktok-hooks-that-go-viral-2026','2026-05-04 18:52:13');
 COMMIT;
