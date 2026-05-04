@@ -206,16 +206,24 @@ async def _run_ad_video_job(params: dict):
         if not audio_url:
             raise Exception("TTS 未返 audio_url")
 
-        # Step 2: omnihuman(image + audio → talking video)
-        # 默认老版(memory:v1.5 标"强表情",老版表情更收敛);用户 params 可改
-        omnihuman_endpoint = params.get("talking_head_endpoint", "fal-ai/bytedance/omnihuman")
-        log_info(f"ad_video P104 omnihuman endpoint={omnihuman_endpoint}")
+        # Step 2: talking head(image + audio → 对口型视频)
+        # P114(2026-05-05):默认改 Kling Avatar v2 Standard($0.056/秒,省 60%),
+        # schema 完全兼容(image_url+audio_url)。用户前端可改回 omnihuman/Pro 等。
+        # Kling 多支持 optional prompt 引导动作 — 把 visual_prompt 透传过去更精细
+        omnihuman_endpoint = params.get("talking_head_endpoint", "fal-ai/kling-video/ai-avatar/v2/standard")
+        log_info(f"ad_video P104 talking_head endpoint={omnihuman_endpoint}")
+        _args = {
+            "image_url": base_image_url,
+            "audio_url": audio_url,
+        }
+        # Kling Avatar 支持 prompt 字段引导动作 — 拼 visual_prompt 增强 P113 镜头公式落地
+        if "kling" in omnihuman_endpoint and first_scene:
+            _vp = (first_scene.get("visual_prompt") or "").strip()
+            if _vp:
+                _args["prompt"] = _vp[:500]
         h = await _fc.submit_async(
             omnihuman_endpoint,
-            arguments={
-                "image_url": base_image_url,
-                "audio_url": audio_url,
-            },
+            arguments=_args,
         )
         task_id = h.request_id
         for _ in range(120):  # 20 min cap
