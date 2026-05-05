@@ -264,14 +264,48 @@ async def _p135_concat_simple(
     try:
         # 下载 N 段
         async with _httpx.AsyncClient(timeout=180) as cli:
-            local_paths = []
+            local_paths_raw = []
             for i, vu in enumerate(seg_video_urls):
                 if not vu:
                     raise Exception(f"P135 段 {i+1} video_url 空")
                 r = await cli.get(vu); r.raise_for_status()
-                p = Path(work) / f"seg_{i+1}.mp4"
+                p = Path(work) / f"seg_{i+1}_raw.mp4"
                 p.write_bytes(r.content)
-                local_paths.append(str(p))
+                local_paths_raw.append(str(p))
+
+        # P151(2026-05-06):用户实测段 1 嘴动+声错位,真因 Kling Avatar
+        # video 流(7.2s)≠ audio 流(5.34s)。concat 前 trim 每段到 audio 长度
+        # (audio 优先,video 砍尾巴)→ video 总长 = audio 总长 → 音画同步
+        local_paths = []
+        for i, raw in enumerate(local_paths_raw):
+            # 探测每段的 video / audio 时长
+            probe = _sp.run(
+                ["ffprobe", "-v", "error", "-show_streams", "-of", "json", raw],
+                capture_output=True, text=True, timeout=30,
+            )
+            import json as _json
+            streams = _json.loads(probe.stdout).get("streams", [])
+            v_dur = next((float(s.get("duration", 0)) for s in streams if s.get("codec_type") == "video"), 0)
+            a_dur = next((float(s.get("duration", 0)) for s in streams if s.get("codec_type") == "audio"), 0)
+            target_dur = min(v_dur, a_dur) if v_dur > 0 and a_dur > 0 else max(v_dur, a_dur)
+            if abs(v_dur - a_dur) > 0.1:
+                log_warning(f"P151 段 {i+1} desync: video={v_dur:.2f}s audio={a_dur:.2f}s,trim 到 {target_dur:.2f}s")
+            trimmed = Path(work) / f"seg_{i+1}.mp4"
+            # ffmpeg trim 到 target_dur(re-encode 保证关键帧对齐)
+            r2 = _sp.run(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                 "-i", raw, "-t", str(target_dur),
+                 "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                 "-c:a", "aac", "-b:a", "128k",
+                 "-movflags", "+faststart",
+                 str(trimmed)],
+                capture_output=True, text=True, timeout=120,
+            )
+            if r2.returncode != 0:
+                log_warning(f"P151 段 {i+1} trim 失败,用 raw: {r2.stderr[:200]}")
+                local_paths.append(raw)
+            else:
+                local_paths.append(str(trimmed))
 
         # concat list 文件
         list_path = Path(work) / "concat_list.txt"
