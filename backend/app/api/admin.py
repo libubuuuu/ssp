@@ -290,19 +290,39 @@ async def admin_list_users(current_user: dict = Depends(get_current_user)):
 
 @router.post("/users/{user_id}/adjust-credits")
 async def admin_adjust_credits(user_id: str, delta: int, request: Request, current_user: dict = Depends(get_current_user)):
-    """管理员：手动加/减用户积分（delta 可正可负）"""
+    """管理员：手动加/减用户积分（delta 可正可负）
+
+    P156(2026-05-06):改原子 UPDATE 修 race condition。
+    之前用 SELECT + SET 两步,并发时可能覆盖用户的扣费操作。
+    现在用 UPDATE credits = MAX(0, credits + ?) 一步原子完成,
+    SQLite 在数据库层算 + floor,绝不会读到中间值。
+    """
     _check_admin_role(current_user)
 
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT credits FROM users WHERE id = ?", (user_id,))
-        row = cursor.fetchone()
-        if not row:
+        # P156 原子 UPDATE:并发安全(SQLite WAL 模式下 UPDATE 是序列化的)
+        cursor.execute(
+            "UPDATE users SET credits = MAX(0, credits + ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (delta, user_id),
+        )
+        if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="用户不存在")
-        old_credits = row[0]
-        new_credits = max(0, old_credits + delta)
-        cursor.execute("UPDATE users SET credits = ? WHERE id = ?", (new_credits, user_id))
+        # 拿新余额(post-UPDATE 读保证看到本事务的写入)
+        cursor.execute("SELECT credits FROM users WHERE id = ?", (user_id,))
+        new_credits = cursor.fetchone()[0]
         conn.commit()
+
+    # P157 ledger 流水(P156 的同事务里写,确保对账)
+    from app.services.credits_ledger import record_credits_change
+    record_credits_change(
+        user_id=user_id,
+        delta=delta,
+        balance_after=new_credits,
+        reason="admin_adjust",
+        ref_id=current_user.get("id"),  # actor admin id
+        module="admin/adjust-credits",
+    )
 
     # 审计日志(失败不阻塞业务)
     from app.services.audit import log_admin_action, ACTION_ADJUST_CREDITS
@@ -312,7 +332,7 @@ async def admin_adjust_credits(user_id: str, delta: int, request: Request, curre
         action=ACTION_ADJUST_CREDITS,
         target_type="user",
         target_id=user_id,
-        details={"delta": delta, "old_credits": old_credits, "new_credits": new_credits},
+        details={"delta": delta, "new_credits": new_credits},
         ip=request.client.host if request.client else None,
     )
 

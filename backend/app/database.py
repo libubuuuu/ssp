@@ -418,6 +418,26 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_viral_scripts_region_kind ON viral_scripts(region, kind)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_viral_scripts_category ON viral_scripts(category)")
 
+        # P157(2026-05-06)credits_ledger 流水表(单一真相源,所有积分变化都记)
+        # 每笔扣费/退款/admin 调账/充值入一条,balance_after 字段用于对账校验
+        # SUM(delta) WHERE user_id=? 必须等于 users.credits(cron 每天对账)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS credits_ledger (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            delta INTEGER NOT NULL,
+            balance_after INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            ref_id TEXT,
+            module TEXT,
+            created_at REAL NOT NULL DEFAULT (strftime('%s','now')),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ledger_user_time ON credits_ledger(user_id, created_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ledger_ref ON credits_ledger(ref_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ledger_reason ON credits_ledger(reason)")
+
         # 创建索引优化查询性能
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
