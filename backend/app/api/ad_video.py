@@ -220,6 +220,7 @@ async def analyze_product(
     # P99:region 透传(CN=国内/Global=海外),VLM 按 region 出对应模特+话术
     safe_duration = max(5, min(300, int(total_duration)))
     safe_region = "Global" if region.lower() in ("global", "en", "international", "海外") else "CN"
+    log_info(f"ad_video/analyze region raw={region!r} safe={safe_region!r} duration={safe_duration}")
     result = await service.analyze_product(
         product_image_url,
         total_duration=safe_duration,

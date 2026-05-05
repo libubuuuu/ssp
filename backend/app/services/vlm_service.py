@@ -225,16 +225,25 @@ def _build_analysis_prompt(total_duration: int = 15, region: str = "CN") -> str:
         )
         cum += d
 
-    # P120/P121 多镜头叙事强提示
+    # P120/P121 多镜头叙事强提示(P134:按 region 分语言示例,防 VLM 看中文示例输出中文)
     if is_p119:
         time_lines.insert(0, f"  ⚠️ **P121 爆款多镜头叙事**:总时长 {total_duration}s 拆成 {n} 个 2-3s 镜头,**每段画面+话术都不同**(钩子→卖点→对比→CTA)。**每段独立 speech**(全段加起来 ≤ {total_max_chars} {char_unit}),后端按段独立 TTS 后画外音 concat 出爆款主播节奏。**严禁段 2-N speech 留空** — 那样会沉默。")
         # P121 爆款话术质量约束:每段 speech 必须含具体细节,不要"360 sculpting / zero squeeze" 这种通用空话
-        time_lines.insert(1, "  ⚠️ **每段 speech 必须包含至少 2 个**:[具体数字(2 寸/50 件/3 天/4 层)] / [具体场景(上班/坐下/聚会/穿衣搭配)] / [痛点反差(腰粗→收/勒→不勒/卷边→服帖)] / [具体动作(穿上/绑紧/转身/拉一下)]。")
-        time_lines.insert(2, "  ⚠️ **严禁通用空话** — \"good quality / amazing / love it / so comfortable / 360 sculpting\" 这种无信息词全部禁用。要写真主播带货那种\"姐妹们我跟你说\"\"穿上立刻瘦 2 寸\"\"坐下都不卷边\"具体感受。")
+        if region == "CN":
+            time_lines.insert(1, "  ⚠️ **每段 speech 必须包含至少 2 个**:[具体数字(2 寸/50 件/3 天/4 层)] / [具体场景(上班/坐下/聚会/穿衣搭配)] / [痛点反差(腰粗→收/勒→不勒/卷边→服帖)] / [具体动作(穿上/绑紧/转身/拉一下)]。")
+            time_lines.insert(2, "  ⚠️ **严禁通用空话** — \"good quality / amazing / love it / so comfortable / 360 sculpting\" 这种无信息词全部禁用。要写真主播带货那种\"姐妹们我跟你说\"\"穿上立刻瘦 2 寸\"\"坐下都不卷边\"具体感受。")
+        else:  # GLOBAL — 全英文示例,VLM 才会输出英文 speech
+            time_lines.insert(1, "  ⚠️ **Each speech MUST include at least 2 of**: [specific numbers (2 inches/50 left/3 days/4 layers)] / [specific scene (work/sit down/party/styling)] / [pain contrast (saggy→snatched/tight→smooth/rolling→flat)] / [specific action (slip on/zip up/turn/tug)].")
+            time_lines.insert(2, "  ⚠️ **NO generic filler** — banned: \"good quality / amazing / love it / so comfortable / 360 sculpting\". Write like a real TikTok creator: \"girl let me tell you\" \"snatches my waist instantly 2 inches\" \"sit down and it doesn't roll up\".")
+            time_lines.insert(3, "  🚨 **CRITICAL — speech LANGUAGE = ENGLISH ONLY**. No Chinese characters allowed in any speech field. If you write any Chinese in speech, the entire output is invalid.")
 
+    # P134:scenes 示例的 speech 也按 region 切语言(VLM 看示例学语言!)
     scenes_example_parts = []
     cum2 = 0.0
-    speech_examples = ['"开场钩子一句话"', '"卖点一句话"', '"CTA 紧迫感一句话"']
+    if region == "CN":
+        speech_examples = ['"开场钩子一句话"', '"卖点一句话"', '"CTA 紧迫感一句话"']
+    else:
+        speech_examples = ['"opening hook in English"', '"selling point in English"', '"CTA with urgency in English"']
     for i, d in enumerate(seg_durs[:3]):
         speech_eg = speech_examples[i] if i < len(speech_examples) else '"本段对应话术"'
         scenes_example_parts.append(
