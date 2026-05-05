@@ -895,25 +895,52 @@ async def _run_ad_video_job(params: dict):
                 else:
                     seg_frames.append(fr.get("image_url") or base_image_url)
 
-            # P125 阶段 C:并发 N 段 omnihuman(每段 image+audio,自带模特说话)
-            log_info(f"ad_video P125 阶段 C:并发 {len(scenes)} 段 omnihuman")
+            # P127(2026-05-05):用户选什么端点就跑什么端点(omnihuman / kling-avatar v2 / v2 pro)
+            # 之前 P125 硬编码 omnihuman,忽略用户前端选择,擅自做主。
+            user_talking_endpoint = params.get("talking_head_endpoint", "fal-ai/bytedance/omnihuman")
+            log_info(f"ad_video P127 阶段 C:并发 {len(scenes)} 段 {user_talking_endpoint}")
 
-            async def _run_omnihuman_for_seg(image_url: str, audio_url: str, idx: int) -> str:
+            async def _run_talking_for_seg(image_url: str, audio_url: str, idx: int) -> str:
+                """跑用户选的 talking 端点(omnihuman / kling-avatar v2 / v2 pro 等)。
+                Kling 拒图时 fallback omnihuman(单段,不影响其他段)。"""
                 if not audio_url:
-                    raise Exception(f"段 {idx} audio 缺失,omnihuman 必须吃 audio")
-                res = await _fc.subscribe_async(
-                    "fal-ai/bytedance/omnihuman",
-                    arguments={"image_url": image_url, "audio_url": audio_url},
-                )
-                v = (res.get("video") or {}).get("url") if isinstance(res.get("video"), dict) else None
-                if not v:
-                    raise Exception(f"段 {idx} omnihuman 未返 video_url")
-                log_info(f"ad_video P125 段{idx} omnihuman OK url={v[:80]}")
-                return v
+                    raise Exception(f"段 {idx} audio 缺失,talking 端点必须吃 audio")
+                ep = user_talking_endpoint
+                args = {"image_url": image_url, "audio_url": audio_url}
+                if "kling" in ep:
+                    args["prompt"] = (
+                        "natural relaxed talking pose, slight head movements, "
+                        "subtle natural expressions, no exaggerated mouth or face"
+                    )
+                try:
+                    h = await _fc.submit_async(ep, arguments=args)
+                except Exception as e:
+                    if "kling" in ep:
+                        log_warning(f"ad_video P127 段{idx} {ep} 拒输入,fallback omnihuman: {str(e)[:200]}")
+                        ep = "fal-ai/bytedance/omnihuman"
+                        args.pop("prompt", None)
+                        h = await _fc.submit_async(ep, arguments=args)
+                    else:
+                        raise
+                tid = h.request_id
+                for _ in range(120):
+                    await asyncio.sleep(5)
+                    try:
+                        s = await _fc.status_async(ep, tid)
+                    except Exception:
+                        continue
+                    if type(s).__name__ == "Completed":
+                        res = await _fc.result_async(ep, tid)
+                        v = (res.get("video") or {}).get("url") if isinstance(res.get("video"), dict) else res.get("video_url")
+                        if not v:
+                            raise Exception(f"段 {idx} {ep} 未返 video_url")
+                        log_info(f"ad_video P127 段{idx} {ep} OK url={v[:80]}")
+                        return v
+                raise Exception(f"段 {idx} {ep} 超时(10 min)")
 
             omni_results = await asyncio.gather(
                 *[
-                    _run_omnihuman_for_seg(seg_frames[i], seg_audios[i], i + 1)
+                    _run_talking_for_seg(seg_frames[i], seg_audios[i], i + 1)
                     for i in range(len(scenes))
                 ],
                 return_exceptions=True,
