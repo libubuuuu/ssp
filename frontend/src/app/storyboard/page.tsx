@@ -20,9 +20,11 @@ type HistoryItem = {
   ts: number;
 };
 
+const MAX_REFS = 8;
+
 export default function StoryboardPage() {
-  const [refUrl, setRefUrl] = useState<string>("");
-  const [refPreview, setRefPreview] = useState<string>("");
+  const [refUrls, setRefUrls] = useState<string[]>([]);
+  const [refPreviews, setRefPreviews] = useState<string[]>([]);
   const [prompt, setPrompt] = useState("");
   const [aspectRatio, setAspectRatio] = useState<"9:16" | "16:9" | "1:1">("9:16");
   const [uploading, setUploading] = useState(false);
@@ -35,6 +37,10 @@ export default function StoryboardPage() {
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (refUrls.length >= MAX_REFS) {
+      setError(`参考图最多 ${MAX_REFS} 张`);
+      return;
+    }
     setError("");
     setUploading(true);
     setMsg("正在压缩图片...");
@@ -51,8 +57,8 @@ export default function StoryboardPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail ?? "上传失败");
-      setRefUrl(data.url);
-      setRefPreview(URL.createObjectURL(file));
+      setRefUrls((u) => [...u, data.url]);
+      setRefPreviews((p) => [...p, URL.createObjectURL(file)]);
       setMsg("");
     } catch (e) {
       setError(errMsg(e));
@@ -63,9 +69,14 @@ export default function StoryboardPage() {
     }
   };
 
+  const removeRef = (i: number) => {
+    setRefUrls((u) => u.filter((_, idx) => idx !== i));
+    setRefPreviews((p) => p.filter((_, idx) => idx !== i));
+  };
+
   const generate = async () => {
-    if (!refUrl) {
-      setError("请先上传参考图");
+    if (refUrls.length === 0) {
+      setError("请至少上传 1 张参考图");
       return;
     }
     if (!prompt.trim()) {
@@ -79,7 +90,7 @@ export default function StoryboardPage() {
     try {
       const token = localStorage.getItem("token") ?? "";
       const fd = new FormData();
-      fd.append("image_url", refUrl);
+      refUrls.forEach((u) => fd.append("image_urls", u));
       fd.append("prompt", prompt);
       fd.append("aspect_ratio", aspectRatio);
       const res = await fetch(`${API_BASE}/api/storyboard/generate-frame`, {
@@ -119,9 +130,13 @@ export default function StoryboardPage() {
   };
 
   const useAsRef = async (url: string) => {
-    setRefUrl(url);
-    setRefPreview(url);
-    setMsg("已把生成图作为新参考图,可以基于这张图继续改");
+    if (refUrls.length >= MAX_REFS) {
+      setError(`参考图已满 ${MAX_REFS} 张,先删一张`);
+      return;
+    }
+    setRefUrls((u) => [...u, url]);
+    setRefPreviews((p) => [...p, url]);
+    setMsg("已把生成图加入参考图列表,可以基于多张图继续改");
     setTimeout(() => setMsg(""), 3000);
   };
 
@@ -384,70 +399,92 @@ export default function StoryboardPage() {
               marginBottom: "0.6rem",
             }}
           >
-            参考图(必填)
+            参考图({refUrls.length}/{MAX_REFS} · 可传产品正/反/模特/背景)
           </div>
-          {refPreview ? (
-            <div style={{ position: "relative", width: "100%" }}>
-              <img
-                src={refPreview}
-                alt="参考图"
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(3, 1fr)",
+              gap: "0.5rem",
+            }}
+          >
+            {refPreviews.map((p, i) => (
+              <div key={i} style={{ position: "relative", aspectRatio: "1 / 1" }}>
+                <img
+                  src={p}
+                  alt={`参考图 ${i + 1}`}
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
+                    borderRadius: "10px",
+                    border: "1px solid #eee",
+                    display: "block",
+                  }}
+                />
+                <button
+                  onClick={() => removeRef(i)}
+                  style={{
+                    position: "absolute",
+                    top: "0.3rem",
+                    right: "0.3rem",
+                    width: 22,
+                    height: 22,
+                    borderRadius: "50%",
+                    background: "rgba(0,0,0,0.65)",
+                    color: "#fff",
+                    border: "none",
+                    cursor: "pointer",
+                    fontSize: "0.75rem",
+                    lineHeight: 1,
+                  }}
+                >
+                  ×
+                </button>
+                <div
+                  style={{
+                    position: "absolute",
+                    bottom: "0.3rem",
+                    left: "0.3rem",
+                    background: "rgba(0,0,0,0.6)",
+                    color: "#fff",
+                    fontSize: "0.65rem",
+                    padding: "0.1rem 0.4rem",
+                    borderRadius: "999px",
+                  }}
+                >
+                  #{i + 1}
+                </div>
+              </div>
+            ))}
+            {refUrls.length < MAX_REFS && (
+              <label
                 style={{
-                  width: "100%",
-                  borderRadius: "12px",
-                  border: "1px solid #eee",
-                  display: "block",
-                }}
-              />
-              <button
-                onClick={() => {
-                  setRefUrl("");
-                  setRefPreview("");
-                }}
-                style={{
-                  position: "absolute",
-                  top: "0.4rem",
-                  right: "0.4rem",
-                  width: 24,
-                  height: 24,
-                  borderRadius: "50%",
-                  background: "rgba(0,0,0,0.65)",
-                  color: "#fff",
-                  border: "none",
-                  cursor: "pointer",
-                  fontSize: "0.8rem",
+                  aspectRatio: "1 / 1",
+                  border: "2px dashed #ccc",
+                  borderRadius: "10px",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: uploading ? "wait" : "pointer",
+                  color: "#999",
+                  fontSize: "0.7rem",
+                  background: "#fafaf7",
                 }}
               >
-                ×
-              </button>
-            </div>
-          ) : (
-            <label
-              style={{
-                width: "100%",
-                minHeight: "120px",
-                border: "2px dashed #ccc",
-                borderRadius: "12px",
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: uploading ? "wait" : "pointer",
-                color: "#999",
-                fontSize: "0.85rem",
-                background: "#fafaf7",
-              }}
-            >
-              <input
-                type="file"
-                accept="image/*"
-                style={{ display: "none" }}
-                onChange={handleUpload}
-                disabled={uploading}
-              />
-              <div style={{ fontSize: "1.6rem", color: "#ccc", marginBottom: "0.4rem" }}>+</div>
-              {uploading ? "处理中..." : "点击上传参考图"}
-            </label>
-          )}
+                <input
+                  type="file"
+                  accept="image/*"
+                  style={{ display: "none" }}
+                  onChange={handleUpload}
+                  disabled={uploading}
+                />
+                <div style={{ fontSize: "1.4rem", color: "#ccc", marginBottom: "0.2rem" }}>+</div>
+                {uploading ? "..." : "加图"}
+              </label>
+            )}
+          </div>
         </div>
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
@@ -544,19 +581,21 @@ export default function StoryboardPage() {
 
         <button
           onClick={generate}
-          disabled={loading || !refUrl || !prompt.trim()}
+          disabled={loading || refUrls.length === 0 || !prompt.trim()}
           style={{
             padding: "0.9rem",
-            background: !refUrl || !prompt.trim() || loading ? "#999" : "#0d0d0d",
+            background:
+              refUrls.length === 0 || !prompt.trim() || loading ? "#999" : "#0d0d0d",
             color: "#fff",
             border: "none",
             borderRadius: "12px",
-            cursor: loading || !refUrl || !prompt.trim() ? "not-allowed" : "pointer",
+            cursor:
+              loading || refUrls.length === 0 || !prompt.trim() ? "not-allowed" : "pointer",
             fontSize: "0.95rem",
             fontWeight: 500,
           }}
         >
-          {loading ? "生成中..." : "生成分镜图(2 积分)"}
+          {loading ? "生成中..." : `生成分镜图(${refUrls.length} 张参考 · 2 积分)`}
         </button>
       </aside>
     </div>

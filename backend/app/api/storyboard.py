@@ -12,6 +12,7 @@
 - VLM 阶段失败 → 抛 HTTPException → 装饰器自动退款
 - Kontext 部分失败 → 返回 success_count + 各段 error 标注(不退款,因 VLM 已花)
 """
+from typing import List
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 from app.api.auth import get_current_user
 from app.services.decorators import require_credits
@@ -80,17 +81,17 @@ async def upload_image(
 @router.post("/generate-frame")
 @require_credits("storyboard/generate-frame")
 async def generate_frame(
-    image_url: str = Form(...),
+    image_urls: List[str] = Form(...),
     prompt: str = Form(...),
     aspect_ratio: str = Form("9:16"),
     current_user: dict = Depends(get_current_user),
 ):
-    """P130 极简版:用户 prompt + 参考图 → GPT-Image 2 出 1 张分镜图
+    """P131(多张参考图):用户 prompt + N 张参考图 → GPT-Image 2 出 1 张分镜图
 
-    Form params:
-      image_url:      /upload/image 返回的 fal storage URL
-      prompt:         用户写的提示词(必填,描述这帧画面想要什么)
-      aspect_ratio:   "9:16" / "16:9" / "1:1",默认 9:16
+    Form params(multipart 多值传 image_urls):
+      image_urls:     /upload/image 返回的 fal storage URL 列表(1-8 张)
+      prompt:         用户写的提示词(必填)
+      aspect_ratio:   "9:16" / "16:9" / "1:1"
 
     返回:
       {image_url, prompt, cost}
@@ -101,19 +102,26 @@ async def generate_frame(
         raise HTTPException(status_code=400, detail="提示词不能为空")
     if aspect_ratio not in ("9:16", "16:9", "1:1"):
         raise HTTPException(status_code=400, detail="比例只支持 9:16 / 16:9 / 1:1")
+    if not image_urls:
+        raise HTTPException(status_code=400, detail="至少 1 张参考图")
+    if len(image_urls) > 8:
+        raise HTTPException(status_code=400, detail="参考图最多 8 张")
 
     user_id = current_user["id"]
-    log_info(f"storyboard/generate-frame user={user_id} ar={aspect_ratio} prompt_len={len(prompt)}")
+    log_info(
+        f"storyboard/generate-frame user={user_id} refs={len(image_urls)} "
+        f"ar={aspect_ratio} prompt_len={len(prompt)}"
+    )
 
     result = await generate_single_frame(
-        reference_image_url=image_url,
+        reference_image_urls=image_urls,
         prompt=prompt.strip(),
         aspect_ratio=aspect_ratio,
     )
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
 
-    result["description"] = f"分镜图 {aspect_ratio} prompt={prompt[:30]}"
+    result["description"] = f"分镜图 {len(image_urls)} 参考图 {aspect_ratio} prompt={prompt[:30]}"
     return result
 
 

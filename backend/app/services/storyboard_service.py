@@ -78,13 +78,14 @@ def _build_storyboard_prompt(description: str, n_frames: int, aspect_ratio: str)
 
 
 async def generate_single_frame(
-    reference_image_url: str,
+    reference_image_urls: list,
     prompt: str,
     aspect_ratio: str = "9:16",
 ) -> dict:
-    """P130:极简版 — 用户写 prompt + 1 张参考图 → GPT-Image 2 直接出 1 张分镜图。
+    """P131(2026-05-05):多张参考图 — 用户传 N 张参考图(模特/产品正/反/背景等)+ prompt
+    → GPT-Image 2 直接出 1 张分镜图。
 
-    不走 VLM。用户写啥就传啥,gpt-image-2/edit 直接出图。
+    gpt-image-2/edit 本来就支持 image_urls list,改成支持多图。
     Returns:
         {"image_url": str, "prompt": str}  成功
         {"error": str}                      失败
@@ -95,6 +96,10 @@ async def generate_single_frame(
 
     if not prompt or not prompt.strip():
         return {"error": "提示词不能为空"}
+    if not reference_image_urls or not isinstance(reference_image_urls, list):
+        return {"error": "至少 1 张参考图"}
+    if len(reference_image_urls) > 8:
+        return {"error": "参考图最多 8 张"}
 
     img_size = "portrait_16_9" if aspect_ratio == "9:16" else (
         "landscape_16_9" if aspect_ratio == "16:9" else "square"
@@ -105,7 +110,7 @@ async def generate_single_frame(
             KONTEXT_ENDPOINT,  # openai/gpt-image-2/edit
             arguments={
                 "prompt": prompt.strip(),
-                "image_urls": [reference_image_url],
+                "image_urls": reference_image_urls,
                 "image_size": img_size,
                 "num_images": 1,
                 "output_format": "png",
@@ -120,7 +125,7 @@ async def generate_single_frame(
             await cb.record_failure(KONTEXT_KEY)
             return {"error": "GPT-Image 2 返回无 URL"}
         await cb.record_success(KONTEXT_KEY)
-        log_info(f"storyboard single-frame OK ar={aspect_ratio} prompt_len={len(prompt)} url={url[:80]}")
+        log_info(f"storyboard single-frame OK refs={len(reference_image_urls)} ar={aspect_ratio} prompt_len={len(prompt)} url={url[:80]}")
         return {"image_url": url, "prompt": prompt}
     except Exception as e:
         await cb.record_failure(KONTEXT_KEY)
