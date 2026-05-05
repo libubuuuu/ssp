@@ -223,12 +223,15 @@ async def _run_ad_video_job(params: dict):
                     "fal-ai/flux-pro/kontext/max/multi",
                     arguments={
                         "prompt": (
-                            "Reframe and recompose this image into a clean upper-body portrait of the model. "
-                            "Model facing camera directly with a clear, well-lit face occupying the upper-center "
-                            "of the frame. Soft studio background, neutral color. The product can stay visible "
-                            "but smaller in scale - worn naturally on the body or held lightly in hands - "
-                            "do not let the product dominate the composition. Photorealistic, high quality, "
-                            "TikTok creator headshot style."
+                            # P117 修法:不替换背景、不弱化产品。仅做"镜头视角调整 + 模特上半身居前"
+                            "Adjust the camera framing of this image to make the model's face clearly visible "
+                            "in the upper-center of the frame, while KEEPING the original background scene "
+                            "EXACTLY as it is (do NOT replace background with studio or any other scene), "
+                            "and KEEPING the product visible and recognizable in the frame "
+                            "(worn naturally on the body or held in hands as in the original). "
+                            "Only zoom/recompose the framing — do not change colors, lighting, "
+                            "background elements, or the product. Model facing camera with a relaxed "
+                            "neutral expression (NO open mouth, NO shocked face). Photorealistic."
                         ),
                         "image_urls": [base_image_url],
                         "guidance_scale": 3.5,
@@ -253,11 +256,15 @@ async def _run_ad_video_job(params: dict):
             "image_url": kling_image_url,
             "audio_url": audio_url,
         }
-        # Kling Avatar 支持 optional prompt 字段引导动作 — 拼 visual_prompt 增强 P113 镜头公式
-        if "kling" in omnihuman_endpoint and first_scene:
-            _vp = (first_scene.get("visual_prompt") or "").strip()
-            if _vp:
-                _args["prompt"] = _vp[:500]
+        # P116-r1:visual_prompt 不再喂给 Kling 当驱动 prompt — 之前喂了导致 Kling
+        # 按 "shocked expression" 驱动嘴张大。Kling 的 prompt 字段是对动作精细化的,
+        # 但我们的 visual_prompt 含镜头/构图/字幕等 talking head 模型不应该执行的指令,
+        # 喂进去反而拉低质量。改为传一个干净的"中性自然"动作引导 prompt。
+        if "kling" in omnihuman_endpoint:
+            _args["prompt"] = (
+                "natural relaxed talking pose, slight head movements, "
+                "subtle natural expressions, no exaggerated mouth or face"
+            )
         try:
             h = await _fc.submit_async(
                 omnihuman_endpoint,

@@ -293,30 +293,41 @@ visual_prompt **必须**显式指明产品穿戴/使用位置(英文),按产品�
 
 每段字段:shot_language(中文镜头语言) / content(中文场景内容) / visual_prompt(英文视频模型提示词,**必含穿戴位置**) / speech({"中文带货话术(国内抖音风)" if region == "CN" else "英文 TikTok 带货话术"})
 
-**P113 爆款镜头/动作公式(每段 visual_prompt + shot_language 必须组合 1-2 个公式,不要每段都"模特微笑站着"这种单调描述)**:
+**P113/P116 爆款镜头/动作公式(每段 visual_prompt + shot_language 必须组合 1-2 个公式,不要每段都"模特微笑站着"这种单调描述)**:
+
+⚠️ **P116 重要约束:visual_prompt 严禁写驱动模特嘴/脸的指令**(因为这个 prompt 后续会喂给
+talking head 模型,模型按指令驱动嘴脸 → 嘴张大、表情夸张失真)。
+- ❌ 禁止:"shocked / concerned / surprised / amazed / open mouth / mouth open / smiling
+  widely / yelling / screaming / dramatic expression / 惊讶 / 痛苦 / 大笑 / 张嘴" 等驱动
+  嘴脸的描述
+- ❌ 禁止:"face close-up / 大特写脸部 / extreme close-up of face" 让 talking head 模型
+  把整张嘴放大
+- ✅ 允许:**镜头运动 / 构图 / 字幕 / 道具 / 服装 / 颜色 / 灯光 / 产品特写 / 动作(走 / 转身 /
+  弯腰 / 手势 / 推近 / 平移)** 这些不驱动嘴脸的元素
 
 - 钩子镜头(0-1s,通常用在第 1 段):
-  ⭐ 大特写 + 痛点表情:`extreme close-up of model's face/hands, shocked/concerned expression, eyebrows raised, mouth slightly open` + 中文 shot:"大特写,模特惊讶/痛苦表情,眉毛上挑"
-  ⭐ 反差对比 split-screen:`split-screen contrast: left side showing pain point (X without product), right side showing solution (X with product)` + "split 分屏对比,左痛点右解决"
-  ⭐ 数字/痛点字幕硬冲:`bold text overlay flashing big number or shocking claim, like '23%↓ INSTANT' or '5 mins to fix'` + "大字幕硬冲,加粗数字闪烁"
-  ⭐ 动作冲击:`model violently throws away old/competitor product, then shows new product` + "甩开旧物,亮出新品"
+  ⭐ 大特写产品 + 推近:`extreme macro close-up of the product itself (not the face), smooth camera push-in revealing texture / material / detail` + "产品大特写微距,镜头推近凸显材质"
+  ⭐ 反差对比 split-screen:`split-screen contrast: left side wide shot of pain point context, right side same scene with product solving it` + "split 分屏对比,左痛点场景右解决方案"
+  ⭐ 数字/痛点字幕硬冲:`bold text overlay flashing big number or shocking claim, like '23%↓ INSTANT' or '5 mins to fix', with neutral model B-roll behind` + "大字幕硬冲,加粗数字闪烁,模特中性 B-roll 在后"
+  ⭐ 动作冲击:`model gestures throwing away old/competitor product (off-screen direction), then product reveal centered` + "甩开旧物(出框方向),新品居中亮出"
 
 - 卖点镜头(中段,通常第 2-N-1 段):
-  ⭐ Product macro 360°:`smooth camera orbit 360 around product, macro close-up showing material/texture/details` + "镜头环绕产品 360°,微距特写材质"
-  ⭐ 数字数据字幕悬浮:`floating text bubbles around model showing data points like '+2 inches slimmer', '0 chemicals', '5x stronger'` + "数据气泡悬浮,具体数字"
-  ⭐ 用前/用后对比:`split-frame before/after using the product, with arrow or 'AFTER' label` + "用前用后对比,带箭头或 AFTER 标签"
-  ⭐ 模特动作演示:`model dynamic movement (walking confidently, twirling, bending to show fit), one hand pointing at product key feature` + "模特动态走台/转身/弯腰展贴合度,手指点产品卖点"
-  ⭐ 用户证言镜头:`split-screen showing customer reviews / 5-star ratings / before-after photos popping in` + "客户评价/五星好评/对比图弹入"
+  ⭐ Product macro 360°:`smooth camera orbit 360 around product, macro close-up showing material/texture/details, model body partial in background` + "镜头环绕产品 360°,微距特写材质,模特身体局部作背景"
+  ⭐ 数字数据字幕悬浮:`floating text bubbles around model body (NOT face) showing data points like '+2 inches slimmer', '0 chemicals', '5x stronger'` + "数据气泡悬浮在模特身体周围(不挡脸),具体数字"
+  ⭐ 用前/用后对比:`split-frame before/after using the product, with arrow or 'AFTER' label, body/waist focus` + "用前用后对比,带箭头或 AFTER 标签,聚焦身体不聚焦脸"
+  ⭐ 模特动作演示:`model dynamic body movement (walking confidently, twirling, bending to show fit, hand gestures pointing at product), camera follows from chest down` + "模特动态身体动作(走台/转身/弯腰展贴合度/手势点产品),镜头从胸部以下跟随"
+  ⭐ 用户证言镜头:`split-screen showing customer reviews / 5-star ratings / before-after photos popping in, no model close-up` + "客户评价/五星好评/对比图弹入,无模特脸部特写"
 
 - CTA 镜头(末段,最后 1 段):
-  ⭐ 字幕硬上 + 倒计时:`big text overlay 'LIMITED 50 LEFT' or 'TODAY ONLY' with red/yellow color and pulse animation, plus countdown timer ticking` + "大字幕硬上,红黄色脉冲,带倒计时"
-  ⭐ 模特看镜头 + 字幕同步:`model staring directly into camera, finger pointing at viewer, urgent expression, with text overlay matching speech keywords` + "模特直视镜头,手指观众,紧迫表情,字幕同步关键词"
-  ⭐ 产品居中 + 加购按钮特写:`product centered on screen, animated 'ADD TO CART' or 'SHOP NOW' button pulsing below, price tag flashing` + "产品居中,加购按钮脉冲动画,价签闪烁"
+  ⭐ 字幕硬上 + 倒计时:`big text overlay 'LIMITED 50 LEFT' or 'TODAY ONLY' with red/yellow color and pulse animation, plus countdown timer ticking, model upper-body in background` + "大字幕硬上,红黄色脉冲,带倒计时,模特上半身在后景"
+  ⭐ 模特看镜头 + 字幕同步:`model facing camera with relaxed natural look (NO exaggerated expression), finger pointing toward camera, with text overlay matching speech keywords` + "模特直视镜头自然放松(不要夸张表情),手指观众,字幕同步关键词"
+  ⭐ 产品居中 + 加购按钮特写:`product centered on screen, animated 'ADD TO CART' or 'SHOP NOW' button pulsing below, price tag flashing, model in soft-blur background` + "产品居中,加购按钮脉冲动画,价签闪烁,模特软虚化在后景"
 
-⚠️ 反面例子(不要写这种单调 visual_prompt):
-- ✗ "model wearing the waist trainer, smiling at camera, standing in studio"(只有静态站姿,没动作没构图,看一眼就划走)
-- ✗ "model showing the product to camera"(空话,什么是 showing?要写具体动作)
-✅ 正例:"extreme close-up of model's waist before/after wearing trainer, split-screen contrast, dynamic camera push-in, with bold '−2 inches' text flashing in red"
+⚠️ 反面例子(不要写这种 visual_prompt):
+- ✗ "model wearing the waist trainer, smiling at camera, standing in studio"(只有静态站姿,看一眼就划走)
+- ✗ "extreme close-up of model's face shocked expression"(P116 严禁:talking head 会按"shocked"驱动嘴张大失真)
+- ✗ "model with open mouth / dramatic facial expression"(同上,驱动嘴脸夸张)
+✅ 正例:"smooth camera orbit 360 around the waist trainer, macro close-up of fabric texture, with bold '−2 inches' text flashing in red, model upper-body softly visible in background"
 
 **P110 抖音/TikTok 真爆款话术(从 db 实时抽样,每次不同样本,库可无限扩展)**:
 {viral_lang_label}
