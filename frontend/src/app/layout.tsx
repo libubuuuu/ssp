@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AI 创意平台",
+  title: "XIAO Liai",
   description: "图片生成 | 视频生成 | 数字人 | 语音克隆",
 };
 
