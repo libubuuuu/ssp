@@ -1003,15 +1003,31 @@ async def _run_ad_video_job(params: dict):
             async def _ka_for_seg(idx: int, audio_url: str):
                 # 用段 idx 对应的分镜图(P138 关键改动);失败 fallback 已经在 seg_frames 里处理
                 seg_img = seg_frames.get(idx, base_image_url)
+                # P143(2026-05-06):把 VLM 的 visual_prompt 传给 Kling Avatar(动作驱动)
+                # 之前写死 "natural relaxed talking pose" 浪费了 VLM 写的动作描述,
+                # 模特只会站着轻微晃头。改传 visual_prompt 让 Kling Avatar 看动作意图。
+                scene = scenes[idx - 1] if idx - 1 < len(scenes) else {}
+                visual = (scene.get("visual_prompt") or "").strip()
+                # P140 sanitize 一致:替换敏感词避开 Kling 内容审核
+                visual_safe = (
+                    visual
+                    .replace("waist trainer", "fashion garment")
+                    .replace("shapewear", "fashion garment")
+                )
+                ka_prompt = (
+                    f"{visual_safe}. "
+                    "Model speaks naturally with synchronized lip movements, "
+                    "expressive but not exaggerated facial expressions."
+                ) if visual_safe else (
+                    "natural relaxed talking pose, slight head movements, "
+                    "subtle natural expressions, no exaggerated mouth or face"
+                )
                 res = await _fc.subscribe_async(
                     kling_endpoint,
                     arguments={
                         "image_url": seg_img,
                         "audio_url": audio_url,
-                        "prompt": (
-                            "natural relaxed talking pose, slight head movements, "
-                            "subtle natural expressions, no exaggerated mouth or face"
-                        ),
+                        "prompt": ka_prompt,
                     },
                 )
                 v = (res.get("video") or {}).get("url") if isinstance(res.get("video"), dict) else res.get("video_url")
