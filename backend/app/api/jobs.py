@@ -233,6 +233,99 @@ def _parse_time_range(tr: str, fallback: float = 2.0) -> float:
         return fallback
 
 
+async def _p135_concat_simple(
+    seg_video_urls: list,  # list[str] — N 段独立 talking head 视频(各自带 audio)
+    user_id: str,
+) -> str:
+    """P135:N 段视频 ffmpeg concat demuxer 直接拼接(不 trim 不 xfade,完整段拼)。
+
+    跟 P125 xfade chain 不同:
+    - 不用 filter_complex,用 concat demuxer(只拷贝流,不重编码)
+    - 不 trim 段长(每段完整保留,自动用模型实际输出秒数)
+    - 不 xfade 渐变(段间硬切,但用户要求"不剪辑只拼接")
+    - 段间会有"姿势重置"小跳跃(Kling Avatar 物理特性,不是剪辑造成)
+    """
+    import subprocess as _sp
+    import tempfile as _tmp
+    import shutil as _sh
+    import re as _re2
+    import httpx as _httpx
+    from datetime import datetime as _dt
+    from app.services.media_archiver import UPLOADS_ROOT, PUBLIC_BASE_URL
+
+    n = len(seg_video_urls)
+    if n == 0:
+        raise Exception("P135 seg_video_urls 空")
+    if n == 1:
+        # 只 1 段无需拼接,直接返该 url(归档归档逻辑跟 P133 一样,但简化:返原 url)
+        return seg_video_urls[0]
+
+    work = _tmp.mkdtemp(prefix="p135_")
+    try:
+        # 下载 N 段
+        async with _httpx.AsyncClient(timeout=180) as cli:
+            local_paths = []
+            for i, vu in enumerate(seg_video_urls):
+                if not vu:
+                    raise Exception(f"P135 段 {i+1} video_url 空")
+                r = await cli.get(vu); r.raise_for_status()
+                p = Path(work) / f"seg_{i+1}.mp4"
+                p.write_bytes(r.content)
+                local_paths.append(str(p))
+
+        # concat list 文件
+        list_path = Path(work) / "concat_list.txt"
+        list_path.write_text(
+            "\n".join([f"file '{p}'" for p in local_paths]) + "\n",
+            encoding="utf-8",
+        )
+
+        final_p = f"{work}/final.mp4"
+
+        # 先试 concat -c copy(不重编码,最快最干净)
+        cmd_copy = [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", str(list_path),
+            "-c", "copy",
+            "-movflags", "+faststart",
+            final_p,
+        ]
+        r = _sp.run(cmd_copy, capture_output=True, text=True, timeout=120)
+        if r.returncode != 0:
+            # codec 不一致(fps / 分辨率 / sample_rate 差)→ 重新编码兜底
+            log_warning(f"P135 concat -c copy 失败,fallback re-encode: {r.stderr[:300]}")
+            cmd_reenc = [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-f", "concat", "-safe", "0",
+                "-i", str(list_path),
+                "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                "-c:a", "aac", "-b:a", "128k",
+                "-movflags", "+faststart",
+                final_p,
+            ]
+            r2 = _sp.run(cmd_reenc, capture_output=True, text=True, timeout=240)
+            if r2.returncode != 0:
+                raise Exception(f"P135 concat re-encode failed: {r2.stderr[:500]}")
+
+        # 归档到 uploads
+        safe_uid = _re2.sub(r"[^a-zA-Z0-9_\-]", "_", str(user_id))[:64] or "anon"
+        yyyymm = _dt.utcnow().strftime("%Y-%m")
+        target_dir = UPLOADS_ROOT / safe_uid / yyyymm
+        target_dir.mkdir(parents=True, exist_ok=True)
+        out_name = f"video_p135_{uuid.uuid4().hex}.mp4"
+        out_path = target_dir / out_name
+        _sh.copy(final_p, out_path)
+        os.chmod(out_path, 0o644)
+
+        public_url = f"{PUBLIC_BASE_URL.rstrip('/')}/{safe_uid}/{yyyymm}/{out_name}"
+        log_info(f"ad_video P135 concat OK ({n} 段) -> {public_url}")
+        return public_url
+    finally:
+        import shutil as _sh2
+        _sh2.rmtree(work, ignore_errors=True)
+
+
 async def _p125_concat_omnihuman(
     seg_video_urls: list,  # list[str] — N 段 omnihuman 视频(各自带 audio)
     seg_durs: list,        # list[float] — 每段时长(秒)
@@ -808,59 +901,101 @@ async def _run_ad_video_job(params: dict):
             log_info(f"ad_video P124 段{idx} i2v OK url={v[:80]}")
             return v
 
-        # P133(2026-05-05):用户敲"换 Kling Avatar v2 Standard"($0.0562/s,Kling v3 pro 太贵)
-        # 极简单段架构:不管 VLM 输出几段都合并成 1 整段
-        # GPT-Image 2 base_image(已合成模特+产品+背景)+ 整段 TTS audio
-        #   → 1 次 Kling AI Avatar v2 Standard(image_url + audio_url → 嘴对口型说话视频)
-        # 砍:N 张分镜首帧 / N 段 i2v 并发 / ffmpeg xfade 拼接 / 多镜头切换
-        # 代价:全程 1 个镜头(模特正面说话 + 微动作),换便宜 + 嘴对 + 0 拼接 0 生硬
+        # P135(2026-05-05):用户敲"按爆款节奏分镜,完整段直接 concat 拼接,不剪辑"
+        # 架构:N 段独立 TTS(每段 speech)+ N 段并发 Kling Avatar v2 Std(共享 base_image,每段独立 audio)
+        #   + ffmpeg concat demuxer(完整段拼,不 trim 不 xfade,真"不剪辑")
+        # VLM scenes 数 = 爆款节奏天然 punch 数(2-4 段),前端 duration 是参考(实际时长 = N 段 audio 总和)
+        # 段间会有"姿势重置"轻跳跃(Kling Avatar 每段从 base_image 起始姿势开始,物理特性)
         if len(scenes) >= 2:
-            log_info(f"ad_video P133 单段 talking head(Kling Avatar v2 Std)scenes={len(scenes)} duration={duration}s")
-
-            # 把 N 段 speech 合并成 1 整段(不再 N 段并发,1 个 audio + 1 个视频)
-            merged_speech = " ".join(
-                [(s.get("speech") or "").strip() for s in scenes if (s.get("speech") or "").strip()]
-            )
-            _has_cn2 = bool(_re.search(r"[一-鿿]", merged_speech))
-            _max_total = int(duration * (5 if _has_cn2 else 14))
-            if len(merged_speech) > _max_total:
-                log_warning(f"ad_video P133 整段 speech 超长 {len(merged_speech)} > {_max_total},截断")
-                merged_speech = merged_speech[:_max_total]
-            if not merged_speech:
-                raise Exception("P133 整段 speech 空,VLM 没写台词")
-
-            # P133 阶段 A:1 次 TTS 整段 audio
-            log_info(f"ad_video P133 阶段 A:整段 TTS chars={len(merged_speech)}")
-            tts_res = await _fc.run_async(
-                "fal-ai/elevenlabs/tts/multilingual-v2",
-                arguments={"text": merged_speech[:1500]},
-            )
-            tts_obj = tts_res.get("audio") if isinstance(tts_res.get("audio"), dict) else None
-            full_audio_url = tts_obj.get("url") if tts_obj else tts_res.get("audio_url")
-            if not full_audio_url:
-                raise Exception("P133 整段 TTS 未返 audio_url")
-            log_info(f"ad_video P133 整段 TTS OK url={full_audio_url[:80]}")
-
-            # P133 阶段 B:1 次 Kling AI Avatar v2 Standard(image+audio→说话视频,自动匹配 audio 时长)
-            user_id = params.get("_user_id", "anon")
             kling_endpoint = "fal-ai/kling-video/ai-avatar/v2/standard"
-            log_info(f"ad_video P133 阶段 B:{kling_endpoint}(time=audio_length)")
-            ka_res = await _fc.subscribe_async(
-                kling_endpoint,
-                arguments={
-                    "image_url": base_image_url,
-                    "audio_url": full_audio_url,
-                    "prompt": (
-                        "natural relaxed talking pose, slight head movements, "
-                        "subtle natural expressions, no exaggerated mouth or face"
-                    ),
-                },
+            log_info(f"ad_video P135 多段 talking head concat scenes={len(scenes)} endpoint={kling_endpoint}")
+
+            # 收集每段 speech(P135 不合并)
+            seg_speeches = []
+            for i, s in enumerate(scenes):
+                sp = (s.get("speech") or "").strip()
+                if not sp:
+                    log_warning(f"ad_video P135 段{i+1} speech 空,该段跳过")
+                    continue
+                seg_speeches.append((i + 1, sp))
+
+            if not seg_speeches:
+                raise Exception("P135 全部段 speech 都空,VLM 没写台词")
+
+            # P135 阶段 A:N 段并发 TTS(每段独立 audio)
+            log_info(f"ad_video P135 阶段 A:并发 {len(seg_speeches)} 段 TTS")
+
+            async def _tts_for_seg(idx: int, text: str):
+                tres = await _fc.run_async(
+                    "fal-ai/elevenlabs/tts/multilingual-v2",
+                    arguments={"text": text[:500]},
+                )
+                ao = tres.get("audio") if isinstance(tres.get("audio"), dict) else None
+                u = ao.get("url") if ao else tres.get("audio_url")
+                if not u:
+                    raise Exception(f"段{idx} TTS 未返 audio_url")
+                log_info(f"ad_video P135 段{idx} TTS OK chars={len(text)} url={u[:60]}")
+                return (idx, u)
+
+            tts_results = await asyncio.gather(
+                *[_tts_for_seg(idx, txt) for idx, txt in seg_speeches],
+                return_exceptions=True,
             )
-            v = (ka_res.get("video") or {}).get("url") if isinstance(ka_res.get("video"), dict) else ka_res.get("video_url")
-            if not v:
-                raise Exception(f"P133 {kling_endpoint} 未返 video_url")
-            log_info(f"ad_video P133 OK url={v[:80]}")
-            return {"video_url": v, "type": "video"}
+            seg_audios = []  # list of (idx, audio_url)
+            for r in tts_results:
+                if isinstance(r, Exception):
+                    log_warning(f"ad_video P135 TTS 段失败,跳过: {str(r)[:150]}")
+                    continue
+                seg_audios.append(r)
+            if not seg_audios:
+                raise Exception("P135 全部段 TTS 失败")
+
+            # P135 阶段 B:N 段并发 Kling Avatar v2 Std(共享 base_image,每段独立 audio)
+            log_info(f"ad_video P135 阶段 B:并发 {len(seg_audios)} 段 Kling Avatar v2 Std")
+
+            async def _ka_for_seg(idx: int, audio_url: str):
+                res = await _fc.subscribe_async(
+                    kling_endpoint,
+                    arguments={
+                        "image_url": base_image_url,
+                        "audio_url": audio_url,
+                        "prompt": (
+                            "natural relaxed talking pose, slight head movements, "
+                            "subtle natural expressions, no exaggerated mouth or face"
+                        ),
+                    },
+                )
+                v = (res.get("video") or {}).get("url") if isinstance(res.get("video"), dict) else res.get("video_url")
+                if not v:
+                    raise Exception(f"段{idx} Kling Avatar 未返 video_url")
+                log_info(f"ad_video P135 段{idx} Kling Avatar OK url={v[:60]}")
+                return (idx, v)
+
+            ka_results = await asyncio.gather(
+                *[_ka_for_seg(idx, audio) for idx, audio in seg_audios],
+                return_exceptions=True,
+            )
+            # 按 idx 排序保证段顺序
+            seg_video_urls = []
+            for r in sorted([x for x in ka_results if not isinstance(x, Exception)], key=lambda t: t[0]):
+                seg_video_urls.append(r[1])
+            for r in ka_results:
+                if isinstance(r, Exception):
+                    log_warning(f"ad_video P135 Kling Avatar 段失败,跳过: {str(r)[:200]}")
+            if not seg_video_urls:
+                raise Exception("P135 全部段 Kling Avatar 失败")
+
+            # P135 阶段 C:ffmpeg concat demuxer 完整段拼接(不 trim 不 xfade)
+            user_id = params.get("_user_id", "anon")
+            try:
+                final_url = await _p135_concat_simple(
+                    seg_video_urls=seg_video_urls,
+                    user_id=user_id,
+                )
+                return {"video_url": final_url, "type": "video"}
+            except Exception as e:
+                log_warning(f"ad_video P135 concat 失败,降级返第 1 段: {str(e)[:200]}")
+                return {"video_url": seg_video_urls[0], "type": "video"}
 
         # P118 单段兜底(VLM 只输出 1 段,如老脚本或失败时):并发 talking + 单段 Seedance
         async def _run_seedance_action() -> str:

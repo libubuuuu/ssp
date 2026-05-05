@@ -226,8 +226,10 @@ def _build_analysis_prompt(total_duration: int = 15, region: str = "CN") -> str:
         cum += d
 
     # P120/P121 多镜头叙事强提示(P134:按 region 分语言示例,防 VLM 看中文示例输出中文)
+    # P135(2026-05-05):后端架构说明 — 让 VLM 知道每段是独立 talking head,按爆款节奏定段数
     if is_p119:
         time_lines.insert(0, f"  ⚠️ **P121 爆款多镜头叙事**:总时长 {total_duration}s 拆成 {n} 个 2-3s 镜头,**每段画面+话术都不同**(钩子→卖点→对比→CTA)。**每段独立 speech**(全段加起来 ≤ {total_max_chars} {char_unit}),后端按段独立 TTS 后画外音 concat 出爆款主播节奏。**严禁段 2-N speech 留空** — 那样会沉默。")
+        time_lines.insert(1, f"  📐 **P135 后端架构**:每段 speech → 独立 TTS → 独立 Kling Avatar talking head 视频 → 全部段 ffmpeg concat 完整拼接(不剪辑)。所以**每段是 1 个独立的爆款 punch**(钩子 / 卖点 / 对比 / CTA),按抽样的爆款 example 天然节奏写,段时长是参考(段时长 = 该段实际 audio 长度,Kling Avatar 自动匹配)。")
         # P121 爆款话术质量约束:每段 speech 必须含具体细节,不要"360 sculpting / zero squeeze" 这种通用空话
         if region == "CN":
             time_lines.insert(1, "  ⚠️ **每段 speech 必须包含至少 2 个**:[具体数字(2 寸/50 件/3 天/4 层)] / [具体场景(上班/坐下/聚会/穿衣搭配)] / [痛点反差(腰粗→收/勒→不勒/卷边→服帖)] / [具体动作(穿上/绑紧/转身/拉一下)]。")
