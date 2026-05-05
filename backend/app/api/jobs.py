@@ -307,7 +307,12 @@ async def _p120_concat_multi_shot_with_audio(
 
         final_p = f"{work}/final.mp4"
 
-        # 构造 ffmpeg filter:每段视频 trim+scale+pad 后 concat,N 段 audio 直接 concat
+        # P122(2026-05-05):xfade + acrossfade 加 0.2s 过渡 — 解决段切换硬切生硬感
+        # 之前用 concat 直接拼,模特姿势瞬间突变。改成 xfade chain 段间渐变 0.2 秒。
+        # 注意:每个 xfade overlap 偷 0.2s,N 段总长 = sum(seg_durs) - (N-1) * 0.2
+        xfade_dur = 0.2
+
+        # 视频:每段 trim+scale+pad,然后 xfade chain
         v_filter_parts = []
         for i in range(n):
             v_filter_parts.append(
@@ -315,17 +320,38 @@ async def _p120_concat_multi_shot_with_audio(
                 f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
                 f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v{i}]"
             )
-        v_concat = "".join(f"[v{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[v]"
-        v_filter_parts.append(v_concat)
+        if n == 1:
+            final_v_label = "v0"
+        else:
+            prev_v = "v0"
+            cum_len = seg_durs[0]
+            for i in range(1, n):
+                out_v = f"vx{i}"
+                offset = cum_len - xfade_dur
+                v_filter_parts.append(
+                    f"[{prev_v}][v{i}]xfade=transition=fade:duration={xfade_dur}:offset={offset}[{out_v}]"
+                )
+                cum_len = cum_len + seg_durs[i] - xfade_dur
+                prev_v = out_v
+            final_v_label = prev_v
 
-        # audio: N 段 audio 各 trim 到段时长(防 elevenlabs 出来稍长),然后 concat
+        # audio:每段 atrim 后 acrossfade chain
         a_filter_parts = []
         for i in range(n):
             a_filter_parts.append(
                 f"[{n+i}:a]atrim=0:{seg_durs[i]},asetpts=PTS-STARTPTS[a{i}]"
             )
-        a_concat = "".join(f"[a{i}]" for i in range(n)) + f"concat=n={n}:v=0:a=1[a]"
-        a_filter_parts.append(a_concat)
+        if n == 1:
+            final_a_label = "a0"
+        else:
+            prev_a = "a0"
+            for i in range(1, n):
+                out_a = f"ax{i}"
+                a_filter_parts.append(
+                    f"[{prev_a}][a{i}]acrossfade=d={xfade_dur}[{out_a}]"
+                )
+                prev_a = out_a
+            final_a_label = prev_a
 
         filter_complex = ";".join(v_filter_parts + a_filter_parts)
 
@@ -336,8 +362,8 @@ async def _p120_concat_multi_shot_with_audio(
             cmd.extend(["-i", p])
         cmd.extend([
             "-filter_complex", filter_complex,
-            "-map", "[v]",
-            "-map", "[a]",
+            "-map", f"[{final_v_label}]",
+            "-map", f"[{final_a_label}]",
             "-c:v", "libx264", "-preset", "fast", "-crf", "20",
             "-c:a", "aac", "-b:a", "128k",
             "-movflags", "+faststart",
