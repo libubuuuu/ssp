@@ -55,10 +55,10 @@ export default function AdVideoPage() {
   // P32:用户自定义视频总时长(5-300s),analyze 时透传给 VLM 出 N 段脚本
   const [duration, setDuration] = useState(12);  // P40: v1.5/pro 单段上限
   const [region, setRegion] = useState<"CN" | "Global">("CN");  // P100: 国内抖音 / 海外 TikTok
-  // P129(2026-05-05):用户教 — 切到 i2v 端点(自带 generate_audio=true 一步出说话视频),
-  // 砍掉 talking head 双轨。前端选项重写为"视频引擎"(Seedance 2.0 / Kling v3 pro / v2.5-turbo pro)。
-  // 字段名保留 talkingHead 兼容后端旧 talking_head_endpoint 字段(后端 P129 已能识别 i2v 端点)。
-  const [talkingHead, setTalkingHead] = useState<string>("bytedance/seedance-2.0/image-to-video");
+  // P133(2026-05-05):用户敲"Kling AI Avatar v2 Standard"($0.0562/s,5s = $0.28),
+  // 砍掉视频引擎下拉选项 — 后端硬编码用 fal-ai/kling-video/ai-avatar/v2/standard。
+  // 用户怒"v3 pro $0.84/5s 那么贵"。这个字段保留是为了兼容老 jobs API,实际后端 P133 不读。
+  const [talkingHead, _setTalkingHead] = useState<string>("fal-ai/kling-video/ai-avatar/v2/standard");
 
   // Step 2: 审核 + 脚本(从 /analyze 返回)
   const [audit, setAudit] = useState<Audit | null>(null);
@@ -488,30 +488,28 @@ export default function AdVideoPage() {
                 影响模特面孔 + 脚本话术风格 + 拍摄场景。选错模特/话术不匹配市场。
               </div>
             </div>
-            {/* P129: 视频引擎(i2v 端点,自带 generate_audio 一步出说话+演示视频) */}
+            {/* P133:视频引擎硬编码为 Kling AI Avatar v2 Standard,无下拉选项 */}
             <div style={{ marginTop: 20 }}>
               <label style={{ display: "block", fontSize: "0.9rem", color: "#444", marginBottom: 8, fontWeight: 500 }}>
                 视频引擎
               </label>
-              <select
-                value={talkingHead}
-                onChange={(e) => setTalkingHead(e.target.value)}
+              <div
                 style={{
                   width: "100%",
                   padding: "0.7rem 0.9rem",
                   border: "1px solid #ddd",
                   borderRadius: 8,
                   fontSize: "0.95rem",
-                  background: "#fff",
-                  cursor: "pointer",
+                  background: "#f9f9f9",
+                  color: "#444",
                 }}
               >
-                <option value="bytedance/seedance-2.0/image-to-video">字节 Seedance 2.0 i2v(默认 · 自带 lipsync audio · 推荐)</option>
-                <option value="bytedance/seedance-2.0/fast/image-to-video">字节 Seedance 2.0 Fast i2v(更快 · 自带 lipsync audio)</option>
-                <option value="fal-ai/kling-video/v3/pro/image-to-video">快手 Kling v3 Pro i2v(顶配 · 自带 lipsync audio · probe 实测 86s)</option>
-              </select>
+                快手 Kling AI Avatar v2 Standard($0.0562/秒)
+              </div>
               <div style={{ fontSize: "0.8rem", color: "#888", marginTop: 6 }}>
-                每段分镜首帧(GPT-Image 2 出)+ visual_prompt(含台词)→ i2v 模型自带生成模特说话+演示动作+lipsync audio,一步到位。
+                单步出片:GPT-Image 2 合成首帧(模特+产品+背景)+ ElevenLabs TTS audio → Kling Avatar 嘴对口型说话视频,0 拼接 0 生硬。
+                <br />
+                参考价:5s ≈ $0.32 / 8s ≈ $0.49 / 12s ≈ $0.71(整套含 GPT-Image + TTS + Kling)
               </div>
             </div>
             <PrimaryButton onClick={callAnalyze} disabled={!productFile} marginTop>
