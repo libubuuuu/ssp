@@ -744,13 +744,13 @@ async def _run_ad_video_job(params: dict):
                 _imgs = _kontext.get("images") or []
                 if _imgs and _imgs[0].get("url"):
                     talking_image_url = _imgs[0]["url"]
-                    log_info(f"ad_video P115 Kontext reframe OK url={talking_image_url[:80]}")
+                    log_info(f"ad_video P115 GPT-Image-2 reframe OK url={talking_image_url[:80]}")
                 else:
-                    log_warning("ad_video P115 Kontext 无 image,fallback omnihuman")
-                    talking_endpoint = "fal-ai/bytedance/omnihuman"
+                    # P128:reframe 失败用 base_image_url 不切端点(用户选啥跑啥)
+                    log_warning("ad_video P115 reframe 无 image,继续用 base_image 跑用户选的 talking 端点")
+                    talking_image_url = base_image_url
             except Exception as e:
-                log_warning(f"ad_video P115 Kontext 失败,fallback omnihuman: {str(e)[:200]}")
-                talking_endpoint = "fal-ai/bytedance/omnihuman"
+                log_warning(f"ad_video P115 reframe 失败,继续用 base_image 跑用户选的 talking 端点: {str(e)[:200]}")
                 talking_image_url = base_image_url
 
         # Step 3: 选 P120 多镜头(scenes>=2)或 P118 双段兜底(scenes<=1)
@@ -765,18 +765,8 @@ async def _run_ad_video_job(params: dict):
                     "natural relaxed talking pose, slight head movements, "
                     "subtle natural expressions, no exaggerated mouth or face"
                 )
-            try:
-                h = await _fc.submit_async(ep_local, arguments=args)
-            except Exception as e:
-                # P115 fallback:Kling 拒输入 → omnihuman 兜底
-                if "kling" in ep_local:
-                    log_warning(f"ad_video P115 Kling 拒输入,fallback omnihuman: {str(e)[:200]}")
-                    args.pop("prompt", None)
-                    args["image_url"] = base_image_url
-                    ep_local = "fal-ai/bytedance/omnihuman"
-                    h = await _fc.submit_async(ep_local, arguments=args)
-                else:
-                    raise
+            # P128:用户选什么端点就跑什么,失败直接抛错给用户(不偷换)
+            h = await _fc.submit_async(ep_local, arguments=args)
             tid = h.request_id
             for _ in range(120):
                 await asyncio.sleep(5)
@@ -901,8 +891,7 @@ async def _run_ad_video_job(params: dict):
             log_info(f"ad_video P127 阶段 C:并发 {len(scenes)} 段 {user_talking_endpoint}")
 
             async def _run_talking_for_seg(image_url: str, audio_url: str, idx: int) -> str:
-                """跑用户选的 talking 端点(omnihuman / kling-avatar v2 / v2 pro 等)。
-                Kling 拒图时 fallback omnihuman(单段,不影响其他段)。"""
+                """P128:用户选什么端点就跑什么,失败直接抛错(绝不偷换)。"""
                 if not audio_url:
                     raise Exception(f"段 {idx} audio 缺失,talking 端点必须吃 audio")
                 ep = user_talking_endpoint
@@ -912,16 +901,8 @@ async def _run_ad_video_job(params: dict):
                         "natural relaxed talking pose, slight head movements, "
                         "subtle natural expressions, no exaggerated mouth or face"
                     )
-                try:
-                    h = await _fc.submit_async(ep, arguments=args)
-                except Exception as e:
-                    if "kling" in ep:
-                        log_warning(f"ad_video P127 段{idx} {ep} 拒输入,fallback omnihuman: {str(e)[:200]}")
-                        ep = "fal-ai/bytedance/omnihuman"
-                        args.pop("prompt", None)
-                        h = await _fc.submit_async(ep, arguments=args)
-                    else:
-                        raise
+                # 失败直接 raise,不 fallback 偷换
+                h = await _fc.submit_async(ep, arguments=args)
                 tid = h.request_id
                 for _ in range(120):
                     await asyncio.sleep(5)
