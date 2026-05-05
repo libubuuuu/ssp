@@ -398,6 +398,13 @@ async def compose_first_frame_for_scene(
         visual_safe = visual_safe.replace(old, new)
 
     prompt = (
+        # P152(2026-05-06)IDENTITY LOCK 第一行强约束 — 用户实测段 2 脸跟段 1 不一致
+        f"⚠️ HIGHEST PRIORITY — IDENTITY LOCK: The model in the output MUST be EXACTLY the same "
+        f"person as in the reference image. Same face shape, same eyes (color, shape, size), "
+        f"same hairstyle (length, color, style), same skin tone, same lip shape, same eyebrows, "
+        f"same nose, same overall facial features. ZERO deviation from reference identity. "
+        f"This is a DIFFERENT SHOT of the SAME PERSON, NOT a similar-looking model. "
+        f"Treat the reference face as a locked anchor that must NOT change. "
         f"Adjust the reference image to show this specific shot: {visual_safe}. "
         f"Keep the model's identity consistent ({model_description}). "
         f"Maintain the overall setting: {overall_setting}. "
