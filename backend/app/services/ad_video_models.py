@@ -411,15 +411,17 @@ async def compose_first_frame_for_scene(
         # P149 关键铁律 — 防 Kling Avatar 拒图(必须有清晰人脸 + 上半身)
         f"CRITICAL — MUST INCLUDE: model's face and upper body clearly visible in the frame. "
         f"Even product close-ups must show the model's face/upper body together with the product. "
-        # P148 + P154 产品焦点 + 演示动作
-        f"PRODUCT FOCUS: the fashion garment (the printed waist accessory, NOT clothes/jeans/phone) "
-        f"is the visual hero, clearly visible. Model's pose and gaze direct viewer attention "
-        f"TOWARD the printed garment. "
-        # P154(2026-05-06):用户:模特要演示产品,不是站着发呆
-        f"PRODUCT DEMONSTRATION: model is ACTIVELY engaging with the printed garment — "
-        f"touching/adjusting/showing/lifting/pointing at the printed waist garment with her hands. "
-        f"NOT just standing passively. The hands interact with the printed garment specifically, "
-        f"demonstrating it like a TikTok seller showing their product. "
+        # P155(2026-05-06)用户:产品类目会变,不能 hardcode "waist garment"
+        # 改抽象指"参考图里那个产品",让 GPT 看图自己识别(束腰/鞋/包/配饰...)
+        # P148 + P154 + P155 产品焦点 + 演示动作 + 类目无关
+        f"PRODUCT FOCUS: the product item shown in the reference image "
+        f"(the specific item the user uploaded — could be a garment, accessory, footwear, "
+        f"bag, beauty product, etc.) is the visual hero, clearly visible. "
+        f"Model's pose and gaze direct viewer attention TOWARD this specific product, "
+        f"NOT toward the model's other clothing/phone/background. "
+        f"PRODUCT DEMONSTRATION: model is ACTIVELY engaging with the reference product — "
+        f"touching/adjusting/showing/lifting/pointing at it with her hands. "
+        f"NOT just standing passively. Like a TikTok seller showing off their product. "
         # P147 框架
         f"Third-person professional commercial camera angle, NOT a mirror selfie. "
         # P150(2026-05-06)用户:字幕后期自己加 — 图里不要任何文字

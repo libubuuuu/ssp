@@ -1066,17 +1066,19 @@ async def _run_ad_video_job(params: dict):
                         # Expression(表情)— fal 官方推荐
                         "Expression: dynamic facial expressions matching emphasis points, "
                         "natural eye contact with camera, expressive eyebrows for engagement. "
-                        # Movement(动作)+ P154 演示动作
-                        "Movement: energetic presenter actively DEMONSTRATING the printed waist "
-                        "garment (NOT clothes/jeans/phone) — hands actively touching, adjusting, "
-                        "lifting, showing or pointing at the printed garment around her midsection. "
+                        # Movement(动作)+ P154/P155 演示参考图里的产品(类目无关)
+                        "Movement: energetic presenter actively DEMONSTRATING the product item "
+                        "shown in the reference image — hands actively touching, adjusting, lifting, "
+                        "showing or pointing at the specific product (the item the user uploaded, "
+                        "could be a garment, accessory, footwear, bag, beauty product, etc.). "
                         "Like a TikTok seller showing off their product. Slight body lean, head nods. "
-                        # P148 + P154:产品焦点 + 明确产品是什么(防 Kling Avatar 误以为产品=手机)
-                        "CRITICAL — PRODUCT IS THE PRINTED GARMENT: the visual HERO is the printed "
-                        "fashion garment around the model's midsection (NOT the phone, NOT the jeans, "
-                        "NOT the top). Model's gestures and gaze direct viewer attention TOWARD the "
-                        "printed garment specifically. Hands interact with the printed garment to "
-                        "demonstrate it. Third-person professional commercial framing. "
+                        # P148 + P155 产品焦点 + 类目无关
+                        "CRITICAL — PRODUCT IS THE REFERENCE IMAGE ITEM: the visual HERO is the "
+                        "specific product item shown in the reference image (NOT the model's other "
+                        "clothing, NOT the phone if visible, NOT the background). Model's gestures "
+                        "and gaze direct viewer attention TOWARD this specific reference product. "
+                        "Hands interact with the reference product to demonstrate it. "
+                        "Third-person professional commercial framing. "
                         # Style(风格)
                         "Style: photorealistic commercial advertisement, natural skin textures, "
                         "synchronized lip movements with audio."
