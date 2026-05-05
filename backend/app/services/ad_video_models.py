@@ -78,14 +78,37 @@ async def compose_storyboard_grid(
     panel_lines = []
     for i in range(n_panels):
         visual = (scenes[i].get("visual_prompt") or "").strip() or "product showcase"
-        # P140:sanitize 敏感词组合
-        visual_safe = (
-            visual
-            .replace("waist trainer", "fashion garment")
-            .replace("shapewear", "fashion garment")
-            .replace("body", "outfit")
-            .replace("waist", "torso area")
-        )
+        # P146(2026-05-06):用户实测 caf2acb7 因 chest/bedroom/candlelight/no face visible
+        # 触发 NSFW,P140 4 词 sanitize 不够。加更多敏感词替换:
+        visual_safe = visual
+        replacements = [
+            # P140 原始
+            ("waist trainer", "fashion garment"),
+            ("shapewear", "fashion garment"),
+            # P146 新增 — 部位/服装描述
+            ("waist", "torso"),
+            ("chest", "upper body"),
+            ("hips", "lower torso"),
+            ("body", "outfit"),
+            # P146 新增 — 材质暗示(neoprene/leather 紧身衣材质)
+            ("neoprene", "fabric"),
+            ("faux leather", "matte material"),
+            ("leather panel", "matte panel"),
+            # P146 新增 — 场景暗示(bedroom/candlelight 浪漫语境触发)
+            ("bedroom", "indoor space"),
+            ("candlelight", "soft warm light"),
+            ("on bed", "sitting indoor"),
+            # P146 新增 — 隐私/暴露暗示
+            ("no face visible", "from a distance"),
+            ("revealing", "showing"),
+            # P146 新增 — 人称(模特性别+部位组合敏感)
+            ("her waist", "the torso"),
+            ("her body", "the outfit"),
+            ("her chest", "the upper area"),
+            ("on her", "on the"),
+        ]
+        for old, new in replacements:
+            visual_safe = visual_safe.replace(old, new)
         panel_lines.append(f"Frame {i+1}: {visual_safe}")
 
     if n_panels == 2:
@@ -95,13 +118,18 @@ async def compose_storyboard_grid(
     else:  # 4
         layout_desc = "2x2 grid layout (upper-left, upper-right, lower-left, lower-right)"
 
-    # P140:用"商业产品摄影"语境,避开 NSFW 敏感组合
+    # P147(2026-05-06):加"商业全身横构图无手机"强约束,防 Kling Avatar 解读成自拍风格
+    # 真因:Kling Avatar 看到肖像/半身图就强加手机做镜面自拍;看到全身商业图就出广告风格
     prompt = (
         f"Create a commercial fashion product photography composite in {layout_desc}. "
         f"Each frame shows the same fully-clothed model presenting the product in modest "
         f"commercial advertising style. "
         f"Setting: {overall_setting}. "
         f"All frames share consistent lighting, model appearance, and product details. "
+        # P147 关键约束:让输入图本身是"商业广告视角",不是"自拍肖像"
+        f"CRITICAL FRAMING: third-person professional commercial camera angle, "
+        f"full-body or three-quarter shot of the model, model's hands free (NO phone, NO smartphone, "
+        f"NO mirror selfie pose), looking naturally at the camera or interacting with product. "
         f"Photorealistic studio fashion photography, professional commercial advertisement.\n\n"
         + "\n".join(panel_lines)
         + "\n\nThin neutral borders separate frames."

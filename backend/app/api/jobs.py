@@ -1011,17 +1011,35 @@ async def _run_ad_video_job(params: dict):
                 # 期望动作幅度比 P143 提升 30-50%(从轻微晃头到频繁手势+动态表情)
                 scene = scenes[idx - 1] if idx - 1 < len(scenes) else {}
                 visual = (scene.get("visual_prompt") or "").strip()
-                # P140 sanitize 一致:替换敏感词避开 Kling 内容审核
-                visual_safe = (
-                    visual
-                    .replace("waist trainer", "fashion garment")
-                    .replace("shapewear", "fashion garment")
-                )
-                # P144-r 4 部分结构 prompt
+                # P146(2026-05-06)sanitize:跟 ad_video_models.py compose_storyboard_grid 一致
+                # 避开 Kling 内容审核 + 跟几宫格图视觉一致
+                visual_safe = visual
+                for old, new in [
+                    ("waist trainer", "fashion garment"),
+                    ("shapewear", "fashion garment"),
+                    ("waist", "torso"),
+                    ("chest", "upper body"),
+                    ("hips", "lower torso"),
+                    ("body", "outfit"),
+                    ("neoprene", "fabric"),
+                    ("faux leather", "matte material"),
+                    ("leather panel", "matte panel"),
+                    ("bedroom", "indoor space"),
+                    ("candlelight", "soft warm light"),
+                    ("on bed", "sitting indoor"),
+                    ("no face visible", "from a distance"),
+                    ("revealing", "showing"),
+                    ("her waist", "the torso"),
+                    ("her body", "the outfit"),
+                    ("her chest", "the upper area"),
+                    ("on her", "on the"),
+                ]:
+                    visual_safe = visual_safe.replace(old, new)
+                # P144-r 4 部分结构 prompt + P147 显式禁令(防镜面自拍/手机抢镜)
                 if visual_safe:
                     ka_prompt = (
                         # Subject(主题)
-                        f"Subject: enthusiastic content creator presenting fashion product. "
+                        f"Subject: professional commercial spokesperson presenting fashion product. "
                         f"Scene: {visual_safe}. "
                         # Expression(表情)— fal 官方推荐
                         "Expression: dynamic facial expressions matching emphasis points, "
@@ -1030,17 +1048,22 @@ async def _run_ad_video_job(params: dict):
                         "Movement: energetic presenter posture with frequent purposeful hand gestures, "
                         "pointing to and demonstrating the product, occasional head nods for emphasis, "
                         "slight body lean to show enthusiasm, gesturing toward product with open palms. "
+                        # P147 关键禁令:防 Kling Avatar 强加手机自拍镜面
+                        "CRITICAL: third-person professional commercial camera framing, "
+                        "NO phone in hand, NO smartphone, NO mirror selfie pose, "
+                        "NO reversed text, model's hands are free for product demonstration. "
                         # Style(风格)
-                        "Style: photorealistic UGC video creator, natural skin textures, "
+                        "Style: photorealistic commercial advertisement, natural skin textures, "
                         "synchronized lip movements with audio."
                     )
                 else:
                     ka_prompt = (
-                        "Subject: enthusiastic content creator. "
+                        "Subject: professional commercial spokesperson. "
                         "Expression: dynamic facial expressions, natural eye contact. "
                         "Movement: frequent purposeful hand gestures, occasional head nods, "
                         "slight body lean for engagement. "
-                        "Style: photorealistic UGC, synchronized lip movements."
+                        "CRITICAL: third-person camera, NO phone, NO mirror selfie, NO reversed text. "
+                        "Style: photorealistic commercial advertisement, synchronized lip movements."
                     )
                 res = await _fc.subscribe_async(
                     kling_endpoint,
