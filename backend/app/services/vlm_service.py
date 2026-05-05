@@ -168,23 +168,29 @@ def split_segments(total_duration: int) -> list[int]:
 # P121(2026-05-05):每段从 1.5-2s 拉长到 2.5-3s,N 段适当减少 — 解决 speech 字数太短
 # 写不出爆款话术(英文 21 字符根本没法说话)。Seedance 跑 4s 然后 ffmpeg trim 到设计长。
 def split_segments_micro(total_duration: int) -> list[float]:
-    """P121: 5-12s 多镜头分段(每段 2.5-3s),够每段说一句完整爆款话术。
+    """P137(2026-05-05):用户敲"5 秒 1 段就够,10 秒 2 段(钩子+CTA),15 秒 3 段"。
+    fal 后台不要再"2s 2s 出视频"(P121 拆碎了),改成每段固定 5 秒爆款 punch。
 
-    设计原则:
-    - 段 1 = 2-2.5s(钩子说一句完整话,英文 28-35 字符 / 中文 10-12 字)
-    - 中段 = 2.5-3s(卖点+动作演示)
-    - 末段 = 2-3s(CTA 紧迫感)
+    设计:每段固定 5s 一个完整爆款 punch(钩子/卖点/CTA),
+    段数 = ceil(total/5),最后一段吸收余数(3-7s 弹性)。
     """
     if total_duration <= 5:
-        return [2, total_duration - 2]  # 5s = [2, 3] 钩子+演示CTA(2 段)
-    if total_duration <= 6:
-        return [2, total_duration - 2]  # 6s = [2, 4]
-    if total_duration <= 8:
-        return [2, 3, total_duration - 5]  # 8s = [2, 3, 3] 钩子+卖点+CTA
+        return [float(total_duration)]  # 5s = [5] 1 段
+    if total_duration <= 7:
+        return [float(total_duration)]  # 6-7s = 1 段(避免最后一段太短)
     if total_duration <= 10:
-        return [2, 3, 2.5, total_duration - 7.5]  # 10s = [2, 3, 2.5, 2.5]
-    # 11-12s
-    return [2, 2.5, 2.5, 2.5, total_duration - 9.5]  # 12s = [2, 2.5, 2.5, 2.5, 2.5](5 段)
+        return [5.0, float(total_duration - 5)]  # 8-10s = [5, 3-5]
+    if total_duration <= 12:
+        return [5.0, float(total_duration - 5)]  # 11-12s = [5, 6-7]
+    if total_duration <= 15:
+        return [5.0, 5.0, float(total_duration - 10)]  # 13-15s = [5, 5, 3-5]
+    if total_duration <= 20:
+        return [5.0, 5.0, 5.0, float(total_duration - 15)]  # 16-20s
+    # 20s+ 走老 split_segments(>15s) 路径,这里不应进入
+    n = (total_duration + 4) // 5
+    base = [5.0] * (n - 1)
+    base.append(float(total_duration - 5 * (n - 1)))
+    return base
 
 
 def _build_analysis_prompt(total_duration: int = 15, region: str = "CN") -> str:
