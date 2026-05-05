@@ -426,7 +426,12 @@ _ANALYSIS_PROMPT = _build_analysis_prompt(15)
 
 _SYSTEM_PROMPT = (
     "You are a JSON-only API. Output strict valid JSON without any markdown "
-    "fences, prose, or explanation. The JSON must match the schema requested in the user prompt."
+    "fences, prose, or explanation. The JSON must match the schema requested in the user prompt. "
+    # P136(2026-05-05):防"几次脚本都一样" — 强约束每次输出不同 hook 风格
+    "IMPORTANT — VARIETY: Each generation MUST use a DIFFERENT hook style and word choice "
+    "from previous runs. Pick from {question / contrast / pain / cliffhanger / direct conclusion / "
+    "shocking number / before-after / personal story / category-comparison} and rotate. "
+    "Even with the same product image, the speech content must feel fresh and varied across runs."
 )
 
 
@@ -511,6 +516,8 @@ class VLMService:
                     "prompt": prompt,
                     "system_prompt": _SYSTEM_PROMPT,
                     "model": chosen_model,
+                    # P136(2026-05-05):加 temperature 让每次输出更随机,防"几次脚本都一样"
+                    "temperature": 0.9,
                 },
             )
         except Exception as e:
