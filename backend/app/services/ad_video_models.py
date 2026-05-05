@@ -83,21 +83,35 @@ async def compose_first_frame(
         "If the prompt says 'on waist/torso' the product MUST be at the waist (not chest). "
         "If 'on hips/lower body' it MUST be at the hips. If 'on feet' it MUST be at the feet.",
     ]
+    # P121(2026-05-05):背景图强约束 — 之前只说 "third is background scene",
+    # Kontext 没听把背景换成白底。改成强制把模特+产品放进参考图的真实环境里。
     if product_back_image_url and background_image_url:
         prompt_parts.append(
-            "First reference is product front, second is product back/side "
-            "(preserve all product details from both views), third is background scene."
+            "First reference is the product FRONT view, second is product BACK/SIDE view "
+            "(preserve ALL product details from both views including patterns, panels, "
+            "textures, logos so the product looks identical from any angle). "
+            "Third reference is the BACKGROUND ENVIRONMENT — you MUST place the model "
+            "INTO this exact background scene (its furniture, walls, lighting, room layout). "
+            "DO NOT use a plain white studio background, DO NOT swap the environment — "
+            "the model and product MUST be composed INTO the third reference image's scene."
         )
     elif product_back_image_url:
         prompt_parts.append(
-            "First reference is product front, second is product back/side "
-            "(preserve product details from both angles for accurate rendering)."
+            "First reference is product FRONT view, second is product BACK/SIDE view "
+            "(preserve ALL product details from both views including patterns, panels, "
+            "textures, logos for accurate rendering at any rotation angle)."
         )
     elif background_image_url:
-        prompt_parts.append("Use the second reference image as the background scene.")
+        prompt_parts.append(
+            "The second reference image is the BACKGROUND ENVIRONMENT — "
+            "you MUST place the model INTO this exact background scene (its furniture, "
+            "walls, lighting, room layout). DO NOT use plain white studio background, "
+            "DO NOT swap the environment — model MUST be composed INTO this reference scene."
+        )
     prompt_parts.append(
         "Photorealistic UGC selfie style, vertical 9:16 composition, "
-        "natural lighting, preserve the exact product details from reference."
+        "natural lighting that matches the background reference, "
+        "preserve the exact product details (front+back if both provided)."
     )
     full_prompt = " ".join(prompt_parts)
 

@@ -165,26 +165,26 @@ def split_segments(total_duration: int) -> list[int]:
 
 
 # P119(2026-05-05):5-12s 多镜头叙事 — VLM 输出 N 段 micro-scenes
-# 每段独立 visual_prompt,后端按 scene 分别生成视频后拼接(段1 talking+段2-N seedance)。
-# 段长用浮点(1.5-2.5s),Seedance 跑 4s 然后 ffmpeg trim 到设计长。
+# P121(2026-05-05):每段从 1.5-2s 拉长到 2.5-3s,N 段适当减少 — 解决 speech 字数太短
+# 写不出爆款话术(英文 21 字符根本没法说话)。Seedance 跑 4s 然后 ffmpeg trim 到设计长。
 def split_segments_micro(total_duration: int) -> list[float]:
-    """P119: 5-12s 多镜头分段(每段 1.5-2.5s),专给爆款多镜头叙事用。
+    """P121: 5-12s 多镜头分段(每段 2.5-3s),够每段说一句完整爆款话术。
 
     设计原则:
-    - 段 1 必须 1-1.5s(开场说话钩子)
-    - 中段 1.5-2.5s(产品/动作演示)
-    - 末段稍长 2-3s(CTA 字幕收尾)
+    - 段 1 = 2-2.5s(钩子说一句完整话,英文 28-35 字符 / 中文 10-12 字)
+    - 中段 = 2.5-3s(卖点+动作演示)
+    - 末段 = 2-3s(CTA 紧迫感)
     """
     if total_duration <= 5:
-        return [1.5, 1.5, total_duration - 3]  # 5s = [1.5, 1.5, 2]
+        return [2, total_duration - 2]  # 5s = [2, 3] 钩子+演示CTA(2 段)
     if total_duration <= 6:
-        return [1.5, 2, total_duration - 3.5]  # 6s = [1.5, 2, 2.5]
+        return [2, total_duration - 2]  # 6s = [2, 4]
     if total_duration <= 8:
-        return [1.5, 2, 2, total_duration - 5.5]  # 8s = [1.5, 2, 2, 2.5]
+        return [2, 3, total_duration - 5]  # 8s = [2, 3, 3] 钩子+卖点+CTA
     if total_duration <= 10:
-        return [1.5, 2, 2, 2, total_duration - 7.5]  # 10s = [1.5, 2, 2, 2, 2.5]
+        return [2, 3, 2.5, total_duration - 7.5]  # 10s = [2, 3, 2.5, 2.5]
     # 11-12s
-    return [1.5, 2, 2, 2.5, 2.5, total_duration - 10.5]  # 12s = [1.5, 2, 2, 2.5, 2.5, 1.5]
+    return [2, 2.5, 2.5, 2.5, total_duration - 9.5]  # 12s = [2, 2.5, 2.5, 2.5, 2.5](5 段)
 
 
 def _build_analysis_prompt(total_duration: int = 15, region: str = "CN") -> str:
@@ -225,9 +225,12 @@ def _build_analysis_prompt(total_duration: int = 15, region: str = "CN") -> str:
         )
         cum += d
 
-    # P120 多镜头叙事强提示
+    # P120/P121 多镜头叙事强提示
     if is_p119:
-        time_lines.insert(0, f"  ⚠️ **P120 爆款多镜头叙事**:总时长 {total_duration}s 拆成 {n} 个 1.5-2.5s 镜头,**每段画面+话术都不同**(钩子→卖点1→卖点2→对比→CTA)。**每段独立 speech**(全段加起来 ≤ {total_max_chars} {char_unit}),后端会按段独立 TTS 然后画外音 concat 出爆款主播节奏。**严禁段 2-N speech 留空** — 那样会沉默。")
+        time_lines.insert(0, f"  ⚠️ **P121 爆款多镜头叙事**:总时长 {total_duration}s 拆成 {n} 个 2-3s 镜头,**每段画面+话术都不同**(钩子→卖点→对比→CTA)。**每段独立 speech**(全段加起来 ≤ {total_max_chars} {char_unit}),后端按段独立 TTS 后画外音 concat 出爆款主播节奏。**严禁段 2-N speech 留空** — 那样会沉默。")
+        # P121 爆款话术质量约束:每段 speech 必须含具体细节,不要"360 sculpting / zero squeeze" 这种通用空话
+        time_lines.insert(1, "  ⚠️ **每段 speech 必须包含至少 2 个**:[具体数字(2 寸/50 件/3 天/4 层)] / [具体场景(上班/坐下/聚会/穿衣搭配)] / [痛点反差(腰粗→收/勒→不勒/卷边→服帖)] / [具体动作(穿上/绑紧/转身/拉一下)]。")
+        time_lines.insert(2, "  ⚠️ **严禁通用空话** — \"good quality / amazing / love it / so comfortable / 360 sculpting\" 这种无信息词全部禁用。要写真主播带货那种\"姐妹们我跟你说\"\"穿上立刻瘦 2 寸\"\"坐下都不卷边\"具体感受。")
 
     scenes_example_parts = []
     cum2 = 0.0
