@@ -74,6 +74,9 @@ export default function AdVideoPage() {
 
   // Step 4: 视频
   const [videoUrl, setVideoUrl] = useState("");
+  // P142:几宫格原图 + N 张子图(分镜图)
+  const [gridImageUrl, setGridImageUrl] = useState("");
+  const [panelImageUrls, setPanelImageUrls] = useState<string[]>([]);
   const [jobProgress, setJobProgress] = useState("");
 
   // 通用
@@ -302,6 +305,9 @@ export default function AdVideoPage() {
         const j = await r.json();
         if (j.status === "completed" && j.result?.video_url) {
           setVideoUrl(j.result.video_url);
+          // P142:几宫格分镜图展示
+          if (j.result.grid_image_url) setGridImageUrl(j.result.grid_image_url);
+          if (Array.isArray(j.result.panel_image_urls)) setPanelImageUrls(j.result.panel_image_urls);
           setJobProgress("");
           if (pollRef.current) clearInterval(pollRef.current);
         } else if (j.status === "failed") {
@@ -576,6 +582,41 @@ export default function AdVideoPage() {
             {videoUrl && (
               <div style={{ background: "#fff", padding: "1.5rem", borderRadius: 12, display: "flex", justifyContent: "center" }}>
                 <video src={videoUrl} controls playsInline style={{ maxWidth: 360, width: "100%", aspectRatio: "9/16", borderRadius: 8, background: "#000" }} />
+              </div>
+            )}
+            {/* P142:几宫格原图 + N 张子图分镜展示 */}
+            {videoUrl && (gridImageUrl || panelImageUrls.length > 0) && (
+              <div style={{ background: "#fff", padding: "1.5rem", borderRadius: 12, marginTop: 12 }}>
+                <div style={{ fontSize: "0.95rem", fontWeight: 500, color: "#333", marginBottom: 12 }}>
+                  分镜图(GPT-Image 2 出的几宫格 + 裁切后每段用的画面)
+                </div>
+                <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
+                  {gridImageUrl && (
+                    <div style={{ flex: "0 0 auto" }}>
+                      <div style={{ fontSize: "0.78rem", color: "#888", marginBottom: 6 }}>整张几宫格</div>
+                      <a href={gridImageUrl} target="_blank" rel="noreferrer">
+                        <img src={gridImageUrl} alt="storyboard grid" style={{ maxHeight: 280, borderRadius: 8, border: "1px solid #eee" }} />
+                      </a>
+                    </div>
+                  )}
+                  {panelImageUrls.length > 0 && (
+                    <div style={{ flex: "1 1 200px" }}>
+                      <div style={{ fontSize: "0.78rem", color: "#888", marginBottom: 6 }}>
+                        裁切后 {panelImageUrls.length} 张子图(每段画面)
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(120px,1fr))", gap: 8 }}>
+                        {panelImageUrls.map((url, i) => (
+                          <a key={i} href={url} target="_blank" rel="noreferrer" style={{ position: "relative" }}>
+                            <img src={url} alt={`panel ${i + 1}`} style={{ width: "100%", aspectRatio: "9/16", objectFit: "cover", borderRadius: 6, border: "1px solid #eee" }} />
+                            <div style={{ position: "absolute", top: 4, left: 4, background: "rgba(0,0,0,0.6)", color: "#fff", fontSize: "0.7rem", padding: "2px 6px", borderRadius: 4 }}>
+                              段 {i + 1}
+                            </div>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
             {videoUrl && (

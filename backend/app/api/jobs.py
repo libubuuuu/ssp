@@ -945,12 +945,14 @@ async def _run_ad_video_job(params: dict):
                     overall_setting=overall,
                 )
                 seg_frames = {}
+                grid_url_for_frontend = None  # P142:存几宫格 URL 给前端展示
                 if "error" in grid_res:
                     log_warning(f"ad_video P139 几宫格图失败,全部段 fallback base_image: {grid_res['error']}")
                     for idx in use_idxs:
                         seg_frames[idx] = base_image_url
                 else:
                     grid_url = grid_res["image_url"]
+                    grid_url_for_frontend = grid_url  # P142:前端展示用
                     log_info(f"ad_video P139 几宫格图 OK url={grid_url[:80]},裁切 {n_panels} 子图")
                     # P139 阶段 A2:PIL 裁切几宫格 → N 张子图 + 上传 fal storage
                     try:
@@ -1034,15 +1036,27 @@ async def _run_ad_video_job(params: dict):
 
             # P135 阶段 C:ffmpeg concat demuxer 完整段拼接(不 trim 不 xfade)
             user_id = params.get("_user_id", "anon")
+            # P142:把分镜图 URL 传给前端展示(几宫格原图 + N 张子图)
+            panel_urls_sorted = [seg_frames[idx] for idx in sorted(seg_frames.keys())]
             try:
                 final_url = await _p135_concat_simple(
                     seg_video_urls=seg_video_urls,
                     user_id=user_id,
                 )
-                return {"video_url": final_url, "type": "video"}
+                return {
+                    "video_url": final_url,
+                    "type": "video",
+                    "grid_image_url": grid_url_for_frontend,  # P142
+                    "panel_image_urls": panel_urls_sorted,    # P142
+                }
             except Exception as e:
                 log_warning(f"ad_video P135 concat 失败,降级返第 1 段: {str(e)[:200]}")
-                return {"video_url": seg_video_urls[0], "type": "video"}
+                return {
+                    "video_url": seg_video_urls[0],
+                    "type": "video",
+                    "grid_image_url": grid_url_for_frontend,
+                    "panel_image_urls": panel_urls_sorted,
+                }
 
         # P118 单段兜底(VLM 只输出 1 段,如老脚本或失败时):并发 talking + 单段 Seedance
         async def _run_seedance_action() -> str:
