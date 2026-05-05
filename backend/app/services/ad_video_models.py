@@ -409,6 +409,11 @@ async def compose_first_frame_for_scene(
         f"Model's pose and gaze direct viewer attention TOWARD the product. "
         # P147 框架
         f"Third-person professional commercial camera angle, NOT a mirror selfie. "
+        # P150(2026-05-06)用户:字幕后期自己加 — 图里不要任何文字
+        f"STRICT — NO TEXT IN IMAGE: absolutely NO text overlays, NO promotional text, "
+        f"NO captions, NO numbers (like '50 LEFT', '-2 inches', '24H'), NO countdown, "
+        f"NO call-to-action text, NO labels, NO Before/After tags. "
+        f"The image must be COMPLETELY TEXT-FREE — clean photograph only. "
         f"Photorealistic commercial advertisement, vertical 9:16 composition, "
         f"natural lighting, preserve the exact product details from reference."
     )
