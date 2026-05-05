@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 from app.api.auth import get_current_user
 from app.services.decorators import require_credits
 from app.services.fal_service import fal_upload_with_retry
-from app.services.storyboard_service import generate_storyboard
+from app.services.storyboard_service import generate_storyboard, generate_single_frame
 from app.services.logger import log_info, log_error
 
 router = APIRouter()
@@ -75,6 +75,46 @@ async def upload_image(
         return {"url": url}
     finally:
         os.unlink(tmp_path)
+
+
+@router.post("/generate-frame")
+@require_credits("storyboard/generate-frame")
+async def generate_frame(
+    image_url: str = Form(...),
+    prompt: str = Form(...),
+    aspect_ratio: str = Form("9:16"),
+    current_user: dict = Depends(get_current_user),
+):
+    """P130 极简版:用户 prompt + 参考图 → GPT-Image 2 出 1 张分镜图
+
+    Form params:
+      image_url:      /upload/image 返回的 fal storage URL
+      prompt:         用户写的提示词(必填,描述这帧画面想要什么)
+      aspect_ratio:   "9:16" / "16:9" / "1:1",默认 9:16
+
+    返回:
+      {image_url, prompt, cost}
+
+    扣费:storyboard/generate-frame 2 积分/张(失败自动退款)。
+    """
+    if not prompt or not prompt.strip():
+        raise HTTPException(status_code=400, detail="提示词不能为空")
+    if aspect_ratio not in ("9:16", "16:9", "1:1"):
+        raise HTTPException(status_code=400, detail="比例只支持 9:16 / 16:9 / 1:1")
+
+    user_id = current_user["id"]
+    log_info(f"storyboard/generate-frame user={user_id} ar={aspect_ratio} prompt_len={len(prompt)}")
+
+    result = await generate_single_frame(
+        reference_image_url=image_url,
+        prompt=prompt.strip(),
+        aspect_ratio=aspect_ratio,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+
+    result["description"] = f"分镜图 {aspect_ratio} prompt={prompt[:30]}"
+    return result
 
 
 @router.post("/generate")

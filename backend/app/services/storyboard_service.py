@@ -77,6 +77,57 @@ def _build_storyboard_prompt(description: str, n_frames: int, aspect_ratio: str)
 5. **严禁** markdown / 注释 / 解释文字,只输出纯 JSON。"""
 
 
+async def generate_single_frame(
+    reference_image_url: str,
+    prompt: str,
+    aspect_ratio: str = "9:16",
+) -> dict:
+    """P130:极简版 — 用户写 prompt + 1 张参考图 → GPT-Image 2 直接出 1 张分镜图。
+
+    不走 VLM。用户写啥就传啥,gpt-image-2/edit 直接出图。
+    Returns:
+        {"image_url": str, "prompt": str}  成功
+        {"error": str}                      失败
+    """
+    cb = get_circuit_breaker()
+    if not cb.is_available(KONTEXT_KEY):
+        return {"error": "图像编辑服务暂时不可用,请稍后再试"}
+
+    if not prompt or not prompt.strip():
+        return {"error": "提示词不能为空"}
+
+    img_size = "portrait_16_9" if aspect_ratio == "9:16" else (
+        "landscape_16_9" if aspect_ratio == "16:9" else "square"
+    )
+
+    try:
+        res = await fal_client.run_async(
+            KONTEXT_ENDPOINT,  # openai/gpt-image-2/edit
+            arguments={
+                "prompt": prompt.strip(),
+                "image_urls": [reference_image_url],
+                "image_size": img_size,
+                "num_images": 1,
+                "output_format": "png",
+            },
+        )
+        images = res.get("images") or []
+        if not images:
+            await cb.record_failure(KONTEXT_KEY)
+            return {"error": "GPT-Image 2 未生成图"}
+        url = images[0].get("url")
+        if not url:
+            await cb.record_failure(KONTEXT_KEY)
+            return {"error": "GPT-Image 2 返回无 URL"}
+        await cb.record_success(KONTEXT_KEY)
+        log_info(f"storyboard single-frame OK ar={aspect_ratio} prompt_len={len(prompt)} url={url[:80]}")
+        return {"image_url": url, "prompt": prompt}
+    except Exception as e:
+        await cb.record_failure(KONTEXT_KEY)
+        log_error(f"storyboard single-frame 失败: {e}")
+        return {"error": f"生成失败: {str(e)[:200]}"}
+
+
 async def generate_storyboard(
     reference_image_url: str,
     description: str,

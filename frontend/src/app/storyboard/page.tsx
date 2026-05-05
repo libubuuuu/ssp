@@ -7,41 +7,28 @@ import { compressImage } from "@/lib/utils/imageCompress";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
-type Frame = {
-  idx: number;
-  title: string;
-  purpose: string;
-  shot_type: string;
-  visual_prompt?: string;
-  prompt?: string;
-  image_url: string | null;
-  error: string | null;
-};
-
-type Result = {
-  overall_theme: string;
-  frames: Frame[];
-  success_count: number;
-  total_count: number;
-  cost?: number;
-};
-
-const FRAME_OPTIONS = [3, 5, 6, 8, 10, 12];
 const ASPECT_OPTIONS: { key: "9:16" | "16:9" | "1:1"; label: string }[] = [
   { key: "9:16", label: "竖屏 9:16" },
   { key: "16:9", label: "横屏 16:9" },
   { key: "1:1", label: "方屏 1:1" },
 ];
 
+type HistoryItem = {
+  url: string;
+  prompt: string;
+  ar: string;
+  ts: number;
+};
+
 export default function StoryboardPage() {
   const [refUrl, setRefUrl] = useState<string>("");
   const [refPreview, setRefPreview] = useState<string>("");
-  const [description, setDescription] = useState("");
-  const [nFrames, setNFrames] = useState<number>(5);
+  const [prompt, setPrompt] = useState("");
   const [aspectRatio, setAspectRatio] = useState<"9:16" | "16:9" | "1:1">("9:16");
   const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<Result | null>(null);
+  const [resultUrl, setResultUrl] = useState<string>("");
+  const [history, setHistory] = useState<HistoryItem[]>([]);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
 
@@ -81,18 +68,21 @@ export default function StoryboardPage() {
       setError("请先上传参考图");
       return;
     }
+    if (!prompt.trim()) {
+      setError("请写提示词");
+      return;
+    }
     setError("");
     setMsg("");
-    setResult(null);
+    setResultUrl("");
     setLoading(true);
     try {
       const token = localStorage.getItem("token") ?? "";
       const fd = new FormData();
       fd.append("image_url", refUrl);
-      fd.append("description", description);
-      fd.append("n_frames", String(nFrames));
+      fd.append("prompt", prompt);
       fd.append("aspect_ratio", aspectRatio);
-      const res = await fetch(`${API_BASE}/api/storyboard/generate`, {
+      const res = await fetch(`${API_BASE}/api/storyboard/generate-frame`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: fd,
@@ -102,7 +92,11 @@ export default function StoryboardPage() {
       if (typeof data.cost === "number" && data.cost > 0) {
         adjustLocalUserCredits(-data.cost);
       }
-      setResult(data as Result);
+      setResultUrl(data.image_url);
+      setHistory((h) => [
+        { url: data.image_url, prompt, ar: aspectRatio, ts: Date.now() },
+        ...h.slice(0, 19),
+      ]);
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -110,13 +104,13 @@ export default function StoryboardPage() {
     }
   };
 
-  const downloadOne = async (url: string, idx: number) => {
+  const download = async (url: string) => {
     try {
       const r = await fetch(url);
       const blob = await r.blob();
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = `storyboard_${idx}_${Date.now()}.png`;
+      a.download = `storyboard_${Date.now()}.png`;
       a.click();
       URL.revokeObjectURL(a.href);
     } catch {
@@ -124,14 +118,11 @@ export default function StoryboardPage() {
     }
   };
 
-  const downloadAll = async () => {
-    if (!result) return;
-    for (const f of result.frames) {
-      if (f.image_url) {
-        await downloadOne(f.image_url, f.idx);
-        await new Promise((r) => setTimeout(r, 300));
-      }
-    }
+  const useAsRef = async (url: string) => {
+    setRefUrl(url);
+    setRefPreview(url);
+    setMsg("已把生成图作为新参考图,可以基于这张图继续改");
+    setTimeout(() => setMsg(""), 3000);
   };
 
   const aspectStyle = (() => {
@@ -167,37 +158,38 @@ export default function StoryboardPage() {
             Storyboard <span style={{ fontStyle: "italic" }}>分镜图</span>
           </h1>
           <div style={{ fontSize: "0.85rem", color: "#888", marginTop: "0.4rem" }}>
-            一张参考图 + 文字描述 → AI 自动拆出 N 段不同景别/角度/动作的分镜图(主体保持一致)
+            上传 1 张参考图 + 写提示词 → GPT-Image 2 出 1 张分镜图(2 积分/张)
           </div>
         </div>
 
         <div
           style={{
             background: "#fafaf7",
-            backgroundImage:
-              "linear-gradient(rgba(0,0,0,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.05) 1px, transparent 1px)",
-            backgroundSize: "40px 40px",
             borderRadius: "24px",
             minHeight: "calc(100vh - 200px)",
             padding: "2rem",
             border: "2px dashed rgba(0,0,0,0.2)",
+            display: "flex",
+            flexDirection: "column",
+            gap: "1.5rem",
           }}
         >
-          {!result && !loading && (
+          {/* 当前结果区 */}
+          {!resultUrl && !loading && (
             <div
               style={{
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",
                 justifyContent: "center",
-                minHeight: "500px",
+                minHeight: "400px",
                 color: "#bbb",
               }}
             >
               <div style={{ fontSize: "3.5rem", marginBottom: "1rem", color: "#ddd" }}>▦</div>
-              <div style={{ fontSize: "0.95rem", color: "#999" }}>右侧上传参考图开始</div>
+              <div style={{ fontSize: "0.95rem", color: "#999" }}>右侧上传参考图 + 写提示词</div>
               <div style={{ fontSize: "0.8rem", color: "#bbb", marginTop: "0.5rem" }}>
-                生成约 30-60 秒
+                生成约 60-130 秒
               </div>
             </div>
           )}
@@ -209,7 +201,7 @@ export default function StoryboardPage() {
                 flexDirection: "column",
                 alignItems: "center",
                 justifyContent: "center",
-                minHeight: "500px",
+                minHeight: "400px",
               }}
             >
               <div
@@ -223,168 +215,141 @@ export default function StoryboardPage() {
                 }}
               ></div>
               <div style={{ marginTop: "1rem", color: "#666", fontSize: "0.9rem" }}>
-                AI 正在拆分镜并生成 {nFrames} 张分镜图...
+                GPT-Image 2 出图中...
               </div>
               <div style={{ marginTop: "0.4rem", color: "#aaa", fontSize: "0.78rem" }}>
-                通常 30-60 秒,请勿刷新页面
+                通常 60-130 秒,请勿刷新
               </div>
               <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
             </div>
           )}
 
-          {result && (
+          {resultUrl && (
             <div>
               <div
                 style={{
                   display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
+                  justifyContent: "center",
                   marginBottom: "1.25rem",
-                  flexWrap: "wrap",
-                  gap: "0.75rem",
                 }}
               >
-                <div>
-                  <div style={{ fontSize: "0.75rem", color: "#999", marginBottom: "0.2rem" }}>
-                    整体主题
-                  </div>
-                  <div style={{ fontSize: "1.05rem", color: "#0d0d0d", fontWeight: 500 }}>
-                    {result.overall_theme || "(未命名)"}
-                  </div>
-                  <div style={{ fontSize: "0.78rem", color: "#888", marginTop: "0.25rem" }}>
-                    成功 {result.success_count}/{result.total_count} 段 · 比例 {aspectRatio}
-                  </div>
-                </div>
-                <button
-                  onClick={downloadAll}
+                <div
                   style={{
-                    padding: "0.6rem 1.1rem",
+                    ...aspectStyle,
+                    maxWidth: aspectRatio === "16:9" ? "720px" : aspectRatio === "9:16" ? "360px" : "500px",
+                    width: "100%",
+                    background: "#fff",
+                    borderRadius: "14px",
+                    overflow: "hidden",
+                    boxShadow: "0 4px 14px rgba(0,0,0,0.05)",
+                    cursor: "pointer",
+                  }}
+                  onClick={() => download(resultUrl)}
+                >
+                  <img
+                    src={resultUrl}
+                    alt="生成结果"
+                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                  />
+                </div>
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  gap: "0.75rem",
+                  justifyContent: "center",
+                  flexWrap: "wrap",
+                }}
+              >
+                <button
+                  onClick={() => download(resultUrl)}
+                  style={{
+                    padding: "0.6rem 1.4rem",
                     background: "#0d0d0d",
                     color: "#fff",
                     border: "none",
                     borderRadius: "999px",
                     cursor: "pointer",
-                    fontSize: "0.85rem",
+                    fontSize: "0.88rem",
                   }}
                 >
-                  ⬇ 全部下载
+                  ⬇ 下载这张
+                </button>
+                <button
+                  onClick={() => useAsRef(resultUrl)}
+                  style={{
+                    padding: "0.6rem 1.4rem",
+                    background: "#fff",
+                    color: "#0d0d0d",
+                    border: "1px solid #ccc",
+                    borderRadius: "999px",
+                    cursor: "pointer",
+                    fontSize: "0.88rem",
+                  }}
+                >
+                  ↻ 用作新参考图(基于这张接着改)
                 </button>
               </div>
+            </div>
+          )}
 
+          {/* 历史 */}
+          {history.length > 0 && (
+            <div style={{ marginTop: "1.5rem" }}>
+              <div
+                style={{
+                  fontSize: "0.78rem",
+                  color: "#999",
+                  marginBottom: "0.6rem",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.1em",
+                }}
+              >
+                本次会话历史
+              </div>
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns:
-                    aspectRatio === "9:16"
-                      ? "repeat(auto-fill,minmax(220px,1fr))"
-                      : aspectRatio === "16:9"
-                      ? "repeat(auto-fill,minmax(340px,1fr))"
-                      : "repeat(auto-fill,minmax(260px,1fr))",
-                  gap: "1.25rem",
+                  gridTemplateColumns: "repeat(auto-fill,minmax(140px,1fr))",
+                  gap: "0.75rem",
                 }}
               >
-                {result.frames.map((f) => (
+                {history.map((h, i) => (
                   <div
-                    key={f.idx}
+                    key={i}
                     style={{
                       background: "#fff",
-                      borderRadius: "16px",
+                      borderRadius: "10px",
                       overflow: "hidden",
-                      boxShadow: "0 4px 14px rgba(0,0,0,0.05)",
+                      cursor: "pointer",
+                      boxShadow: "0 2px 6px rgba(0,0,0,0.04)",
                     }}
+                    onClick={() => download(h.url)}
+                    title={h.prompt}
                   >
                     <div
                       style={{
-                        ...aspectStyle,
+                        aspectRatio: h.ar === "9:16" ? "9/16" : h.ar === "16:9" ? "16/9" : "1/1",
                         background: "#f5f5f5",
-                        position: "relative",
-                        cursor: f.image_url ? "pointer" : "default",
                       }}
-                      onClick={() => f.image_url && downloadOne(f.image_url, f.idx)}
                     >
-                      {f.image_url ? (
-                        <>
-                          <img
-                            src={f.image_url}
-                            alt={f.title}
-                            style={{
-                              width: "100%",
-                              height: "100%",
-                              objectFit: "cover",
-                              display: "block",
-                            }}
-                          />
-                          <div
-                            style={{
-                              position: "absolute",
-                              top: "0.5rem",
-                              left: "0.5rem",
-                              background: "rgba(0,0,0,0.7)",
-                              color: "#fff",
-                              padding: "0.2rem 0.55rem",
-                              borderRadius: "999px",
-                              fontSize: "0.7rem",
-                            }}
-                          >
-                            #{f.idx}
-                          </div>
-                          <div
-                            style={{
-                              position: "absolute",
-                              top: "0.5rem",
-                              right: "0.5rem",
-                              background: "rgba(0,0,0,0.6)",
-                              color: "#fff",
-                              padding: "0.2rem 0.55rem",
-                              borderRadius: "999px",
-                              fontSize: "0.7rem",
-                            }}
-                          >
-                            ⬇
-                          </div>
-                        </>
-                      ) : (
-                        <div
-                          style={{
-                            position: "absolute",
-                            inset: 0,
-                            display: "flex",
-                            flexDirection: "column",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            color: "#bbb",
-                            padding: "1rem",
-                            textAlign: "center",
-                          }}
-                        >
-                          <div style={{ fontSize: "1.6rem", marginBottom: "0.5rem" }}>✕</div>
-                          <div style={{ fontSize: "0.8rem" }}>段 {f.idx} 生成失败</div>
-                          <div
-                            style={{
-                              fontSize: "0.7rem",
-                              marginTop: "0.4rem",
-                              color: "#999",
-                            }}
-                          >
-                            {(f.error ?? "").slice(0, 80)}
-                          </div>
-                        </div>
-                      )}
+                      <img
+                        src={h.url}
+                        alt=""
+                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      />
                     </div>
-                    <div style={{ padding: "0.85rem 1rem" }}>
-                      <div
-                        style={{
-                          fontSize: "0.92rem",
-                          fontWeight: 500,
-                          color: "#0d0d0d",
-                          marginBottom: "0.25rem",
-                        }}
-                      >
-                        {f.title}
-                      </div>
-                      <div style={{ fontSize: "0.72rem", color: "#888" }}>
-                        {f.purpose} · {f.shot_type}
-                      </div>
+                    <div
+                      style={{
+                        padding: "0.4rem 0.55rem",
+                        fontSize: "0.7rem",
+                        color: "#666",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {h.prompt}
                     </div>
                   </div>
                 ))}
@@ -481,14 +446,11 @@ export default function StoryboardPage() {
               />
               <div style={{ fontSize: "1.6rem", color: "#ccc", marginBottom: "0.4rem" }}>+</div>
               {uploading ? "处理中..." : "点击上传参考图"}
-              <div style={{ fontSize: "0.72rem", color: "#bbb", marginTop: "0.3rem" }}>
-                支持产品图 / 模特+产品 / 场景图
-              </div>
             </label>
           )}
         </div>
 
-        <div>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
           <div
             style={{
               fontSize: "0.72rem",
@@ -498,62 +460,26 @@ export default function StoryboardPage() {
               marginBottom: "0.6rem",
             }}
           >
-            创作描述(可选)
+            提示词(必填)
           </div>
           <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="例:女性塑身衣爆款带货短视频,展示 360 度收紧效果 + 卧室场景"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="例:把模特换成 45 度侧面,微笑看镜头,手里拿着产品自然展示,卧室柔和光线"
             style={{
               width: "100%",
               padding: "0.75rem 0.9rem",
               border: "1px solid #e5e5e5",
               borderRadius: "12px",
-              fontSize: "0.85rem",
-              minHeight: "90px",
+              fontSize: "0.88rem",
+              minHeight: "150px",
               resize: "vertical",
               fontFamily: "inherit",
               background: "#fff",
               color: "#333",
+              flex: 1,
             }}
           />
-        </div>
-
-        <div>
-          <div
-            style={{
-              fontSize: "0.72rem",
-              color: "#999",
-              textTransform: "uppercase",
-              letterSpacing: "0.1em",
-              marginBottom: "0.6rem",
-            }}
-          >
-            分镜数
-          </div>
-          <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
-            {FRAME_OPTIONS.map((n) => (
-              <button
-                key={n}
-                onClick={() => setNFrames(n)}
-                style={{
-                  padding: "0.45rem 0.9rem",
-                  border: nFrames === n ? "2px solid #0d0d0d" : "1px solid #e5e5e5",
-                  background: nFrames === n ? "#f9f7f2" : "#fff",
-                  borderRadius: "999px",
-                  cursor: "pointer",
-                  fontSize: "0.82rem",
-                  color: "#333",
-                  minWidth: "44px",
-                }}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
-          <div style={{ fontSize: "0.7rem", color: "#888", marginTop: "0.4rem" }}>
-            {nFrames > 6 ? "12 积分/单(7-12 段)" : "8 积分/单(2-6 段)"}
-          </div>
         </div>
 
         <div>
@@ -618,19 +544,19 @@ export default function StoryboardPage() {
 
         <button
           onClick={generate}
-          disabled={loading || !refUrl}
+          disabled={loading || !refUrl || !prompt.trim()}
           style={{
             padding: "0.9rem",
-            background: !refUrl || loading ? "#999" : "#0d0d0d",
+            background: !refUrl || !prompt.trim() || loading ? "#999" : "#0d0d0d",
             color: "#fff",
             border: "none",
             borderRadius: "12px",
-            cursor: loading || !refUrl ? "not-allowed" : "pointer",
+            cursor: loading || !refUrl || !prompt.trim() ? "not-allowed" : "pointer",
             fontSize: "0.95rem",
             fontWeight: 500,
           }}
         >
-          {loading ? "生成中..." : `生成 ${nFrames} 段分镜图`}
+          {loading ? "生成中..." : "生成分镜图(2 积分)"}
         </button>
       </aside>
     </div>
