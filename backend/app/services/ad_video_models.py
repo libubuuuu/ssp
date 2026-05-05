@@ -372,11 +372,44 @@ async def compose_first_frame_for_scene(
     if not visual:
         return {"error": "scene 缺 visual_prompt"}
 
+    # P149(2026-05-06):用户敲"回 N 张独立 GPT 图(每张 9:16 portrait)"
+    # 加 P146 sanitize + P148 产品焦点 + 上半身有人脸(防 Kling Avatar 拒图)
+    visual_safe = visual
+    for old, new in [
+        ("waist trainer", "fashion garment"),
+        ("shapewear", "fashion garment"),
+        ("waist", "torso"),
+        ("chest", "upper body"),
+        ("hips", "lower torso"),
+        ("body", "outfit"),
+        ("neoprene", "fabric"),
+        ("faux leather", "matte material"),
+        ("leather panel", "matte panel"),
+        ("bedroom", "indoor space"),
+        ("candlelight", "soft warm light"),
+        ("on bed", "sitting indoor"),
+        ("no face visible", "from a distance"),
+        ("revealing", "showing"),
+        ("her waist", "the torso"),
+        ("her body", "the outfit"),
+        ("her chest", "the upper area"),
+        ("on her", "on the"),
+    ]:
+        visual_safe = visual_safe.replace(old, new)
+
     prompt = (
-        f"Adjust the reference image to show this specific shot: {visual}. "
+        f"Adjust the reference image to show this specific shot: {visual_safe}. "
         f"Keep the model's identity consistent ({model_description}). "
         f"Maintain the overall setting: {overall_setting}. "
-        f"Photorealistic UGC selfie style, vertical 9:16 composition, "
+        # P149 关键铁律 — 防 Kling Avatar 拒图(必须有清晰人脸 + 上半身)
+        f"CRITICAL — MUST INCLUDE: model's face and upper body clearly visible in the frame. "
+        f"Even product close-ups must show the model's face/upper body together with the product. "
+        # P148 产品焦点
+        f"PRODUCT FOCUS: the fashion garment is the visual hero, clearly visible. "
+        f"Model's pose and gaze direct viewer attention TOWARD the product. "
+        # P147 框架
+        f"Third-person professional commercial camera angle, NOT a mirror selfie. "
+        f"Photorealistic commercial advertisement, vertical 9:16 composition, "
         f"natural lighting, preserve the exact product details from reference."
     )
 
