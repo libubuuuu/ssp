@@ -1003,9 +1003,12 @@ async def _run_ad_video_job(params: dict):
             async def _ka_for_seg(idx: int, audio_url: str):
                 # 用段 idx 对应的分镜图(P138 关键改动);失败 fallback 已经在 seg_frames 里处理
                 seg_img = seg_frames.get(idx, base_image_url)
-                # P143(2026-05-06):把 VLM 的 visual_prompt 传给 Kling Avatar(动作驱动)
-                # 之前写死 "natural relaxed talking pose" 浪费了 VLM 写的动作描述,
-                # 模特只会站着轻微晃头。改传 visual_prompt 让 Kling Avatar 看动作意图。
+                # P144-r(2026-05-06):基于 fal 官方 Kling Avatar v2 Prompt Guide 重写
+                # https://fal.ai/learn/devs/kling-avatar-v2-prompt-guide
+                # 官方 4 部分结构:Subject + Expression + Movement + Style
+                # 官方推荐词组:"Energetic presenter with frequent hand gestures",
+                # "purposeful gestures pointing to product","head nods for emphasis"
+                # 期望动作幅度比 P143 提升 30-50%(从轻微晃头到频繁手势+动态表情)
                 scene = scenes[idx - 1] if idx - 1 < len(scenes) else {}
                 visual = (scene.get("visual_prompt") or "").strip()
                 # P140 sanitize 一致:替换敏感词避开 Kling 内容审核
@@ -1014,14 +1017,31 @@ async def _run_ad_video_job(params: dict):
                     .replace("waist trainer", "fashion garment")
                     .replace("shapewear", "fashion garment")
                 )
-                ka_prompt = (
-                    f"{visual_safe}. "
-                    "Model speaks naturally with synchronized lip movements, "
-                    "expressive but not exaggerated facial expressions."
-                ) if visual_safe else (
-                    "natural relaxed talking pose, slight head movements, "
-                    "subtle natural expressions, no exaggerated mouth or face"
-                )
+                # P144-r 4 部分结构 prompt
+                if visual_safe:
+                    ka_prompt = (
+                        # Subject(主题)
+                        f"Subject: enthusiastic content creator presenting fashion product. "
+                        f"Scene: {visual_safe}. "
+                        # Expression(表情)— fal 官方推荐
+                        "Expression: dynamic facial expressions matching emphasis points, "
+                        "natural eye contact with camera, expressive eyebrows for engagement. "
+                        # Movement(动作)— fal 官方明文支持
+                        "Movement: energetic presenter posture with frequent purposeful hand gestures, "
+                        "pointing to and demonstrating the product, occasional head nods for emphasis, "
+                        "slight body lean to show enthusiasm, gesturing toward product with open palms. "
+                        # Style(风格)
+                        "Style: photorealistic UGC video creator, natural skin textures, "
+                        "synchronized lip movements with audio."
+                    )
+                else:
+                    ka_prompt = (
+                        "Subject: enthusiastic content creator. "
+                        "Expression: dynamic facial expressions, natural eye contact. "
+                        "Movement: frequent purposeful hand gestures, occasional head nods, "
+                        "slight body lean for engagement. "
+                        "Style: photorealistic UGC, synchronized lip movements."
+                    )
                 res = await _fc.subscribe_async(
                     kling_endpoint,
                     arguments={
