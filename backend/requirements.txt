@@ -46,3 +46,4 @@ sentry-sdk[fastapi]==2.20.0
 # 七十二续:腾讯云 STS SDK(B 方案 OSS 直传,只签发临时凭证)
 tencentcloud-sdk-python-sts>=3.0.1400
 tencentcloud-sdk-python-common>=3.1.0
+resend>=2.0,<3
