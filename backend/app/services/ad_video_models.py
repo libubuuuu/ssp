@@ -184,26 +184,12 @@ async def crop_storyboard_panels(
             (w, h, W, H),       # 右下
         ]
 
-    # 裁切 + 强制 9:16 中心裁切 + 上传每张
-    # P141(2026-05-05):用户实测视频 1008x896 比例不对,强制每格再裁中心 9:16
-    target_ratio = 9 / 16  # 0.5625
+    # P145(2026-05-06):回滚 P141 强制 9:16 裁切 — 把 608x544 砍成 306x544 太窄,
+    # Kling Avatar 拒图 "No recognizable elements found"。回到 P140 原比例上传,
+    # 视频输出可能不是 9:16 但能跑。9:16 比例问题后续考虑 padding 而不是 crop。
     panel_urls = []
     for i, box in enumerate(boxes):
         panel = img.crop(box)
-        pw, ph = panel.size
-        cur_ratio = pw / ph
-        if abs(cur_ratio - target_ratio) > 0.02:
-            if cur_ratio > target_ratio:
-                # 太宽 → 裁中间窄(常见情况:1024x896 → 504x896)
-                new_w = int(ph * target_ratio)
-                left = (pw - new_w) // 2
-                panel = panel.crop((left, 0, left + new_w, ph))
-            else:
-                # 太窄 → 裁中间矮(罕见)
-                new_h = int(pw / target_ratio)
-                top = (ph - new_h) // 2
-                panel = panel.crop((0, top, pw, top + new_h))
-            log_info(f"crop_storyboard_panels panel {i+1} 强制 9:16: {pw}x{ph} → {panel.size}")
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
             panel.save(tmp.name, "JPEG", quality=92, optimize=True)
             tmp_path = tmp.name
