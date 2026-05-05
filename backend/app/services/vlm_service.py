@@ -211,33 +211,29 @@ def _build_analysis_prompt(total_duration: int = 15, region: str = "CN") -> str:
         purpose_hint = f"前 1 段开场,中间 {n-2} 段从不同角度展示卖点,最后 1 段促单 CTA"
 
     # 拼时间戳 + P112 speech 字数硬上限(elevenlabs 实测速率:CN 5 字/s, EN 14 字符/s)
-    # P119:5-12s speech 字数算总 duration(因为整段一份 TTS,不按 segment 拆)
+    # P120(2026-05-05):5-12s 也按段独立 speech(每段独立 TTS,画外音 concat),
+    # 不再"段 1 全说话其他段沉默"— 爆款抖音是每段不同话术连贯播
     char_per_sec = 5 if region == "CN" else 14
     char_unit = "字" if region == "CN" else "字符"
     total_max_chars = int(total_duration * char_per_sec)
     time_lines = []
     cum = 0.0
     for i, d in enumerate(seg_durs):
-        if is_p119:
-            # P119: 段 1 可以有 speech 字段(开场钩子),段 2-N speech 应留空(后端只用段 1)
-            # 但为了 VLM 不偷懒省略 speech,允许各段写,后端拼起来用段 1 的字段
-            speech_hint = "speech 写整段开场钩子" if i == 0 else "speech 留空字符串(只画面)"
-        else:
-            max_chars = int(d * char_per_sec)
-            speech_hint = f"**speech 严格 ≤ {max_chars} {char_unit}**,超字会被截断"
+        max_chars = int(d * char_per_sec)
         time_lines.append(
-            f"  - 镜头{i+1}({cum}-{cum+d}s,共 {d} 秒,{speech_hint})"
+            f"  - 镜头{i+1}({cum}-{cum+d}s,共 {d} 秒,**speech 严格 ≤ {max_chars} {char_unit}**,超字会被截断)"
         )
         cum += d
 
-    # P119 5-12s 强提示:把整段 speech 集中在第 1 段,其他段画面驱动
+    # P120 多镜头叙事强提示
     if is_p119:
-        time_lines.insert(0, f"  ⚠️ **P119 多镜头叙事**:总时长 {total_duration}s 拆成 {n} 个 1.5-2.5s 镜头,**每段画面/动作完全不同**(钩子→产品特写→演示→CTA)。**整段 speech 总字数 ≤ {total_max_chars} {char_unit}**,放在第 1 段 speech 字段里(其他段 speech 空字符串)。")
+        time_lines.insert(0, f"  ⚠️ **P120 爆款多镜头叙事**:总时长 {total_duration}s 拆成 {n} 个 1.5-2.5s 镜头,**每段画面+话术都不同**(钩子→卖点1→卖点2→对比→CTA)。**每段独立 speech**(全段加起来 ≤ {total_max_chars} {char_unit}),后端会按段独立 TTS 然后画外音 concat 出爆款主播节奏。**严禁段 2-N speech 留空** — 那样会沉默。")
 
     scenes_example_parts = []
     cum2 = 0.0
-    for i, d in enumerate(seg_durs[:3]):  # 仅展示前 3 段示例
-        speech_eg = '"English speech here"' if i == 0 else '""'
+    speech_examples = ['"开场钩子一句话"', '"卖点一句话"', '"CTA 紧迫感一句话"']
+    for i, d in enumerate(seg_durs[:3]):
+        speech_eg = speech_examples[i] if i < len(speech_examples) else '"本段对应话术"'
         scenes_example_parts.append(
             f'      {{"id": {i+1}, "time_range": "{cum2}-{cum2+d}s", "purpose": "...", '
             f'"shot_language": "...", "content": "...", '
