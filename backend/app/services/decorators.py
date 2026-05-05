@@ -44,6 +44,13 @@ def require_credits(module: str):
                 raise HTTPException(status_code=401, detail="未登录")
 
             user_id = current_user["id"]
+            role = current_user.get("role", "user")
+
+            # P161(2026-05-06)任务级限流(每分钟次数 + 每日 quota,admin 跳过)
+            from .rate_limiter import check_task_quota
+            allowed, reason = check_task_quota(user_id, cost, role=role)
+            if not allowed:
+                raise HTTPException(status_code=429, detail=reason)
 
             # 检查额度
             if not check_user_credits(user_id, cost):
@@ -52,11 +59,11 @@ def require_credits(module: str):
                     detail=f"额度不足，需要 {cost} 积分，当前剩余 {get_user_credits(user_id)} 积分"
                 )
 
-            # 扣减额度
-            if not deduct_credits(user_id, cost):
-                raise HTTPException(status_code=500, detail="扣费失败，请重试")
-
             task_id = str(uuid.uuid4())
+
+            # P158 扣减额度 + 埋 ledger(传 ref_id=task_id)
+            if not deduct_credits(user_id, cost, ref_id=task_id, module=module):
+                raise HTTPException(status_code=500, detail="扣费失败，请重试")
 
             try:
                 result = await func(*args, **kwargs)
@@ -75,24 +82,23 @@ def require_credits(module: str):
                 )
 
                 # 异步任务:登记 fal task_id 备退款,polling 检测到 failed 时由 refund_tracker.try_refund 退
-                # 同步任务(result 无 task_id)走原 except 路径,这里 noop
                 if isinstance(result, dict) and result.get("task_id"):
                     from .refund_tracker import register as register_refund
                     register_refund(result["task_id"], user_id, cost)
 
-                # 附加 cost 字段
+                # P158:附加 cost + new_credits 字段(前端用 server 真实余额覆盖 localStorage)
                 if isinstance(result, dict):
                     result["cost"] = cost
+                    result["new_credits"] = get_user_credits(user_id)
 
                 return result
 
             except HTTPException:
-                # 明确抛出的 HTTP 异常：返还积分
-                add_credits(user_id, cost)
+                # P158 退款 + 埋 ledger(reason='task_refund')
+                add_credits(user_id, cost, reason="task_refund", ref_id=task_id, module=module)
                 raise
             except Exception as e:
-                # 未知错误：返还积分
-                add_credits(user_id, cost)
+                add_credits(user_id, cost, reason="task_refund", ref_id=task_id, module=module)
                 raise HTTPException(status_code=500, detail=str(e))
 
         return wrapper

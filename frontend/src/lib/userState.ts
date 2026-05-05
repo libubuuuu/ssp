@@ -55,12 +55,31 @@ export function updateLocalUser(patch: Record<string, unknown>): void {
   _writeUser(u);
 }
 
-/** 给 credits 加 delta(正数充值/退款,负数扣费)— 比 updateLocalUser 更适合"我知道增量但不知绝对值"的场景 */
+/** 给 credits 加 delta(正数充值/退款,负数扣费)— 比 updateLocalUser 更适合"我知道增量但不知绝对值"的场景
+ *
+ * P158(2026-05-06):**优先用 setLocalUserCreditsAbsolute**(server 返 new_credits)。
+ * 局部增量 adjustLocalUserCredits 多次扣费/退款会跟数据库累积误差,只在没 new_credits 时用。
+ */
 export function adjustLocalUserCredits(delta: number): void {
   const u = _readUser();
   if (!u) return;
   const cur = typeof u.credits === "number" ? u.credits : 0;
   u.credits = cur + delta;
+  _writeUser(u);
+}
+
+/** P158(2026-05-06):用 server 真实返回的 new_credits 覆盖本地 — 跟数据库 100% 同步
+ *
+ * 用法:
+ *   const data = await fetch('/api/...').then(r => r.json());
+ *   if (typeof data.new_credits === 'number') setLocalUserCreditsAbsolute(data.new_credits);
+ *
+ * 业务调用方应优先用这个(不再用 adjustLocalUserCredits 局部算)。
+ */
+export function setLocalUserCreditsAbsolute(credits: number): void {
+  const u = _readUser();
+  if (!u) return;
+  u.credits = credits;
   _writeUser(u);
 }
 

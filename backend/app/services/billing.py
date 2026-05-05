@@ -81,13 +81,11 @@ def check_user_credits(user_id: str, required: int) -> bool:
     return user.get("credits", 0) >= required
 
 
-def deduct_credits(user_id: str, amount: int) -> bool:
-    """原子扣减用户额度。
+def deduct_credits(user_id: str, amount: int, *, ref_id: str = None, module: str = None) -> bool:
+    """原子扣减用户额度 + 写 credits_ledger(P158)。
 
-    在 SQL 层 ``WHERE credits >= ?`` 保证"检查 + 扣减"原子,杜绝
-    并发竞态把余额扣到负数。返回值即真实结果:
-      True  = 余额充足,扣减成功
-      False = 余额不足 / 用户不存在 / amount 非正数,数据未变
+    保留 bool 返回接口(21 处调用方不用改)。需要 new_credits 用 get_user_credits()。
+    SQL 层 ``WHERE credits >= ?`` 保证"检查 + 扣减"原子。
     """
     if amount <= 0:
         return False
@@ -98,14 +96,52 @@ def deduct_credits(user_id: str, amount: int) -> bool:
                SET credits = credits - ?, updated_at = CURRENT_TIMESTAMP
              WHERE id = ? AND credits >= ?
         """, (amount, user_id, amount))
+        success = cursor.rowcount == 1
+        if success:
+            cursor.execute("SELECT credits FROM users WHERE id = ?", (user_id,))
+            row = cursor.fetchone()
+            new_credits = row[0] if row else 0
         conn.commit()
-        return cursor.rowcount == 1
+
+    if success:
+        # P157 ledger 埋点
+        from .credits_ledger import record_credits_change
+        record_credits_change(
+            user_id=user_id, delta=-amount, balance_after=new_credits,
+            reason="task_charge", ref_id=ref_id, module=module,
+        )
+    return success
 
 
-def add_credits(user_id: str, amount: int) -> bool:
-    """增加用户额度（失败返还）"""
-    from .auth import update_user_credits
-    return update_user_credits(user_id, amount)
+def add_credits(user_id: str, amount: int, *, reason: str = "task_refund", ref_id: str = None, module: str = None) -> bool:
+    """增加用户额度 + 写 credits_ledger(P158 原子,防 race)。
+
+    Args:
+        reason: 'task_refund' / 'recharge_wx' / 'recharge_alipay' / 'system_compensation'
+    """
+    if amount <= 0:
+        return False
+    with get_db() as conn:
+        cursor = conn.cursor()
+        # P158 原子加(防 race,替代之前 update_user_credits 的 SET)
+        cursor.execute(
+            "UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (amount, user_id),
+        )
+        success = cursor.rowcount == 1
+        if success:
+            cursor.execute("SELECT credits FROM users WHERE id = ?", (user_id,))
+            row = cursor.fetchone()
+            new_credits = row[0] if row else 0
+        conn.commit()
+
+    if success:
+        from .credits_ledger import record_credits_change
+        record_credits_change(
+            user_id=user_id, delta=amount, balance_after=new_credits,
+            reason=reason, ref_id=ref_id, module=module,
+        )
+    return success
 
 
 def get_user_credits(user_id: str) -> int:

@@ -378,6 +378,73 @@ def user_rate_limit(func):
 
 
 # 辅助函数
+# P161(2026-05-06)任务专门限流(防陌生用户 1 分钟跑 100 个 ad_video 撸羊毛)
+# 只针对扣费任务(@require_credits 装饰的端点),普通限流不动
+
+_TASK_PER_MINUTE_LIMIT = 5      # 普通用户每分钟最多 5 个生成任务
+_TASK_HIGH_COST_DAILY = 50      # 高 cost(>=10 积分)任务每天上限
+_TASK_LOW_COST_DAILY = 200      # 低 cost(<10 积分)任务每天上限
+_HIGH_COST_THRESHOLD = 10
+
+
+def check_task_quota(user_id: str, cost: int, role: str = "user") -> tuple[bool, str]:
+    """P161 任务级限流:每分钟 N 次 + 每日 quota。admin 跳过。
+
+    Args:
+        user_id: 用户 ID
+        cost: 本次任务积分数(用于判断 high/low cost 走哪个 daily quota)
+        role: 用户角色,'admin' 跳过限流
+
+    Returns:
+        (allowed, reason): allowed=False 时 reason 是给用户看的中文消息
+    """
+    if role == "admin":
+        return True, ""
+
+    from ..database import get_db
+    now_ts = time.time()
+    minute_ago = now_ts - 60
+    today_start_ts = now_ts - (now_ts % 86400)
+
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            # 近 1 分钟该用户成功扣费的任务数(generation_history 是扣费成功后才插)
+            cursor.execute(
+                "SELECT COUNT(*) FROM generation_history WHERE user_id = ? AND strftime('%s', created_at) > ?",
+                (user_id, minute_ago),
+            )
+            minute_count = cursor.fetchone()[0]
+            if minute_count >= _TASK_PER_MINUTE_LIMIT:
+                return False, f"操作频繁,1 分钟最多 {_TASK_PER_MINUTE_LIMIT} 个任务,稍等"
+
+            # 当天该用户任务数(分高/低 cost)
+            cursor.execute(
+                "SELECT COUNT(*) FROM generation_history WHERE user_id = ? AND strftime('%s', created_at) > ? AND cost >= ?",
+                (user_id, today_start_ts, _HIGH_COST_THRESHOLD),
+            )
+            high_today = cursor.fetchone()[0]
+            cursor.execute(
+                "SELECT COUNT(*) FROM generation_history WHERE user_id = ? AND strftime('%s', created_at) > ? AND cost < ?",
+                (user_id, today_start_ts, _HIGH_COST_THRESHOLD),
+            )
+            low_today = cursor.fetchone()[0]
+
+            if cost >= _HIGH_COST_THRESHOLD:
+                if high_today >= _TASK_HIGH_COST_DAILY:
+                    return False, f"今日高消耗任务已达 {_TASK_HIGH_COST_DAILY} 次上限,明天再来"
+            else:
+                if low_today >= _TASK_LOW_COST_DAILY:
+                    return False, f"今日普通任务已达 {_TASK_LOW_COST_DAILY} 次上限,明天再来"
+    except Exception as e:
+        # 限流查询失败不阻塞业务(fail-open)
+        from .logger import log_warning
+        log_warning(f"check_task_quota 查询失败 user={user_id[:8]}: {e}")
+        return True, ""
+
+    return True, ""
+
+
 def get_rate_limiter() -> RateLimiter:
     """获取限流器实例"""
     return rate_limiter

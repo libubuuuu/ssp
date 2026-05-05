@@ -1,9 +1,12 @@
 "use client";
 import LanguageSwitcher from "@/lib/i18n/LanguageSwitcher";
 import { useLang } from "@/lib/i18n/LanguageContext";
-import { useMemo } from "react";
+import { useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useLocalStorageItem } from "@/lib/hooks/useLocalStorageItem";
+import { updateLocalUser } from "@/lib/userState";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 interface SidebarUser {
   name?: string;
@@ -15,12 +18,34 @@ export default function Sidebar() {
   const router = useRouter();
   const { t } = useLang();
   // useSyncExternalStore 订阅 localStorage["user"] — 自动跨 tab + 同 tab 同步,
-  // 不再 useEffect + 手挂 listener(原 623ceac 的修法,这一版统一收口)
   const userJson = useLocalStorageItem("user");
   const user: SidebarUser | null = useMemo(() => {
     if (!userJson) return null;
     try { return JSON.parse(userJson) as SidebarUser; } catch { return null; }
   }, [userJson]);
+
+  // P159(2026-05-06):Sidebar 挂载时 fetch /me 拉真实 credits 覆盖本地缓存
+  // 防 admin 后台调账后用户看到旧 credits + 防 adjustLocalUserCredits 局部算误差
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    let cancelled = false;
+    fetch(`${API_BASE}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (cancelled || !data || typeof data !== "object") return;
+        if (typeof data.credits === "number") {
+          updateLocalUser({
+            credits: data.credits,
+            ...(data.name ? { name: data.name } : {}),
+            ...(data.role ? { role: data.role } : {}),
+          });
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   if (!user) return null;
 

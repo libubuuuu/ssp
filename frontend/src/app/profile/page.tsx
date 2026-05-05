@@ -29,6 +29,17 @@ export default function ProfilePage(){
       setUser(obj);
       setName(obj.name||"");
     }catch{}
+    // P159(2026-05-06)Profile 挂载时 fetch /me 拉真实 credits(防显示旧 localStorage 缓存)
+    fetch(`${API_BASE}/api/auth/me`,{headers:{"Authorization":`Bearer ${token}`}})
+      .then(r=>r.ok?r.json():null)
+      .then((data)=>{
+        if(!data||typeof data!=="object")return;
+        if(typeof data.credits==="number"){
+          setUser((prev)=>prev?{...prev,credits:data.credits,name:data.name??prev.name}:prev);
+          updateLocalUser({credits:data.credits,...(data.name?{name:data.name}:{})});
+        }
+      })
+      .catch(()=>{});
   },[router]);
 
   const saveName=async()=>{
