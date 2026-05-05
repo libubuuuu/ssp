@@ -901,29 +901,62 @@ async def _run_ad_video_job(params: dict):
             log_info(f"ad_video P124 段{idx} i2v OK url={v[:80]}")
             return v
 
-        # P135(2026-05-05):用户敲"按爆款节奏分镜,完整段直接 concat 拼接,不剪辑"
-        # 架构:N 段独立 TTS(每段 speech)+ N 段并发 Kling Avatar v2 Std(共享 base_image,每段独立 audio)
-        #   + ffmpeg concat demuxer(完整段拼,不 trim 不 xfade,真"不剪辑")
-        # VLM scenes 数 = 爆款节奏天然 punch 数(2-4 段),前端 duration 是参考(实际时长 = N 段 audio 总和)
-        # 段间会有"姿势重置"轻跳跃(Kling Avatar 每段从 base_image 起始姿势开始,物理特性)
+        # P138(2026-05-05):用户怒"GPT-Image 2 没出多个镜头画面" — verify 出 P135 漏洞
+        # P135 共享 1 张 base_image,VLM 写的 N 段 visual_prompt 被浪费,所以画面只有 1 个镜头
+        # P138 修:N 段并发 GPT-Image 2(每段独立 visual_prompt → 不同分镜图)+ N 段独立 TTS
+        #   + N 段 Kling Avatar(每段用对应分镜图)+ ffmpeg concat
         if len(scenes) >= 2:
+            from app.services.ad_video_models import compose_first_frame_for_scene
             kling_endpoint = "fal-ai/kling-video/ai-avatar/v2/standard"
-            log_info(f"ad_video P135 多段 talking head concat scenes={len(scenes)} endpoint={kling_endpoint}")
+            log_info(f"ad_video P138 多段画面分镜 + talking head concat scenes={len(scenes)} endpoint={kling_endpoint}")
 
             # 收集每段 speech(P135 不合并)
             seg_speeches = []
             for i, s in enumerate(scenes):
                 sp = (s.get("speech") or "").strip()
                 if not sp:
-                    log_warning(f"ad_video P135 段{i+1} speech 空,该段跳过")
+                    log_warning(f"ad_video P138 段{i+1} speech 空,该段跳过")
                     continue
                 seg_speeches.append((i + 1, sp))
 
             if not seg_speeches:
-                raise Exception("P135 全部段 speech 都空,VLM 没写台词")
+                raise Exception("P138 全部段 speech 都空,VLM 没写台词")
 
-            # P135 阶段 A:N 段并发 TTS(每段独立 audio)
-            log_info(f"ad_video P135 阶段 A:并发 {len(seg_speeches)} 段 TTS")
+            # P138 阶段 A1:N 段并发 GPT-Image 2 出分镜图(每段独立 visual_prompt)
+            log_info(f"ad_video P138 阶段 A1:并发 {len(seg_speeches)} 段 GPT-Image 2 出分镜图")
+            valid_idxs = [idx for idx, _ in seg_speeches]
+
+            async def _frame_for_seg(idx: int):
+                scene = scenes[idx - 1]
+                fr = await compose_first_frame_for_scene(
+                    base_image_url=base_image_url,
+                    scene=scene,
+                    model_description=model_desc,
+                    overall_setting=overall,
+                )
+                if isinstance(fr, dict) and "error" in fr:
+                    raise Exception(f"段{idx} 分镜图失败: {fr['error']}")
+                url = fr.get("image_url") if isinstance(fr, dict) else None
+                if not url:
+                    raise Exception(f"段{idx} 分镜图未返 url")
+                log_info(f"ad_video P138 段{idx} GPT-Image 2 分镜图 OK url={url[:60]}")
+                return (idx, url)
+
+            frame_results = await asyncio.gather(
+                *[_frame_for_seg(idx) for idx in valid_idxs],
+                return_exceptions=True,
+            )
+            seg_frames = {}  # {idx: image_url}
+            for i, r in enumerate(frame_results):
+                if isinstance(r, Exception):
+                    fallback_idx = valid_idxs[i]
+                    log_warning(f"ad_video P138 段{fallback_idx} 分镜图失败,fallback base_image: {str(r)[:200]}")
+                    seg_frames[fallback_idx] = base_image_url
+                else:
+                    seg_frames[r[0]] = r[1]
+
+            # P138 阶段 A2:N 段并发 TTS(每段独立 audio)
+            log_info(f"ad_video P138 阶段 A2:并发 {len(seg_speeches)} 段 TTS")
 
             async def _tts_for_seg(idx: int, text: str):
                 tres = await _fc.run_async(
@@ -934,7 +967,7 @@ async def _run_ad_video_job(params: dict):
                 u = ao.get("url") if ao else tres.get("audio_url")
                 if not u:
                     raise Exception(f"段{idx} TTS 未返 audio_url")
-                log_info(f"ad_video P135 段{idx} TTS OK chars={len(text)} url={u[:60]}")
+                log_info(f"ad_video P138 段{idx} TTS OK chars={len(text)} url={u[:60]}")
                 return (idx, u)
 
             tts_results = await asyncio.gather(
@@ -944,20 +977,22 @@ async def _run_ad_video_job(params: dict):
             seg_audios = []  # list of (idx, audio_url)
             for r in tts_results:
                 if isinstance(r, Exception):
-                    log_warning(f"ad_video P135 TTS 段失败,跳过: {str(r)[:150]}")
+                    log_warning(f"ad_video P138 TTS 段失败,跳过: {str(r)[:150]}")
                     continue
                 seg_audios.append(r)
             if not seg_audios:
-                raise Exception("P135 全部段 TTS 失败")
+                raise Exception("P138 全部段 TTS 失败")
 
-            # P135 阶段 B:N 段并发 Kling Avatar v2 Std(共享 base_image,每段独立 audio)
-            log_info(f"ad_video P135 阶段 B:并发 {len(seg_audios)} 段 Kling Avatar v2 Std")
+            # P138 阶段 B:N 段并发 Kling Avatar v2 Std(每段用对应分镜图 + 对应 audio)
+            log_info(f"ad_video P138 阶段 B:并发 {len(seg_audios)} 段 Kling Avatar v2 Std(每段独立分镜图)")
 
             async def _ka_for_seg(idx: int, audio_url: str):
+                # 用段 idx 对应的分镜图(P138 关键改动);失败 fallback 已经在 seg_frames 里处理
+                seg_img = seg_frames.get(idx, base_image_url)
                 res = await _fc.subscribe_async(
                     kling_endpoint,
                     arguments={
-                        "image_url": base_image_url,
+                        "image_url": seg_img,
                         "audio_url": audio_url,
                         "prompt": (
                             "natural relaxed talking pose, slight head movements, "
@@ -968,7 +1003,7 @@ async def _run_ad_video_job(params: dict):
                 v = (res.get("video") or {}).get("url") if isinstance(res.get("video"), dict) else res.get("video_url")
                 if not v:
                     raise Exception(f"段{idx} Kling Avatar 未返 video_url")
-                log_info(f"ad_video P135 段{idx} Kling Avatar OK url={v[:60]}")
+                log_info(f"ad_video P138 段{idx} Kling Avatar OK url={v[:60]}")
                 return (idx, v)
 
             ka_results = await asyncio.gather(
