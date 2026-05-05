@@ -840,19 +840,21 @@ async def _run_ad_video_job(params: dict):
         if not audio_url:
             raise Exception("TTS 未返 audio_url")
 
-        # Step 2: P115 Kling 通道 — talking head 喂 reframed 图(若用 Kling)
-        # 注意 Seedance 永远喂 base_image(同模特同产品同背景,保证身份一致)
+        # Step 2: P115 Kling 通道 reframe(P153 只在 scenes <= 1 单段兜底分支才需要)
+        # P135/P149 多段(scenes >= 2)用每段独立 GPT-Image 2 9:16 分镜图,不需要 reframe
+        # P153(2026-05-06):跳过 P115 reframe → 省 ~2 分钟(总耗时 7-8 分 → 5-6 分)
         talking_endpoint = params.get("talking_head_endpoint", "fal-ai/bytedance/omnihuman")
         log_info(f"ad_video P104 talking_head endpoint={talking_endpoint}")
         talking_image_url = base_image_url
-        if "kling" in talking_endpoint:
+        # P153:只在 scenes <= 1 时才跑 P115 reframe(P118 单段兜底路径)
+        # scenes >= 2 直接进 P135/P149,不进 _run_talking_head(),P115 reframe 浪费
+        if len(scenes) <= 1 and "kling" in talking_endpoint:
             try:
-                log_info("ad_video P115 Kling 通道:GPT-Image 2 reframe → portrait")
+                log_info("ad_video P115 Kling 通道:GPT-Image 2 reframe → portrait(单段兜底)")
                 _kontext = await _fc.run_async(
                     "openai/gpt-image-2/edit",
                     arguments={
                         "prompt": (
-                            # P117:不替换背景、不弱化产品。仅做"镜头视角调整 + 模特上半身居前"
                             "Adjust the camera framing of this image to make the model's face clearly visible "
                             "in the upper-center of the frame, while KEEPING the original background scene "
                             "EXACTLY as it is (do NOT replace background with studio or any other scene), "
@@ -873,11 +875,10 @@ async def _run_ad_video_job(params: dict):
                     talking_image_url = _imgs[0]["url"]
                     log_info(f"ad_video P115 GPT-Image-2 reframe OK url={talking_image_url[:80]}")
                 else:
-                    # P128:reframe 失败用 base_image_url 不切端点(用户选啥跑啥)
-                    log_warning("ad_video P115 reframe 无 image,继续用 base_image 跑用户选的 talking 端点")
+                    log_warning("ad_video P115 reframe 无 image,继续用 base_image")
                     talking_image_url = base_image_url
             except Exception as e:
-                log_warning(f"ad_video P115 reframe 失败,继续用 base_image 跑用户选的 talking 端点: {str(e)[:200]}")
+                log_warning(f"ad_video P115 reframe 失败,继续用 base_image: {str(e)[:200]}")
                 talking_image_url = base_image_url
 
         # Step 3: 选 P120 多镜头(scenes>=2)或 P118 双段兜底(scenes<=1)
