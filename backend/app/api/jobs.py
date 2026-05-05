@@ -233,6 +233,126 @@ def _parse_time_range(tr: str, fallback: float = 2.0) -> float:
         return fallback
 
 
+async def _p125_concat_omnihuman(
+    seg_video_urls: list,  # list[str] — N 段 omnihuman 视频(各自带 audio)
+    seg_durs: list,        # list[float] — 每段时长(秒)
+    user_id: str,
+    aspect_ratio: str = "9:16",
+) -> str:
+    """P125(2026-05-05):N 段 omnihuman 视频(各带 audio)→ xfade + acrossfade chain。
+
+    跟 P120 不同:
+    - audio 不再独立 mp3 文件 concat,直接从每段视频 [i:a] 流 acrossfade
+    - 因为 omnihuman 输出 = 模特说话视频 + 嘴型同步 audio,音画一体
+    - 所以只用 N 个 video 输入,无需额外 audio 输入
+    """
+    import subprocess as _sp
+    import tempfile as _tmp
+    import shutil as _sh
+    import re as _re2
+    import httpx as _httpx
+    from datetime import datetime as _dt
+    from app.services.media_archiver import UPLOADS_ROOT, PUBLIC_BASE_URL
+
+    n = len(seg_durs)
+    if n == 0 or len(seg_video_urls) != n:
+        raise Exception(f"P125: video={len(seg_video_urls)} 应等于 seg_durs={n}")
+
+    if aspect_ratio == "16:9":
+        target_w, target_h = 1952, 1056
+    else:
+        target_w, target_h = 1056, 1952
+
+    work = _tmp.mkdtemp(prefix="p125_")
+    try:
+        async with _httpx.AsyncClient(timeout=120) as cli:
+            video_paths = []
+            for i, vu in enumerate(seg_video_urls):
+                if not vu:
+                    raise Exception(f"P125 段 {i+1} video_url 空")
+                r = await cli.get(vu); r.raise_for_status()
+                vp = Path(work) / f"seg_{i+1}.mp4"
+                vp.write_bytes(r.content)
+                video_paths.append(str(vp))
+
+        final_p = f"{work}/final.mp4"
+        xfade_dur = 0.2
+
+        v_filter_parts = []
+        for i in range(n):
+            v_filter_parts.append(
+                f"[{i}:v]trim=0:{seg_durs[i]},setpts=PTS-STARTPTS,"
+                f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+                f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v{i}]"
+            )
+        if n == 1:
+            final_v_label = "v0"
+        else:
+            prev_v = "v0"
+            cum_len = seg_durs[0]
+            for i in range(1, n):
+                out_v = f"vx{i}"
+                offset = cum_len - xfade_dur
+                v_filter_parts.append(
+                    f"[{prev_v}][v{i}]xfade=transition=fade:duration={xfade_dur}:offset={offset}[{out_v}]"
+                )
+                cum_len = cum_len + seg_durs[i] - xfade_dur
+                prev_v = out_v
+            final_v_label = prev_v
+
+        # audio 从每段 video 流 [i:a] 取(omnihuman 视频自带模特说话 audio)
+        a_filter_parts = []
+        for i in range(n):
+            a_filter_parts.append(
+                f"[{i}:a]atrim=0:{seg_durs[i]},asetpts=PTS-STARTPTS[a{i}]"
+            )
+        if n == 1:
+            final_a_label = "a0"
+        else:
+            prev_a = "a0"
+            for i in range(1, n):
+                out_a = f"ax{i}"
+                a_filter_parts.append(
+                    f"[{prev_a}][a{i}]acrossfade=d={xfade_dur}[{out_a}]"
+                )
+                prev_a = out_a
+            final_a_label = prev_a
+
+        filter_complex = ";".join(v_filter_parts + a_filter_parts)
+
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+        for p in video_paths:
+            cmd.extend(["-i", p])
+        cmd.extend([
+            "-filter_complex", filter_complex,
+            "-map", f"[{final_v_label}]",
+            "-map", f"[{final_a_label}]",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            final_p,
+        ])
+        r = _sp.run(cmd, capture_output=True, text=True, timeout=240)
+        if r.returncode != 0:
+            raise Exception(f"P125 ffmpeg failed: {r.stderr[:500]}")
+
+        safe_uid = _re2.sub(r"[^a-zA-Z0-9_\-]", "_", str(user_id))[:64] or "anon"
+        yyyymm = _dt.utcnow().strftime("%Y-%m")
+        target_dir = UPLOADS_ROOT / safe_uid / yyyymm
+        target_dir.mkdir(parents=True, exist_ok=True)
+        out_name = f"video_p125_{uuid.uuid4().hex}.mp4"
+        out_path = target_dir / out_name
+        _sh.copy(final_p, out_path)
+        os.chmod(out_path, 0o644)
+
+        public_url = f"{PUBLIC_BASE_URL.rstrip('/')}/{safe_uid}/{yyyymm}/{out_name}"
+        log_info(f"ad_video P125 omnihuman concat OK ({n} 段) -> {public_url}")
+        return public_url
+    finally:
+        import shutil as _sh2
+        _sh2.rmtree(work, ignore_errors=True)
+
+
 async def _p120_concat_multi_shot_with_audio(
     talking_url: str,
     seedance_urls: list,  # list[Optional[str]] — None 表示 fallback 用 talking 填该段
@@ -699,11 +819,14 @@ async def _run_ad_video_job(params: dict):
             log_info(f"ad_video P124 段{idx} i2v OK url={v[:80]}")
             return v
 
-        # P120 爆款多镜头分支(scenes >= 2):每段独立 speech → 独立 TTS → 独立 audio,
-        # 段 1 talking 喂段 1 audio,段 2-N seedance,ffmpeg 视频+audio 都按段拼接
+        # P125(2026-05-05):极简爆款多镜头叙事 — 用户怒"模型本身能说话,别多此一举"
+        # 一条线:VLM N 段 → N 张分镜首帧(各段独立 Kontext) → N 段 omnihuman(自带说话)→ ffmpeg xfade
+        # 砍:talking head + Seedance 双轨 + 独立 TTS + 独立 audio concat。
         if len(scenes) >= 2:
-            log_info(f"ad_video P120 爆款多镜头叙事 scenes={len(scenes)} duration={duration}s")
-            # 解析 time_range 拿每段时长(VLM 已按 split_segments_micro 分配)
+            log_info(f"ad_video P125 极简多镜头(omnihuman)scenes={len(scenes)} duration={duration}s")
+            from app.services.ad_video_models import compose_first_frame_for_scene
+
+            # 解析 time_range 拿每段时长
             seg_durs = []
             for s in scenes:
                 seg_durs.append(_parse_time_range(s.get("time_range"), fallback=duration / len(scenes)))
@@ -719,16 +842,14 @@ async def _run_ad_video_job(params: dict):
                 _has_cn2 = bool(_re.search(r"[一-鿿]", sp))
                 _max_seg = int(seg_durs[i] * (5 if _has_cn2 else 14))
                 if len(sp) > _max_seg:
-                    log_warning(
-                        f"ad_video P120 段{i+1} speech 超长 {len(sp)} > {_max_seg},截断"
-                    )
+                    log_warning(f"ad_video P125 段{i+1} speech 超长 {len(sp)} > {_max_seg},截断")
                     sp = sp[:_max_seg]
                 seg_speeches.append(sp)
 
-            # P120 阶段 A:并发 N 段独立 TTS
+            # P125 阶段 A:并发 N 段独立 TTS
             async def _tts_for_seg(text: str, idx: int):
                 if not text:
-                    log_warning(f"ad_video P120 段{idx} speech 空,该段静音")
+                    log_warning(f"ad_video P125 段{idx} speech 空,该段静音(omnihuman 仍需 audio,生成短静音)")
                     return None
                 tres = await _fc.run_async(
                     "fal-ai/elevenlabs/tts/multilingual-v2",
@@ -736,7 +857,7 @@ async def _run_ad_video_job(params: dict):
                 )
                 ao = tres.get("audio") if isinstance(tres.get("audio"), dict) else None
                 u = ao.get("url") if ao else tres.get("audio_url")
-                log_info(f"ad_video P120 段{idx} TTS OK chars={len(text)}")
+                log_info(f"ad_video P125 段{idx} TTS OK chars={len(text)}")
                 return u
 
             tts_results = await asyncio.gather(
@@ -746,51 +867,82 @@ async def _run_ad_video_job(params: dict):
             seg_audios = []
             for i, tr in enumerate(tts_results):
                 if isinstance(tr, Exception):
-                    log_warning(f"ad_video P120 段{i+1} TTS 失败: {str(tr)[:200]}")
+                    log_warning(f"ad_video P125 段{i+1} TTS 失败: {str(tr)[:200]}")
                     seg_audios.append(None)
                 else:
                     seg_audios.append(tr)
-            if not seg_audios[0]:
-                raise Exception("P120 段 1 TTS 失败,无法跑 talking head")
+            if not any(seg_audios):
+                raise Exception("P125 全部 TTS 失败,无法跑 omnihuman")
 
-            # P120 阶段 B:并发 talking(吃段 1 audio) + N-1 个 Seedance
-            talking_task = asyncio.create_task(_run_talking_head(audio_for_talking=seg_audios[0]))
-            seedance_tasks = [
-                asyncio.create_task(_run_seedance_for_scene(scenes[i], i + 1))
-                for i in range(1, len(scenes))
+            # P125 阶段 B:并发 N 张分镜首帧(每段独立 visual_prompt → Kontext multi-edit)
+            # 共享 base_image_url 锁模特+产品+背景,每段调整镜头/景别
+            log_info(f"ad_video P125 阶段 B:并发 {len(scenes)} 张分镜首帧合成")
+            frame_tasks = [
+                compose_first_frame_for_scene(
+                    base_image_url=base_image_url,
+                    scene=scenes[i],
+                    model_description=model_desc,
+                    overall_setting=overall,
+                )
+                for i in range(len(scenes))
             ]
-            results = await asyncio.gather(
-                talking_task, *seedance_tasks, return_exceptions=True
-            )
-            talking_url = results[0]
-            seedance_results = results[1:]
-
-            if isinstance(talking_url, Exception):
-                raise talking_url
-
-            seedance_urls = []
-            for i, sr in enumerate(seedance_results):
-                if isinstance(sr, Exception):
-                    log_warning(f"ad_video P120 段{i+2} Seedance 失败,fallback talking 填: {str(sr)[:200]}")
-                    seedance_urls.append(None)
+            frame_results = await asyncio.gather(*frame_tasks, return_exceptions=True)
+            seg_frames = []
+            for i, fr in enumerate(frame_results):
+                if isinstance(fr, Exception) or (isinstance(fr, dict) and "error" in fr):
+                    err = str(fr)[:120] if isinstance(fr, Exception) else fr.get("error", "?")
+                    log_warning(f"ad_video P125 段{i+1} 分镜首帧失败,fallback base_image: {err}")
+                    seg_frames.append(base_image_url)
                 else:
-                    seedance_urls.append(sr)
+                    seg_frames.append(fr.get("image_url") or base_image_url)
 
-            # P120 阶段 C:ffmpeg 拼视频 + 拼 audio(每段独立 speech 拼成连贯主播节奏)
+            # P125 阶段 C:并发 N 段 omnihuman(每段 image+audio,自带模特说话)
+            log_info(f"ad_video P125 阶段 C:并发 {len(scenes)} 段 omnihuman")
+
+            async def _run_omnihuman_for_seg(image_url: str, audio_url: str, idx: int) -> str:
+                if not audio_url:
+                    raise Exception(f"段 {idx} audio 缺失,omnihuman 必须吃 audio")
+                res = await _fc.subscribe_async(
+                    "fal-ai/bytedance/omnihuman",
+                    arguments={"image_url": image_url, "audio_url": audio_url},
+                )
+                v = (res.get("video") or {}).get("url") if isinstance(res.get("video"), dict) else None
+                if not v:
+                    raise Exception(f"段 {idx} omnihuman 未返 video_url")
+                log_info(f"ad_video P125 段{idx} omnihuman OK url={v[:80]}")
+                return v
+
+            omni_results = await asyncio.gather(
+                *[
+                    _run_omnihuman_for_seg(seg_frames[i], seg_audios[i], i + 1)
+                    for i in range(len(scenes))
+                ],
+                return_exceptions=True,
+            )
+            seg_video_urls = []
+            seg_video_durs = []
+            for i, vr in enumerate(omni_results):
+                if isinstance(vr, Exception):
+                    log_warning(f"ad_video P125 段{i+1} omnihuman 失败,该段被跳过: {str(vr)[:200]}")
+                    continue
+                seg_video_urls.append(vr)
+                seg_video_durs.append(seg_durs[i])
+            if not seg_video_urls:
+                raise Exception("P125 全部 omnihuman 失败,无视频可拼接")
+
+            # P125 阶段 D:ffmpeg xfade 拼接(audio 来自每段视频流,无独立 audio concat)
             try:
                 user_id = params.get("_user_id", "anon")
-                final_url = await _p120_concat_multi_shot_with_audio(
-                    talking_url=talking_url,
-                    seedance_urls=seedance_urls,
-                    seg_audios=seg_audios,
-                    seg_durs=seg_durs,
+                final_url = await _p125_concat_omnihuman(
+                    seg_video_urls=seg_video_urls,
+                    seg_durs=seg_video_durs,
                     user_id=user_id,
                     aspect_ratio=aspect_ratio,
                 )
                 return {"video_url": final_url, "type": "video"}
             except Exception as e:
-                log_warning(f"ad_video P120 ffmpeg 拼接失败,降级返 talking only(只段 1): {str(e)[:200]}")
-                return {"video_url": talking_url, "type": "video"}
+                log_warning(f"ad_video P125 ffmpeg 拼接失败,降级返第 1 段视频: {str(e)[:200]}")
+                return {"video_url": seg_video_urls[0], "type": "video"}
 
         # P118 单段兜底(VLM 只输出 1 段,如老脚本或失败时):并发 talking + 单段 Seedance
         async def _run_seedance_action() -> str:
