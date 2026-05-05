@@ -675,38 +675,28 @@ async def _run_ad_video_job(params: dict):
             raise Exception("talking head 超时(10 min)")
 
         async def _run_seedance_for_scene(scene: dict, idx: int) -> str:
-            """P123: 段 2-N 用 Seedance ref2vid(吃多图参考)替换 i2v(单图)。
-            参考图链:[base 合成首帧, 产品正面, 产品反面, 背景图] 去重。
-            ref2vid 行为:对参考图自由组合,能真展示产品反面 + 真用背景图,
-            代价是模特身份/产品细节有自由发挥(probe verify 接受)。"""
-            from app.services.ad_video_models import (
-                build_seedance_ref2vid_prompt,
-                submit_seedance_ref2vid_subscribe,
+            """P124(2026-05-05):回滚 P123 ref2vid → 改回 i2v 单图驱动。
+            理由:ref2vid 实测模特身份/产品款式漂移严重(段1 黑直发 vs 段3 棕卷发,
+            产品款式都换),用户怒"参考图根本没参考"。i2v 强保留 base_image_url
+            首帧(P121 已把 正面+反面+背景 编码进首帧),保模特+产品身份是底线。
+            代价:段 2-N 不能"换镜头到反面",但模特+产品 100% 一致。"""
+            sd_prompt = _build_p118_seedance_prompt(scene, overall, model_desc)
+            log_info(f"ad_video P124 段{idx} i2v(强保留)start prompt_len={len(sd_prompt)}")
+            res = await _fc.subscribe_async(
+                "fal-ai/bytedance/seedance/v1/pro/image-to-video",
+                arguments={
+                    "image_url": base_image_url,  # P121 合成首帧 = 模特+产品+反面信息+背景
+                    "prompt": sd_prompt,
+                    "duration": "4",  # 跑 4s,ffmpeg trim 到设计段长
+                    "resolution": "720p",
+                    "aspect_ratio": aspect_ratio,
+                    "enable_audio": False,
+                },
             )
-            ref_imgs = []
-            for u in [
-                base_image_url,
-                params.get("product_image_url"),
-                params.get("product_back_image_url"),
-                params.get("background_image_url"),
-            ]:
-                if u and u not in ref_imgs:
-                    ref_imgs.append(u)
-            sd_prompt = build_seedance_ref2vid_prompt(scene, model_desc, overall)
-            log_info(f"ad_video P123 段{idx} ref2vid start refs={len(ref_imgs)} prompt_len={len(sd_prompt)}")
-            r = await submit_seedance_ref2vid_subscribe(
-                reference_image_urls=ref_imgs,
-                prompt=sd_prompt,
-                duration=5,  # ref2vid 接受 5/10/15
-                aspect_ratio=aspect_ratio,
-                resolution="720p",
-            )
-            if "error" in r:
-                raise Exception(f"P123 段{idx} ref2vid 失败: {r['error'][:200]}")
-            v = r.get("video_url")
+            v = (res.get("video") or {}).get("url") if isinstance(res.get("video"), dict) else None
             if not v:
-                raise Exception(f"P123 段{idx} ref2vid 未返 video_url")
-            log_info(f"ad_video P123 段{idx} ref2vid OK url={v[:80]}")
+                raise Exception(f"P124 段{idx} i2v 未返 video_url")
+            log_info(f"ad_video P124 段{idx} i2v OK url={v[:80]}")
             return v
 
         # P120 爆款多镜头分支(scenes >= 2):每段独立 speech → 独立 TTS → 独立 audio,
