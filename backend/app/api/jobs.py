@@ -901,59 +901,71 @@ async def _run_ad_video_job(params: dict):
             log_info(f"ad_video P124 段{idx} i2v OK url={v[:80]}")
             return v
 
-        # P138(2026-05-05):用户怒"GPT-Image 2 没出多个镜头画面" — verify 出 P135 漏洞
-        # P135 共享 1 张 base_image,VLM 写的 N 段 visual_prompt 被浪费,所以画面只有 1 个镜头
-        # P138 修:N 段并发 GPT-Image 2(每段独立 visual_prompt → 不同分镜图)+ N 段独立 TTS
-        #   + N 段 Kling Avatar(每段用对应分镜图)+ ffmpeg concat
+        # P139(2026-05-05):用户敲"GPT-Image 2 出 1 张 N 宫格图,后端裁切成 N 子图"
+        # 替代 P138 的 N 张独立图 → 改成 1 张几宫格图 + PIL 裁切
+        # 优势:1 次 GPT 调用思考 N 个分镜协同,统一画风,省 ~$0.12
         if len(scenes) >= 2:
-            from app.services.ad_video_models import compose_first_frame_for_scene
+            from app.services.ad_video_models import (
+                compose_storyboard_grid,
+                crop_storyboard_panels,
+            )
             kling_endpoint = "fal-ai/kling-video/ai-avatar/v2/standard"
-            log_info(f"ad_video P138 多段画面分镜 + talking head concat scenes={len(scenes)} endpoint={kling_endpoint}")
+            log_info(f"ad_video P139 几宫格 storyboard + N 段 talking head concat scenes={len(scenes)} endpoint={kling_endpoint}")
 
             # 收集每段 speech(P135 不合并)
             seg_speeches = []
             for i, s in enumerate(scenes):
                 sp = (s.get("speech") or "").strip()
                 if not sp:
-                    log_warning(f"ad_video P138 段{i+1} speech 空,该段跳过")
+                    log_warning(f"ad_video P139 段{i+1} speech 空,该段跳过")
                     continue
                 seg_speeches.append((i + 1, sp))
 
             if not seg_speeches:
-                raise Exception("P138 全部段 speech 都空,VLM 没写台词")
+                raise Exception("P139 全部段 speech 都空,VLM 没写台词")
 
-            # P138 阶段 A1:N 段并发 GPT-Image 2 出分镜图(每段独立 visual_prompt)
-            log_info(f"ad_video P138 阶段 A1:并发 {len(seg_speeches)} 段 GPT-Image 2 出分镜图")
-            valid_idxs = [idx for idx, _ in seg_speeches]
+            # P139 限制:几宫格只支持 2/3/4 段,>4 段截断
+            n_panels = min(len(seg_speeches), 4)
+            if n_panels < 2:
+                # 1 段直接 fallback 共享 base_image(走 talking head 单段路径,但仍走 N 段 concat)
+                seg_frames = {seg_speeches[0][0]: base_image_url}
+                log_warning(f"ad_video P139 只 1 段,跳过几宫格直接用 base_image")
+            else:
+                # 取前 n_panels 段(VLM 写超 4 段时截断,保留前 4)
+                use_speeches = seg_speeches[:n_panels]
+                use_idxs = [idx for idx, _ in use_speeches]
 
-            async def _frame_for_seg(idx: int):
-                scene = scenes[idx - 1]
-                fr = await compose_first_frame_for_scene(
+                # P139 阶段 A1:1 次 GPT-Image 2 出 N 宫格 storyboard 图
+                log_info(f"ad_video P139 阶段 A1:GPT-Image 2 出 {n_panels} 宫格 storyboard 图")
+                grid_res = await compose_storyboard_grid(
                     base_image_url=base_image_url,
-                    scene=scene,
+                    scenes=[scenes[idx - 1] for idx in use_idxs],
+                    n_panels=n_panels,
                     model_description=model_desc,
                     overall_setting=overall,
                 )
-                if isinstance(fr, dict) and "error" in fr:
-                    raise Exception(f"段{idx} 分镜图失败: {fr['error']}")
-                url = fr.get("image_url") if isinstance(fr, dict) else None
-                if not url:
-                    raise Exception(f"段{idx} 分镜图未返 url")
-                log_info(f"ad_video P138 段{idx} GPT-Image 2 分镜图 OK url={url[:60]}")
-                return (idx, url)
-
-            frame_results = await asyncio.gather(
-                *[_frame_for_seg(idx) for idx in valid_idxs],
-                return_exceptions=True,
-            )
-            seg_frames = {}  # {idx: image_url}
-            for i, r in enumerate(frame_results):
-                if isinstance(r, Exception):
-                    fallback_idx = valid_idxs[i]
-                    log_warning(f"ad_video P138 段{fallback_idx} 分镜图失败,fallback base_image: {str(r)[:200]}")
-                    seg_frames[fallback_idx] = base_image_url
+                seg_frames = {}
+                if "error" in grid_res:
+                    log_warning(f"ad_video P139 几宫格图失败,全部段 fallback base_image: {grid_res['error']}")
+                    for idx in use_idxs:
+                        seg_frames[idx] = base_image_url
                 else:
-                    seg_frames[r[0]] = r[1]
+                    grid_url = grid_res["image_url"]
+                    log_info(f"ad_video P139 几宫格图 OK url={grid_url[:80]},裁切 {n_panels} 子图")
+                    # P139 阶段 A2:PIL 裁切几宫格 → N 张子图 + 上传 fal storage
+                    try:
+                        panel_urls = await crop_storyboard_panels(grid_url, n_panels)
+                        for i, idx in enumerate(use_idxs):
+                            seg_frames[idx] = panel_urls[i] if i < len(panel_urls) else base_image_url
+                    except Exception as e:
+                        log_warning(f"ad_video P139 PIL 裁切失败,全部 fallback base_image: {str(e)[:200]}")
+                        for idx in use_idxs:
+                            seg_frames[idx] = base_image_url
+
+                # 截断的段(>4)也用 base_image 兜底
+                for idx, _ in seg_speeches[n_panels:]:
+                    seg_frames[idx] = base_image_url
+                    log_info(f"ad_video P139 段{idx} 超出 4 宫格上限,用 base_image 兜底")
 
             # P138 阶段 A2:N 段并发 TTS(每段独立 audio)
             log_info(f"ad_video P138 阶段 A2:并发 {len(seg_speeches)} 段 TTS")

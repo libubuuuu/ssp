@@ -37,6 +37,160 @@ SEEDANCE_ENDPOINT = "fal-ai/bytedance/seedance/v1.5/pro/image-to-video"
 NANO_BANANA_EDIT_ENDPOINT = "openai/gpt-image-2/edit"
 
 
+# ============== P139 几宫格 storyboard helpers(2026-05-05)==============
+# 用户敲"GPT-Image 2 出 1 张几宫格分镜图,后端裁切成 N 张子图给 Kling Avatar"。
+# 优势:1 次 GPT 调用思考 N 个分镜协同 → 风格/光线/模特一致性 100%
+
+# 几宫格布局(都用 portrait_16_9 = 1024x1792 为基础)
+# N=2:上下切 → 每格 1024x896
+# N=3:上中下切 → 每格 1024x597
+# N=4:2x2 → 每格 512x896
+# Kling Avatar v2 Std 接受 ≥300x300 输入,以上都满足
+
+
+async def compose_storyboard_grid(
+    base_image_url: str,
+    scenes: list,
+    n_panels: int,
+    model_description: str,
+    overall_setting: str,
+) -> dict:
+    """P139:GPT-Image 2 出 1 张 N 宫格 storyboard 图。
+
+    每格是一个分镜画面(根据 scenes[i].visual_prompt 定),共享同一模特+产品+背景。
+    Returns:
+        {"image_url": str}  成功
+        {"error": str}      失败
+    """
+    cb = get_circuit_breaker()
+    cb_key = "fal/nano-banana-edit"
+    if not cb.is_available(cb_key):
+        return {"error": "几宫格图服务暂时不可用,已熔断"}
+
+    if n_panels < 2 or n_panels > 4:
+        return {"error": f"n_panels={n_panels} 不支持(只支持 2/3/4)"}
+    if len(scenes) < n_panels:
+        return {"error": f"scenes={len(scenes)} 少于 n_panels={n_panels}"}
+
+    # 拼几宫格 prompt
+    panel_lines = []
+    for i in range(n_panels):
+        visual = (scenes[i].get("visual_prompt") or "").strip() or "model showcasing product"
+        panel_lines.append(f"Panel {i+1}: {visual}")
+
+    if n_panels == 2:
+        layout_desc = "vertical 2-panel storyboard layout (top half + bottom half)"
+    elif n_panels == 3:
+        layout_desc = "vertical 3-panel storyboard layout (top + middle + bottom)"
+    else:  # 4
+        layout_desc = "2x2 grid storyboard layout (top-left, top-right, bottom-left, bottom-right)"
+
+    prompt = (
+        f"Create a {n_panels}-panel UGC product video storyboard in {layout_desc}. "
+        f"Each panel must show a DIFFERENT shot/angle/action of the same model and same product. "
+        f"Model: {model_description}. "
+        f"Setting: {overall_setting}. "
+        f"All panels share consistent lighting, model identity, and product details. "
+        f"Photorealistic UGC selfie style, vertical composition.\n\n"
+        + "\n".join(panel_lines)
+        + "\n\nThin black borders separate panels."
+    )
+
+    try:
+        result = await fal_client.run_async(
+            NANO_BANANA_EDIT_ENDPOINT,  # openai/gpt-image-2/edit
+            arguments={
+                "prompt": prompt,
+                "image_urls": [base_image_url],
+                "image_size": "portrait_16_9",  # 1024x1792
+                "num_images": 1,
+                "output_format": "png",
+            },
+        )
+        images = result.get("images", []) if isinstance(result, dict) else []
+        if not images or not images[0].get("url"):
+            await cb.record_failure(cb_key)
+            return {"error": "几宫格图未生成"}
+        await cb.record_success(cb_key)
+        url = images[0]["url"]
+        log_info(f"compose_storyboard_grid OK n={n_panels} url={url[:80]}")
+        return {"image_url": url}
+    except Exception as e:
+        await cb.record_failure(cb_key)
+        log_error(f"compose_storyboard_grid 失败 n={n_panels}: {e}")
+        return {"error": f"几宫格图合成失败: {str(e)[:200]}"}
+
+
+async def crop_storyboard_panels(
+    grid_image_url: str,
+    n_panels: int,
+) -> list:
+    """P139:下载几宫格图,PIL 裁切成 N 张子图,各自上传 fal storage,返 URL list。
+
+    布局:
+      N=2:水平 2 段(上下切)
+      N=3:水平 3 段(上中下切)
+      N=4:2x2 田字格(左上/右上/左下/右下)
+    """
+    import io
+    import tempfile
+    import os
+    import httpx
+    from PIL import Image
+    from .fal_service import fal_upload_with_retry
+
+    if n_panels not in (2, 3, 4):
+        raise ValueError(f"n_panels={n_panels} 不支持")
+
+    # 下载几宫格图
+    async with httpx.AsyncClient(timeout=60) as cli:
+        r = await cli.get(grid_image_url)
+        r.raise_for_status()
+        img_bytes = r.content
+
+    img = Image.open(io.BytesIO(img_bytes))
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    W, H = img.size
+    log_info(f"crop_storyboard_panels grid size={W}x{H} n_panels={n_panels}")
+
+    # 计算每格 box (left, top, right, bottom)
+    boxes = []
+    if n_panels == 2:
+        # 上下切
+        boxes = [(0, 0, W, H // 2), (0, H // 2, W, H)]
+    elif n_panels == 3:
+        # 上中下切
+        h = H // 3
+        boxes = [(0, 0, W, h), (0, h, W, 2 * h), (0, 2 * h, W, H)]
+    else:  # 4
+        # 2x2
+        w, h = W // 2, H // 2
+        boxes = [
+            (0, 0, w, h),       # 左上
+            (w, 0, W, h),       # 右上
+            (0, h, w, H),       # 左下
+            (w, h, W, H),       # 右下
+        ]
+
+    # 裁切 + 上传每张
+    panel_urls = []
+    for i, box in enumerate(boxes):
+        panel = img.crop(box)
+        # Kling Avatar 期望 9:16 输入,如果裁出来的子图比例偏离太多,resize 到 9:16
+        # 不强行 resize,先按原比例上传,看效果
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+            panel.save(tmp.name, "JPEG", quality=92, optimize=True)
+            tmp_path = tmp.name
+        try:
+            url = await fal_upload_with_retry(tmp_path)
+            panel_urls.append(url)
+            log_info(f"crop_storyboard_panels panel {i+1} {box} → {url[:80]}")
+        finally:
+            os.unlink(tmp_path)
+    return panel_urls
+
+
 # ============== Nano Banana 多图合成首帧 ==============
 
 async def compose_first_frame(
