@@ -720,9 +720,9 @@ async def _run_ad_video_job(params: dict):
         talking_image_url = base_image_url
         if "kling" in talking_endpoint:
             try:
-                log_info("ad_video P115 Kling 通道:Flux Kontext reframe → portrait")
+                log_info("ad_video P115 Kling 通道:GPT-Image 2 reframe → portrait")
                 _kontext = await _fc.run_async(
-                    "fal-ai/flux-pro/kontext/max/multi",
+                    "openai/gpt-image-2/edit",
                     arguments={
                         "prompt": (
                             # P117:不替换背景、不弱化产品。仅做"镜头视角调整 + 模特上半身居前"
@@ -736,10 +736,9 @@ async def _run_ad_video_job(params: dict):
                             "neutral expression (NO open mouth, NO shocked face). Photorealistic."
                         ),
                         "image_urls": [base_image_url],
-                        "guidance_scale": 3.5,
+                        "image_size": "portrait_16_9",
                         "num_images": 1,
                         "output_format": "jpeg",
-                        "safety_tolerance": "5",
                     },
                 )
                 _imgs = _kontext.get("images") or []

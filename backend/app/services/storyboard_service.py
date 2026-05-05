@@ -28,9 +28,12 @@ from .logger import log_info, log_error, log_warning
 from .vlm_service import DEFAULT_MODEL, FALLBACK_MODEL, VISION_ENDPOINT
 
 
-KONTEXT_ENDPOINT = "fal-ai/flux-pro/kontext/max/multi"
+# P126(2026-05-05):用户怒"做图片全部由 gpt2 来做",切 OpenAI gpt-image-2/edit。
+# probe 5 段对比 Kontext:出图质量明显更好(听 prompt + 没水印泄漏 + 镜头景别准),
+# 代价慢 1 倍(132s vs 52s 5 段并发)。schema:image_size 替代 aspect_ratio,无 guidance_scale。
+KONTEXT_ENDPOINT = "openai/gpt-image-2/edit"
 VLM_KEY = "fal/openrouter-vision"
-KONTEXT_KEY = "fal/kontext-max-multi"
+KONTEXT_KEY = "fal/gpt-image-2-edit"
 
 
 _SYSTEM_PROMPT = (
@@ -165,13 +168,16 @@ async def generate_storyboard(
             f"Photorealistic, {aspect_ratio} composition, natural lighting."
         )
         try:
+            # P126: gpt-image-2/edit schema(image_size 替代 aspect_ratio,无 guidance_scale)
+            _img_size = "portrait_16_9" if aspect_ratio == "9:16" else (
+                "landscape_16_9" if aspect_ratio == "16:9" else "square"
+            )
             res = await fal_client.run_async(
                 KONTEXT_ENDPOINT,
                 arguments={
                     "prompt": full_prompt,
                     "image_urls": [reference_image_url],
-                    "aspect_ratio": aspect_ratio,
-                    "guidance_scale": 3.5,
+                    "image_size": _img_size,
                     "num_images": 1,
                     "output_format": "png",
                 },

@@ -27,12 +27,14 @@ from .logger import log_info, log_error
 # v1.5/pro probe 70s 出 5s 视频(15x 提速)+ NSFW 通过。换 v1.5/pro。
 # 历史:fal-ai/bytedance/seedance/v2/pro/image-to-video
 SEEDANCE_ENDPOINT = "fal-ai/bytedance/seedance/v1.5/pro/image-to-video"
-# P39 (2026-05-01):Seedream v4 edit 产品保真度差(用户实测"产品被改"),
-# 换 Flux Kontext (BlackForestLabs SOTA image edit,对参考图 preserve 极强,
-# probe 实测 17.8 秒出图 + NSFW 通过塑形产品)。schema 兼容(prompt + image_urls),
-# 只是 image_size→aspect_ratio。
-# 历史: fal-ai/bytedance/seedream/v4/edit
-NANO_BANANA_EDIT_ENDPOINT = "fal-ai/flux-pro/kontext/max/multi"
+# P126 (2026-05-05):用户怒"做图片全部由 gpt2 来做",切 OpenAI gpt-image-2/edit。
+# 实测优势(probe 5 段对比 Flux Kontext):
+#   ✅ 真听 prompt(段 1 真"产品大特写"没硬塞模特脸,段 4 真"卧室场景"还原床/床头柜)
+#   ✅ 没水印泄漏(Kontext 把参考图的 "+2 Inches" 当画面元素保留,gpt-image-2 知道那是水印不保留)
+#   ✅ 镜头景别切换更准确(特写/正面/侧面/坐姿/CTA 5 个景别都对)
+# 代价:慢 1 倍(132s vs 52s 5 段并发),价格估计更贵
+# 历史: fal-ai/bytedance/seedream/v4/edit → fal-ai/flux-pro/kontext/max/multi → openai/gpt-image-2/edit
+NANO_BANANA_EDIT_ENDPOINT = "openai/gpt-image-2/edit"
 
 
 # ============== Nano Banana 多图合成首帧 ==============
@@ -121,9 +123,8 @@ async def compose_first_frame(
             arguments={
                 "prompt": full_prompt,
                 "image_urls": image_urls,
-                # P39: Flux Kontext schema:aspect_ratio + guidance_scale
-                "aspect_ratio": "9:16",
-                "guidance_scale": 3.5,
+                # P126: openai/gpt-image-2/edit schema(image_size 替代 aspect_ratio,无 guidance_scale)
+                "image_size": "portrait_16_9",
                 "num_images": 1,
                 "output_format": "png",
             },
@@ -189,9 +190,8 @@ async def compose_first_frame_for_scene(
             arguments={
                 "prompt": prompt,
                 "image_urls": [base_image_url],
-                # P39: Flux Kontext schema
-                "aspect_ratio": "9:16",
-                "guidance_scale": 3.5,
+                # P126: openai/gpt-image-2/edit schema(image_size 替代 aspect_ratio,无 guidance_scale)
+                "image_size": "portrait_16_9",
                 "num_images": 1,
                 "output_format": "png",
             },
