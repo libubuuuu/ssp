@@ -223,6 +223,136 @@ async def _p118_concat_and_save(
         _sh2.rmtree(work, ignore_errors=True)
 
 
+def _parse_time_range(tr: str, fallback: float = 2.0) -> float:
+    """P119 helper:解析 scene.time_range 拿段长。'0-1.5s' / '1.5-3s' → 1.5"""
+    try:
+        s = (tr or "").replace("s", "").strip()
+        a, b = s.split("-")
+        return max(0.5, float(b) - float(a))
+    except Exception:
+        return fallback
+
+
+async def _p119_concat_multi_shot(
+    talking_url: str,
+    seedance_urls: list,  # list[Optional[str]] — None 表示 fallback 用 talking 填这段
+    seg_durs: list,  # list[float] — 每段时长(秒)
+    user_id: str,
+    aspect_ratio: str = "9:16",
+) -> str:
+    """P119: 多镜头拼接 — 段 1 talking + 段 2-N seedance(可有 None fallback),
+    audio 全程用 talking。N 个视频按 seg_durs 时长 trim 后 concat。"""
+    import subprocess as _sp
+    import tempfile as _tmp
+    import shutil as _sh
+    import re as _re2
+    import httpx as _httpx
+    from datetime import datetime as _dt
+    from app.services.media_archiver import UPLOADS_ROOT, PUBLIC_BASE_URL
+
+    if not talking_url:
+        raise Exception("P119: talking_url 必须有")
+    if len(seg_durs) != len(seedance_urls) + 1:
+        raise Exception(f"P119: seg_durs={len(seg_durs)} != seedance+1={len(seedance_urls)+1}")
+
+    if aspect_ratio == "16:9":
+        target_w, target_h = 1952, 1056
+    else:
+        target_w, target_h = 1056, 1952
+
+    work = _tmp.mkdtemp(prefix="p119_")
+    try:
+        # 下载 talking + 所有 seedance(并发)
+        async with _httpx.AsyncClient(timeout=120) as cli:
+            paths = []
+            # 段 1: talking
+            r = await cli.get(talking_url)
+            r.raise_for_status()
+            tp = Path(work) / "talking.mp4"
+            tp.write_bytes(r.content)
+            paths.append(str(tp))
+            # 段 2-N: seedance 或 fallback talking
+            for i, su in enumerate(seedance_urls):
+                if su:
+                    r = await cli.get(su)
+                    r.raise_for_status()
+                    sp = Path(work) / f"seedance_{i+2}.mp4"
+                    sp.write_bytes(r.content)
+                    paths.append(str(sp))
+                else:
+                    # fallback:用 talking 填这段(从对应时间点)
+                    paths.append(str(tp))
+
+        final_p = f"{work}/final.mp4"
+
+        # 构造 ffmpeg filter_complex
+        # 段 1: trim 0:seg_durs[0] from talking
+        # 段 i (i>=2): trim 0:seg_durs[i-1] from seedance(每段从 0 开始,ffmpeg 截前 X 秒)
+        # 例外:fallback 用 talking 时,trim 段 i 在 talking 里对应的累计时间窗
+        filter_parts = []
+        cum = 0.0
+        for i, d in enumerate(paths):
+            seg_dur = seg_durs[i]
+            if i == 0:
+                # talking 段从 0 开始
+                start = 0
+                end = seg_dur
+            elif paths[i] == paths[0]:
+                # fallback: 用 talking 在累计时间窗
+                start = cum
+                end = cum + seg_dur
+            else:
+                # seedance: 从 0 开始截前 seg_dur 秒
+                start = 0
+                end = seg_dur
+            filter_parts.append(
+                f"[{i}:v]trim={start}:{end},setpts=PTS-STARTPTS,"
+                f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+                f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v{i}]"
+            )
+            cum += seg_dur
+
+        # 拼接所有 [vN]
+        concat_inputs = "".join(f"[v{i}]" for i in range(len(paths)))
+        filter_parts.append(f"{concat_inputs}concat=n={len(paths)}:v=1:a=0[v]")
+        filter_complex = ";".join(filter_parts)
+
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+        # input 列表(去重 — 同一个 talking 文件不能重复传作 input,index 会乱)
+        # 实际上 ffmpeg 允许同一文件多次 -i,但 stream index 会按 -i 顺序排
+        # 简单点:每段都给独立 -i,即使指向同一文件
+        for p in paths:
+            cmd.extend(["-i", p])
+        cmd.extend([
+            "-filter_complex", filter_complex,
+            "-map", "[v]",
+            "-map", "0:a",  # 全程 audio 用 talking(input 0)
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            final_p,
+        ])
+        r = _sp.run(cmd, capture_output=True, text=True, timeout=180)
+        if r.returncode != 0:
+            raise Exception(f"P119 ffmpeg failed: {r.stderr[:500]}")
+
+        safe_uid = _re2.sub(r"[^a-zA-Z0-9_\-]", "_", str(user_id))[:64] or "anon"
+        yyyymm = _dt.utcnow().strftime("%Y-%m")
+        target_dir = UPLOADS_ROOT / safe_uid / yyyymm
+        target_dir.mkdir(parents=True, exist_ok=True)
+        out_name = f"video_p119_{uuid.uuid4().hex}.mp4"
+        out_path = target_dir / out_name
+        _sh.copy(final_p, out_path)
+        os.chmod(out_path, 0o644)
+
+        public_url = f"{PUBLIC_BASE_URL.rstrip('/')}/{safe_uid}/{yyyymm}/{out_name}"
+        log_info(f"ad_video P119 multi-shot concat OK ({len(paths)} 段) -> {public_url}")
+        return public_url
+    finally:
+        import shutil as _sh2
+        _sh2.rmtree(work, ignore_errors=True)
+
+
 async def _run_ad_video_job(params: dict):
     """AI 带货视频 — Seedance 2.0 异步任务
 
@@ -347,7 +477,7 @@ async def _run_ad_video_job(params: dict):
                 talking_endpoint = "fal-ai/bytedance/omnihuman"
                 talking_image_url = base_image_url
 
-        # Step 3: P118 并发 talking head + Seedance i2v(动作演示)
+        # Step 3: 选 P119 多镜头(scenes>=2)或 P118 双段兜底(scenes<=1)
         async def _run_talking_head() -> str:
             ep_local = talking_endpoint
             args = {"image_url": talking_image_url, "audio_url": audio_url}
@@ -384,19 +514,93 @@ async def _run_ad_video_job(params: dict):
                     return v
             raise Exception("talking head 超时(10 min)")
 
+        async def _run_seedance_for_scene(scene: dict, idx: int) -> str:
+            """P119: 给单个 scene 跑 Seedance(每段独立 visual_prompt 出独立动作镜头)"""
+            sd_prompt = _build_p118_seedance_prompt(scene, overall, model_desc)
+            log_info(f"ad_video P119 段{idx} Seedance start prompt_len={len(sd_prompt)}")
+            res = await _fc.subscribe_async(
+                "fal-ai/bytedance/seedance/v1/pro/image-to-video",
+                arguments={
+                    "image_url": base_image_url,  # 同模特同产品同背景
+                    "prompt": sd_prompt,
+                    "duration": "4",  # 跑 4s,ffmpeg trim 到设计段长
+                    "resolution": "720p",
+                    "aspect_ratio": aspect_ratio,
+                    "enable_audio": False,
+                },
+            )
+            v = (res.get("video") or {}).get("url") if isinstance(res.get("video"), dict) else None
+            if not v:
+                raise Exception(f"P119 段{idx} Seedance 未返 video_url")
+            log_info(f"ad_video P119 段{idx} Seedance OK url={v[:80]}")
+            return v
+
+        # P119 多镜头分支(scenes >= 2):段 1 talking + 段 2-N 各自 Seedance
+        if len(scenes) >= 2:
+            log_info(f"ad_video P119 多镜头叙事 scenes={len(scenes)} duration={duration}s")
+            # 解析 time_range 拿每段时长(VLM 已按 split_segments_micro 分配)
+            seg_durs = []
+            for s in scenes:
+                seg_durs.append(_parse_time_range(s.get("time_range"), fallback=duration / len(scenes)))
+            # 总段时长不超过 duration(VLM 偶尔写超 → 等比缩)
+            total_seg = sum(seg_durs)
+            if total_seg > duration:
+                ratio = duration / total_seg
+                seg_durs = [d * ratio for d in seg_durs]
+
+            # 并发跑 talking + N-1 个 Seedance
+            talking_task = asyncio.create_task(_run_talking_head())
+            seedance_tasks = [
+                asyncio.create_task(_run_seedance_for_scene(scenes[i], i + 1))
+                for i in range(1, len(scenes))
+            ]
+            results = await asyncio.gather(
+                talking_task, *seedance_tasks, return_exceptions=True
+            )
+            talking_url = results[0]
+            seedance_results = results[1:]
+
+            if isinstance(talking_url, Exception):
+                raise talking_url  # talking 是核心音频源
+
+            # 任意 seedance 失败 → 用 talking 视频填该段(用户至少能看到模特连贯说完话)
+            seedance_urls = []
+            for i, sr in enumerate(seedance_results):
+                if isinstance(sr, Exception):
+                    log_warning(f"ad_video P119 段{i+2} Seedance 失败,fallback talking: {str(sr)[:200]}")
+                    seedance_urls.append(None)
+                else:
+                    seedance_urls.append(sr)
+
+            # ffmpeg 多镜头拼接
+            try:
+                user_id = params.get("_user_id", "anon")
+                final_url = await _p119_concat_multi_shot(
+                    talking_url=talking_url,
+                    seedance_urls=seedance_urls,
+                    seg_durs=seg_durs,
+                    user_id=user_id,
+                    aspect_ratio=aspect_ratio,
+                )
+                return {"video_url": final_url, "type": "video"}
+            except Exception as e:
+                log_warning(f"ad_video P119 ffmpeg 拼接失败,降级返 talking only: {str(e)[:200]}")
+                return {"video_url": talking_url, "type": "video"}
+
+        # P118 单段兜底(VLM 只输出 1 段,如老脚本或失败时):并发 talking + 单段 Seedance
         async def _run_seedance_action() -> str:
-            seg_dur = max(4, min(12, duration))  # Seedance v1.5 接 4-12 秒
+            seg_dur = max(4, min(12, duration))
             sd_prompt = _build_p118_seedance_prompt(first_scene, overall, model_desc)
             log_info(f"ad_video P118 Seedance action duration={seg_dur} prompt_len={len(sd_prompt)}")
             res = await _fc.subscribe_async(
                 "fal-ai/bytedance/seedance/v1/pro/image-to-video",
                 arguments={
-                    "image_url": base_image_url,  # P118: 同模特同产品同背景
+                    "image_url": base_image_url,
                     "prompt": sd_prompt,
                     "duration": str(seg_dur),
                     "resolution": "720p",
                     "aspect_ratio": aspect_ratio,
-                    "enable_audio": False,  # P118 静音段,音频用 talking 的
+                    "enable_audio": False,
                 },
             )
             v = (res.get("video") or {}).get("url") if isinstance(res.get("video"), dict) else None
@@ -409,16 +613,13 @@ async def _run_ad_video_job(params: dict):
             _run_talking_head(), _run_seedance_action(), return_exceptions=True
         )
 
-        # talking 是核心(音频+模特说话),失败必死
         if isinstance(talking_url, Exception):
             raise talking_url
 
-        # Seedance 失败 → 降级返 talking only(P104 行为,不破坏用户)
         if isinstance(seedance_url, Exception):
             log_warning(f"ad_video P118 Seedance 失败,降级返 talking only: {str(seedance_url)[:200]}")
             return {"video_url": talking_url, "type": "video"}
 
-        # Step 4: ffmpeg 拼接 + 写本地 uploads
         try:
             user_id = params.get("_user_id", "anon")
             final_url = await _p118_concat_and_save(

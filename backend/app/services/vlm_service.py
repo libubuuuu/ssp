@@ -164,13 +164,42 @@ def split_segments(total_duration: int) -> list[int]:
     return segs
 
 
+# P119(2026-05-05):5-12s 多镜头叙事 — VLM 输出 N 段 micro-scenes
+# 每段独立 visual_prompt,后端按 scene 分别生成视频后拼接(段1 talking+段2-N seedance)。
+# 段长用浮点(1.5-2.5s),Seedance 跑 4s 然后 ffmpeg trim 到设计长。
+def split_segments_micro(total_duration: int) -> list[float]:
+    """P119: 5-12s 多镜头分段(每段 1.5-2.5s),专给爆款多镜头叙事用。
+
+    设计原则:
+    - 段 1 必须 1-1.5s(开场说话钩子)
+    - 中段 1.5-2.5s(产品/动作演示)
+    - 末段稍长 2-3s(CTA 字幕收尾)
+    """
+    if total_duration <= 5:
+        return [1.5, 1.5, total_duration - 3]  # 5s = [1.5, 1.5, 2]
+    if total_duration <= 6:
+        return [1.5, 2, total_duration - 3.5]  # 6s = [1.5, 2, 2.5]
+    if total_duration <= 8:
+        return [1.5, 2, 2, total_duration - 5.5]  # 8s = [1.5, 2, 2, 2.5]
+    if total_duration <= 10:
+        return [1.5, 2, 2, 2, total_duration - 7.5]  # 10s = [1.5, 2, 2, 2, 2.5]
+    # 11-12s
+    return [1.5, 2, 2, 2.5, 2.5, total_duration - 10.5]  # 12s = [1.5, 2, 2, 2.5, 2.5, 1.5]
+
+
 def _build_analysis_prompt(total_duration: int = 15, region: str = "CN") -> str:
     """P31:按 total_duration 动态生成 N 段分镜。
     每段独立可作为单次 Seedance 调用,共享 overall_setting + model_description
     锁角色场景(简版段间一致性)。
     P99:加 region 参数(CN=国内抖音风/亚洲模特/中文话术,Global=TikTok 风/西方模特/英文话术)
     """
-    seg_durs = split_segments(total_duration)
+    # P119(2026-05-05):5-12s 也用多镜头(split_segments_micro),>12s 走老逻辑
+    if total_duration <= 12:
+        seg_durs = split_segments_micro(total_duration)
+        is_p119 = True
+    else:
+        seg_durs = split_segments(total_duration)
+        is_p119 = False
     n = len(seg_durs)
     if n == 1:
         purpose_hint = "单段:开场 → 产品展示 → 促单 CTA 一气呵成"
@@ -182,24 +211,37 @@ def _build_analysis_prompt(total_duration: int = 15, region: str = "CN") -> str:
         purpose_hint = f"前 1 段开场,中间 {n-2} 段从不同角度展示卖点,最后 1 段促单 CTA"
 
     # 拼时间戳 + P112 speech 字数硬上限(elevenlabs 实测速率:CN 5 字/s, EN 14 字符/s)
+    # P119:5-12s speech 字数算总 duration(因为整段一份 TTS,不按 segment 拆)
     char_per_sec = 5 if region == "CN" else 14
     char_unit = "字" if region == "CN" else "字符"
+    total_max_chars = int(total_duration * char_per_sec)
     time_lines = []
-    cum = 0
+    cum = 0.0
     for i, d in enumerate(seg_durs):
-        max_chars = int(d * char_per_sec)
+        if is_p119:
+            # P119: 段 1 可以有 speech 字段(开场钩子),段 2-N speech 应留空(后端只用段 1)
+            # 但为了 VLM 不偷懒省略 speech,允许各段写,后端拼起来用段 1 的字段
+            speech_hint = "speech 写整段开场钩子" if i == 0 else "speech 留空字符串(只画面)"
+        else:
+            max_chars = int(d * char_per_sec)
+            speech_hint = f"**speech 严格 ≤ {max_chars} {char_unit}**,超字会被截断"
         time_lines.append(
-            f"  - 镜头{i+1}({cum}-{cum+d}s,共 {d} 秒,**speech 严格 ≤ {max_chars} {char_unit}**,超字会被截断)"
+            f"  - 镜头{i+1}({cum}-{cum+d}s,共 {d} 秒,{speech_hint})"
         )
         cum += d
 
+    # P119 5-12s 强提示:把整段 speech 集中在第 1 段,其他段画面驱动
+    if is_p119:
+        time_lines.insert(0, f"  ⚠️ **P119 多镜头叙事**:总时长 {total_duration}s 拆成 {n} 个 1.5-2.5s 镜头,**每段画面/动作完全不同**(钩子→产品特写→演示→CTA)。**整段 speech 总字数 ≤ {total_max_chars} {char_unit}**,放在第 1 段 speech 字段里(其他段 speech 空字符串)。")
+
     scenes_example_parts = []
-    cum2 = 0
+    cum2 = 0.0
     for i, d in enumerate(seg_durs[:3]):  # 仅展示前 3 段示例
+        speech_eg = '"English speech here"' if i == 0 else '""'
         scenes_example_parts.append(
             f'      {{"id": {i+1}, "time_range": "{cum2}-{cum2+d}s", "purpose": "...", '
             f'"shot_language": "...", "content": "...", '
-            f'"visual_prompt": "English prompt", "speech": "English speech"}}'
+            f'"visual_prompt": "English prompt", "speech": {speech_eg}}}'
         )
         cum2 += d
     if n > 3:
