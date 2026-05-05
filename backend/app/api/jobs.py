@@ -878,24 +878,37 @@ async def _run_ad_video_job(params: dict):
                 return " ".join(parts) or "Model presenting product naturally to the camera."
 
             async def _run_i2v_for_seg(image_url: str, scene: dict, idx: int) -> str:
-                """P129:跑用户选的 i2v 端点(失败直接 raise,不偷换端点)。"""
+                """P132:按端点类型适配 schema(失败直接 raise,不偷换端点)。
+
+                Seedance 2.0 i2v: image_url + duration "4" string + aspect_ratio + resolution + generate_audio
+                Kling v3 pro i2v: start_image_url + duration 数值 + generate_audio(无 aspect_ratio/resolution)
+                """
                 ep = user_video_endpoint
                 prompt = _build_i2v_prompt_with_speech(scene, idx)
-                # i2v schema(seedance-2.0 / kling-video/v3-pro / v2.5-turbo-pro 共用)
-                args = {
-                    "image_url": image_url,
-                    "prompt": prompt,
-                    "duration": "4",  # 跑 4s,ffmpeg trim 到设计段长(seg_durs[i])
-                    "resolution": "720p",
-                    "aspect_ratio": aspect_ratio,
-                    "generate_audio": True,  # 关键:模型自己生成 lipsync audio
-                }
-                log_info(f"ad_video P129 段{idx} i2v start prompt_len={len(prompt)}")
+
+                if "kling-video/v3" in ep:
+                    args = {
+                        "start_image_url": image_url,  # Kling v3 用 start_image_url
+                        "prompt": prompt,
+                        "duration": 5,  # Kling 接受数值,3-15s,设 5s 让 audio 完整(ffmpeg trim 到段长)
+                        "generate_audio": True,
+                    }
+                else:
+                    # Seedance 2.0 / fast 共用
+                    args = {
+                        "image_url": image_url,
+                        "prompt": prompt,
+                        "duration": "4",  # ffmpeg trim 到 seg_durs[i]
+                        "resolution": "720p",
+                        "aspect_ratio": aspect_ratio,
+                        "generate_audio": True,
+                    }
+                log_info(f"ad_video P132 段{idx} {ep} start prompt_len={len(prompt)}")
                 res = await _fc.subscribe_async(ep, arguments=args)
                 v = (res.get("video") or {}).get("url") if isinstance(res.get("video"), dict) else res.get("video_url")
                 if not v:
                     raise Exception(f"段 {idx} {ep} 未返 video_url")
-                log_info(f"ad_video P129 段{idx} i2v OK url={v[:80]}")
+                log_info(f"ad_video P132 段{idx} {ep} OK url={v[:80]}")
                 return v
 
             i2v_results = await asyncio.gather(

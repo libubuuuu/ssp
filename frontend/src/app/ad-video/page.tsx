@@ -506,10 +506,9 @@ export default function AdVideoPage() {
                   cursor: "pointer",
                 }}
               >
-                <option value="bytedance/seedance-2.0/image-to-video">字节 Seedance 2.0 i2v(默认 · 自带 lipsync · 推荐)</option>
-                <option value="bytedance/seedance-2.0/fast/image-to-video">字节 Seedance 2.0 Fast i2v(更快 · 质量稍弱)</option>
-                <option value="fal-ai/kling-video/v3/pro/image-to-video">快手 Kling v3 Pro i2v(顶配 · 4K · 自带 audio)</option>
-                <option value="fal-ai/kling-video/v2.5-turbo/pro/image-to-video">快手 Kling v2.5 Turbo Pro i2v(快 · 自带 audio)</option>
+                <option value="bytedance/seedance-2.0/image-to-video">字节 Seedance 2.0 i2v(默认 · 自带 lipsync audio · 推荐)</option>
+                <option value="bytedance/seedance-2.0/fast/image-to-video">字节 Seedance 2.0 Fast i2v(更快 · 自带 lipsync audio)</option>
+                <option value="fal-ai/kling-video/v3/pro/image-to-video">快手 Kling v3 Pro i2v(顶配 · 自带 lipsync audio · probe 实测 86s)</option>
               </select>
               <div style={{ fontSize: "0.8rem", color: "#888", marginTop: 6 }}>
                 每段分镜首帧(GPT-Image 2 出)+ visual_prompt(含台词)→ i2v 模型自带生成模特说话+演示动作+lipsync audio,一步到位。
