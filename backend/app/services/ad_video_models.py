@@ -118,18 +118,21 @@ async def compose_storyboard_grid(
     else:  # 4
         layout_desc = "2x2 grid layout (upper-left, upper-right, lower-left, lower-right)"
 
-    # P147(2026-05-06):加"商业全身横构图无手机"强约束,防 Kling Avatar 解读成自拍风格
-    # 真因:Kling Avatar 看到肖像/半身图就强加手机做镜面自拍;看到全身商业图就出广告风格
+    # P148(2026-05-06):撤回 P147 "NO phone" 教条 — 用户说"不是要无手机,是要产品清楚"
+    # 真意:**产品(束腰)是画面焦点,不能被其他元素抢镜**
     prompt = (
         f"Create a commercial fashion product photography composite in {layout_desc}. "
         f"Each frame shows the same fully-clothed model presenting the product in modest "
         f"commercial advertising style. "
         f"Setting: {overall_setting}. "
         f"All frames share consistent lighting, model appearance, and product details. "
-        # P147 关键约束:让输入图本身是"商业广告视角",不是"自拍肖像"
-        f"CRITICAL FRAMING: third-person professional commercial camera angle, "
-        f"full-body or three-quarter shot of the model, model's hands free (NO phone, NO smartphone, "
-        f"NO mirror selfie pose), looking naturally at the camera or interacting with product. "
+        # P148 关键:产品焦点 + 商业第三方视角(让画面不被自拍/手机抢镜)
+        f"CRITICAL — PRODUCT FOCUS: The fashion garment product is the visual HERO and primary "
+        f"subject of every frame. Camera focus and composition prioritize showing the product "
+        f"clearly (texture, color, fit, design details). Model's pose serves to showcase the product, "
+        f"not the model's face or other items. "
+        f"Third-person professional commercial camera angle, full-body or three-quarter shot, "
+        f"product visible and recognizable in the center of attention. "
         f"Photorealistic studio fashion photography, professional commercial advertisement.\n\n"
         + "\n".join(panel_lines)
         + "\n\nThin neutral borders separate frames."

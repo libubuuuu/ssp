@@ -1035,11 +1035,12 @@ async def _run_ad_video_job(params: dict):
                     ("on her", "on the"),
                 ]:
                     visual_safe = visual_safe.replace(old, new)
-                # P144-r 4 部分结构 prompt + P147 显式禁令(防镜面自拍/手机抢镜)
+                # P144-r 4 部分 + P148 产品焦点(撤回 P147 "NO phone" 教条)
+                # 用户:"不是要无手机,是要清楚哪个是产品" → 强调产品是画面焦点
                 if visual_safe:
                     ka_prompt = (
                         # Subject(主题)
-                        f"Subject: professional commercial spokesperson presenting fashion product. "
+                        f"Subject: professional commercial spokesperson showcasing fashion garment product. "
                         f"Scene: {visual_safe}. "
                         # Expression(表情)— fal 官方推荐
                         "Expression: dynamic facial expressions matching emphasis points, "
@@ -1048,21 +1049,22 @@ async def _run_ad_video_job(params: dict):
                         "Movement: energetic presenter posture with frequent purposeful hand gestures, "
                         "pointing to and demonstrating the product, occasional head nods for emphasis, "
                         "slight body lean to show enthusiasm, gesturing toward product with open palms. "
-                        # P147 关键禁令:防 Kling Avatar 强加手机自拍镜面
-                        "CRITICAL: third-person professional commercial camera framing, "
-                        "NO phone in hand, NO smartphone, NO mirror selfie pose, "
-                        "NO reversed text, model's hands are free for product demonstration. "
+                        # P148 关键:产品焦点(产品是 HERO,不被其他元素抢镜)
+                        "CRITICAL — PRODUCT FOCUS: the fashion garment product is the visual HERO of "
+                        "the frame, clearly visible and recognizable. Model's gestures and gaze direct "
+                        "viewer attention TOWARD the product. Avoid any unrelated objects competing "
+                        "for visual focus. Third-person professional commercial framing. "
                         # Style(风格)
                         "Style: photorealistic commercial advertisement, natural skin textures, "
                         "synchronized lip movements with audio."
                     )
                 else:
                     ka_prompt = (
-                        "Subject: professional commercial spokesperson. "
+                        "Subject: professional spokesperson showcasing fashion product. "
                         "Expression: dynamic facial expressions, natural eye contact. "
                         "Movement: frequent purposeful hand gestures, occasional head nods, "
                         "slight body lean for engagement. "
-                        "CRITICAL: third-person camera, NO phone, NO mirror selfie, NO reversed text. "
+                        "CRITICAL: product is the visual HERO, clearly visible, no competing elements. "
                         "Style: photorealistic commercial advertisement, synchronized lip movements."
                     )
                 res = await _fc.subscribe_async(
