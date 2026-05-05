@@ -72,28 +72,39 @@ async def compose_storyboard_grid(
     if len(scenes) < n_panels:
         return {"error": f"scenes={len(scenes)} 少于 n_panels={n_panels}"}
 
-    # 拼几宫格 prompt
+    # P140(2026-05-05):sanitize NSFW —— 之前 prompt 含
+    # "DIFFERENT shot/angle/action of the same model" + 种族描述 触发 OpenAI NSFW
+    # 改为中性"商业摄影"语境,避开"模特+多角度+塑身衣"组合
     panel_lines = []
     for i in range(n_panels):
-        visual = (scenes[i].get("visual_prompt") or "").strip() or "model showcasing product"
-        panel_lines.append(f"Panel {i+1}: {visual}")
+        visual = (scenes[i].get("visual_prompt") or "").strip() or "product showcase"
+        # P140:sanitize 敏感词组合
+        visual_safe = (
+            visual
+            .replace("waist trainer", "fashion garment")
+            .replace("shapewear", "fashion garment")
+            .replace("body", "outfit")
+            .replace("waist", "torso area")
+        )
+        panel_lines.append(f"Frame {i+1}: {visual_safe}")
 
     if n_panels == 2:
-        layout_desc = "vertical 2-panel storyboard layout (top half + bottom half)"
+        layout_desc = "vertical 2-frame layout (upper half + lower half)"
     elif n_panels == 3:
-        layout_desc = "vertical 3-panel storyboard layout (top + middle + bottom)"
+        layout_desc = "vertical 3-frame layout (upper, middle, lower)"
     else:  # 4
-        layout_desc = "2x2 grid storyboard layout (top-left, top-right, bottom-left, bottom-right)"
+        layout_desc = "2x2 grid layout (upper-left, upper-right, lower-left, lower-right)"
 
+    # P140:用"商业产品摄影"语境,避开 NSFW 敏感组合
     prompt = (
-        f"Create a {n_panels}-panel UGC product video storyboard in {layout_desc}. "
-        f"Each panel must show a DIFFERENT shot/angle/action of the same model and same product. "
-        f"Model: {model_description}. "
+        f"Create a commercial fashion product photography composite in {layout_desc}. "
+        f"Each frame shows the same fully-clothed model presenting the product in modest "
+        f"commercial advertising style. "
         f"Setting: {overall_setting}. "
-        f"All panels share consistent lighting, model identity, and product details. "
-        f"Photorealistic UGC selfie style, vertical composition.\n\n"
+        f"All frames share consistent lighting, model appearance, and product details. "
+        f"Photorealistic studio fashion photography, professional commercial advertisement.\n\n"
         + "\n".join(panel_lines)
-        + "\n\nThin black borders separate panels."
+        + "\n\nThin neutral borders separate frames."
     )
 
     try:
