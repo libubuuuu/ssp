@@ -125,6 +125,104 @@ async def _run_video_job(params: dict, job_type: str):
     raise Exception("timeout (10 min)")
 
 
+def _build_p118_seedance_prompt(scene: dict, overall: str, model_desc: str) -> str:
+    """P118 helper:构造 Seedance i2v 动作演示 prompt(强化"动作"弱化"talking")"""
+    parts = []
+    if model_desc:
+        parts.append(f"Model: {model_desc}")
+    if overall:
+        parts.append(overall)
+    vp = (scene.get("visual_prompt") or "").strip()
+    if vp:
+        parts.append(
+            f"DYNAMIC PRODUCT DEMO ACTION: {vp}. "
+            f"Model performs vivid product demonstration: "
+            f"adjusting/tugging/showing the product on her body, "
+            f"rotating torso, hand gestures pointing at the product details, "
+            f"smooth dynamic camera following the action. "
+            f"NO talking focus, NO mouth-driven expressions — "
+            f"focus on body movement and product interaction."
+        )
+    return "\n".join(parts).strip() or "Dynamic product demonstration action"
+
+
+async def _p118_concat_and_save(
+    talking_url: str,
+    seedance_url: str,
+    duration: int,
+    user_id: str,
+    aspect_ratio: str = "9:16",
+) -> str:
+    """P118: 下载 talking + seedance,ffmpeg 拼"talking 0-1.5s + seedance 1.5-end + 完整 audio",
+    写本地 uploads 返回公网 URL。"""
+    import subprocess as _sp
+    import tempfile as _tmp
+    import shutil as _sh
+    import re as _re2
+    import httpx as _httpx
+    from datetime import datetime as _dt
+    from app.services.media_archiver import UPLOADS_ROOT, PUBLIC_BASE_URL
+
+    # 切换点 1.5s 经验值:够看清开场说话又不长
+    cut_point = 1.5
+    # 9:16 = 1056x1952(对齐 Kling Avatar v2 输出,probe 实测同尺寸)
+    if aspect_ratio == "16:9":
+        target_w, target_h = 1952, 1056
+    else:
+        target_w, target_h = 1056, 1952
+
+    work = _tmp.mkdtemp(prefix="p118_")
+    try:
+        async with _httpx.AsyncClient(timeout=120) as cli:
+            for url, name in [(talking_url, "talking.mp4"), (seedance_url, "seedance.mp4")]:
+                r = await cli.get(url)
+                r.raise_for_status()
+                (Path(work) / name).write_bytes(r.content)
+
+        talking_p = f"{work}/talking.mp4"
+        seedance_p = f"{work}/seedance.mp4"
+        final_p = f"{work}/final.mp4"
+
+        cmd = [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-i", talking_p,
+            "-i", seedance_p,
+            "-filter_complex",
+            f"[0:v]trim=0:{cut_point},setpts=PTS-STARTPTS,"
+            f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+            f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v0];"
+            f"[1:v]trim={cut_point}:{duration},setpts=PTS-STARTPTS,"
+            f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+            f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v1];"
+            "[v0][v1]concat=n=2:v=1:a=0[v]",
+            "-map", "[v]",
+            "-map", "0:a",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            final_p,
+        ]
+        r = _sp.run(cmd, capture_output=True, text=True, timeout=120)
+        if r.returncode != 0:
+            raise Exception(f"ffmpeg failed: {r.stderr[:500]}")
+
+        safe_uid = _re2.sub(r"[^a-zA-Z0-9_\-]", "_", str(user_id))[:64] or "anon"
+        yyyymm = _dt.utcnow().strftime("%Y-%m")
+        target_dir = UPLOADS_ROOT / safe_uid / yyyymm
+        target_dir.mkdir(parents=True, exist_ok=True)
+        out_name = f"video_p118_{uuid.uuid4().hex}.mp4"
+        out_path = target_dir / out_name
+        _sh.copy(final_p, out_path)
+        os.chmod(out_path, 0o644)
+
+        public_url = f"{PUBLIC_BASE_URL.rstrip('/')}/{safe_uid}/{yyyymm}/{out_name}"
+        log_info(f"ad_video P118 ffmpeg concat OK -> {public_url}")
+        return public_url
+    finally:
+        import shutil as _sh2
+        _sh2.rmtree(work, ignore_errors=True)
+
+
 async def _run_ad_video_job(params: dict):
     """AI 带货视频 — Seedance 2.0 异步任务
 
@@ -169,11 +267,13 @@ async def _run_ad_video_job(params: dict):
         raise Exception(f"首帧合成失败: {base_result.get('error', '?')}")
     base_image_url = base_result["image_url"]
 
-    # ---------- 单段模式(<=12s) ----------
-    # P104(2026-05-05):去掉 Seedance i2v + 后置 lipsync 两步浪费钱方案,
-    # 改用 omnihuman talking head 一步到位(image + audio → 模特对口型说音频内容)
-    # omnihuman 设计就是 talking,嘴型 + 表情比 i2v + 后置 lipsync 自然得多
-    # 流程:TTS speech → audio_url → omnihuman(first_frame + audio)→ talking video
+    # ---------- 单段模式(<=12s,P118 双段拼接) ----------
+    # P104(2026-05-05):TTS + omnihuman talking head 一步到位
+    # P118(2026-05-05):用户骂"动作太少不像爆款" — 真因 talking head 是 lip-sync 模型,
+    # 物理只能"嘴动+头微动",做不了"拉/穿/转"演示。爆款抖音多动作靠多镜头剪辑。
+    # 修法:5-12s 走双段拼接 — talking 0-1.5s 模特说话(嘴动开场)+ seedance 1.5-end
+    # 产品演示动作。音频全程用 talking 的 5s(完整一句话不断),视觉前段说话+后段演示。
+    # 并发跑 talking head + Seedance i2v(节省一半时间),ffmpeg 拼。
     if duration <= 12 or len(scenes) <= 1:
         speech_text = (first_scene.get("speech") or "").strip() if first_scene else ""
         if not speech_text:
@@ -206,24 +306,19 @@ async def _run_ad_video_job(params: dict):
         if not audio_url:
             raise Exception("TTS 未返 audio_url")
 
-        # Step 2: talking head(image + audio → 对口型视频)
-        # P115(2026-05-05):Kling Avatar v2 拒"产品+模特"合成首帧(要求纯人脸主体),
-        # 加 Kling 专用通道:先调 Flux Kontext reframe 重构成"模特肖像式"再喂 Kling。
-        # probe verify 走通(probe_kling_channel.py),Kling 通道总成本约 omnihuman 51%。
-        # 失败自动 fallback omnihuman 兜底。
-        omnihuman_endpoint = params.get("talking_head_endpoint", "fal-ai/bytedance/omnihuman")
-        log_info(f"ad_video P104 talking_head endpoint={omnihuman_endpoint}")
-
-        # P115 Kling 通道:Kontext reframe → 喂 Kling
-        kling_image_url = base_image_url
-        if "kling" in omnihuman_endpoint:
+        # Step 2: P115 Kling 通道 — talking head 喂 reframed 图(若用 Kling)
+        # 注意 Seedance 永远喂 base_image(同模特同产品同背景,保证身份一致)
+        talking_endpoint = params.get("talking_head_endpoint", "fal-ai/bytedance/omnihuman")
+        log_info(f"ad_video P104 talking_head endpoint={talking_endpoint}")
+        talking_image_url = base_image_url
+        if "kling" in talking_endpoint:
             try:
                 log_info("ad_video P115 Kling 通道:Flux Kontext reframe → portrait")
                 _kontext = await _fc.run_async(
                     "fal-ai/flux-pro/kontext/max/multi",
                     arguments={
                         "prompt": (
-                            # P117 修法:不替换背景、不弱化产品。仅做"镜头视角调整 + 模特上半身居前"
+                            # P117:不替换背景、不弱化产品。仅做"镜头视角调整 + 模特上半身居前"
                             "Adjust the camera framing of this image to make the model's face clearly visible "
                             "in the upper-center of the frame, while KEEPING the original background scene "
                             "EXACTLY as it is (do NOT replace background with studio or any other scene), "
@@ -242,62 +337,101 @@ async def _run_ad_video_job(params: dict):
                 )
                 _imgs = _kontext.get("images") or []
                 if _imgs and _imgs[0].get("url"):
-                    kling_image_url = _imgs[0]["url"]
-                    log_info(f"ad_video P115 Kontext reframe OK url={kling_image_url[:80]}")
+                    talking_image_url = _imgs[0]["url"]
+                    log_info(f"ad_video P115 Kontext reframe OK url={talking_image_url[:80]}")
                 else:
                     log_warning("ad_video P115 Kontext 无 image,fallback omnihuman")
-                    omnihuman_endpoint = "fal-ai/bytedance/omnihuman"
+                    talking_endpoint = "fal-ai/bytedance/omnihuman"
             except Exception as e:
                 log_warning(f"ad_video P115 Kontext 失败,fallback omnihuman: {str(e)[:200]}")
-                omnihuman_endpoint = "fal-ai/bytedance/omnihuman"
-                kling_image_url = base_image_url
+                talking_endpoint = "fal-ai/bytedance/omnihuman"
+                talking_image_url = base_image_url
 
-        _args = {
-            "image_url": kling_image_url,
-            "audio_url": audio_url,
-        }
-        # P116-r1:visual_prompt 不再喂给 Kling 当驱动 prompt — 之前喂了导致 Kling
-        # 按 "shocked expression" 驱动嘴张大。Kling 的 prompt 字段是对动作精细化的,
-        # 但我们的 visual_prompt 含镜头/构图/字幕等 talking head 模型不应该执行的指令,
-        # 喂进去反而拉低质量。改为传一个干净的"中性自然"动作引导 prompt。
-        if "kling" in omnihuman_endpoint:
-            _args["prompt"] = (
-                "natural relaxed talking pose, slight head movements, "
-                "subtle natural expressions, no exaggerated mouth or face"
-            )
-        try:
-            h = await _fc.submit_async(
-                omnihuman_endpoint,
-                arguments=_args,
-            )
-        except Exception as e:
-            # P115 fallback:Kling 拒输入(如 reframe 仍不够纯人脸),自动 fallback omnihuman
-            if "kling" in omnihuman_endpoint:
-                log_warning(f"ad_video P115 Kling 拒输入,fallback omnihuman: {str(e)[:200]}")
-                omnihuman_endpoint = "fal-ai/bytedance/omnihuman"
-                _args.pop("prompt", None)
-                _args["image_url"] = base_image_url  # 用回原首帧
-                h = await _fc.submit_async(
-                    omnihuman_endpoint,
-                    arguments=_args,
+        # Step 3: P118 并发 talking head + Seedance i2v(动作演示)
+        async def _run_talking_head() -> str:
+            ep_local = talking_endpoint
+            args = {"image_url": talking_image_url, "audio_url": audio_url}
+            if "kling" in ep_local:
+                args["prompt"] = (
+                    "natural relaxed talking pose, slight head movements, "
+                    "subtle natural expressions, no exaggerated mouth or face"
                 )
-            else:
-                raise
-        task_id = h.request_id
-        for _ in range(120):  # 20 min cap
-            await asyncio.sleep(5)
             try:
-                s = await _fc.status_async(omnihuman_endpoint, task_id)
-            except Exception:
-                continue
-            if type(s).__name__ == "Completed":
-                res = await _fc.result_async(omnihuman_endpoint, task_id)
-                v = (res.get("video") or {}).get("url") if isinstance(res.get("video"), dict) else res.get("video_url")
-                if not v:
-                    raise Exception("omnihuman 未返 video_url")
-                log_info(f"ad_video P104 omnihuman OK url={v[:80]}")
-                return {"video_url": v, "type": "video"}
-        raise Exception("AI 带货视频生成超时(20 分钟)")
+                h = await _fc.submit_async(ep_local, arguments=args)
+            except Exception as e:
+                # P115 fallback:Kling 拒输入 → omnihuman 兜底
+                if "kling" in ep_local:
+                    log_warning(f"ad_video P115 Kling 拒输入,fallback omnihuman: {str(e)[:200]}")
+                    args.pop("prompt", None)
+                    args["image_url"] = base_image_url
+                    ep_local = "fal-ai/bytedance/omnihuman"
+                    h = await _fc.submit_async(ep_local, arguments=args)
+                else:
+                    raise
+            tid = h.request_id
+            for _ in range(120):
+                await asyncio.sleep(5)
+                try:
+                    s = await _fc.status_async(ep_local, tid)
+                except Exception:
+                    continue
+                if type(s).__name__ == "Completed":
+                    res = await _fc.result_async(ep_local, tid)
+                    v = (res.get("video") or {}).get("url") if isinstance(res.get("video"), dict) else res.get("video_url")
+                    if not v:
+                        raise Exception("talking head 未返 video_url")
+                    log_info(f"ad_video P104 talking_head OK url={v[:80]}")
+                    return v
+            raise Exception("talking head 超时(10 min)")
+
+        async def _run_seedance_action() -> str:
+            seg_dur = max(4, min(12, duration))  # Seedance v1.5 接 4-12 秒
+            sd_prompt = _build_p118_seedance_prompt(first_scene, overall, model_desc)
+            log_info(f"ad_video P118 Seedance action duration={seg_dur} prompt_len={len(sd_prompt)}")
+            res = await _fc.subscribe_async(
+                "fal-ai/bytedance/seedance/v1/pro/image-to-video",
+                arguments={
+                    "image_url": base_image_url,  # P118: 同模特同产品同背景
+                    "prompt": sd_prompt,
+                    "duration": str(seg_dur),
+                    "resolution": "720p",
+                    "aspect_ratio": aspect_ratio,
+                    "enable_audio": False,  # P118 静音段,音频用 talking 的
+                },
+            )
+            v = (res.get("video") or {}).get("url") if isinstance(res.get("video"), dict) else None
+            if not v:
+                raise Exception("Seedance i2v 未返 video_url")
+            log_info(f"ad_video P118 Seedance OK url={v[:80]}")
+            return v
+
+        talking_url, seedance_url = await asyncio.gather(
+            _run_talking_head(), _run_seedance_action(), return_exceptions=True
+        )
+
+        # talking 是核心(音频+模特说话),失败必死
+        if isinstance(talking_url, Exception):
+            raise talking_url
+
+        # Seedance 失败 → 降级返 talking only(P104 行为,不破坏用户)
+        if isinstance(seedance_url, Exception):
+            log_warning(f"ad_video P118 Seedance 失败,降级返 talking only: {str(seedance_url)[:200]}")
+            return {"video_url": talking_url, "type": "video"}
+
+        # Step 4: ffmpeg 拼接 + 写本地 uploads
+        try:
+            user_id = params.get("_user_id", "anon")
+            final_url = await _p118_concat_and_save(
+                talking_url=talking_url,
+                seedance_url=seedance_url,
+                duration=duration,
+                user_id=user_id,
+                aspect_ratio=aspect_ratio,
+            )
+            return {"video_url": final_url, "type": "video"}
+        except Exception as e:
+            log_warning(f"ad_video P118 ffmpeg 拼接/保存失败,降级返 talking only: {str(e)[:200]}")
+            return {"video_url": talking_url, "type": "video"}
 
     # ---------- 多段模式(>15s):N 段独立首帧 + N 段 i2v 并发 + ffmpeg concat ----------
     seg_durs = split_segments(duration)
@@ -428,6 +562,8 @@ async def _execute_job(job_id: str):
             elif t.startswith("video_"):
                 result = await _run_video_job(job["params"], t)
             elif t == "ad_video":
+                # P118: 把 user_id 透传给 _run_ad_video_job(用于 ffmpeg 拼接产物落 uploads)
+                job["params"]["_user_id"] = job.get("user_id") or job.get("user_numeric_id") or "anon"
                 result = await _run_ad_video_job(job["params"])
             else:
                 raise Exception(f"unknown type: {t}")
