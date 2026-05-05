@@ -411,9 +411,15 @@ async def compose_first_frame_for_scene(
         # P149 关键铁律 — 防 Kling Avatar 拒图(必须有清晰人脸 + 上半身)
         f"CRITICAL — MUST INCLUDE: model's face and upper body clearly visible in the frame. "
         f"Even product close-ups must show the model's face/upper body together with the product. "
-        # P148 产品焦点
-        f"PRODUCT FOCUS: the fashion garment is the visual hero, clearly visible. "
-        f"Model's pose and gaze direct viewer attention TOWARD the product. "
+        # P148 + P154 产品焦点 + 演示动作
+        f"PRODUCT FOCUS: the fashion garment (the printed waist accessory, NOT clothes/jeans/phone) "
+        f"is the visual hero, clearly visible. Model's pose and gaze direct viewer attention "
+        f"TOWARD the printed garment. "
+        # P154(2026-05-06):用户:模特要演示产品,不是站着发呆
+        f"PRODUCT DEMONSTRATION: model is ACTIVELY engaging with the printed garment — "
+        f"touching/adjusting/showing/lifting/pointing at the printed waist garment with her hands. "
+        f"NOT just standing passively. The hands interact with the printed garment specifically, "
+        f"demonstrating it like a TikTok seller showing their product. "
         # P147 框架
         f"Third-person professional commercial camera angle, NOT a mirror selfie. "
         # P150(2026-05-06)用户:字幕后期自己加 — 图里不要任何文字

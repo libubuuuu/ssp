@@ -1066,15 +1066,17 @@ async def _run_ad_video_job(params: dict):
                         # Expression(表情)— fal 官方推荐
                         "Expression: dynamic facial expressions matching emphasis points, "
                         "natural eye contact with camera, expressive eyebrows for engagement. "
-                        # Movement(动作)— fal 官方明文支持
-                        "Movement: energetic presenter posture with frequent purposeful hand gestures, "
-                        "pointing to and demonstrating the product, occasional head nods for emphasis, "
-                        "slight body lean to show enthusiasm, gesturing toward product with open palms. "
-                        # P148 关键:产品焦点(产品是 HERO,不被其他元素抢镜)
-                        "CRITICAL — PRODUCT FOCUS: the fashion garment product is the visual HERO of "
-                        "the frame, clearly visible and recognizable. Model's gestures and gaze direct "
-                        "viewer attention TOWARD the product. Avoid any unrelated objects competing "
-                        "for visual focus. Third-person professional commercial framing. "
+                        # Movement(动作)+ P154 演示动作
+                        "Movement: energetic presenter actively DEMONSTRATING the printed waist "
+                        "garment (NOT clothes/jeans/phone) — hands actively touching, adjusting, "
+                        "lifting, showing or pointing at the printed garment around her midsection. "
+                        "Like a TikTok seller showing off their product. Slight body lean, head nods. "
+                        # P148 + P154:产品焦点 + 明确产品是什么(防 Kling Avatar 误以为产品=手机)
+                        "CRITICAL — PRODUCT IS THE PRINTED GARMENT: the visual HERO is the printed "
+                        "fashion garment around the model's midsection (NOT the phone, NOT the jeans, "
+                        "NOT the top). Model's gestures and gaze direct viewer attention TOWARD the "
+                        "printed garment specifically. Hands interact with the printed garment to "
+                        "demonstrate it. Third-person professional commercial framing. "
                         # Style(风格)
                         "Style: photorealistic commercial advertisement, natural skin textures, "
                         "synchronized lip movements with audio."
