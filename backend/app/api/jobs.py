@@ -808,11 +808,11 @@ async def _run_ad_video_job(params: dict):
             log_info(f"ad_video P124 段{idx} i2v OK url={v[:80]}")
             return v
 
-        # P125(2026-05-05):极简爆款多镜头叙事 — 用户怒"模型本身能说话,别多此一举"
-        # 一条线:VLM N 段 → N 张分镜首帧(各段独立 Kontext) → N 段 omnihuman(自带说话)→ ffmpeg xfade
-        # 砍:talking head + Seedance 双轨 + 独立 TTS + 独立 audio concat。
+        # P129(2026-05-05):用户教的真正架构 —
+        # GPT-Image 2 出 N 张分镜首帧 + i2v 模型(用户选 Seedance 2.0 / Kling v3 pro / v2.5-turbo pro)
+        # 自带 generate_audio=true,模型自己生成"模特说话+lipsync+演示动作",一步到位。
+        # 砍:elevenlabs TTS / talking head 端点 / 独立 audio concat / 双轨。
         if len(scenes) >= 2:
-            log_info(f"ad_video P125 极简多镜头(omnihuman)scenes={len(scenes)} duration={duration}s")
             from app.services.ad_video_models import compose_first_frame_for_scene
 
             # 解析 time_range 拿每段时长
@@ -824,48 +824,18 @@ async def _run_ad_video_job(params: dict):
                 ratio = duration / total_seg
                 seg_durs = [d * ratio for d in seg_durs]
 
-            # P112 截断:每段 speech ≤ 段时长 × char_per_sec
-            seg_speeches = []
-            for i, s in enumerate(scenes):
-                sp = (s.get("speech") or "").strip()
-                _has_cn2 = bool(_re.search(r"[一-鿿]", sp))
-                _max_seg = int(seg_durs[i] * (5 if _has_cn2 else 14))
-                if len(sp) > _max_seg:
-                    log_warning(f"ad_video P125 段{i+1} speech 超长 {len(sp)} > {_max_seg},截断")
-                    sp = sp[:_max_seg]
-                seg_speeches.append(sp)
-
-            # P125 阶段 A:并发 N 段独立 TTS
-            async def _tts_for_seg(text: str, idx: int):
-                if not text:
-                    log_warning(f"ad_video P125 段{idx} speech 空,该段静音(omnihuman 仍需 audio,生成短静音)")
-                    return None
-                tres = await _fc.run_async(
-                    "fal-ai/elevenlabs/tts/multilingual-v2",
-                    arguments={"text": text[:500]},
-                )
-                ao = tres.get("audio") if isinstance(tres.get("audio"), dict) else None
-                u = ao.get("url") if ao else tres.get("audio_url")
-                log_info(f"ad_video P125 段{idx} TTS OK chars={len(text)}")
-                return u
-
-            tts_results = await asyncio.gather(
-                *[_tts_for_seg(seg_speeches[i], i + 1) for i in range(len(scenes))],
-                return_exceptions=True,
+            # 用户前端选的视频引擎(默认 Seedance 2.0 i2v)。
+            # 兼容前端旧字段名 talking_head_endpoint(用户当前还在传)+ 新字段 video_model_endpoint
+            user_video_endpoint = (
+                params.get("video_model_endpoint")
+                or params.get("talking_head_endpoint")
+                or "bytedance/seedance-2.0/image-to-video"
             )
-            seg_audios = []
-            for i, tr in enumerate(tts_results):
-                if isinstance(tr, Exception):
-                    log_warning(f"ad_video P125 段{i+1} TTS 失败: {str(tr)[:200]}")
-                    seg_audios.append(None)
-                else:
-                    seg_audios.append(tr)
-            if not any(seg_audios):
-                raise Exception("P125 全部 TTS 失败,无法跑 omnihuman")
+            log_info(f"ad_video P129 多镜头叙事 scenes={len(scenes)} duration={duration}s "
+                     f"video_endpoint={user_video_endpoint}")
 
-            # P125 阶段 B:并发 N 张分镜首帧(每段独立 visual_prompt → Kontext multi-edit)
-            # 共享 base_image_url 锁模特+产品+背景,每段调整镜头/景别
-            log_info(f"ad_video P125 阶段 B:并发 {len(scenes)} 张分镜首帧合成")
+            # P129 阶段 A:并发 N 张分镜首帧(GPT-Image 2 - 共享 base_image 锁模特+产品)
+            log_info(f"ad_video P129 阶段 A:并发 {len(scenes)} 张分镜首帧合成(GPT-Image 2)")
             frame_tasks = [
                 compose_first_frame_for_scene(
                     base_image_url=base_image_url,
@@ -880,64 +850,73 @@ async def _run_ad_video_job(params: dict):
             for i, fr in enumerate(frame_results):
                 if isinstance(fr, Exception) or (isinstance(fr, dict) and "error" in fr):
                     err = str(fr)[:120] if isinstance(fr, Exception) else fr.get("error", "?")
-                    log_warning(f"ad_video P125 段{i+1} 分镜首帧失败,fallback base_image: {err}")
+                    log_warning(f"ad_video P129 段{i+1} 分镜首帧失败,用 base_image 兜底: {err}")
                     seg_frames.append(base_image_url)
                 else:
                     seg_frames.append(fr.get("image_url") or base_image_url)
 
-            # P127(2026-05-05):用户选什么端点就跑什么端点(omnihuman / kling-avatar v2 / v2 pro)
-            # 之前 P125 硬编码 omnihuman,忽略用户前端选择,擅自做主。
-            user_talking_endpoint = params.get("talking_head_endpoint", "fal-ai/bytedance/omnihuman")
-            log_info(f"ad_video P127 阶段 C:并发 {len(scenes)} 段 {user_talking_endpoint}")
+            # P129 阶段 B:并发 N 段 i2v(用户选的端点,generate_audio=true,visual_prompt 含台词)
+            log_info(f"ad_video P129 阶段 B:并发 {len(scenes)} 段 {user_video_endpoint}(generate_audio)")
 
-            async def _run_talking_for_seg(image_url: str, audio_url: str, idx: int) -> str:
-                """P128:用户选什么端点就跑什么,失败直接抛错(绝不偷换)。"""
-                if not audio_url:
-                    raise Exception(f"段 {idx} audio 缺失,talking 端点必须吃 audio")
-                ep = user_talking_endpoint
-                args = {"image_url": image_url, "audio_url": audio_url}
-                if "kling" in ep:
-                    args["prompt"] = (
-                        "natural relaxed talking pose, slight head movements, "
-                        "subtle natural expressions, no exaggerated mouth or face"
+            def _build_i2v_prompt_with_speech(scene: dict, idx: int) -> str:
+                """合成 i2v prompt:视觉描述 + 模特要说的话(让 i2v 生成 lipsync audio)。"""
+                visual = (scene.get("visual_prompt") or "").strip()
+                speech = (scene.get("speech") or "").strip()
+                # 段时长 → 字数限制(防 i2v 内置 TTS 说不完)
+                _has_cn2 = bool(_re.search(r"[一-鿿]", speech))
+                _max = int(seg_durs[idx - 1] * (5 if _has_cn2 else 14))
+                if len(speech) > _max:
+                    log_warning(f"ad_video P129 段{idx} speech 超长 {len(speech)} > {_max},截断")
+                    speech = speech[:_max]
+                parts = [visual] if visual else []
+                if speech:
+                    parts.append(
+                        f"The model is speaking enthusiastically to the camera. "
+                        f"She says: \"{speech}\". "
+                        f"Her lips and mouth move naturally in sync with the words."
                     )
-                # 失败直接 raise,不 fallback 偷换
-                h = await _fc.submit_async(ep, arguments=args)
-                tid = h.request_id
-                for _ in range(120):
-                    await asyncio.sleep(5)
-                    try:
-                        s = await _fc.status_async(ep, tid)
-                    except Exception:
-                        continue
-                    if type(s).__name__ == "Completed":
-                        res = await _fc.result_async(ep, tid)
-                        v = (res.get("video") or {}).get("url") if isinstance(res.get("video"), dict) else res.get("video_url")
-                        if not v:
-                            raise Exception(f"段 {idx} {ep} 未返 video_url")
-                        log_info(f"ad_video P127 段{idx} {ep} OK url={v[:80]}")
-                        return v
-                raise Exception(f"段 {idx} {ep} 超时(10 min)")
+                return " ".join(parts) or "Model presenting product naturally to the camera."
 
-            omni_results = await asyncio.gather(
+            async def _run_i2v_for_seg(image_url: str, scene: dict, idx: int) -> str:
+                """P129:跑用户选的 i2v 端点(失败直接 raise,不偷换端点)。"""
+                ep = user_video_endpoint
+                prompt = _build_i2v_prompt_with_speech(scene, idx)
+                # i2v schema(seedance-2.0 / kling-video/v3-pro / v2.5-turbo-pro 共用)
+                args = {
+                    "image_url": image_url,
+                    "prompt": prompt,
+                    "duration": "4",  # 跑 4s,ffmpeg trim 到设计段长(seg_durs[i])
+                    "resolution": "720p",
+                    "aspect_ratio": aspect_ratio,
+                    "generate_audio": True,  # 关键:模型自己生成 lipsync audio
+                }
+                log_info(f"ad_video P129 段{idx} i2v start prompt_len={len(prompt)}")
+                res = await _fc.subscribe_async(ep, arguments=args)
+                v = (res.get("video") or {}).get("url") if isinstance(res.get("video"), dict) else res.get("video_url")
+                if not v:
+                    raise Exception(f"段 {idx} {ep} 未返 video_url")
+                log_info(f"ad_video P129 段{idx} i2v OK url={v[:80]}")
+                return v
+
+            i2v_results = await asyncio.gather(
                 *[
-                    _run_talking_for_seg(seg_frames[i], seg_audios[i], i + 1)
+                    _run_i2v_for_seg(seg_frames[i], scenes[i], i + 1)
                     for i in range(len(scenes))
                 ],
                 return_exceptions=True,
             )
             seg_video_urls = []
             seg_video_durs = []
-            for i, vr in enumerate(omni_results):
+            for i, vr in enumerate(i2v_results):
                 if isinstance(vr, Exception):
-                    log_warning(f"ad_video P125 段{i+1} omnihuman 失败,该段被跳过: {str(vr)[:200]}")
+                    log_warning(f"ad_video P129 段{i+1} i2v 失败,该段跳过: {str(vr)[:200]}")
                     continue
                 seg_video_urls.append(vr)
                 seg_video_durs.append(seg_durs[i])
             if not seg_video_urls:
-                raise Exception("P125 全部 omnihuman 失败,无视频可拼接")
+                raise Exception(f"P129 全部 i2v({user_video_endpoint})失败,无视频可拼接")
 
-            # P125 阶段 D:ffmpeg xfade 拼接(audio 来自每段视频流,无独立 audio concat)
+            # P129 阶段 C:ffmpeg xfade 拼接(各段视频自带 audio,无独立 audio concat)
             try:
                 user_id = params.get("_user_id", "anon")
                 final_url = await _p125_concat_omnihuman(
@@ -948,7 +927,7 @@ async def _run_ad_video_job(params: dict):
                 )
                 return {"video_url": final_url, "type": "video"}
             except Exception as e:
-                log_warning(f"ad_video P125 ffmpeg 拼接失败,降级返第 1 段视频: {str(e)[:200]}")
+                log_warning(f"ad_video P129 ffmpeg 拼接失败,降级返第 1 段: {str(e)[:200]}")
                 return {"video_url": seg_video_urls[0], "type": "video"}
 
         # P118 单段兜底(VLM 只输出 1 段,如老脚本或失败时):并发 talking + 单段 Seedance

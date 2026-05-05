@@ -55,11 +55,10 @@ export default function AdVideoPage() {
   // P32:用户自定义视频总时长(5-300s),analyze 时透传给 VLM 出 N 段脚本
   const [duration, setDuration] = useState(12);  // P40: v1.5/pro 单段上限
   const [region, setRegion] = useState<"CN" | "Global">("CN");  // P100: 国内抖音 / 海外 TikTok
-  // P105: talking head 模型选择(默认 omnihuman 老版表情收敛)
-  // P115-r1(2026-05-05):Kling 通道实测视频质量不如 omnihuman(Kontext reframe 弱化产品 +
-  // 替换背景成工作室 + Kling 嘴型夸张),回滚默认 omnihuman 兜底。Kling 选项保留作纯人像
-  // 场景候选(用户测过后判断 trade-off)。
-  const [talkingHead, setTalkingHead] = useState<string>("fal-ai/bytedance/omnihuman");
+  // P129(2026-05-05):用户教 — 切到 i2v 端点(自带 generate_audio=true 一步出说话视频),
+  // 砍掉 talking head 双轨。前端选项重写为"视频引擎"(Seedance 2.0 / Kling v3 pro / v2.5-turbo pro)。
+  // 字段名保留 talkingHead 兼容后端旧 talking_head_endpoint 字段(后端 P129 已能识别 i2v 端点)。
+  const [talkingHead, setTalkingHead] = useState<string>("bytedance/seedance-2.0/image-to-video");
 
   // Step 2: 审核 + 脚本(从 /analyze 返回)
   const [audit, setAudit] = useState<Audit | null>(null);
@@ -489,10 +488,10 @@ export default function AdVideoPage() {
                 影响模特面孔 + 脚本话术风格 + 拍摄场景。选错模特/话术不匹配市场。
               </div>
             </div>
-            {/* P105: 对口型模型选择(talking head endpoint) */}
+            {/* P129: 视频引擎(i2v 端点,自带 generate_audio 一步出说话+演示视频) */}
             <div style={{ marginTop: 20 }}>
               <label style={{ display: "block", fontSize: "0.9rem", color: "#444", marginBottom: 8, fontWeight: 500 }}>
-                对口型模型
+                视频引擎
               </label>
               <select
                 value={talkingHead}
@@ -507,14 +506,13 @@ export default function AdVideoPage() {
                   cursor: "pointer",
                 }}
               >
-                <option value="fal-ai/bytedance/omnihuman">字节 Omnihuman 老版(¥1/秒 · 表情收敛 · 推荐)</option>
-                <option value="fal-ai/kling-video/ai-avatar/v2/standard">快手 Kling Avatar v2 标准版(约 ¥0.5/秒 · 省 50% · 但弱化产品/背景 + 嘴型夸张)</option>
-                <option value="fal-ai/kling-video/ai-avatar/v2/pro">快手 Kling Avatar v2 Pro(约 ¥0.9/秒 · 高质量 · 仍弱化产品/背景)</option>
-                <option value="fal-ai/bytedance/omnihuman/v1.5">字节 Omnihuman v1.5(¥1.1/秒 · 强表情但牙齿易糟)</option>
-                <option value="fal-ai/hunyuan-avatar">腾讯 Hunyuan Avatar(实测 5s 段)</option>
+                <option value="bytedance/seedance-2.0/image-to-video">字节 Seedance 2.0 i2v(默认 · 自带 lipsync · 推荐)</option>
+                <option value="bytedance/seedance-2.0/fast/image-to-video">字节 Seedance 2.0 Fast i2v(更快 · 质量稍弱)</option>
+                <option value="fal-ai/kling-video/v3/pro/image-to-video">快手 Kling v3 Pro i2v(顶配 · 4K · 自带 audio)</option>
+                <option value="fal-ai/kling-video/v2.5-turbo/pro/image-to-video">快手 Kling v2.5 Turbo Pro i2v(快 · 自带 audio)</option>
               </select>
               <div style={{ fontSize: "0.8rem", color: "#888", marginTop: 6 }}>
-                决定嘴型 / 牙齿 / 表情自然度。直接 image+audio→对口型说话视频(取代 i2v+lipsync 老路)。
+                每段分镜首帧(GPT-Image 2 出)+ visual_prompt(含台词)→ i2v 模型自带生成模特说话+演示动作+lipsync audio,一步到位。
               </div>
             </div>
             <PrimaryButton onClick={callAnalyze} disabled={!productFile} marginTop>
