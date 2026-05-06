@@ -25,9 +25,8 @@ const ASPECT_OPTIONS = [
 ];
 
 const ENGINE_OPTIONS = [
-  { value: "catvton-pixverse",  label: "CatVTON + Pixverse 🛡️", desc: "¥1.83/5s · 用参考视频原模特+你的产品 · 100% 复刻动作 · 不过 GPT 内容检测(敏感品类首选)", color: "#0d8a3e" },
-  { value: "pixverse-swap",     label: "Pixverse Swap",     desc: "¥1.4/5s · GPT-Image 2 出 AI 模特 · 100% 复刻动作 · 适合非敏感品类" },
-  { value: "kling-3-pro-i2v",   label: "Kling 3 Pro i2v",    desc: "¥2.5/5s · GPT-Image 2 出 AI 模特 · 不复刻动作 · AI 自由生成" },
+  { value: "pixverse-swap",     label: "Pixverse Swap ⭐推荐", desc: "¥1.4/5s · GPT-Image 2 直接出图 · 100% 复刻参考视频动作 · 真复刻最佳", color: "#0d8a3e" },
+  { value: "kling-3-pro-i2v",   label: "Kling 3 Pro i2v",     desc: "¥2.5/5s · GPT-Image 2 直接出图 · 不复刻动作 · AI 自由生成动作" },
 ];
 
 function token() {
@@ -49,7 +48,7 @@ export default function ReplicatePage() {
   const [scenes, setScenes] = useState<Scene[] | null>(null);
   const [detectedRatio, setDetectedRatio] = useState<string>("9:16");
   const [chosenRatio, setChosenRatio] = useState<string>("auto");
-  const [chosenEngine, setChosenEngine] = useState<string>("catvton-pixverse");
+  const [chosenEngine, setChosenEngine] = useState<string>("pixverse-swap");
 
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState("");

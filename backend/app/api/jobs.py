@@ -2156,7 +2156,15 @@ async def _gen_videos_kling_i2v(scenes: list, frames: list, aspect_ratio: str) -
 
 
 async def _gen_videos_pixverse_swap(scenes: list, frames: list, reference_video_url: str, aspect_ratio: str) -> list:
-    """引擎 2:pixverse-swap. 真复刻 — N 段共用 frames[0] 作 canonical reference,身份 100% 一致。"""
+    """引擎 2:pixverse-swap. 每段用对应的 GPT-Image 2 出的 frame 做 reference。
+    
+    用户铁律:图必须交给 gpt2 做。所以:
+      - reference 图 = frames[i](GPT-Image 2 直接出的,不经任何后处理)
+      - driving 视频段 = 参考视频对应段(原片动作/场景)
+    
+    N 段身份一致性靠 GPT-Image 2 的 identity-lock prompt + qwen-vl 提取的身份描述
+    保证(已在 Step 1A.5 + 1B prompt 里强约束)。
+    """
     import asyncio as _asyncio
     import tempfile
     from app.services.fal_service import get_pixverse_swap_service
@@ -2165,19 +2173,19 @@ async def _gen_videos_pixverse_swap(scenes: list, frames: list, reference_video_
     pix = get_pixverse_swap_service()
     if not pix:
         raise RuntimeError("pixverse-swap 服务未初始化")
-    if not frames or not frames[0]:
-        raise RuntimeError("pixverse-swap 需要 frames[0]")
+    if not frames or len(frames) < len(scenes):
+        raise RuntimeError(f"pixverse-swap 需要 N={len(scenes)} 张 GPT frames,当前只 {len(frames) if frames else 0} 张")
 
-    canonical_ref = frames[0]
-    log_info(f"replicate pixverse: canonical reference url={canonical_ref[:60]}(N 段共用)")
+    log_info(f"replicate pixverse: 每段独立用对应 GPT frame(GPT-2 直接出图,无后处理)")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         seg_urls = await _slice_video_by_scenes(reference_video_url, scenes, tmpdir, aspect_ratio=aspect_ratio)
 
         sem = _asyncio.Semaphore(3)
-        async def _swap_one(idx: int, seg_url: str) -> str:
+        async def _swap_one(idx: int, seg_url: str, frame_url: str) -> str:
             async with sem:
-                result = await pix.swap(video_url=seg_url, image_url=canonical_ref)
+                # frame_url 是 GPT-Image 2 出的图,直接喂 pixverse(不经 cat-vton 等后处理)
+                result = await pix.swap(video_url=seg_url, image_url=frame_url)
                 if "error" in result:
                     raise RuntimeError(f"pixverse-swap seg {idx}: {result['error']}")
                 vurl = result.get("video_url")
@@ -2187,71 +2195,18 @@ async def _gen_videos_pixverse_swap(scenes: list, frames: list, reference_video_
                 return vurl
 
         return await _asyncio.gather(*[
-            _swap_one(i, seg_urls[i]) for i in range(len(scenes))
+            _swap_one(i, seg_urls[i], frames[i]) for i in range(len(scenes))
         ])
 
 
 async def _gen_videos_catvton_pixverse(scenes: list, frames: list, product_image_url: str, reference_video_url: str, aspect_ratio: str) -> list:
-    """引擎 3:catvton-pixverse. 真复刻最优 — cat-vton 一次出 canonical_vton,N 段共用。
+    """引擎 3:catvton-pixverse(已废弃 cat-vton 中间步) — 现在等同 pixverse-swap。
     
-    流程:
-      Step 1: frames[0] 作 canonical(GPT-Image 2 base 帧:AI 模特+产品+场景)
-      Step 2: cat-vton(canonical, 用户产品图) → canonical_vton(锁产品真实细节)
-      Step 3: ffmpeg 切参考视频成 N 段(强制 720p)
-      Step 4: N 段并发 pixverse-swap(canonical_vton, 段视频)
-              所有段用同一张 canonical_vton → 模特身份+产品 100% 一致
-              动作/场景从参考视频段 → 复刻原片
+    用户铁律:图必须交给 gpt2 做,不准 cat-vton 后处理。
+    所以这条路径也直接调 _gen_videos_pixverse_swap,frames 已经是 GPT 直出图。
     
-    身份一致性:之前每段独立 cat-vton 出 N 个略不同的人 ✗ → 现在 1 张 canonical 全段共用 ✓
-    成本节省:cat-vton N 次 → 1 次,省 (N-1)×¥0.43
+    保留 engine 选项是为了兼容老的 job(用户已选 catvton-pixverse 时不报错)。
     """
-    import asyncio as _asyncio
-    import tempfile
-    from app.services.fal_service import get_vton_service, get_pixverse_swap_service
-    from app.services.logger import log_info, log_error
-
-    if not frames or not frames[0]:
-        raise RuntimeError("catvton-pixverse 需要 frames[0](Step 1A 应已出 base)")
-
-    vton = get_vton_service()
-    pix = get_pixverse_swap_service()
-    if not vton or not pix:
-        raise RuntimeError("cat-vton 或 pixverse-swap 服务未初始化")
-
-    canonical_frame = frames[0]
-    log_info(f"replicate catvton: 取 frames[0] 作 canonical url={canonical_frame[:60]}")
-
-    # Step 2: cat-vton 一次出 canonical_vton
-    vton_res = await vton.try_on(
-        human_image_url=canonical_frame,
-        garment_image_url=product_image_url,
-        cloth_type="upper",
-    )
-    canonical_vton = canonical_frame
-    if "error" not in vton_res and vton_res.get("image_url"):
-        canonical_vton = vton_res["image_url"]
-        log_info(f"replicate catvton: vton 一次 OK url={canonical_vton[:60]}")
-    else:
-        log_error(f"replicate catvton: vton 失败,canonical_frame 兜底: {vton_res.get('error','?')[:120]}")
-
-    # Step 3+4: 切段 + N 段并发 pixverse-swap(全部用 canonical_vton)
-    with tempfile.TemporaryDirectory() as tmpdir:
-        seg_urls = await _slice_video_by_scenes(reference_video_url, scenes, tmpdir, aspect_ratio=aspect_ratio)
-
-        sem = _asyncio.Semaphore(3)
-        async def _swap_one(idx: int, seg_url: str) -> str:
-            async with sem:
-                swap_res = await pix.swap(video_url=seg_url, image_url=canonical_vton)
-                if "error" in swap_res:
-                    raise RuntimeError(f"catvton-pixverse seg {idx}: {swap_res['error']}")
-                vurl = swap_res.get("video_url")
-                if not vurl:
-                    raise RuntimeError(f"catvton-pixverse seg {idx} 无 url")
-                log_info(f"replicate catvton-pix seg {idx} OK url={vurl[:60]}")
-                return vurl
-
-        return await _asyncio.gather(*[
-            _swap_one(i, seg_urls[i]) for i in range(len(seg_urls))
-        ])
+    return await _gen_videos_pixverse_swap(scenes, frames, reference_video_url, aspect_ratio)
 
 
