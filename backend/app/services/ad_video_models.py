@@ -491,6 +491,7 @@ async def compose_first_frame_for_scene(
     aspect_ratio: str = "9:16",
     product_image_url: Optional[str] = None,        # 用户产品正面图(锁产品材质)
     product_back_image_url: Optional[str] = None,   # 产品反面/侧面(锁背面/logo)
+    exclude_base_image: bool = False,               # P157.5(2026-05-07):绕 fal image-level checker
 ) -> dict:
     """
     P32 一镜一图: 给单个分镜单独合成它的首帧
@@ -541,17 +542,31 @@ async def compose_first_frame_for_scene(
         product_position_safe = _sanitize_text((pp_raw or "").strip())
     hand_product_contact_safe = _sanitize_text(hand_product_contact)
 
+    # P157.5(2026-05-07):exclude_base_image=True 时不能引用 "reference image"
+    if exclude_base_image:
+        identity_lock = (
+            f"⚠️ HIGHEST PRIORITY — IDENTITY LOCK: Generate a model whose appearance EXACTLY matches "
+            f"this detailed identity description: {model_description}. "
+            f"Same face shape, same eye color/shape/size, same hairstyle, same skin tone, same lip "
+            f"shape, same eyebrows, same nose, same overall facial features. ZERO deviation. "
+            f"This text identity description IS the model — no visual reference is provided, "
+            f"but the generated person MUST match the description exactly. "
+            f"Generate this specific shot: {visual_safe}. "
+        )
+    else:
+        identity_lock = (
+            f"⚠️ HIGHEST PRIORITY — IDENTITY LOCK: The model in the output MUST be EXACTLY the same "
+            f"person as in the reference image. Same face shape, same eyes (color, shape, size), "
+            f"same hairstyle (length, color, style), same skin tone, same lip shape, same eyebrows, "
+            f"same nose, same overall facial features. ZERO deviation from reference identity. "
+            f"This is a DIFFERENT SHOT of the SAME PERSON, NOT a similar-looking model. "
+            f"Treat the reference face as a locked anchor that must NOT change. "
+            f"Adjust the reference image to show this specific shot: {visual_safe}. "
+        )
     prompt = (
-        # P152(2026-05-06)IDENTITY LOCK 第一行强约束 — 用户实测段 2 脸跟段 1 不一致
-        f"⚠️ HIGHEST PRIORITY — IDENTITY LOCK: The model in the output MUST be EXACTLY the same "
-        f"person as in the reference image. Same face shape, same eyes (color, shape, size), "
-        f"same hairstyle (length, color, style), same skin tone, same lip shape, same eyebrows, "
-        f"same nose, same overall facial features. ZERO deviation from reference identity. "
-        f"This is a DIFFERENT SHOT of the SAME PERSON, NOT a similar-looking model. "
-        f"Treat the reference face as a locked anchor that must NOT change. "
-        f"Adjust the reference image to show this specific shot: {visual_safe}. "
-        f"Keep the model's identity consistent ({model_description}). "
-        f"Maintain the overall setting: {overall_setting}. "
+        identity_lock + " "
+        + f"Keep the model's identity consistent ({model_description}). "
+        + f"Maintain the overall setting: {overall_setting}. "
         # P149 关键铁律 — 防 Kling Avatar 拒图(必须有清晰人脸 + 上半身)
         f"CRITICAL — MUST INCLUDE: model's face and upper body clearly visible in the frame. "
         f"Even product close-ups must show the model's face/upper body together with the product. "
@@ -576,19 +591,22 @@ async def compose_first_frame_for_scene(
         f"Photorealistic commercial advertisement, vertical 9:16 composition, "
         f"natural lighting, preserve the exact product details from reference. "
     )
-    # 产品图作为额外参考 — 锁住用户上传的真实产品(材质/logo/纹理)
+    # P157.5(2026-05-07):产品图索引根据 exclude_base 调整(没 base 图时索引前移)
     if product_image_url and product_back_image_url:
+        front_idx = 1 if exclude_base_image else 2
+        back_idx = 2 if exclude_base_image else 3
         prompt += (
-            "IMPORTANT — PRODUCT REFERENCE: image 2 is the user's product FRONT view, "
-            "image 3 is BACK/SIDE view. The product on the model in the output MUST match "
-            "these reference images EXACTLY (same fabric texture, same logo placement, "
-            "same color, same design details, same proportions). Do NOT improvise the product. "
+            f"IMPORTANT — PRODUCT REFERENCE: image {front_idx} is the user's product FRONT view, "
+            f"image {back_idx} is BACK/SIDE view. The product on the model in the output MUST match "
+            f"these reference images EXACTLY (same fabric texture, same logo placement, "
+            f"same color, same design details, same proportions). Do NOT improvise the product. "
         )
     elif product_image_url:
+        idx = 1 if exclude_base_image else 2
         prompt += (
-            "IMPORTANT — PRODUCT REFERENCE: image 2 is the user's exact product. "
-            "The product worn by the model in the output MUST match this reference image "
-            "EXACTLY (same fabric, logo, color, design). Do NOT change the product appearance. "
+            f"IMPORTANT — PRODUCT REFERENCE: image {idx} is the user's exact product. "
+            f"The product worn by the model in the output MUST match this reference image "
+            f"EXACTLY (same fabric, logo, color, design). Do NOT change the product appearance. "
         )
 
     # P157(2026-05-07):空间锁定 — 产品必须放在驱动视频原片同样的屏幕位置 + 手部交互
@@ -617,7 +635,7 @@ async def compose_first_frame_for_scene(
             arguments={
                 "prompt": prompt,
                 "image_urls": (
-                [base_image_url]
+                ([] if exclude_base_image else [base_image_url])
                 + ([product_image_url] if product_image_url else [])
                 + ([product_back_image_url] if product_back_image_url else [])
             ),

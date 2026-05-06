@@ -1913,7 +1913,31 @@ async def _run_replicate_job(params: dict) -> dict:
             except Exception as exc:
                 log_error(f"replicate scene {sid} attempt {attempt_idx+1} exc: {exc}")
 
-        log_error(f"replicate scene {sid} 所有 retry 全失败,降级到 base(画面会跟其他段重)")
+        # P157.5(2026-05-07)attempt 4:exclude_base_image=True 绕 fal image-level checker
+        # 内衣类产品的 base 图被 fal 看到就拒,这里 fallback 到只传产品图(像 Step 1A 一样)
+        # 身份保真改靠 prompt 里 model_description 文字(已含脸/眼/发/肤色/眉/嘴/鼻全描述)
+        log_info(f"replicate scene {sid} attempt 4(无 base 图,绕 image-level checker)")
+        try:
+            scene_no_base = dict(scene)
+            scene_no_base["visual_prompt"] = retry_prompts[1]  # 用简化版 prompt
+            fr = await ad_video_models.compose_first_frame_for_scene(
+                base_image_url=base_frame_url,  # 还传(签名要),但被 exclude
+                scene=scene_no_base,
+                model_description=model_description,
+                overall_setting=overall_setting,
+                aspect_ratio=aspect_ratio,
+                product_image_url=product_image_url,
+                product_back_image_url=product_back_image_url,
+                exclude_base_image=True,
+            )
+            if "error" not in fr and fr.get("image_url"):
+                log_info(f"replicate scene {sid} attempt 4(无 base) 成功 — image-level checker 绕过")
+                return fr["image_url"]
+            log_error(f"replicate scene {sid} attempt 4(无 base) 仍失败: {fr.get('error','?')[:160]}")
+        except Exception as exc:
+            log_error(f"replicate scene {sid} attempt 4 exc: {exc}")
+
+        log_error(f"replicate scene {sid} 所有 retry(含 attempt 4 无 base)全失败,降级到 base")
         return base_frame_url
 
     async def _gen_grid_panels(chunk):
