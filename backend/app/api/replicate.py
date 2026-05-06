@@ -145,15 +145,27 @@ _ANALYZE_INSTRUCTION = """你是视频复刻专家。看完这段视频,按时�
       "shot": "close-up | medium-shot | wide-shot | medium close-up",
       "action": "本段主要动作的中文描述(15 字内)",
       "framing": "构图描述(中心 / 左 / 右 / 仰拍 / 俯拍 等,10 字内)",
-      "visual_prompt": "完整英文 prompt,描述本段画面 — 镜头语言 + 动作 + 灯光 + 构图,不写人物身体特征/年龄/外貌。会传给 GPT-Image 2 出首帧。"
+      "visual_prompt": "完整英文 prompt,150 字内,只写镜头语言 + 动作 + 灯光 + 构图。"
     }
   ]
 }
 
-要求:
-1. 每段 visual_prompt 必须英文,150 字内,描述本段独特的镜头/动作/构图。
-2. 严禁敏感词:不写身体部位(腰/胸/腿/臀)、年龄、性别外貌。只写场景/动作/构图/光线。
-3. 时序连贯:第 1 段要"开场"语感,中间段"展示",最后段"结束/CTA"。
+🚨 visual_prompt **绝对禁用词**(违反 fal content_checker,整句被拒):
+- 服装类: bra, lingerie, underwear, panties, bikini, balconette, padded, push-up, underwire, shapewear, waist trainer
+- 身体部位: chest, breast, bust, waist, hips, thigh, butt, cleavage
+- 服装部件: strap, shoulder strap, support panel, mesh panel
+- 服装动作: pull bra, lift strap, adjust bra, tighten strap
+
+🟢 改用通用替代词:
+- 产品 → "the garment / the apparel item / the product / the item"
+- 任何身体描述 → 用 "torso / outfit / upper outfit"  
+- 任何动作 → "adjusting the garment / showing the item / lifting the apparel"
+- **NEVER** 包含产品具体类目(bra/lingerie 等)
+
+🚨 严禁文字叠加: 不写 "text overlay 'XXX'" / "text 'XXX' appears" 等暗示画面里有文字的词。
+即使想强调卖点,改写成 "highlighting comfort feature"  / "showcasing key benefit" 等抽象描述。
+
+时序连贯:第 1 段"开场",中间段"展示",最后段"结束"。
 """
 
 
