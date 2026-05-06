@@ -1880,13 +1880,7 @@ async def _run_replicate_job(params: dict) -> dict:
             _sc["visual_prompt"] = _sanitize_for_gpt2(_sc["visual_prompt"])
     log_info(f"replicate visual_prompts sanitized N={len(scenes)}")
 
-    # ---- P161(2026-05-07):pixverse-swap 引擎跳 Step 1B(方案 B 不需要 per-scene GPT)----
-    _engine_skip_check = params.get("engine") or "pixverse-swap"
-    if _engine_skip_check == "pixverse-swap":
-        log_info(f"replicate engine={_engine_skip_check} → 跳 Step 1B(方案 B,只用 base 帧),省 ¥{0.30 * len(scenes):.2f}")
-        frames = [base_frame_url] * len(scenes)
-
-    # ---- Step 1B:用几宫格策略出剩余段首帧(其他引擎仍走)----
+    # ---- Step 1B:用几宫格策略出剩余段首帧 ----
     # 1 张几宫格 GPT-Image 2 调用最多出 4 段(2/3/4 panel),N>5 分多次 grid;
     # 同一 grid 内的 panels 天然身份一致(同一张图);跨 grid 靠 base + 身份描述锁
     async def _gen_single_scene(scene):
@@ -2021,10 +2015,7 @@ async def _run_replicate_job(params: dict) -> dict:
         # 最终降级:逐段单出(单出自身有 3 段 retry)
         return await _asyncio.gather(*[_gen_single_scene(sc) for sc in chunk])
 
-    # P161:只有非 pixverse-swap 引擎才跑 Step 1B(per-scene GPT)
-    if _engine_skip_check == "pixverse-swap":
-        pass  # frames 已在前面赋值 [base_frame_url] * N
-    elif len(scenes) == 1:
+    if len(scenes) == 1:
         frames = [base_frame_url]
     else:
         # scene 0 = base; scenes[1:] 按 4 个一组分块走 grid
