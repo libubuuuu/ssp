@@ -19,7 +19,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "xiaoLi ai",
-  description: "图片生成 | 视频生成 | 数字人 | 语音克隆",
+  description: "图片生成 | 视频生成",
 };
 
 export default function RootLayout({

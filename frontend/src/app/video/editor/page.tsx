@@ -20,11 +20,6 @@ export default function VideoEditorPage() {
               视频(图生视频 / 视频元素替换 / 视频翻拍)
             </Link>
           </li>
-          <li>
-            <Link href="/avatar" className="text-amber-400 hover:underline">
-              数字人(图片 + 音频)
-            </Link>
-          </li>
         </ul>
       </div>
     </div>

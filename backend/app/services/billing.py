@@ -24,13 +24,6 @@ PRICING: Dict[str, int] = {
     "video/editor/regenerate": 10,
     "video/editor/compose": 15,
 
-    # 数字人
-    "avatar/generate": 10,
-
-    # 语音
-    "voice/clone": 5,
-    "voice/tts": 2,
-
     # AI 带货视频(2026-04-28 v3 新增)
     # analyze: VLM 视觉调用(qwen3-vl 235B via fal openrouter),成本约 $0.02 → 1 积分
     # preview: Nano Banana 单图,成本约 $0.04 → 2 积分
