@@ -1744,6 +1744,20 @@ async def _run_replicate_job(params: dict) -> dict:
     overall_setting = params.get("overall_setting") or ""
     model_description = params.get("model_description") or "A professional commercial model"
 
+    # ---- Step 0:把所有要喂阿里云 wan2.7 的 URL 归档到本地 /uploads(防跨境下载超时)----
+    # qwen-vl / wan2.7 都是阿里云国内服务,fal 在美国 → 跨境下载常 121s 超时(实测)
+    # archive_url 把 fal URL 拉到本地,返回 ailixiao.com 国内 URL
+    from app.services.media_archiver import archive_url as _archive
+    _uid = params.get("_user_id") or "anon"
+    _orig_video = reference_video_url
+    _orig_front = product_image_url
+    _orig_back = product_back_image_url
+    reference_video_url = await _archive(_orig_video, _uid, "video")
+    product_image_url = await _archive(_orig_front, _uid, "image")
+    if _orig_back:
+        product_back_image_url = await _archive(_orig_back, _uid, "image")
+    log_info(f"replicate Step 0 归档完: video {len(_orig_video)}->{len(reference_video_url)}, front_img, back_img")
+
     # ---- Step 1A:scene 1 用 compose_first_frame 出 base(GPT-2 自己想模特 + 产品正反面) ----
     # 这一步给后续段提供"模特身份锚点",防止每段 GPT-2 出不同的人
     log_info(f"replicate Step 1A:base 首帧(产品正反面 → GPT-2 自动出模特) ratio={aspect_ratio}")
