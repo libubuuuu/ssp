@@ -257,7 +257,7 @@ export default function AdVideoPage() {
         setBgImageUrl(bUrl);
       }
 
-      setLoadingMsg("Seedance 直出视频中...");
+      setLoadingMsg("视频生成中...");
       const r = await fetch(`${API_BASE}/api/ad-video/generate`, {
         method: "POST",
         headers: {
@@ -401,7 +401,7 @@ export default function AdVideoPage() {
             <span style={{ fontStyle: "italic" }}> 视频</span>
           </h1>
           <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
-            上传白底产品图 · 小九自动审核与撰稿 · Seedance 2.0 生成口播视频
+            上传白底产品图 · AI 自动审核与撰稿 · 一键生成口播带货视频
           </div>
         </div>
 
@@ -455,18 +455,18 @@ export default function AdVideoPage() {
                   cursor: "pointer",
                 }}
               >
-                <option value={5}>5 秒(单镜)</option>
-                <option value={8}>8 秒(单镜)</option>
-                <option value={10}>10 秒(单镜)</option>
-                <option value={12}>12 秒(单镜,Seedance 单段上限)</option>
-                <option value={30}>30 秒(3 段拼接)</option>
-                <option value={60}>60 秒(6 段拼接)</option>
-                <option value={120}>120 秒(12 段拼接)</option>
-                <option value={180}>180 秒(18 段拼接)</option>
-                <option value={300}>300 秒(30 段拼接,5 分钟)</option>
+                <option value={5}>5 秒(1 个分镜)</option>
+                <option value={8}>8 秒(1 个分镜)</option>
+                <option value={10}>10 秒(1 个分镜)</option>
+                <option value={12}>12 秒(1 个分镜)</option>
+                <option value={30}>30 秒(3 个分镜)</option>
+                <option value={60}>60 秒(6 个分镜)</option>
+                <option value={120}>120 秒(12 个分镜)</option>
+                <option value={180}>180 秒(18 个分镜)</option>
+                <option value={300}>300 秒(30 个分镜,共 5 分钟)</option>
               </select>
               <div style={{ fontSize: "0.8rem", color: "#888", marginTop: 6 }}>
-                超过 15 秒会自动拆段并发生成,每段独立首帧 + 独立视频,最后拼接
+                超过 15 秒会自动按分镜分段生成,最后无缝拼接
               </div>
             </div>
             {/* P100: 国内 / 海外 region 选择 */}
@@ -510,12 +510,11 @@ export default function AdVideoPage() {
                   color: "#444",
                 }}
               >
-                快手 Kling AI Avatar v2 Standard($0.0562/秒)
+                AI 数字人口播 · 模特口型自动同步
               </div>
               <div style={{ fontSize: "0.8rem", color: "#888", marginTop: 6 }}>
-                单步出片:GPT-Image 2 合成首帧(模特+产品+背景)+ ElevenLabs TTS audio → Kling Avatar 嘴对口型说话视频,0 拼接 0 生硬。
+                自动合成「模特 + 产品 + 场景」首帧,配 AI 配音生成口型同步视频,无生硬拼接。
                 <br />
-                参考价:5s ≈ $0.32 / 8s ≈ $0.49 / 12s ≈ $0.71(整套含 GPT-Image + TTS + Kling)
               </div>
             </div>
             <PrimaryButton onClick={callAnalyze} disabled={!productFile} marginTop>
@@ -575,7 +574,7 @@ export default function AdVideoPage() {
               <div style={{ background: "#fff", padding: "3rem", borderRadius: 12, textAlign: "center" }}>
                 <div style={{ fontSize: "0.9rem", color: "#666" }}>{jobProgress || "排队中..."}</div>
                 <div style={{ fontSize: "0.75rem", color: "#999", marginTop: 8 }}>
-                  Seedance 2.0 一般需要 1-3 分钟,可关闭页面去做别的事,任务在后台跑
+                  视频生成一般需要 1-3 分钟,可关闭页面去做别的事,任务在后台跑
                 </div>
               </div>
             )}
@@ -588,7 +587,7 @@ export default function AdVideoPage() {
             {videoUrl && (gridImageUrl || panelImageUrls.length > 0) && (
               <div style={{ background: "#fff", padding: "1.5rem", borderRadius: 12, marginTop: 12 }}>
                 <div style={{ fontSize: "0.95rem", fontWeight: 500, color: "#333", marginBottom: 12 }}>
-                  分镜图(GPT-Image 2 出的几宫格 + 裁切后每段用的画面)
+                  分镜图(每个分镜用到的画面)
                 </div>
                 <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
                   {gridImageUrl && (
