@@ -2044,6 +2044,9 @@ async def _run_replicate_job(params: dict) -> dict:
         seg_urls = await _gen_videos_kling_i2v(scenes, frames, aspect_ratio)
     elif engine == "pixverse-swap":
         seg_urls = await _gen_videos_pixverse_swap(scenes, frames, reference_video_url, aspect_ratio)
+    elif engine == "pixverse-2step":
+        # P163(2026-05-07):方案 B — 2 步 swap(适合手持物体类产品)
+        seg_urls = await _gen_videos_pixverse_2step(scenes, frames, reference_video_url, aspect_ratio, product_image_url=product_image_url)
     elif engine == "catvton-pixverse":
         seg_urls = await _gen_videos_catvton_pixverse(scenes, frames, product_image_url, reference_video_url, aspect_ratio)
     else:
@@ -2234,6 +2237,65 @@ async def _gen_videos_pixverse_swap(scenes: list, frames: list, reference_video_
 
         return await _asyncio.gather(*[
             _swap_one(i, seg_urls[i], frames[i]) for i in range(len(scenes))
+        ])
+
+
+async def _gen_videos_pixverse_2step(scenes: list, frames: list, reference_video_url: str, aspect_ratio: str, product_image_url: str = None) -> list:
+    """方案 B(P163 2026-05-07):pixverse 2 步 swap — object 后 person。
+    
+    适合:**手持/独立物体类产品**(手机/包/水杯/化妆品/装饰品等)
+    不适合:穿戴类(衣服/塑身衣/胸罩)— pixverse object 模式无法生成 mask
+    
+    Step A: pixverse-swap(driving, product_image, mode="object")
+            → 替换驱动视频中的产品 → 用户产品(位置和手贴合关系全保留)
+    Step B: pixverse-swap(stepA, frame, mode="person")
+            → 替换人 → 用户模特(产品位置不变)
+    
+    成本:¥2.80/段(2 次 pixverse 调用)
+    """
+    import asyncio as _asyncio
+    import tempfile
+    from app.services.fal_service import get_pixverse_swap_service
+    from app.services.logger import log_info, log_error
+
+    pix = get_pixverse_swap_service()
+    if not pix:
+        raise RuntimeError("pixverse-swap 服务未初始化")
+    if not frames or not frames[0]:
+        raise RuntimeError("pixverse-2step 需要 frames[0](base 帧)作 person 替换 reference")
+    if not product_image_url:
+        raise RuntimeError("pixverse-2step 需要 product_image_url 作 object 替换 reference")
+
+    log_info(f"replicate pixverse 2-step: object swap → person swap(N={len(scenes)} 段)")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        seg_urls = await _slice_video_by_scenes(reference_video_url, scenes, tmpdir, aspect_ratio=aspect_ratio)
+
+        sem = _asyncio.Semaphore(3)
+        async def _two_step_swap(idx: int, seg_url: str, person_ref: str) -> str:
+            async with sem:
+                # Step A: object swap
+                log_info(f"replicate pixverse seg {idx} Step A(object swap)…")
+                step_a = await pix.swap(video_url=seg_url, image_url=product_image_url, mode="object")
+                if "error" in step_a:
+                    raise RuntimeError(f"pixverse seg {idx} Step A object: {step_a['error']}")
+                step_a_url = step_a.get("video_url")
+                if not step_a_url:
+                    raise RuntimeError(f"pixverse seg {idx} Step A 无 url")
+                log_info(f"replicate pixverse seg {idx} Step A OK url={step_a_url[:60]}")
+                # Step B: person swap
+                log_info(f"replicate pixverse seg {idx} Step B(person swap)…")
+                step_b = await pix.swap(video_url=step_a_url, image_url=person_ref, mode="person")
+                if "error" in step_b:
+                    raise RuntimeError(f"pixverse seg {idx} Step B person: {step_b['error']}")
+                step_b_url = step_b.get("video_url")
+                if not step_b_url:
+                    raise RuntimeError(f"pixverse seg {idx} Step B 无 url")
+                log_info(f"replicate pixverse seg {idx} 2-step OK final={step_b_url[:60]}")
+                return step_b_url
+
+        return await _asyncio.gather(*[
+            _two_step_swap(i, seg_urls[i], frames[min(i, len(frames)-1)]) for i in range(len(scenes))
         ])
 
 

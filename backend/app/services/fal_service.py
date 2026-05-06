@@ -1064,14 +1064,20 @@ class FalPixverseSwapService:
     def __init__(self, fal_key: str):
         self.fal_key = fal_key
 
-    async def swap(self, video_url: str, image_url: str) -> dict:
+    async def swap(self, video_url: str, image_url: str, mode: str = "person") -> dict:
+        """P163(2026-05-07):mode 参数支持
+          - person(默认):替换人(脸/身/衣),保留物体/背景/动作
+          - object:替换 key 物体(产品/道具/手机/包),保留人/动作/背景
+          - background:替换背景,保留人/物
+        注意:object 模式不支持穿戴类(衣服/塑身衣) — 报 'Could not generate mask'
+        """
         cb = get_circuit_breaker()
         if not cb.is_available("pixverse-swap"):
             return {"error": "模型 pixverse-swap 已熔断"}
+        if mode not in ("person", "object", "background"):
+            return {"error": f"invalid mode={mode}"}
         try:
-            # P159(2026-05-07):显式 mode=person — fal 默认就是这个,写清楚防默认改变
-            # mode 选项:person(替换人,保留物体/背景/动作)/ object(替换产品)/ background
-            args = {"video_url": video_url, "image_url": image_url, "mode": "person"}
+            args = {"video_url": video_url, "image_url": image_url, "mode": mode}
             result = await fal_client.run_async(self.ENDPOINT, arguments=args)
             await cb.record_success("pixverse-swap")
             video_obj = result.get("video") if isinstance(result, dict) else None

@@ -25,8 +25,9 @@ const ASPECT_OPTIONS = [
 ];
 
 const ENGINE_OPTIONS = [
-  { value: "pixverse-swap",     label: "Pixverse Swap ⭐推荐", desc: "¥1.4/5s · GPT-Image 2 直接出图 · 100% 复刻参考视频动作 · 真复刻最佳", color: "#0d8a3e" },
-  { value: "kling-3-pro-i2v",   label: "Kling 3 Pro i2v",     desc: "¥2.5/5s · GPT-Image 2 直接出图 · 不复刻动作 · AI 自由生成动作" },
+  { value: "pixverse-swap",     label: "Pixverse Swap(单步)⭐穿戴类首选", desc: "¥1.4/5s · 单步替换人 · 适合衣服/塑身衣/胸罩 · 凭空触碰可能存在", color: "#0d8a3e" },
+  { value: "pixverse-2step",    label: "Pixverse 2-Step(双步)🎯手持类首选", desc: "¥2.8/5s · 先换产品后换人 · 适合手机/包/水杯/化妆品 · 手物 100% 贴合", color: "#1d4ed8" },
+  { value: "kling-3-pro-i2v",   label: "Kling 3 Pro i2v",     desc: "¥2.5/5s · GPT 出图 · 不复刻动作 · AI 自由生成", color: "#888" },
 ];
 
 function token() {
