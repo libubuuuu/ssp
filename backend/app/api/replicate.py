@@ -70,7 +70,7 @@ class GenerateRequest(BaseModel):
     reference_video_url: str                        # 复刻参考视频(传给 wan2.7 当 driving)
     script: ReplicateScript
     aspect_ratio: str = "9:16"
-    engine: str = "aliyun-wan2.7-r2v"
+    engine: str = "pixverse-swap"  # 默认推荐(¥1.4/5s)
 
 
 # ================= 端点 1:上传视频 =================
@@ -275,8 +275,9 @@ async def generate(
 
     if not req.script.scenes:
         raise HTTPException(400, "至少 1 段")
-    if req.engine != "aliyun-wan2.7-r2v":
-        raise HTTPException(400, f"engine 暂只支持 aliyun-wan2.7-r2v(收到 {req.engine})")
+    _ALLOWED_ENGINES = ("kling-3-pro-i2v", "pixverse-swap", "catvton-pixverse")
+    if req.engine not in _ALLOWED_ENGINES:
+        raise HTTPException(400, f"engine 必须是 {_ALLOWED_ENGINES} 之一(收到 {req.engine})")
 
     user_id = current_user.get("id") or current_user.get("email", "unknown")
     user_id_str = str(user_id)

@@ -1937,63 +1937,18 @@ async def _run_replicate_job(params: dict) -> dict:
         frames = [base_frame_url] + rest_frames
         log_info(f"replicate Step 1B 完成 N={len(scenes)} frames={len(frames)}")
 
-    # ---- Step 2:每段 aliyun-wan2.7-r2v ----
-    aliyun = get_aliyun_wan_service()
-    if not aliyun or not aliyun.is_available():
-        raise RuntimeError("aliyun-wan2.7-r2v 不可用(DASHSCOPE_API_KEY 未配置)")
-
-    async def _gen_seg(idx: int, scene: dict, frame_url: str) -> str:
-        ref_imgs = []
-        if frame_url:
-            ref_imgs.append(frame_url)
-        if product_image_url and product_image_url not in ref_imgs:
-            ref_imgs.append(product_image_url)
-        if product_back_image_url and product_back_image_url not in ref_imgs:
-            ref_imgs.append(product_back_image_url)
-        prompt = scene.get("visual_prompt") or "Cinematic product showcase, soft natural lighting"
-        duration = max(2, min(15, int(round(scene.get("duration_sec", 5)))))
-        submit = await aliyun.wan27_r2v_submit(
-            reference_image_url=ref_imgs[0] if ref_imgs else "",
-            reference_image_urls=ref_imgs,
-            reference_video_url=reference_video_url,
-            prompt=prompt,
-            duration=duration,
-            resolution="720P",
-            ratio=aspect_ratio,
-        )
-        if "error" in submit:
-            err = submit['error']
-            if "FreeTierOnly" in err or "免费配额" in err or "exhaust" in err.lower():
-                hint = (
-                    "阿里云通义万相 wan2.7-r2v 免费配额已用完。"
-                    "请到 https://dashscope.console.aliyun.com/ 控制台关闭"
-                    "「仅用免费配额」开关后重试(付费约 ¥0.5/秒)。"
-                )
-                raise RuntimeError(f"{hint} 原始错误: {err[:160]}")
-            raise RuntimeError(f"seg {idx} submit: {err}")
-        task_id = submit["task_id"]
-        # poll 上限 90 次 × 10s = 15 分钟
-        for _attempt in range(90):
-            await _asyncio.sleep(10)
-            pr = await aliyun.poll_task(task_id)
-            status = pr.get("status")
-            if status == "SUCCEEDED":
-                vurl = pr.get("video_url")
-                if not vurl:
-                    raise RuntimeError(f"seg {idx} succeeded but no url")
-                log_info(f"replicate seg {idx} OK url={vurl[:60]}")
-                return vurl
-            if status == "FAILED":
-                raise RuntimeError(f"seg {idx} failed: {pr.get('error','?')}")
-        raise RuntimeError(f"seg {idx} 超时(15min)")
-
-    sem_seg = _asyncio.Semaphore(3)
-    async def _gen_seg_sem(idx, scene, fu):
-        async with sem_seg:
-            return await _gen_seg(idx, scene, fu)
-    seg_urls = await _asyncio.gather(*[
-        _gen_seg_sem(i, s, frames[i]) for i, s in enumerate(scenes)
-    ])
+    # ---- Step 2:按 engine 分发到不同视频生成路径 ----
+    engine = params.get("engine") or "pixverse-swap"
+    log_info(f"replicate Step 2 engine={engine}")
+    if engine == "kling-3-pro-i2v":
+        seg_urls = await _gen_videos_kling_i2v(scenes, frames, aspect_ratio)
+    elif engine == "pixverse-swap":
+        seg_urls = await _gen_videos_pixverse_swap(scenes, frames, reference_video_url, aspect_ratio)
+    elif engine == "catvton-pixverse":
+        seg_urls = await _gen_videos_catvton_pixverse(scenes, frames, product_image_url, reference_video_url, aspect_ratio)
+    else:
+        raise RuntimeError(f"unknown engine: {engine}")
+    log_info(f"replicate Step 2 完成 engine={engine} N={len(seg_urls)}")
 
     # ---- Step 3:下载所有段 + ffmpeg concat ----
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -2030,3 +1985,167 @@ async def _run_replicate_job(params: dict) -> dict:
         "type": "video/replicate",
         "description": f"视频复刻 · {len(scenes)} 段 · {total_dur}s",
     }
+
+
+# ==================== 3 个引擎的视频段生成 helper(2026-05-07)====================
+
+async def _slice_video_by_scenes(reference_video_url: str, scenes: list, tmpdir: str) -> list:
+    """ffmpeg 按 scene time_range 切参考视频成 N 段,上传 fal storage,返 fal URL 列表。
+    pixverse-swap / catvton-pixverse 都用这个切段。"""
+    import asyncio as _asyncio
+    import subprocess
+    import os
+    import httpx
+    from app.services.fal_service import fal_upload_with_retry
+    from app.services.logger import log_info, log_error
+
+    # 1. 下载参考视频到 tmpdir
+    local_path = os.path.join(tmpdir, "ref.mp4")
+    async with httpx.AsyncClient(timeout=300) as cli:
+        async with cli.stream("GET", reference_video_url) as r:
+            with open(local_path, "wb") as f:
+                async for chunk in r.aiter_bytes(64 * 1024):
+                    f.write(chunk)
+    log_info(f"slice_video: 下载 ref 到 {local_path}")
+
+    # 2. 按 scene 切段
+    seg_paths = []
+    for sc in scenes:
+        tr = sc.get("time_range") or "0-5s"
+        try:
+            parts = tr.replace("s", "").strip().split("-")
+            start = float(parts[0])
+            end = float(parts[1])
+            dur = max(2.0, end - start)
+        except Exception:
+            start, dur = 0.0, float(sc.get("duration_sec", 5))
+        sid = sc.get("id", len(seg_paths))
+        seg_path = os.path.join(tmpdir, f"seg_{sid}.mp4")
+        cp = subprocess.run(
+            ["ffmpeg", "-y", "-ss", str(start), "-i", local_path, "-t", str(dur),
+             "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", seg_path],
+            capture_output=True,
+        )
+        if cp.returncode != 0 or not os.path.exists(seg_path):
+            raise RuntimeError(f"ffmpeg slice scene {sid} failed: {cp.stderr.decode()[:200]}")
+        seg_paths.append(seg_path)
+    log_info(f"slice_video: 切完 {len(seg_paths)} 段")
+
+    # 3. 并发上传 fal storage
+    seg_fal_urls = await _asyncio.gather(*[fal_upload_with_retry(p) for p in seg_paths])
+    log_info(f"slice_video: 上传 fal 完成")
+    return seg_fal_urls
+
+
+async def _gen_videos_kling_i2v(scenes: list, frames: list, aspect_ratio: str) -> list:
+    """引擎 1:kling-3-pro-i2v(¥2.5/5s,纯图生视频不要 driving)"""
+    import asyncio as _asyncio
+    import fal_client
+    from app.services.logger import log_info, log_error
+
+    sem = _asyncio.Semaphore(3)
+    async def _one(idx: int, scene: dict, frame_url: str) -> str:
+        async with sem:
+            duration = max(5, min(10, int(round(scene.get("duration_sec", 5)))))
+            prompt = scene.get("visual_prompt") or "Cinematic product showcase"
+            try:
+                result = await fal_client.run_async(
+                    "fal-ai/kling-video/v3/pro/image-to-video",
+                    arguments={
+                        "image_url": frame_url,
+                        "prompt": prompt,
+                        "duration": str(duration),
+                        "aspect_ratio": aspect_ratio,
+                    },
+                )
+                video = result.get("video") if isinstance(result, dict) else None
+                vurl = video.get("url") if isinstance(video, dict) else None
+                if not vurl:
+                    vurl = result.get("video_url") if isinstance(result, dict) else None
+                if not vurl:
+                    raise RuntimeError(f"kling-3-pro-i2v seg {idx} 未返 video URL")
+                log_info(f"replicate kling-i2v seg {idx} OK url={vurl[:60]}")
+                return vurl
+            except Exception as e:
+                raise RuntimeError(f"kling-3-pro-i2v seg {idx} 失败: {str(e)[:200]}")
+
+    return await _asyncio.gather(*[
+        _one(i, scenes[i], frames[i]) for i in range(len(scenes))
+    ])
+
+
+async def _gen_videos_pixverse_swap(scenes: list, frames: list, reference_video_url: str, aspect_ratio: str) -> list:
+    """引擎 2:pixverse-swap(¥1.4/5s,需要 driving 视频段)"""
+    import asyncio as _asyncio
+    import tempfile
+    from app.services.fal_service import get_pixverse_swap_service
+    from app.services.logger import log_info, log_error
+
+    pix = get_pixverse_swap_service()
+    if not pix:
+        raise RuntimeError("pixverse-swap 服务未初始化")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        seg_urls = await _slice_video_by_scenes(reference_video_url, scenes, tmpdir)
+
+        sem = _asyncio.Semaphore(3)
+        async def _swap_one(idx: int, seg_url: str, frame_url: str) -> str:
+            async with sem:
+                result = await pix.swap(video_url=seg_url, image_url=frame_url)
+                if "error" in result:
+                    raise RuntimeError(f"pixverse-swap seg {idx}: {result['error']}")
+                vurl = result.get("video_url")
+                if not vurl:
+                    raise RuntimeError(f"pixverse-swap seg {idx} 未返 url")
+                log_info(f"replicate pixverse seg {idx} OK url={vurl[:60]}")
+                return vurl
+
+        return await _asyncio.gather(*[
+            _swap_one(i, seg_urls[i], frames[i]) for i in range(len(scenes))
+        ])
+
+
+async def _gen_videos_catvton_pixverse(scenes: list, frames: list, product_image_url: str, reference_video_url: str, aspect_ratio: str) -> list:
+    """引擎 3:catvton-pixverse(¥1.83/5s,先 cat-vton 出 vton 图,再 pixverse-swap)"""
+    import asyncio as _asyncio
+    import tempfile
+    from app.services.fal_service import get_vton_service, get_pixverse_swap_service
+    from app.services.logger import log_info, log_error
+
+    vton = get_vton_service()
+    pix = get_pixverse_swap_service()
+    if not vton or not pix:
+        raise RuntimeError("cat-vton 或 pixverse-swap 服务未初始化")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        seg_urls = await _slice_video_by_scenes(reference_video_url, scenes, tmpdir)
+
+        sem = _asyncio.Semaphore(3)
+        async def _process(idx: int, seg_url: str, frame_url: str) -> str:
+            async with sem:
+                # Step A: cat-vton(frame + product 图)→ vton 图
+                vton_res = await vton.try_on(
+                    human_image_url=frame_url,
+                    garment_image_url=product_image_url,
+                    cloth_type="upper",
+                )
+                vton_image = frame_url  # fallback
+                if "error" not in vton_res and vton_res.get("image_url"):
+                    vton_image = vton_res["image_url"]
+                    log_info(f"replicate catvton seg {idx} vton OK")
+                else:
+                    log_error(f"replicate catvton seg {idx} vton 失败 fallback frame: {vton_res.get('error','?')}")
+
+                # Step B: pixverse-swap(vton 图 + driving 段)
+                swap_res = await pix.swap(video_url=seg_url, image_url=vton_image)
+                if "error" in swap_res:
+                    raise RuntimeError(f"catvton-pixverse seg {idx} swap: {swap_res['error']}")
+                vurl = swap_res.get("video_url")
+                if not vurl:
+                    raise RuntimeError(f"catvton-pixverse seg {idx} 无 url")
+                log_info(f"replicate catvton-pixverse seg {idx} OK url={vurl[:60]}")
+                return vurl
+
+        return await _asyncio.gather(*[
+            _process(i, seg_urls[i], frames[i]) for i in range(len(scenes))
+        ])

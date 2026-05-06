@@ -24,6 +24,12 @@ const ASPECT_OPTIONS = [
   { value: "1:1", label: "1:1 正方" },
 ];
 
+const ENGINE_OPTIONS = [
+  { value: "pixverse-swap",     label: "Pixverse Swap",     desc: "¥1.4/5s · 复刻参考视频动作 · 推荐", color: "#0d8a3e" },
+  { value: "catvton-pixverse",  label: "CatVTON + Pixverse", desc: "¥1.83/5s · 先穿衣再 swap · 产品保真高" },
+  { value: "kling-3-pro-i2v",   label: "Kling 3 Pro i2v",    desc: "¥2.5/5s · 不复刻动作 · AI 自由生成" },
+];
+
 function token() {
   if (typeof window === "undefined") return "";
   return localStorage.getItem("token") || "";
@@ -43,6 +49,7 @@ export default function ReplicatePage() {
   const [scenes, setScenes] = useState<Scene[] | null>(null);
   const [detectedRatio, setDetectedRatio] = useState<string>("9:16");
   const [chosenRatio, setChosenRatio] = useState<string>("auto");
+  const [chosenEngine, setChosenEngine] = useState<string>("pixverse-swap");
 
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState("");
@@ -163,7 +170,7 @@ export default function ReplicatePage() {
           reference_video_url: videoUrl,
           script: { scenes, overall_setting: "", model_description: "A professional commercial model" },
           aspect_ratio: ratio,
-          engine: "aliyun-wan2.7-r2v",
+          engine: chosenEngine,
         }),
       });
       if (!r.ok) throw new Error(await r.text());
@@ -275,7 +282,25 @@ export default function ReplicatePage() {
               </div>
             </Box>
 
-            <Box label={`⑤ AI 拆出 ${scenes.length} 个分镜(可微调每段 prompt)`}>
+            <Box label="⑤ 视频生成引擎">
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {ENGINE_OPTIONS.map(o => (
+                  <label key={o.value} style={{
+                    padding: "0.7rem 0.9rem",
+                    border: chosenEngine === o.value ? "2px solid #0d0d0d" : "1px solid #ddd",
+                    background: chosenEngine === o.value ? "#f9f7f2" : "#fff",
+                    borderRadius: 10, cursor: "pointer",
+                  }}>
+                    <input type="radio" name="engine" value={o.value} checked={chosenEngine === o.value}
+                      onChange={() => setChosenEngine(o.value)} style={{ marginRight: 8 }} />
+                    <strong style={{ color: o.color || "#0d0d0d" }}>{o.label}</strong>
+                    <div style={{ fontSize: "0.78rem", color: "#666", marginTop: 4 }}>{o.desc}</div>
+                  </label>
+                ))}
+              </div>
+            </Box>
+
+            <Box label={`⑥ AI 拆出 ${scenes.length} 个分镜(可微调每段 prompt)`}>
               {scenes.map((sc, idx) => (
                 <div key={sc.id} style={{ borderTop: idx > 0 ? "1px solid #eee" : "none", paddingTop: idx > 0 ? "0.8rem" : 0, marginTop: idx > 0 ? "0.8rem" : 0 }}>
                   <div style={{ fontSize: "0.85rem", fontWeight: 500, marginBottom: 6 }}>
@@ -300,7 +325,7 @@ export default function ReplicatePage() {
         )}
 
         {jobId && (
-          <Box label={`⑥ 任务状态:${jobStatus}`}>
+          <Box label={`⑦ 任务状态:${jobStatus}`}>
             {jobStatus !== "completed" && (
               <div style={{ color: "#666", fontSize: "0.85rem" }}>
                 {loadingMsg || "后台生成中,可关闭页面去做别的,任务在后台跑..."}
