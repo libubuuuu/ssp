@@ -9,8 +9,6 @@ const FEATURE_KEYS = [
   { key:"image", i18nKey:"image", icon:"◧", color:"#f0e8d5" },
   { key:"video", i18nKey:"video", icon:"▶", color:"#e5e0d0" },
   { key:"video/studio", i18nKey:"studio", icon:"▦", color:"#ead8c0" },
-  { key:"avatar", i18nKey:"avatar", icon:"◉", color:"#ede5d3" },
-  { key:"voice-clone", i18nKey:"voiceClone", icon:"◐", color:"#e8e2d0" },
   { key:"tasks/history", i18nKey:"history", icon:"☰", color:"#f2ece0" },
   { key:"pricing", i18nKey:"pricing", icon:"✦", color:"#ebe5d5" },
 ];
