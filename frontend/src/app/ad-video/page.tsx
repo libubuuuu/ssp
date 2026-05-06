@@ -487,12 +487,9 @@ export default function AdVideoPage() {
                   cursor: "pointer",
                 }}
               >
-                <option value="CN">🇨🇳 国内抖音(亚洲模特 + 中文带货话术 · 姐妹们/YYDS/链接挂车)</option>
-                <option value="Global">🌍 海外 TikTok(西方/多元模特 + 英文 TikTok 话术 · POV/snatched/link in bio)</option>
+                <option value="CN">CN 国内抖音</option>
+                <option value="Global">海外 TikTok</option>
               </select>
-              <div style={{ fontSize: "0.8rem", color: "#888", marginTop: 6 }}>
-                影响模特面孔 + 脚本话术风格 + 拍摄场景。选错模特/话术不匹配市场。
-              </div>
             </div>
             {/* P133:视频引擎硬编码为 Kling AI Avatar v2 Standard,无下拉选项 */}
             <div style={{ marginTop: 20 }}>
