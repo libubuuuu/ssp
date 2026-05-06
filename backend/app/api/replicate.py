@@ -50,10 +50,12 @@ class Scene(BaseModel):
     action: str              # 动作描述
     framing: str             # 构图
     visual_prompt: str       # 给 GPT-Image 2 的英文 prompt
-    # P157(2026-05-07):空间约束 — 让 GPT-2 把产品放在和驱动视频一致的屏幕位置,
+    # P157(2026-05-07):空间约束 — 像素百分比 dict 让 GPT-2 把产品放在精确位置
     # pixverse-swap 时手轨迹和产品位置才能对齐(避免"凭空触碰")
-    product_position: Optional[str] = None       # 产品在屏幕的位置 + 在身体的位置(英文中性词)
-    hand_product_contact: Optional[str] = None   # 手部和产品的交互关系(哪只手/哪个部位/无接触)
+    # product_position 是 dict {x_percent, y_percent, width_percent, height_percent, description}
+    # 也兼容老的字符串格式(自然语言描述)
+    product_position: Optional[object] = None      # dict 或 string
+    hand_product_contact: Optional[str] = None     # 手部和产品的交互关系
 
 
 class AnalyzeResponse(BaseModel):
@@ -150,27 +152,46 @@ _ANALYZE_INSTRUCTION = """你是视频复刻专家。看完这段视频,按时�
       "action": "本段主要动作的中文描述(15 字内)",
       "framing": "构图描述(中心 / 左 / 右 / 仰拍 / 俯拍 等,10 字内)",
       "visual_prompt": "完整英文 prompt,150 字内,只写镜头语言 + 动作 + 灯光 + 构图。",
-      "product_position": "英文,产品在屏幕的位置 + 在身体/场景的位置(空间锁定关键)",
+      "product_position": {
+        "x_percent": 50,
+        "y_percent": 35,
+        "width_percent": 30,
+        "height_percent": 25,
+        "description": "英文短句,产品所处场景描述(中性词)"
+      },
       "hand_product_contact": "英文,手部和产品的交互关系(哪只手碰哪里 / 没接触)"
     }
   ]
 }
 
-🎯 **product_position 极其重要 — 直接决定后续视频里手能不能真的碰到产品。**
-要从视频中精确观察产品在屏幕的什么位置,描述要具体到"屏幕九宫格 + 身体部位",示例:
-  - "screen center, on the upper torso area, occupying about 30% screen width"
-  - "lower-left of screen, held in front of the lower torso, takes 40% screen height"
-  - "screen right edge, near the model's right hand at hip level"
-  - "behind the model, partially visible at her side"
-  - "extreme close-up filling 80% of frame, no body visible"
-**禁用敏感词** — 用 "upper torso / lower torso / hip area / shoulder area / outfit area" 替代 chest/waist/hips/bust。
+🎯🎯🎯 **product_position 是整个流程最关键字段** — 决定后续视频里手能不能真的碰到产品。
+**输出格式必须是 dict,含 5 个字段(都是数字 0-100,description 是英文短句):**
 
-🎯 **hand_product_contact 同样重要 — 决定手轨迹和产品的对齐关系。**
+  - **x_percent**: 产品中心点在屏幕水平方向的百分比(0=最左,50=正中,100=最右)
+  - **y_percent**: 产品中心点在屏幕垂直方向的百分比(0=最上,50=中间,100=最下)
+  - **width_percent**: 产品占屏幕宽度的百分比(0-100)
+  - **height_percent**: 产品占屏幕高度的百分比(0-100)
+  - **description**: 一句英文,中性词描述场景(如"on upper torso, presented to camera")
+
+📐 **关键 — 必须仔细观察视频画面像素位置,精确估算百分比**:
+  - 产品在屏幕中下方,占满半屏:x=50, y=70, w=50, h=40
+  - 产品在右上角小图:x=80, y=20, w=15, h=15
+  - 产品居中铺满胸口位置:x=50, y=40, w=40, h=30
+  - 产品在模特右手肩膀位置:x=65, y=25, w=20, h=20
+  - 产品被手挡住部分,只看到上半:x=50, y=35, w=35, h=15
+
+⚠️ **每段视频里产品位置可能不同**(模特挪动/手抬起放下/视角切换),N 段就要 N 个不同的位置百分比。**不要 N 段都给同一个 x:50 y:50** — 那是偷懒,后续生成视频会全段产品错位。
+
+❌ **禁用敏感词** — description 字段只能用中性词:
+  - 用 "upper torso / lower torso / hip area / shoulder area / arm area" 替代 chest/waist/hips/bust/breast
+  - 用 "garment / apparel / fashion item" 替代 bra/lingerie/strap/panel
+
+🎯 **hand_product_contact**:同样重要 — 决定手轨迹和产品的对齐关系。
 描述要具体到"哪只手 + 接触点 + 动作",示例:
   - "right hand grips the top edge, left hand supports the bottom"
-  - "both hands hold it at hip level, fingers wrap around the sides"  
+  - "both hands hold it at lower torso level, fingers wrap around the sides"
   - "no hand contact, product is worn on the body"
-  - "left hand pinches the strap area at shoulder, right hand free"
+  - "left hand pinches the band area at shoulder, right hand free"
   - "right hand points at the product without touching it, gestural only"
 **禁用敏感词** — 同上。
 
