@@ -456,9 +456,9 @@ export default function AdVideoPage() {
                 }}
               >
                 <option value={5}>5 秒(1 个分镜)</option>
-                <option value={8}>8 秒(1 个分镜)</option>
-                <option value={10}>10 秒(1 个分镜)</option>
-                <option value={12}>12 秒(1 个分镜)</option>
+                <option value={8}>8 秒(2 个分镜)</option>
+                <option value={10}>10 秒(2 个分镜)</option>
+                <option value={12}>12 秒(2 个分镜)</option>
                 <option value={30}>30 秒(3 个分镜)</option>
                 <option value={60}>60 秒(6 个分镜)</option>
                 <option value={120}>120 秒(12 个分镜)</option>
