@@ -1,1 +1,1 @@
-from . import image, video, digital_human, tasks, video_studio, jobs
+from . import image, video, tasks, video_studio, jobs
