@@ -309,6 +309,7 @@ async def preview_first_frame(
         scene_visual_prompt=first_scene.visual_prompt,
         product_back_image_url=req.product_back_image_url,
         aspect_ratio=getattr(req, "aspect_ratio", None) or "9:16",
+        no_text=True,  # P158(2026-05-07):AI 带货视频图严禁有任何字幕/文字
     )
     if "error" in base_result or not base_result.get("image_url"):
         raise HTTPException(status_code=500, detail=base_result.get("error", "首帧合成失败"))

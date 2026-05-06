@@ -383,6 +383,7 @@ async def compose_first_frame(
     scene_visual_prompt: str,
     product_back_image_url: Optional[str] = None,  # P34
     aspect_ratio: str = "9:16",
+    no_text: bool = False,  # P158(2026-05-07):AI 带货视频开启 → 严禁图里有任何字幕/文字
 ) -> dict:
     """
     合成视频首帧:产品 + 背景 + 模特
@@ -453,6 +454,17 @@ async def compose_first_frame(
         "natural lighting that matches the background reference, "
         "preserve the exact product details (front+back if both provided)."
     )
+    # P158(2026-05-07):AI 带货视频要求图里完全无文字/字幕(用户明确铁律)
+    if no_text:
+        prompt_parts.append(
+            "STRICT — ABSOLUTELY NO TEXT IN IMAGE: no text overlays, no captions, no subtitles, "
+            "no promotional text, no numbers (like '50 LEFT', '-2 inches', '24H', '50% OFF'), "
+            "no countdown timers, no call-to-action text (NO 'BUY NOW', NO 'ADD TO CART', "
+            "NO 'SHOP NOW'), no labels, no Before/After tags, no price tags. "
+            "If the visual_prompt mentions 'text overlay' or any words to display, IGNORE that — "
+            "the final image must be COMPLETELY TEXT-FREE, a clean photograph only. "
+            "User adds subtitles in post-production."
+        )
     full_prompt = " ".join(prompt_parts)
 
     try:

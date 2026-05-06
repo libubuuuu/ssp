@@ -797,6 +797,7 @@ async def _run_ad_video_job(params: dict):
         scene_visual_prompt=first_scene.get("visual_prompt", ""),
         product_back_image_url=params.get("product_back_image_url"),
         aspect_ratio=params.get("aspect_ratio") or "9:16",
+        no_text=True,  # P158(2026-05-07):AI 带货视频图严禁字幕
     )
     if "error" in base_result or not base_result.get("image_url"):
         raise Exception(f"首帧合成失败: {base_result.get('error', '?')}")
