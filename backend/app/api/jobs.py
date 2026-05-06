@@ -1706,32 +1706,76 @@ async def _run_replicate_job(params: dict) -> dict:
     except Exception as _e:
         log_error(f"replicate model identity 提取异常(降级): {_e}")
 
-    # ---- Step 1B:scene 1 直接用 base;scene 2..N 在 base 上调 visual_prompt(锁模特身份) ----
-    log_info(f"replicate Step 1B:并发 {len(scenes)-1} 段 scene 首帧(在 base 上)")
-    sem_frame = _asyncio.Semaphore(3)
-    async def _gen_scene_frame(scene):
-        async with sem_frame:
-            try:
-                fr = await ad_video_models.compose_first_frame_for_scene(
-                    base_image_url=base_frame_url,
-                    scene=scene,
-                    model_description=model_description,
-                    overall_setting=overall_setting,
-                    aspect_ratio=aspect_ratio,
-                )
-                if "error" in fr or not fr.get("image_url"):
-                    log_error(f"replicate frame {scene.get('id')} fail, fallback to base: {fr.get('error','?')}")
-                    return base_frame_url
-                return fr["image_url"]
-            except Exception as e:
-                log_error(f"replicate frame {scene.get('id')} exc: {e}")
+    # ---- Step 1B:用几宫格策略出剩余段首帧 ----
+    # 1 张几宫格 GPT-Image 2 调用最多出 4 段(2/3/4 panel),N>5 分多次 grid;
+    # 同一 grid 内的 panels 天然身份一致(同一张图);跨 grid 靠 base + 身份描述锁
+    async def _gen_single_scene(scene):
+        try:
+            fr = await ad_video_models.compose_first_frame_for_scene(
+                base_image_url=base_frame_url,
+                scene=scene,
+                model_description=model_description,
+                overall_setting=overall_setting,
+                aspect_ratio=aspect_ratio,
+            )
+            if "error" in fr or not fr.get("image_url"):
+                log_error(f"replicate single frame {scene.get('id')} fail: {fr.get('error','?')}")
                 return base_frame_url
+            return fr["image_url"]
+        except Exception as exc:
+            log_error(f"replicate single frame {scene.get('id')} exc: {exc}")
+            return base_frame_url
+
+    async def _gen_grid_panels(chunk):
+        """对 2-4 段 scene 出 1 张几宫格 + crop 出 N 张 panel。失败降级到逐段单出。"""
+        n = len(chunk)
+        if n == 1:
+            return [await _gen_single_scene(chunk[0])]
+        if n not in (2, 3, 4):
+            raise ValueError(f"grid chunk size {n} 不支持")
+        try:
+            grid_res = await ad_video_models.compose_storyboard_grid(
+                base_image_url=base_frame_url,
+                scenes=chunk,
+                n_panels=n,
+                model_description=model_description,
+                overall_setting=overall_setting,
+                aspect_ratio=aspect_ratio,
+            )
+            if "error" in grid_res or not grid_res.get("image_url"):
+                log_error(f"replicate grid n={n} fail, 逐段降级: {grid_res.get('error','?')}")
+                return await _asyncio.gather(*[_gen_single_scene(sc) for sc in chunk])
+            panels = await ad_video_models.crop_storyboard_panels(grid_res["image_url"], n)
+            if len(panels) != n:
+                log_error(f"replicate grid n={n} crop returned {len(panels)},逐段降级")
+                return await _asyncio.gather(*[_gen_single_scene(sc) for sc in chunk])
+            log_info(f"replicate grid n={n} OK,省 {n-1} 次 GPT-Image 2 调用")
+            return panels
+        except Exception as exc:
+            log_error(f"replicate grid n={n} exc, 逐段降级: {exc}")
+            return await _asyncio.gather(*[_gen_single_scene(sc) for sc in chunk])
 
     if len(scenes) == 1:
         frames = [base_frame_url]
     else:
-        rest = await _asyncio.gather(*[_gen_scene_frame(s) for s in scenes[1:]])
-        frames = [base_frame_url] + list(rest)
+        # scene 0 = base; scenes[1:] 按 4 个一组分块走 grid
+        rest = scenes[1:]
+        frame_chunks: list = []
+        i = 0
+        while i < len(rest):
+            chunk_size = min(4, len(rest) - i)
+            # 末尾如果只剩 1,合并到上一块? 简化:剩 1 单出
+            if chunk_size == 1 and frame_chunks:
+                # 单段加在末尾
+                single_url = await _gen_single_scene(rest[i])
+                frame_chunks.append([single_url])
+            else:
+                panels = await _gen_grid_panels(rest[i:i+chunk_size])
+                frame_chunks.append(panels)
+            i += chunk_size
+        rest_frames = [u for chunk in frame_chunks for u in chunk]
+        frames = [base_frame_url] + rest_frames
+        log_info(f"replicate Step 1B 完成 N={len(scenes)} frames={len(frames)}")
 
     # ---- Step 2:每段 aliyun-wan2.7-r2v ----
     aliyun = get_aliyun_wan_service()
