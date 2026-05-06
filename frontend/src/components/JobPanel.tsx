@@ -90,7 +90,8 @@ export default function JobPanel() {
     video_i2v: t("jobs.typeI2V"),
     video_edit: t("jobs.typeEdit"),
     video_clone: t("jobs.typeClone"),
-    long_video: "长视频翻拍",  // 七十五续:long-video 虚拟 job(暂中文硬编码,i18n 留下次)
+    long_video: "长视频翻拍",
+    oral_broadcast: "口播带货",  // 七十五续:long-video 虚拟 job(暂中文硬编码,i18n 留下次)
   } as Record<string, string>)[typ] || typ;
 
   const deleteJob = async (id: string) => {
