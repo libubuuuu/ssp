@@ -508,7 +508,7 @@ export default function OralBroadcastWorkbench() {
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "#fbfaf6" }}>
       <Sidebar />
-      <main style={{ flex: 1, padding: "2rem 3rem", maxWidth: 900 }}>
+      <main style={{ flex: 1, padding: "2rem 3rem", maxWidth: 900, width: "100%", margin: "0 auto" }}>
         <div style={{ marginBottom: "1.5rem" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <button onClick={() => router.push("/video/oral-broadcast")}
