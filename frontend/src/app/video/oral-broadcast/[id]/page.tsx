@@ -60,12 +60,12 @@ export default function OralBroadcastWorkbench() {
   // P16:成片比例(空字符串表示跟随原视频)
   const [aspectRatio, setAspectRatio] = useState<"" | "9:16" | "16:9" | "1:1">("");
   // P41:Step B 引擎覆盖(空字符串=后端默认 kling-o1-edit;其余多个用户实测对比)
-  type StepBEngine = "" | "auto-cheap" | "vace-mask" | "catvton-pixverse" | "aliyun-wan2.7-r2v" | "kling-o3-standard-v2v"
+  type StepBEngine = "" | "catvton-pixverse" | "aliyun-wan2.7-r2v"
     // 老引擎(后端兼容,UI 不露)
     | "auto" | "auto-best" | "pixverse-swap" | "kling-o1-edit" | "i2v" | "seedance-2-r2v" | "kling-o3-r2v" | "kling-o3-v2v" | "kling-2-6-i2v";
   // P47-C:默认 "auto-cheap"(阿里 wan 主路 + fal 兜底,180 天免费 ¥0,慢但白嫖)
   // 商家用户要快可改 "auto"(fal 主路,~¥17/30s 但 5min 出片)
-  const [stepBEngine, setStepBEngine] = useState<StepBEngine>("auto-cheap");
+  const [stepBEngine, setStepBEngine] = useState<StepBEngine>("catvton-pixverse");
   // P43-2:可选 Topaz 超分到 1440p(默认关,+$0.02/秒)
   const [useTopazUpscale, setUseTopazUpscale] = useState(false);
   // P45:模特图过 codeformer 修脸预处理(默认开,补 fal r2v 真人保身份残差)
@@ -595,14 +595,10 @@ export default function OralBroadcastWorkbench() {
               <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>{t("oral.engineTitle")}</div>
               <select value={stepBEngine} onChange={e => setStepBEngine(e.target.value as StepBEngine)}
                 style={{ width: "100%", padding: "0.6rem 0.8rem", border: "1px solid #ddd", borderRadius: 10, background: "#fff", fontSize: "0.9rem", cursor: "pointer" }}>
-                {/* P70 真分层:VACE+SAM2+中文 prompt — 行业唯一近似分层 */}
-                <option value="vace-mask">{t("oral.engine.vaceMask")}</option>
-                {/* P66 推荐主路:catvton + pixverse — probe 实测最对路 */}
+                {/* 推荐主路:cat-vton + pixverse swap — 用户脸+用户产品+driving 动作背景 · ¥1.83/5s */}
                 <option value="catvton-pixverse">{t("oral.engine.catvtonPixverse")}</option>
-                <option value="auto-cheap">{t("oral.engine.autoCheap")}</option>
+                {/* 阿里云通义万相 r2v(免费 + multi-reference) */}
                 <option value="aliyun-wan2.7-r2v">{t("oral.engine.aliyunWan27R2v")}</option>
-                <option value="kling-o3-standard-v2v">{t("oral.engine.klingO3StandardV2v")}</option>
-                <option value="pixverse-swap">{t("oral.engine.pixverseSwap")}</option>
               </select>
               <div style={{ fontSize: "0.7rem", color: "#999", marginTop: 4 }}>
                 {t("oral.engine.note")}

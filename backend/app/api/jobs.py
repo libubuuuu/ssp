@@ -796,6 +796,7 @@ async def _run_ad_video_job(params: dict):
         model_description=model_desc,
         scene_visual_prompt=first_scene.get("visual_prompt", ""),
         product_back_image_url=params.get("product_back_image_url"),
+        aspect_ratio=params.get("aspect_ratio") or "9:16",
     )
     if "error" in base_result or not base_result.get("image_url"):
         raise Exception(f"首帧合成失败: {base_result.get('error', '?')}")
@@ -966,6 +967,7 @@ async def _run_ad_video_job(params: dict):
                     scene=scene,
                     model_description=model_desc,
                     overall_setting=overall,
+                    aspect_ratio=params.get("aspect_ratio") or "9:16",
                 )
                 if isinstance(fr, dict) and "error" in fr:
                     raise Exception(f"段{idx} 分镜图失败: {fr['error']}")
@@ -1209,6 +1211,7 @@ async def _run_ad_video_job(params: dict):
                     scene=scene,
                     model_description=model_desc,
                     overall_setting=overall,
+                    aspect_ratio=params.get("aspect_ratio") or "9:16",
                 )
                 if fr.get("image_url"):
                     scene_frame_url = fr["image_url"]

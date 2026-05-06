@@ -48,12 +48,26 @@ NANO_BANANA_EDIT_ENDPOINT = "openai/gpt-image-2/edit"
 # Kling Avatar v2 Std 接受 ≥300x300 输入,以上都满足
 
 
+
+def _img_size_for_aspect(ar: str) -> str:
+    """把用户的 aspect_ratio 映射到 GPT-Image 2 的 image_size 名。
+    GPT-Image 2 不接 aspect_ratio,只接 image_size 名。"""
+    return {
+        "9:16":  "portrait_16_9",   # 1024 x 1792
+        "16:9":  "landscape_16_9",  # 1792 x 1024
+        "1:1":   "square_hd",       # 1024 x 1024
+        "3:4":   "portrait_4_3",    # 768 x 1024
+        "4:3":   "landscape_4_3",   # 1024 x 768
+    }.get((ar or "").strip().lower(), "portrait_16_9")
+
+
 async def compose_storyboard_grid(
     base_image_url: str,
     scenes: list,
     n_panels: int,
     model_description: str,
     overall_setting: str,
+    aspect_ratio: str = "9:16",
 ) -> dict:
     """P139:GPT-Image 2 出 1 张 N 宫格 storyboard 图。
 
@@ -144,7 +158,7 @@ async def compose_storyboard_grid(
             arguments={
                 "prompt": prompt,
                 "image_urls": [base_image_url],
-                "image_size": "portrait_16_9",  # 1024x1792
+                "image_size": _img_size_for_aspect(aspect_ratio),
                 "num_images": 1,
                 "output_format": "png",
             },
@@ -241,6 +255,7 @@ async def compose_first_frame(
     model_description: str,
     scene_visual_prompt: str,
     product_back_image_url: Optional[str] = None,  # P34
+    aspect_ratio: str = "9:16",
 ) -> dict:
     """
     合成视频首帧:产品 + 背景 + 模特
@@ -320,7 +335,7 @@ async def compose_first_frame(
                 "prompt": full_prompt,
                 "image_urls": image_urls,
                 # P126: openai/gpt-image-2/edit schema(image_size 替代 aspect_ratio,无 guidance_scale)
-                "image_size": "portrait_16_9",
+                "image_size": _img_size_for_aspect(aspect_ratio),
                 "num_images": 1,
                 "output_format": "png",
             },
@@ -346,6 +361,7 @@ async def compose_first_frame_for_scene(
     scene: dict,
     model_description: str,
     overall_setting: str,
+    aspect_ratio: str = "9:16",
 ) -> dict:
     """
     P32 一镜一图: 给单个分镜单独合成它的首帧
@@ -440,7 +456,7 @@ async def compose_first_frame_for_scene(
                 "prompt": prompt,
                 "image_urls": [base_image_url],
                 # P126: openai/gpt-image-2/edit schema(image_size 替代 aspect_ratio,无 guidance_scale)
-                "image_size": "portrait_16_9",
+                "image_size": _img_size_for_aspect(aspect_ratio),
                 "num_images": 1,
                 "output_format": "png",
             },

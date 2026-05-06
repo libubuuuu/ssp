@@ -308,6 +308,7 @@ async def preview_first_frame(
         model_description=req.script.model_description,
         scene_visual_prompt=first_scene.visual_prompt,
         product_back_image_url=req.product_back_image_url,
+        aspect_ratio=getattr(req, "aspect_ratio", None) or "9:16",
     )
     if "error" in base_result or not base_result.get("image_url"):
         raise HTTPException(status_code=500, detail=base_result.get("error", "首帧合成失败"))
@@ -335,6 +336,7 @@ async def preview_first_frame(
                 scene=scene.model_dump() if hasattr(scene, "model_dump") else dict(scene),
                 model_description=req.script.model_description,
                 overall_setting=req.script.overall_setting,
+                aspect_ratio=getattr(req, "aspect_ratio", None) or "9:16",
             )
             if sf.get("image_url"):
                 return await archive_url(sf["image_url"], current_user["id"], "image")
