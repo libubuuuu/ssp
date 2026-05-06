@@ -947,12 +947,25 @@ async def _run_ad_video_job(params: dict):
             log_info(f"ad_video P139 几宫格 storyboard + N 段 talking head concat scenes={len(scenes)} endpoint={kling_endpoint}")
 
             # 收集每段 speech(P135 不合并)
+            # P158(2026-05-07):按 scene.duration_sec 硬截断 — VLM 经常超字导致段视频被拉长
+            # bug:8/10/12s 用户选时长被拉成 12/14/16s,根因 P149 多段路径无 per-scene 截断
+            # 速率:elevenlabs multilingual-v2 实测中文 5 字/秒,英文 14 字符/秒
+            import re as __re_p158
             seg_speeches = []
-            for i, s in enumerate(scenes):
-                sp = (s.get("speech") or "").strip()
+            for i, sc in enumerate(scenes):
+                sp = (sc.get("speech") or "").strip()
                 if not sp:
                     log_warning(f"ad_video P139 段{i+1} speech 空,该段跳过")
                     continue
+                seg_dur = float(sc.get("duration_sec") or 5)
+                has_cn = bool(__re_p158.search(r"[\u4e00-\u9fff]", sp))
+                max_chars = int(seg_dur * (5 if has_cn else 14))
+                if len(sp) > max_chars:
+                    log_warning(
+                        f"ad_video P158 段{i+1} speech 超长 {len(sp)} > {max_chars} "
+                        f"(seg_dur={seg_dur}s lang={'CN' if has_cn else 'EN'}),截断"
+                    )
+                    sp = sp[:max_chars]
                 seg_speeches.append((i + 1, sp))
 
             if not seg_speeches:
