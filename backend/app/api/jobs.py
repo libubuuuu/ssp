@@ -1678,6 +1678,34 @@ async def _run_replicate_job(params: dict) -> dict:
     base_frame_url = base_res["image_url"]
     log_info(f"replicate base OK url={base_frame_url[:60]}")
 
+    # ---- Step 1A.5:看 base 图提取模特特征,后续 scene 用文字+图双重锁身份 ----
+    try:
+        import fal_client as _fal
+        _ID_PROMPT = (
+            "Look at this image. Describe the model's physical appearance in a concise "
+            "100-word block, focused on identity-locking features that must NOT change "
+            "across other shots. Cover: face shape, eye color and shape, hair (length/color/style), "
+            "skin tone, eyebrow shape, lip shape, nose shape, body build, current outfit "
+            "(top color/material, bottom if visible). Output English only, plain text, "
+            "no list, no preamble. Start with 'Identity lock: '."
+        )
+        _vlm_res = await _fal.run_async(
+            "openrouter/router/vision",
+            arguments={
+                "image_urls": [base_frame_url],
+                "prompt": _ID_PROMPT,
+                "model": "qwen/qwen3-vl-235b-a22b-instruct",
+            },
+        )
+        _id_text = (_vlm_res.get("output") or "").strip() if isinstance(_vlm_res, dict) else ""
+        if _id_text and len(_id_text) > 20:
+            model_description = _id_text[:600]  # 截断防溢出
+            log_info(f"replicate model identity 提取 OK len={len(model_description)}")
+        else:
+            log_error(f"replicate model identity 提取空,降级用通用描述")
+    except Exception as _e:
+        log_error(f"replicate model identity 提取异常(降级): {_e}")
+
     # ---- Step 1B:scene 1 直接用 base;scene 2..N 在 base 上调 visual_prompt(锁模特身份) ----
     log_info(f"replicate Step 1B:并发 {len(scenes)-1} 段 scene 首帧(在 base 上)")
     sem_frame = _asyncio.Semaphore(3)
