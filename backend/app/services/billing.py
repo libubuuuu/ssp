@@ -41,15 +41,6 @@ PRICING: Dict[str, int] = {
     "ad_video/scene_regen": 1,
     "ad_video/generate": 30,
 
-    # 分镜图工作台(2026-05-05):VLM 写 N 段分镜 + N 张 Kontext multi-edit
-    # VLM 1 次 ≈ $0.02,Kontext 1 张 ≈ $0.04,5 段 ≈ $0.22,留毛利 → 8 积分/单(N≤6)
-    # 多段(7-12)按 1.5 倍计 → 12 积分
-    "storyboard/generate": 8,
-    "storyboard/generate_large": 12,
-    # P130 极简版:用户 prompt + 参考图 → GPT-Image 2 出 1 张分镜图(无 VLM)
-    # GPT-Image 2 单张 ≈ $0.04,留毛利 → 2 积分
-    "storyboard/generate-frame": 2,
-
     # 七十七续:口播带货工作台 3 档定价(每分钟成片;按秒折算见 oral.compute_charge)
     # 经济 ¥80 / 标准 ¥180 / 顶级 ¥350,假设 1 积分 ≈ ¥0.50
     "oral_broadcast/economy":  160,   # 160 积分/分钟 = 2.67 积分/秒
