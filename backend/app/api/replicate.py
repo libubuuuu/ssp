@@ -216,7 +216,7 @@ async def analyze_submit(
         "user_numeric_id": user_id,
         "type": "replicate_analyze",
         "title": "视频复刻 · AI 分析",
-        "params": {"video_url": video_url, "instruction": _ANALYZE_INSTRUCTION},
+        "params": {"video_url": video_url, "instruction": _ANALYZE_INSTRUCTION, "_user_id": user_id},
         "module": "video/replicate/analyze",
         "cost": cost,
         "status": "pending",

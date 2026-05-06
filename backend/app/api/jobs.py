@@ -1646,10 +1646,18 @@ async def _run_replicate_analyze_job(params: dict) -> dict:
     if not svc or not svc.is_available():
         raise RuntimeError("qwen-vl 服务不可用(DASHSCOPE_API_KEY)")
 
-    log_info(f"replicate_analyze qwen-vl 调用 video={video_url[:80]}")
+    # 把 fal storage URL 归档到本地 /opt/ssp/uploads
+    # 阿里云 qwen-vl 服务在国内,fal storage 在美国,跨境下载常超时(实测 121.6s 还没拉完)
+    # 归档后用 ailixiao.com URL,腾讯云国内 → 阿里云国内 速度稳
+    from app.services.media_archiver import archive_url
+    _uid = params.get("_user_id") or "anon"
+    archived_url = await archive_url(video_url, _uid, "video")
+    log_info(f"replicate_analyze 视频归档: {video_url[:50]}... -> {archived_url[:80]}")
+
+    log_info(f"replicate_analyze qwen-vl 调用 video={archived_url[:80]}")
     import time as _t
     t0 = _t.time()
-    res = await svc.analyze_video(video_url, instruction)
+    res = await svc.analyze_video(archived_url, instruction)
     log_info(f"replicate_analyze qwen-vl 返回 elapsed={_t.time()-t0:.1f}s keys={list(res.keys())}")
     if "error" in res:
         log_error(f"replicate_analyze qwen-vl 失败: {res.get('error','?')}")
