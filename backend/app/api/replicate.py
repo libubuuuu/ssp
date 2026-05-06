@@ -50,6 +50,10 @@ class Scene(BaseModel):
     action: str              # 动作描述
     framing: str             # 构图
     visual_prompt: str       # 给 GPT-Image 2 的英文 prompt
+    # P157(2026-05-07):空间约束 — 让 GPT-2 把产品放在和驱动视频一致的屏幕位置,
+    # pixverse-swap 时手轨迹和产品位置才能对齐(避免"凭空触碰")
+    product_position: Optional[str] = None       # 产品在屏幕的位置 + 在身体的位置(英文中性词)
+    hand_product_contact: Optional[str] = None   # 手部和产品的交互关系(哪只手/哪个部位/无接触)
 
 
 class AnalyzeResponse(BaseModel):
@@ -145,10 +149,30 @@ _ANALYZE_INSTRUCTION = """你是视频复刻专家。看完这段视频,按时�
       "shot": "close-up | medium-shot | wide-shot | medium close-up",
       "action": "本段主要动作的中文描述(15 字内)",
       "framing": "构图描述(中心 / 左 / 右 / 仰拍 / 俯拍 等,10 字内)",
-      "visual_prompt": "完整英文 prompt,150 字内,只写镜头语言 + 动作 + 灯光 + 构图。"
+      "visual_prompt": "完整英文 prompt,150 字内,只写镜头语言 + 动作 + 灯光 + 构图。",
+      "product_position": "英文,产品在屏幕的位置 + 在身体/场景的位置(空间锁定关键)",
+      "hand_product_contact": "英文,手部和产品的交互关系(哪只手碰哪里 / 没接触)"
     }
   ]
 }
+
+🎯 **product_position 极其重要 — 直接决定后续视频里手能不能真的碰到产品。**
+要从视频中精确观察产品在屏幕的什么位置,描述要具体到"屏幕九宫格 + 身体部位",示例:
+  - "screen center, on the upper torso area, occupying about 30% screen width"
+  - "lower-left of screen, held in front of the lower torso, takes 40% screen height"
+  - "screen right edge, near the model's right hand at hip level"
+  - "behind the model, partially visible at her side"
+  - "extreme close-up filling 80% of frame, no body visible"
+**禁用敏感词** — 用 "upper torso / lower torso / hip area / shoulder area / outfit area" 替代 chest/waist/hips/bust。
+
+🎯 **hand_product_contact 同样重要 — 决定手轨迹和产品的对齐关系。**
+描述要具体到"哪只手 + 接触点 + 动作",示例:
+  - "right hand grips the top edge, left hand supports the bottom"
+  - "both hands hold it at hip level, fingers wrap around the sides"  
+  - "no hand contact, product is worn on the body"
+  - "left hand pinches the strap area at shoulder, right hand free"
+  - "right hand points at the product without touching it, gestural only"
+**禁用敏感词** — 同上。
 
 🚨 visual_prompt **绝对禁用词**(违反 fal content_checker,整句被拒):
 - 服装类: bra, lingerie, underwear, panties, bikini, balconette, padded, push-up, underwire, shapewear, waist trainer

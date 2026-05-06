@@ -125,7 +125,20 @@ async def compose_storyboard_grid(
         ]
         for old, new in replacements:
             visual_safe = visual_safe.replace(old, new)
-        panel_lines.append(f"Frame {i+1}: {visual_safe}")
+        # P157(2026-05-07):每个 panel 拼空间约束 — 产品位置 + 手交互
+        pp = (scenes[i].get("product_position") or "").strip()
+        hpc = (scenes[i].get("hand_product_contact") or "").strip()
+        # sanitize(同 visual_safe 一样的敏感词替换)
+        for old, new in replacements:
+            pp = pp.replace(old, new)
+            hpc = hpc.replace(old, new)
+        spatial_parts = []
+        if pp:
+            spatial_parts.append(f"PRODUCT POSITION (must match exactly): {pp}")
+        if hpc:
+            spatial_parts.append(f"HAND-PRODUCT CONTACT: {hpc}")
+        spatial_block = (" | " + " | ".join(spatial_parts)) if spatial_parts else ""
+        panel_lines.append(f"Frame {i+1}: {visual_safe}{spatial_block}")
 
     if n_panels == 2:
         layout_desc = "vertical 2-frame layout (upper half + lower half)"
@@ -152,6 +165,11 @@ async def compose_storyboard_grid(
         f"Photorealistic studio fashion photography, professional commercial advertisement.\n\n"
         + "\n".join(panel_lines)
         + "\n\nThin neutral borders separate frames."
+        + "\n\n🎯 CRITICAL — Each frame's PRODUCT POSITION and HAND-PRODUCT CONTACT (when "
+          "specified per-frame above) MUST be matched EXACTLY. These spatial annotations come from "
+          "the original driving video and are required for downstream motion-driven video synthesis "
+          "to preserve physical hand-product contact. Do NOT relocate the product or change hand "
+          "interaction style — exact spatial replication is mandatory."
     )
     # 产品图作为额外参考 — 每个 panel 里的产品都要严格匹配
     if product_image_url and product_back_image_url:
@@ -434,6 +452,30 @@ async def compose_first_frame_for_scene(
     ]:
         visual_safe = visual_safe.replace(old, new)
 
+    # P157(2026-05-07):空间约束 — 让 GPT-2 把产品放在和驱动视频一致的屏幕位置,
+    # pixverse-swap 时手轨迹和产品位置才能对齐(避免"凭空触碰")
+    product_position = (scene.get("product_position") or "").strip()
+    hand_product_contact = (scene.get("hand_product_contact") or "").strip()
+    # 这两个字段也要做相同的敏感词替换(qwen-vl 可能输出 chest/waist/hips)
+    def _sanitize_spatial(t: str) -> str:
+        if not t:
+            return t
+        for old, new in [
+            ("waist trainer", "fashion garment"),
+            ("shapewear", "fashion garment"),
+            ("waist", "torso"),
+            ("chest", "upper body"),
+            ("hips", "lower torso"),
+            ("body", "outfit"),
+            ("bra", "garment"),
+            ("strap", "band"),
+            ("revealing", "showing"),
+        ]:
+            t = t.replace(old, new)
+        return t
+    product_position_safe = _sanitize_spatial(product_position)
+    hand_product_contact_safe = _sanitize_spatial(hand_product_contact)
+
     prompt = (
         # P152(2026-05-06)IDENTITY LOCK 第一行强约束 — 用户实测段 2 脸跟段 1 不一致
         f"⚠️ HIGHEST PRIORITY — IDENTITY LOCK: The model in the output MUST be EXACTLY the same "
@@ -482,6 +524,24 @@ async def compose_first_frame_for_scene(
             "IMPORTANT — PRODUCT REFERENCE: image 2 is the user's exact product. "
             "The product worn by the model in the output MUST match this reference image "
             "EXACTLY (same fabric, logo, color, design). Do NOT change the product appearance. "
+        )
+
+    # P157(2026-05-07):空间锁定 — 产品必须放在驱动视频原片同样的屏幕位置 + 手部交互
+    # 否则 pixverse-swap 后会"凭空触碰"(手按原片轨迹动,产品却在 GPT 自由发挥的新位置)
+    if product_position_safe:
+        prompt += (
+            f"\n\n🎯 CRITICAL SPATIAL CONSTRAINT — PRODUCT POSITION (motion-alignment requirement): "
+            f"The product MUST be positioned in the frame at: {product_position_safe}. "
+            f"This position is measured from the original reference video that will drive the motion. "
+            f"If the product is placed elsewhere, the model's hand motion will not align with the product "
+            f"in downstream video synthesis. EXACT spatial match is required. "
+        )
+    if hand_product_contact_safe:
+        prompt += (
+            f"🎯 CRITICAL HAND-PRODUCT INTERACTION: {hand_product_contact_safe}. "
+            f"The hands MUST be in this exact relationship to the product so that subsequent "
+            f"motion-driven video synthesis preserves physical contact (hand actually touching product, "
+            f"not gesturing in empty air). "
         )
 
     try:
