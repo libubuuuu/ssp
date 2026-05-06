@@ -1603,3 +1603,16 @@ async def delete_job(job_id: str, current_user: dict = Depends(get_current_user)
     del JOBS[job_id]
     _save_jobs()
     return {"deleted": job_id}
+
+
+@router.post("/clear")
+async def clear_jobs(current_user: dict = Depends(get_current_user)):
+    """一键清空当前用户在 JOBS 字典里的常规任务条目。
+    虚拟会话(口播 / 长视频)是真实业务数据,不在这删,前端会用 localStorage 局部隐藏。
+    """
+    user_id = str(current_user.get("id") or current_user.get("email", "unknown"))
+    to_remove = [jid for jid, j in JOBS.items() if j.get("user_id") == user_id]
+    for jid in to_remove:
+        del JOBS[jid]
+    _save_jobs()
+    return {"removed": len(to_remove)}

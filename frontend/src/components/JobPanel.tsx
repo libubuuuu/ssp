@@ -25,6 +25,16 @@ export default function JobPanel() {
   const router = useRouter();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [open, setOpen] = useState(false);
+  // 一键清空:常规 jobs 后端真删,虚拟会话(口播/长视频)往 localStorage 加 dismiss 列表本地隐藏
+  const [dismissed, setDismissed] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const raw = localStorage.getItem("jobs_dismissed_sessions");
+      if (!raw) return new Set();
+      const arr = JSON.parse(raw);
+      return new Set(Array.isArray(arr) ? arr : []);
+    } catch { return new Set(); }
+  });
   // 通过 useSyncExternalStore 订阅 localStorage["token"];
   // 登录页的 setAuthToken / 登出的 clearAuthSession 都 dispatch user-updated → 自动刷新
   const token = useLocalStorageItem("token");
@@ -68,8 +78,9 @@ export default function JobPanel() {
 
   if (!loggedIn) return null;
 
-  const running = jobs.filter(j => j.status === "running" || j.status === "pending").length;
-  const completed = jobs.filter(j => j.status === "completed").length;
+  const visibleJobs = jobs.filter(j => !(j._session_id && dismissed.has(j._session_id)));
+  const running = visibleJobs.filter(j => j.status === "running" || j.status === "pending").length;
+  const completed = visibleJobs.filter(j => j.status === "completed").length;
 
   const statusLabel = (s: string) => ({
     pending: t("jobs.statusPending"),
@@ -133,15 +144,32 @@ export default function JobPanel() {
                 {running} · {completed}
               </div>
             </div>
-            <button onClick={() => setOpen(false)} style={{ background: "none", border: "none", fontSize: "1.2rem", cursor: "pointer", color: "#666" }}>×</button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button onClick={async () => {
+                if (!confirm("清空所有任务记录?常规任务后端会删除,口播/长视频会话仅从此列表移除,实际数据保留。")) return;
+                const t = localStorage.getItem("token") || "";
+                try {
+                  await fetch(`${API_BASE}/api/jobs/clear`, { method: "POST", headers: { Authorization: `Bearer ${t}` } });
+                } catch {}
+                // 当前可见的虚拟会话 sid 全部加入 dismissed,持久化
+                const newDismissed = new Set(dismissed);
+                jobs.forEach(j => { if (j._session_id) newDismissed.add(j._session_id); });
+                setDismissed(newDismissed);
+                try { localStorage.setItem("jobs_dismissed_sessions", JSON.stringify(Array.from(newDismissed))); } catch {}
+                setJobs([]);
+              }} style={{ background: "none", border: "1px solid #eee", borderRadius: 8, padding: "0.2rem 0.6rem", fontSize: "0.75rem", cursor: "pointer", color: "#888" }}>
+                清空
+              </button>
+              <button onClick={() => setOpen(false)} style={{ background: "none", border: "none", fontSize: "1.2rem", cursor: "pointer", color: "#666" }}>×</button>
+            </div>
           </div>
           <div style={{ flex: 1, overflowY: "auto", padding: "0.5rem" }}>
-            {jobs.length === 0 && (
+            {visibleJobs.length === 0 && (
               <div style={{ padding: "2rem", textAlign: "center", color: "#999", fontSize: "0.85rem" }}>
                 {t("jobs.noTasks")}
               </div>
             )}
-            {jobs.map(j => (
+            {visibleJobs.map(j => (
               <div key={j.id} style={{
                 padding: "0.7rem 0.8rem", borderRadius: 10, marginBottom: 6,
                 background: "#fafaf7", position: "relative",
