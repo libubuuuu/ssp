@@ -455,15 +455,15 @@ export default function AdVideoPage() {
                   cursor: "pointer",
                 }}
               >
-                <option value={5}>5 秒(1 个分镜)</option>
-                <option value={8}>8 秒(2 个分镜)</option>
-                <option value={10}>10 秒(2 个分镜)</option>
-                <option value={12}>12 秒(2 个分镜)</option>
-                <option value={30}>30 秒(3 个分镜)</option>
-                <option value={60}>60 秒(6 个分镜)</option>
-                <option value={120}>120 秒(12 个分镜)</option>
-                <option value={180}>180 秒(18 个分镜)</option>
-                <option value={300}>300 秒(30 个分镜,共 5 分钟)</option>
+                <option value={5}>5 秒(1 个分镜 · 5s)</option>
+                <option value={8}>8 秒(2 个分镜 · 5s+3s)</option>
+                <option value={10}>10 秒(2 个分镜 · 5s+5s)</option>
+                <option value={12}>12 秒(2 个分镜 · 5s+7s)</option>
+                <option value={30}>30 秒(3 个分镜 · 各 10s)</option>
+                <option value={60}>60 秒(6 个分镜 · 各 10s)</option>
+                <option value={120}>120 秒(12 个分镜 · 各 10s)</option>
+                <option value={180}>180 秒(18 个分镜 · 各 10s)</option>
+                <option value={300}>300 秒(30 个分镜 · 各 10s · 共 5 分钟)</option>
               </select>
               <div style={{ fontSize: "0.8rem", color: "#888", marginTop: 6 }}>
                 超过 15 秒会自动按分镜分段生成,最后无缝拼接
