@@ -98,10 +98,10 @@ export default function ReplicatePage() {
     finally { setLoading(false); setLoadingMsg(""); }
   };
 
-  // ---- 分析 ----
+  // ---- 分析(异步:推 job + 轮询)----
   const analyze = async () => {
     if (!videoUrl) return;
-    setError(""); setLoading(true); setLoadingMsg("AI 分析参考视频(可能 30-60s)...");
+    setError(""); setLoading(true); setLoadingMsg("提交分析任务...");
     try {
       const r = await fetch(`${API_BASE}/api/video/replicate/analyze`, {
         method: "POST",
@@ -110,11 +110,35 @@ export default function ReplicatePage() {
       });
       if (!r.ok) throw new Error(await r.text());
       const d = await r.json();
-      setScenes(d.scenes || []);
-      setDetectedRatio(d.detected_aspect_ratio || "9:16");
+      const aid = d.analyze_job_id;
+      if (!aid) throw new Error("没拿到 analyze_job_id");
       adjustLocalUserCredits(-1);
-    } catch (e) { setError(errMsg(e, "分析失败")); }
-    finally { setLoading(false); setLoadingMsg(""); }
+      setLoadingMsg("AI 看视频中(qwen-vl,30-180s)...");
+      // 轮询 status
+      let elapsed = 0;
+      const interval = setInterval(async () => {
+        elapsed += 6;
+        try {
+          const sr = await fetch(`${API_BASE}/api/video/replicate/analyze/status/${aid}`, {
+            headers: { Authorization: `Bearer ${token()}` },
+          });
+          if (!sr.ok) return;
+          const sd = await sr.json();
+          if (sd.status === "completed") {
+            clearInterval(interval);
+            setScenes(sd.scenes || []);
+            setDetectedRatio(sd.detected_aspect_ratio || "9:16");
+            setLoading(false); setLoadingMsg("");
+          } else if (sd.status === "failed") {
+            clearInterval(interval);
+            setError(sd.error || "分析失败");
+            setLoading(false); setLoadingMsg("");
+          } else {
+            setLoadingMsg(`AI 看视频中... 已用 ${elapsed}s`);
+          }
+        } catch {}
+      }, 6000);
+    } catch (e) { setError(errMsg(e, "提交分析失败")); setLoading(false); setLoadingMsg(""); }
   };
 
   // ---- 编辑 scene visual_prompt ----

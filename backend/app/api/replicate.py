@@ -185,11 +185,13 @@ def _detect_video_aspect(video_url: str) -> str:
 
 
 @router.post("/analyze")
-async def analyze(
+async def analyze_submit(
     body: dict,
     current_user: dict = Depends(get_current_user),
 ):
-    """qwen-vl 看视频出 N 段分镜。1 积分。"""
+    """异步:推 JOBS 队列后立刻返 analyze_job_id,前端用 /analyze/status/{id} 轮询。
+    根因:qwen-vl 视频理解 30-180s,sync HTTP 必触 CF/nginx 代理超时。
+    """
     video_url = body.get("video_url")
     if not video_url:
         raise HTTPException(400, "video_url 必填")
@@ -197,51 +199,54 @@ async def analyze(
     cost = 1
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
-    try:
-        svc = get_aliyun_qwenvl_service()
-        if not svc or not svc.is_available():
-            raise HTTPException(503, "qwen-vl 视频理解服务不可用(DASHSCOPE_API_KEY 未配置)")
-        res = await svc.analyze_video(video_url, _ANALYZE_INSTRUCTION)
-        if "error" in res:
-            raise HTTPException(502, f"qwen-vl 失败: {res.get('error','?')[:200]}")
-        text = (res.get("text") or "").strip()
-        # 清掉可能的 markdown
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-        try:
-            data = json.loads(text)
-        except Exception as e:
-            log_error(f"replicate/analyze JSON parse fail: {e} text[:200]={text[:200]}")
-            raise HTTPException(502, "qwen-vl 输出解析失败,请重试")
-        scenes_raw = data.get("scenes") or []
-        if not scenes_raw:
-            raise HTTPException(502, "qwen-vl 未返回分镜")
-        # 过滤每段 visual_prompt 防敏感
-        clean_scenes = []
-        for sc in scenes_raw:
-            try:
-                assert_safe_prompt(sc.get("visual_prompt", ""))
-            except HTTPException:
-                # 替换为通用安全 prompt,不阻塞整体
-                sc["visual_prompt"] = "Cinematic product showcase, soft natural lighting, professional commercial style"
-            clean_scenes.append(sc)
-        aspect = _detect_video_aspect(video_url)
-        log_info(f"replicate/analyze ok user={user_id} scenes={len(clean_scenes)} ratio={aspect}")
-        return {
-            "scenes": clean_scenes,
-            "total_duration": data.get("total_duration_seconds", sum(s.get("duration_sec", 5) for s in clean_scenes)),
-            "detected_aspect_ratio": aspect,
-        }
-    except HTTPException:
-        # 退款
+
+    # 先做服务可用性 fail-fast(同步,不阻塞 jobs 队列)
+    svc = get_aliyun_qwenvl_service()
+    if not svc or not svc.is_available():
         from app.services.billing import add_credits
         add_credits(user_id, cost, reason="task_refund")
-        raise
-    except Exception as e:
-        from app.services.billing import add_credits
-        add_credits(user_id, cost, reason="task_refund")
-        log_error(f"replicate/analyze 异常: {e}")
-        raise HTTPException(500, str(e)[:200])
+        raise HTTPException(503, "qwen-vl 视频理解服务不可用")
+
+    # 推到 JOBS 队列 type=replicate_analyze
+    from app.api.jobs import JOBS, _save_jobs, _execute_job
+    job_id = str(uuid.uuid4())[:8]
+    JOBS[job_id] = {
+        "id": job_id,
+        "user_id": user_id,
+        "user_numeric_id": user_id,
+        "type": "replicate_analyze",
+        "title": "视频复刻 · AI 分析",
+        "params": {"video_url": video_url, "instruction": _ANALYZE_INSTRUCTION},
+        "module": "video/replicate/analyze",
+        "cost": cost,
+        "status": "pending",
+        "created_at": time.time(),
+    }
+    _save_jobs()
+    asyncio.create_task(_execute_job(job_id))
+    log_info(f"replicate/analyze submitted job={job_id} user={user_id}")
+    return {"analyze_job_id": job_id, "status": "pending"}
+
+
+@router.get("/analyze/status/{job_id}")
+async def analyze_status(
+    job_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """前端轮询:返 pending/running/completed/failed + 完成时附 scenes."""
+    from app.api.jobs import JOBS
+    job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, "job 不存在")
+    uid = str(current_user.get("id"))
+    if job.get("user_id") != uid:
+        raise HTTPException(403, "无权限")
+    out = {"status": job.get("status", "pending")}
+    if job.get("status") == "completed":
+        out.update(job.get("result") or {})
+    if job.get("status") == "failed":
+        out["error"] = job.get("error", "unknown")
+    return out
 
 
 # ================= 端点 4:生成视频 → 推 JOBS =================

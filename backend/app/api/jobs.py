@@ -1326,6 +1326,8 @@ async def _execute_job(job_id: str):
                 # P118: 把 user_id 透传给 _run_ad_video_job(用于 ffmpeg 拼接产物落 uploads)
                 job["params"]["_user_id"] = job.get("user_id") or job.get("user_numeric_id") or "anon"
                 result = await _run_ad_video_job(job["params"])
+            elif t == "replicate_analyze":
+                result = await _run_replicate_analyze_job(job["params"])
             elif t == "replicate":
                 job["params"]["_user_id"] = job.get("user_id") or job.get("user_numeric_id") or "anon"
                 result = await _run_replicate_job(job["params"])
@@ -1622,6 +1624,78 @@ async def clear_jobs(current_user: dict = Depends(get_current_user)):
         del JOBS[jid]
     _save_jobs()
     return {"removed": len(to_remove)}
+
+
+# ==================== 视频复刻 · 分析 worker(2026-05-06)====================
+
+async def _run_replicate_analyze_job(params: dict) -> dict:
+    """异步跑 qwen-vl 看视频出 N 段分镜 + 探比例。"""
+    import re as _re
+    import json as _json
+    from app.services.fal_service import get_aliyun_qwenvl_service
+    from app.services.logger import log_info, log_error
+    from app.services.content_filter import assert_safe_prompt
+    from fastapi import HTTPException as _HTTPEx
+
+    video_url = params.get("video_url")
+    instruction = params.get("instruction") or ""
+    if not video_url or not instruction:
+        raise RuntimeError("video_url 或 instruction 缺")
+
+    svc = get_aliyun_qwenvl_service()
+    if not svc or not svc.is_available():
+        raise RuntimeError("qwen-vl 服务不可用(DASHSCOPE_API_KEY)")
+
+    log_info(f"replicate_analyze qwen-vl 调用 video={video_url[:80]}")
+    import time as _t
+    t0 = _t.time()
+    res = await svc.analyze_video(video_url, instruction)
+    log_info(f"replicate_analyze qwen-vl 返回 elapsed={_t.time()-t0:.1f}s keys={list(res.keys())}")
+    if "error" in res:
+        log_error(f"replicate_analyze qwen-vl 失败: {res.get('error','?')}")
+        raise RuntimeError(f"qwen-vl 失败: {res.get('error','?')[:200]}")
+    text = (res.get("text") or "").strip()
+    text = _re.sub(r"^```(?:json)?\s*", "", text)
+    text = _re.sub(r"\s*```$", "", text)
+    try:
+        data = _json.loads(text)
+    except Exception as e:
+        log_error(f"replicate_analyze JSON parse fail: {e} text[:200]={text[:200]}")
+        raise RuntimeError("qwen-vl 输出解析失败")
+    scenes_raw = data.get("scenes") or []
+    if not scenes_raw:
+        raise RuntimeError("qwen-vl 未返回分镜")
+    clean_scenes = []
+    for sc in scenes_raw:
+        try:
+            assert_safe_prompt(sc.get("visual_prompt", ""))
+        except _HTTPEx:
+            sc["visual_prompt"] = "Cinematic product showcase, soft natural lighting, professional commercial style"
+        clean_scenes.append(sc)
+    # 探比例(ffprobe)
+    aspect = "9:16"
+    try:
+        import subprocess as _sp
+        rr = _sp.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                      "-show_entries", "stream=width,height", "-of", "json", video_url],
+                     capture_output=True, text=True, timeout=15)
+        if rr.returncode == 0:
+            sd = _json.loads(rr.stdout)["streams"][0]
+            w, h = sd.get("width"), sd.get("height")
+            if w and h:
+                ratio = w / h
+                if abs(ratio - 9/16) < 0.1: aspect = "9:16"
+                elif abs(ratio - 16/9) < 0.1: aspect = "16:9"
+                elif abs(ratio - 1.0) < 0.1: aspect = "1:1"
+    except Exception as _e:
+        log_error(f"ffprobe 失败(默认 9:16): {_e}")
+    log_info(f"replicate_analyze OK scenes={len(clean_scenes)} ratio={aspect}")
+    return {
+        "scenes": clean_scenes,
+        "total_duration": data.get("total_duration_seconds", sum(s.get("duration_sec", 5) for s in clean_scenes)),
+        "detected_aspect_ratio": aspect,
+    }
+
 
 # ==================== 视频复刻 worker(2026-05-06)====================
 
