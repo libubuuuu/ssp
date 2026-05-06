@@ -50,7 +50,6 @@ export const zh = {
     adminDashboard: "系统监控",
     adminSettings: "管理员设置",
     adVideo: "AI 带货视频",
-    quickAd: "快速带货(产品图→视频)",
     oralBroadcast: "口播带货工作台",
   },
   dashboard: {

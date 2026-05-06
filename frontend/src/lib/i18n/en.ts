@@ -50,7 +50,6 @@ export const en = {
     adminDashboard: "Monitor",
     adminSettings: "Admin",
     adVideo: "AI Product Video",
-    quickAd: "Quick Ad (Image → Video)",
     oralBroadcast: "Oral Broadcast Studio",
   },
   dashboard: {
