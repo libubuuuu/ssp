@@ -2043,7 +2043,7 @@ async def _run_replicate_job(params: dict) -> dict:
     if engine == "kling-3-pro-i2v":
         seg_urls = await _gen_videos_kling_i2v(scenes, frames, aspect_ratio)
     elif engine == "pixverse-swap":
-        seg_urls = await _gen_videos_pixverse_swap(scenes, frames, reference_video_url, aspect_ratio, product_image_url=product_image_url)
+        seg_urls = await _gen_videos_pixverse_swap(scenes, frames, reference_video_url, aspect_ratio)
     elif engine == "catvton-pixverse":
         seg_urls = await _gen_videos_catvton_pixverse(scenes, frames, product_image_url, reference_video_url, aspect_ratio)
     else:
@@ -2193,17 +2193,15 @@ async def _gen_videos_kling_i2v(scenes: list, frames: list, aspect_ratio: str) -
     ])
 
 
-async def _gen_videos_pixverse_swap(scenes: list, frames: list, reference_video_url: str, aspect_ratio: str, product_image_url: str = None) -> list:
-    """方案 B(P160 2026-05-07):pixverse 2 步 swap — object 后 person。
-
-    解决凭空触碰:
-      Step A: pixverse-swap(driving_seg, product_image, mode="object")
-              替换驱动视频中的产品 → 用户产品(位置/手贴合关系全保留)
-      Step B: pixverse-swap(stepA, reference_image, mode="person")
-              替换人 → 用户模特(产品位置不变)
-
-    reference_image 优先用 frames[i](per-scene GPT 出的图,有变化),
-    没有就用 frames[0](base 帧)。
+async def _gen_videos_pixverse_swap(scenes: list, frames: list, reference_video_url: str, aspect_ratio: str) -> list:
+    """引擎 2:pixverse-swap. 每段用对应的 GPT-Image 2 出的 frame 做 reference。
+    
+    用户铁律:图必须交给 gpt2 做。所以:
+      - reference 图 = frames[i](GPT-Image 2 直接出的,不经任何后处理)
+      - driving 视频段 = 参考视频对应段(原片动作/场景)
+    
+    N 段身份一致性靠 GPT-Image 2 的 identity-lock prompt + qwen-vl 提取的身份描述
+    保证(已在 Step 1A.5 + 1B prompt 里强约束)。
     """
     import asyncio as _asyncio
     import tempfile
@@ -2213,54 +2211,29 @@ async def _gen_videos_pixverse_swap(scenes: list, frames: list, reference_video_
     pix = get_pixverse_swap_service()
     if not pix:
         raise RuntimeError("pixverse-swap 服务未初始化")
-    if not frames or not frames[0]:
-        raise RuntimeError("pixverse-swap 需要至少 frames[0](base 帧)作 person 替换 reference")
-    if not product_image_url:
-        log_info("⚠️ 无 product_image_url,降级单步 person swap(可能凭空触碰)")
-        # 兜底:回退到单步 person swap(老逻辑)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            seg_urls = await _slice_video_by_scenes(reference_video_url, scenes, tmpdir, aspect_ratio=aspect_ratio)
-            sem = _asyncio.Semaphore(3)
-            async def _single_swap(idx, seg, frame):
-                async with sem:
-                    result = await pix.swap(video_url=seg, image_url=frame, mode="person")
-                    if "error" in result:
-                        raise RuntimeError(f"pixverse-swap seg {idx}: {result['error']}")
-                    return result.get("video_url")
-            return await _asyncio.gather(*[_single_swap(i, seg_urls[i], frames[min(i, len(frames)-1)]) for i in range(len(scenes))])
+    if not frames or len(frames) < len(scenes):
+        raise RuntimeError(f"pixverse-swap 需要 N={len(scenes)} 张 GPT frames,当前只 {len(frames) if frames else 0} 张")
 
-    log_info(f"replicate pixverse 2-step: object swap → person swap(N={len(scenes)} 段)")
+    log_info(f"replicate pixverse: 每段独立用对应 GPT frame(GPT-2 直接出图,无后处理)")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         seg_urls = await _slice_video_by_scenes(reference_video_url, scenes, tmpdir, aspect_ratio=aspect_ratio)
 
         sem = _asyncio.Semaphore(3)
-        async def _two_step_swap(idx: int, seg_url: str, person_ref: str) -> str:
+        async def _swap_one(idx: int, seg_url: str, frame_url: str) -> str:
             async with sem:
-                # Step A: object swap — 把驱动视频里的"产品"换成用户产品
-                # 手轨迹和产品位置 100% 来自原片(原拍摄真实贴合)
-                log_info(f"replicate pixverse seg {idx} Step A(object swap)…")
-                step_a = await pix.swap(video_url=seg_url, image_url=product_image_url, mode="object")
-                if "error" in step_a:
-                    raise RuntimeError(f"pixverse seg {idx} Step A object: {step_a['error']}")
-                step_a_url = step_a.get("video_url")
-                if not step_a_url:
-                    raise RuntimeError(f"pixverse seg {idx} Step A 无 url")
-                log_info(f"replicate pixverse seg {idx} Step A OK url={step_a_url[:60]}")
-
-                # Step B: person swap — 把"人"换成用户模特(产品位置已锁住,不会动)
-                log_info(f"replicate pixverse seg {idx} Step B(person swap)…")
-                step_b = await pix.swap(video_url=step_a_url, image_url=person_ref, mode="person")
-                if "error" in step_b:
-                    raise RuntimeError(f"pixverse seg {idx} Step B person: {step_b['error']}")
-                step_b_url = step_b.get("video_url")
-                if not step_b_url:
-                    raise RuntimeError(f"pixverse seg {idx} Step B 无 url")
-                log_info(f"replicate pixverse seg {idx} 2-step OK final={step_b_url[:60]}")
-                return step_b_url
+                # frame_url 是 GPT-Image 2 出的图,直接喂 pixverse(不经 cat-vton 等后处理)
+                result = await pix.swap(video_url=seg_url, image_url=frame_url)
+                if "error" in result:
+                    raise RuntimeError(f"pixverse-swap seg {idx}: {result['error']}")
+                vurl = result.get("video_url")
+                if not vurl:
+                    raise RuntimeError(f"pixverse-swap seg {idx} 未返 url")
+                log_info(f"replicate pixverse seg {idx} OK url={vurl[:60]}")
+                return vurl
 
         return await _asyncio.gather(*[
-            _two_step_swap(i, seg_urls[i], frames[min(i, len(frames)-1)]) for i in range(len(scenes))
+            _swap_one(i, seg_urls[i], frames[i]) for i in range(len(scenes))
         ])
 
 
