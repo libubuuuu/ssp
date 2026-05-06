@@ -585,7 +585,7 @@ export const en = {
     s5Done: "Generation complete",
     waitHint: "Takes ~5-8 minutes. You can close this page and come back later.",
     tierTitle: "Tier",
-    tier: { economy: "Economy", standard: "Standard ⭐", premium: "Premium" },
+    tier: { economy: "Economy", standard: "Standard", premium: "Premium" },
     tierComingSoon: "(Coming soon)",
     aspectTitle: "Output aspect ratio",
     aspectAuto: "Auto",

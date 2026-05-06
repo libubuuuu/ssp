@@ -185,8 +185,6 @@ export default function AdminOralPage() {
             style={{ padding: "0.3rem 0.5rem", borderRadius: 6, border: "1px solid #ddd" }}>
             <option value="">{isEn ? "(all)" : "(全部)"}</option>
             <option value="economy">economy</option>
-            <option value="standard">standard</option>
-            <option value="premium">premium</option>
           </select>
         </label>
         <button onClick={load} style={{ padding: "0.3rem 0.8rem", border: "1px solid #ddd", background: "#fff", borderRadius: 6, cursor: "pointer", fontSize: "0.85rem" }}>

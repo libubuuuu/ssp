@@ -59,7 +59,7 @@ ORAL_UPLOAD_TMP = ORAL_UPLOAD_ROOT / "_uploading"
 MAX_DURATION_SECONDS = 300
 
 # 档位允许值
-TIERS = ("economy", "standard", "premium")
+TIERS = ("economy",)
 
 # P42:assets role / type 白名单
 _ASSET_ROLES = (

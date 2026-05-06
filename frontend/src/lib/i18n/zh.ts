@@ -585,7 +585,7 @@ export const zh = {
     s5Done: "生成完成",
     waitHint: "约 5-8 分钟,可关闭页面稍后回来查看",
     tierTitle: "选档位",
-    tier: { economy: "经济档", standard: "标准档 ⭐", premium: "顶级档" },
+    tier: { economy: "经济档", standard: "标准档", premium: "顶级档" },
     tierComingSoon: "(即将上线)",
     aspectTitle: "成片比例",
     aspectAuto: "自动",

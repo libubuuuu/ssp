@@ -9,7 +9,7 @@ import { compressImage } from "@/lib/utils/imageCompress";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 const WS_BASE = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
 
-type Tier = "economy" | "standard" | "premium";
+type Tier = "economy";
 
 interface SessionStatus {
   session_id: string;
@@ -41,8 +41,6 @@ interface SessionStatus {
 
 const TIER_PRICE: Record<Tier, { yuan: number; credits: number }> = {
   economy: { yuan: 80, credits: 160 },
-  standard: { yuan: 180, credits: 360 },
-  premium: { yuan: 350, credits: 700 },
 };
 
 export default function OralBroadcastWorkbench() {
@@ -545,61 +543,24 @@ export default function OralBroadcastWorkbench() {
 
             <div style={{ marginBottom: "1.5rem" }}>
               <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>{t("oral.tierTitle")}</div>
-              {(["economy", "standard", "premium"] as Tier[]).map(opt => {
+              {(["economy"] as Tier[]).map(opt => {
                 // standard / premium 走 ElevenLabs,P6 接入前不可选(防止用户
                 // 跑到 audio swap 阶段才发现挂掉,前置 disabled 避免 fail-late)
-                const disabled = opt !== "economy";
-                // 标准 / 顶级 强调:即将上线但视觉先立起来,加徽章 + 金色描边
-                const badge = opt === "standard"
-                  ? { label: "推荐 · 性价比之选", color: "#b87a00", bg: "#fff8e8", border: "#e6c34a" }
-                  : opt === "premium"
-                    ? { label: "影棚级 · 最强档", color: "#7a3eb8", bg: "#f6efff", border: "#a974e6" }
-                    : null;
-                const isHighlight = !!badge;
                 return (
                   <label key={opt} style={{
-                    display: "block", padding: "0.9rem 1rem",
-                    border: tier === opt
-                      ? "2px solid #0d0d0d"
-                      : isHighlight
-                        ? `2px solid ${badge!.border}`
-                        : "1px solid #ddd",
-                    background: tier === opt
-                      ? "#f9f7f2"
-                      : isHighlight
-                        ? badge!.bg
-                        : "#fff",
+                    display: "block", padding: "0.8rem 1rem",
+                    border: tier === opt ? "2px solid #0d0d0d" : "1px solid #ddd",
+                    background: tier === opt ? "#f9f7f2" : "#fff",
                     borderRadius: 10, marginBottom: "0.5rem",
-                    cursor: disabled ? "not-allowed" : "pointer",
-                    opacity: disabled ? 0.85 : 1,
-                    position: "relative",
+                    cursor: "pointer",
                   }}>
-                    {isHighlight && (
-                      <span style={{
-                        position: "absolute", top: -10, right: 12,
-                        background: badge!.color, color: "#fff",
-                        fontSize: "0.7rem", fontWeight: 600,
-                        padding: "0.15rem 0.6rem", borderRadius: 999,
-                        letterSpacing: "0.02em",
-                      }}>
-                        {badge!.label}
-                      </span>
-                    )}
                     <input type="radio" name="tier" value={opt} checked={tier === opt}
-                      disabled={disabled}
                       onChange={() => setTier(opt)} style={{ marginRight: "0.5rem" }} />
-                    <strong style={{ color: isHighlight ? badge!.color : "#0d0d0d", fontSize: "0.95rem" }}>
-                      {t(`oral.tier.${opt}`)}
-                    </strong>
-                    {disabled && (
-                      <span style={{ marginLeft: "0.5rem", color: "#999", fontSize: "0.72rem" }}>
-                        {t("oral.tierComingSoon")}
-                      </span>
-                    )}
-                    <span style={{ marginLeft: "0.8rem", color: "#666", fontSize: "0.85rem", fontWeight: 500 }}>
+                    <strong>{t(`oral.tier.${opt}`)}</strong>
+                    <span style={{ marginLeft: "0.8rem", color: "#888", fontSize: "0.85rem" }}>
                       ¥{TIER_PRICE[opt].yuan}/分钟 · {Math.ceil(TIER_PRICE[opt].credits / 60 * sess.duration_seconds)} 积分
                     </span>
-                    <div style={{ fontSize: "0.78rem", color: isHighlight ? badge!.color : "#999", marginTop: 6, opacity: 0.85 }}>
+                    <div style={{ fontSize: "0.75rem", color: "#999", marginTop: 4 }}>
                       {t(`oral.tierDesc.${opt}`)}
                     </div>
                   </label>
