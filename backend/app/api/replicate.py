@@ -70,7 +70,7 @@ class GenerateRequest(BaseModel):
     reference_video_url: str                        # 复刻参考视频(传给 wan2.7 当 driving)
     script: ReplicateScript
     aspect_ratio: str = "9:16"
-    engine: str = "pixverse-swap"  # 默认推荐(¥1.4/5s)
+    engine: str = "catvton-pixverse"  # 默认推荐(敏感品类不过 GPT 检测)(¥1.4/5s)
 
 
 # ================= 端点 1:上传视频 =================
