@@ -1069,7 +1069,9 @@ class FalPixverseSwapService:
         if not cb.is_available("pixverse-swap"):
             return {"error": "模型 pixverse-swap 已熔断"}
         try:
-            args = {"video_url": video_url, "image_url": image_url}
+            # P159(2026-05-07):显式 mode=person — fal 默认就是这个,写清楚防默认改变
+            # mode 选项:person(替换人,保留物体/背景/动作)/ object(替换产品)/ background
+            args = {"video_url": video_url, "image_url": image_url, "mode": "person"}
             result = await fal_client.run_async(self.ENDPOINT, arguments=args)
             await cb.record_success("pixverse-swap")
             video_obj = result.get("video") if isinstance(result, dict) else None
