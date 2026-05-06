@@ -47,6 +47,7 @@ export default function HistoryPage() {
     "ad_video/scene_regen": "AI 带货 · 重写脚本",
     "video/editor/compose": "视频剪辑合成",
     "video/studio/clone": "长视频翻拍",
+    "video/replicate": "视频复刻",
   };
 
   return (

@@ -1326,6 +1326,9 @@ async def _execute_job(job_id: str):
                 # P118: 把 user_id 透传给 _run_ad_video_job(用于 ffmpeg 拼接产物落 uploads)
                 job["params"]["_user_id"] = job.get("user_id") or job.get("user_numeric_id") or "anon"
                 result = await _run_ad_video_job(job["params"])
+            elif t == "replicate":
+                job["params"]["_user_id"] = job.get("user_id") or job.get("user_numeric_id") or "anon"
+                result = await _run_replicate_job(job["params"])
             else:
                 raise Exception(f"unknown type: {t}")
 
@@ -1619,3 +1622,152 @@ async def clear_jobs(current_user: dict = Depends(get_current_user)):
         del JOBS[jid]
     _save_jobs()
     return {"removed": len(to_remove)}
+
+# ==================== 视频复刻 worker(2026-05-06)====================
+
+async def _run_replicate_job(params: dict) -> dict:
+    """复刻视频:每段 GPT-Image 2 首帧 → aliyun-wan2.7-r2v 出视频段 → ffmpeg concat。
+
+    inputs:
+      product_image_url      : 必,产品图(GPT-Image 2 base + wan reference)
+      model_image_url        : 可选,模特图
+      reference_video_url    : 必,参考视频(wan reference_video,驱动动作/场景)
+      scenes                 : VLM 出的 N 段 [{id, duration_sec, visual_prompt, ...}]
+      aspect_ratio           : 9:16 / 16:9 / 1:1 / ...
+      overall_setting        : 整体设定(可选)
+      model_description      : 模特描述(可选)
+
+    output: {video_url, type, description}
+    """
+    import asyncio as _asyncio
+    import subprocess
+    import tempfile
+    import os
+    import httpx
+    from app.services.fal_service import get_aliyun_wan_service, fal_upload_with_retry
+    from app.services import ad_video_models
+    from app.services.logger import log_info, log_error
+
+    product_image_url = params.get("product_image_url")
+    if not product_image_url:
+        raise RuntimeError("product_image_url 必填")
+    model_image_url = params.get("model_image_url")
+    reference_video_url = params.get("reference_video_url")
+    if not reference_video_url:
+        raise RuntimeError("reference_video_url 必填")
+    scenes = params.get("scenes") or []
+    if not scenes:
+        raise RuntimeError("scenes 不能为空")
+    aspect_ratio = params.get("aspect_ratio") or "9:16"
+    overall_setting = params.get("overall_setting") or ""
+    model_description = params.get("model_description") or "A professional model"
+
+    # ---- Step 1:每段并发出 GPT-Image 2 首帧(用产品图作 base + scene visual_prompt 重塑) ----
+    log_info(f"replicate Step 1:并发 {len(scenes)} 段 GPT-Image 2 首帧 ratio={aspect_ratio}")
+
+    sem_frame = _asyncio.Semaphore(3)
+    async def _gen_frame(scene):
+        async with sem_frame:
+            try:
+                fr = await ad_video_models.compose_first_frame_for_scene(
+                    base_image_url=product_image_url,
+                    scene=scene,
+                    model_description=model_description,
+                    overall_setting=overall_setting,
+                    aspect_ratio=aspect_ratio,
+                )
+                if "error" in fr or not fr.get("image_url"):
+                    log_error(f"replicate frame {scene.get('id')} fail, fallback to product: {fr.get('error','?')}")
+                    return product_image_url
+                return fr["image_url"]
+            except Exception as e:
+                log_error(f"replicate frame {scene.get('id')} exc: {e}")
+                return product_image_url
+
+    frames = await _asyncio.gather(*[_gen_frame(s) for s in scenes])
+
+    # ---- Step 2:每段 aliyun-wan2.7-r2v ----
+    aliyun = get_aliyun_wan_service()
+    if not aliyun or not aliyun.is_available():
+        raise RuntimeError("aliyun-wan2.7-r2v 不可用(DASHSCOPE_API_KEY 未配置)")
+
+    async def _gen_seg(idx: int, scene: dict, frame_url: str) -> str:
+        ref_imgs = []
+        if frame_url:
+            ref_imgs.append(frame_url)
+        if model_image_url and model_image_url not in ref_imgs:
+            ref_imgs.append(model_image_url)
+        if product_image_url and product_image_url not in ref_imgs:
+            ref_imgs.append(product_image_url)
+        prompt = scene.get("visual_prompt") or "Cinematic product showcase, soft natural lighting"
+        duration = max(2, min(15, int(round(scene.get("duration_sec", 5)))))
+        submit = await aliyun.wan27_r2v_submit(
+            reference_image_url=ref_imgs[0] if ref_imgs else "",
+            reference_image_urls=ref_imgs,
+            reference_video_url=reference_video_url,
+            prompt=prompt,
+            duration=duration,
+            resolution="720P",
+            ratio=aspect_ratio,
+        )
+        if "error" in submit:
+            raise RuntimeError(f"seg {idx} submit: {submit['error']}")
+        task_id = submit["task_id"]
+        # poll 上限 90 次 × 10s = 15 分钟
+        for _attempt in range(90):
+            await _asyncio.sleep(10)
+            pr = await aliyun.poll_task(task_id)
+            status = pr.get("status")
+            if status == "SUCCEEDED":
+                vurl = pr.get("video_url")
+                if not vurl:
+                    raise RuntimeError(f"seg {idx} succeeded but no url")
+                log_info(f"replicate seg {idx} OK url={vurl[:60]}")
+                return vurl
+            if status == "FAILED":
+                raise RuntimeError(f"seg {idx} failed: {pr.get('error','?')}")
+        raise RuntimeError(f"seg {idx} 超时(15min)")
+
+    sem_seg = _asyncio.Semaphore(3)
+    async def _gen_seg_sem(idx, scene, fu):
+        async with sem_seg:
+            return await _gen_seg(idx, scene, fu)
+    seg_urls = await _asyncio.gather(*[
+        _gen_seg_sem(i, s, frames[i]) for i, s in enumerate(scenes)
+    ])
+
+    # ---- Step 3:下载所有段 + ffmpeg concat ----
+    with tempfile.TemporaryDirectory() as tmpdir:
+        seg_paths = []
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            for i, url in enumerate(seg_urls):
+                r = await client.get(url)
+                p = os.path.join(tmpdir, f"seg_{i}.mp4")
+                with open(p, "wb") as f:
+                    f.write(r.content)
+                seg_paths.append(p)
+        list_file = os.path.join(tmpdir, "list.txt")
+        with open(list_file, "w") as f:
+            for p in seg_paths:
+                f.write(f"file '{p}'\n")
+        out_path = os.path.join(tmpdir, "final.mp4")
+        # 用 -c copy 试,失败再 re-encode
+        cp = subprocess.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", out_path],
+            capture_output=True,
+        )
+        if cp.returncode != 0 or not os.path.exists(out_path):
+            # re-encode 兜底
+            subprocess.run(
+                ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file,
+                 "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", out_path],
+                check=True, capture_output=True,
+            )
+        fal_final_url = await fal_upload_with_retry(out_path)
+
+    total_dur = sum(int(round(s.get("duration_sec", 5))) for s in scenes)
+    return {
+        "video_url": fal_final_url,
+        "type": "video/replicate",
+        "description": f"视频复刻 · {len(scenes)} 段 · {total_dur}s",
+    }

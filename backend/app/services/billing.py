@@ -23,6 +23,7 @@ PRICING: Dict[str, int] = {
     "video/editor/parse": 5,
     "video/editor/regenerate": 10,
     "video/editor/compose": 15,
+    "video/replicate": 0,  # 入历史用,真正定价按时长在 replicate.py 算
 
     # AI 带货视频(2026-04-28 v3 新增)
     # analyze: VLM 视觉调用(qwen3-vl 235B via fal openrouter),成本约 $0.02 → 1 积分
