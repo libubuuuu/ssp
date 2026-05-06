@@ -162,7 +162,7 @@ export default function StudioListPage() {
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "#edeae4", fontFamily: "-apple-system,BlinkMacSystemFont,sans-serif" }}>
       <Sidebar />
-      <main style={{ flex: 1, padding: "2rem 2.5rem", overflowY: "auto" }}>
+      <main style={{ flex: 1, padding: "2rem 2.5rem", overflowY: "auto", maxWidth: 1280, width: "100%", margin: "0 auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.5rem" }}>
           <div>
             <div style={{ fontSize: "0.85rem", color: "#999" }}>{t("studio.studioVideo")}</div>

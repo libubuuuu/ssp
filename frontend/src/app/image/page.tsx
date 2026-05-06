@@ -127,7 +127,7 @@ export default function ImagePage(){
   return (
     <div style={{display:"flex",minHeight:"100vh",background:"#edeae4",fontFamily:"-apple-system,BlinkMacSystemFont,sans-serif"}}>
       <Sidebar/>
-      <main style={{flex:1,padding:"2rem 2.5rem",overflowY:"auto"}}>
+      <main style={{flex:1,padding:"2rem 2.5rem",overflowY:"auto",maxWidth:"1280px",width:"100%",margin:"0 auto"}}>
         <div style={{marginBottom:"1.5rem",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div>
             <div style={{fontSize:"0.85rem",color:"#999",marginBottom:"0.3rem"}}>{t("image.title")}</div>

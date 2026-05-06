@@ -52,7 +52,7 @@ export default function HistoryPage() {
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "#edeae4", fontFamily: "-apple-system,BlinkMacSystemFont,sans-serif" }}>
       <Sidebar />
-      <main style={{ flex: 1, padding: "2rem 2.5rem", overflowY: "auto" }}>
+      <main style={{ flex: 1, padding: "2rem 2.5rem", overflowY: "auto", maxWidth: 1280, width: "100%", margin: "0 auto" }}>
         <div style={{ marginBottom: "1.5rem" }}>
           <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>{t("tasks.genRecord")}</div>
           <h1 style={{ fontSize: "1.6rem", fontWeight: 400, color: "#0d0d0d", margin: 0, fontFamily: "Georgia,serif" }}>{t("tasks.titleMain")}<span style={{ fontStyle: "italic" }}> {t("tasks.titleAccent")}</span></h1>

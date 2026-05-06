@@ -107,7 +107,7 @@ export default function ProfilePage(){
   return (
     <div style={{display:"flex",minHeight:"100vh",background:"#edeae4",fontFamily:"-apple-system,BlinkMacSystemFont,sans-serif"}}>
       <Sidebar/>
-      <main style={{flex:1,padding:"3rem 4rem",overflowY:"auto",maxWidth:"800px"}}>
+      <main style={{flex:1,padding:"3rem 4rem",overflowY:"auto",maxWidth:"800px",width:"100%",margin:"0 auto"}}>
         <div style={{marginBottom:"2.5rem"}}>
           <div style={{fontSize:"0.85rem",color:"#999",marginBottom:"0.3rem"}}>{t("profile.accountSettings")}</div>
           <h1 style={{fontSize:"2rem",fontWeight:300,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>{t("profile.titleMain")} <span style={{fontStyle:"italic"}}>{t("profile.titleAccent")}</span></h1>

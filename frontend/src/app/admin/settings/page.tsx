@@ -41,7 +41,7 @@ export default function AdminSettingsPage() {
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "#edeae4", fontFamily: "-apple-system,BlinkMacSystemFont,sans-serif" }}>
       <Sidebar />
-      <main style={{ flex: 1, padding: "2rem 2.5rem", maxWidth: 800 }}>
+      <main style={{ flex: 1, padding: "2rem 2.5rem", maxWidth: 800, width: "100%", margin: "0 auto" }}>
         <div style={{ marginBottom: "1.5rem" }}>
           <div style={{ fontSize: "0.85rem", color: "#999" }}>{t("admin.adminRole")}</div>
           <h1 style={{ fontSize: "1.6rem", fontWeight: 400, margin: "0.3rem 0", fontFamily: "Georgia,serif" }}>{t("admin.titleMain")} <span style={{ fontStyle: "italic" }}>{t("admin.titleAccent")}</span></h1>
