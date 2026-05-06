@@ -68,6 +68,8 @@ async def compose_storyboard_grid(
     model_description: str,
     overall_setting: str,
     aspect_ratio: str = "9:16",
+    product_image_url: Optional[str] = None,
+    product_back_image_url: Optional[str] = None,
 ) -> dict:
     """P139:GPT-Image 2 出 1 张 N 宫格 storyboard 图。
 
@@ -151,13 +153,30 @@ async def compose_storyboard_grid(
         + "\n".join(panel_lines)
         + "\n\nThin neutral borders separate frames."
     )
+    # 产品图作为额外参考 — 每个 panel 里的产品都要严格匹配
+    if product_image_url and product_back_image_url:
+        prompt += (
+            " CRITICAL PRODUCT REFERENCE: After the base image, image 2 is product FRONT view "
+            "and image 3 is BACK/SIDE view. EVERY panel's product MUST match these references "
+            "EXACTLY — same fabric texture, logo placement, color, and design. Do NOT improvise."
+        )
+    elif product_image_url:
+        prompt += (
+            " CRITICAL PRODUCT REFERENCE: After the base image, image 2 is the user's exact product. "
+            "EVERY panel's product MUST match this reference EXACTLY (fabric, logo, color, design). "
+            "Do NOT change product appearance across panels."
+        )
 
     try:
         result = await fal_client.run_async(
             NANO_BANANA_EDIT_ENDPOINT,  # openai/gpt-image-2/edit
             arguments={
                 "prompt": prompt,
-                "image_urls": [base_image_url],
+                "image_urls": (
+                    [base_image_url]
+                    + ([product_image_url] if product_image_url else [])
+                    + ([product_back_image_url] if product_back_image_url else [])
+                ),
                 "image_size": _img_size_for_aspect(aspect_ratio),
                 "num_images": 1,
                 "output_format": "png",
@@ -362,6 +381,8 @@ async def compose_first_frame_for_scene(
     model_description: str,
     overall_setting: str,
     aspect_ratio: str = "9:16",
+    product_image_url: Optional[str] = None,        # 用户产品正面图(锁产品材质)
+    product_back_image_url: Optional[str] = None,   # 产品反面/侧面(锁背面/logo)
 ) -> dict:
     """
     P32 一镜一图: 给单个分镜单独合成它的首帧
@@ -446,15 +467,33 @@ async def compose_first_frame_for_scene(
         f"NO call-to-action text, NO labels, NO Before/After tags. "
         f"The image must be COMPLETELY TEXT-FREE — clean photograph only. "
         f"Photorealistic commercial advertisement, vertical 9:16 composition, "
-        f"natural lighting, preserve the exact product details from reference."
+        f"natural lighting, preserve the exact product details from reference. "
     )
+    # 产品图作为额外参考 — 锁住用户上传的真实产品(材质/logo/纹理)
+    if product_image_url and product_back_image_url:
+        prompt += (
+            "IMPORTANT — PRODUCT REFERENCE: image 2 is the user's product FRONT view, "
+            "image 3 is BACK/SIDE view. The product on the model in the output MUST match "
+            "these reference images EXACTLY (same fabric texture, same logo placement, "
+            "same color, same design details, same proportions). Do NOT improvise the product. "
+        )
+    elif product_image_url:
+        prompt += (
+            "IMPORTANT — PRODUCT REFERENCE: image 2 is the user's exact product. "
+            "The product worn by the model in the output MUST match this reference image "
+            "EXACTLY (same fabric, logo, color, design). Do NOT change the product appearance. "
+        )
 
     try:
         result = await fal_client.run_async(
             NANO_BANANA_EDIT_ENDPOINT,
             arguments={
                 "prompt": prompt,
-                "image_urls": [base_image_url],
+                "image_urls": (
+                [base_image_url]
+                + ([product_image_url] if product_image_url else [])
+                + ([product_back_image_url] if product_back_image_url else [])
+            ),
                 # P126: openai/gpt-image-2/edit schema(image_size 替代 aspect_ratio,无 guidance_scale)
                 "image_size": _img_size_for_aspect(aspect_ratio),
                 "num_images": 1,

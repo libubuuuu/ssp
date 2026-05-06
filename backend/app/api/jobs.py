@@ -1898,6 +1898,8 @@ async def _run_replicate_job(params: dict) -> dict:
                     model_description=model_description,
                     overall_setting=overall_setting,
                     aspect_ratio=aspect_ratio,
+                    product_image_url=product_image_url,
+                    product_back_image_url=product_back_image_url,
                 )
                 if "error" not in fr and fr.get("image_url"):
                     if attempt_idx > 0:
@@ -1934,6 +1936,8 @@ async def _run_replicate_job(params: dict) -> dict:
                     model_description=model_description,
                     overall_setting=overall_setting,
                     aspect_ratio=aspect_ratio,
+                    product_image_url=product_image_url,
+                    product_back_image_url=product_back_image_url,
                 )
                 if "error" in grid_res or not grid_res.get("image_url"):
                     return None, grid_res.get("error", "?")
