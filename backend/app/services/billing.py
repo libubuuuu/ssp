@@ -151,9 +151,11 @@ def create_consumption_record(
         with get_db() as conn:
             cursor = conn.cursor()
             import uuid
-            record_id = str(uuid.uuid4())
+            # 用传入的 task_id 当 record_id(异步任务能由 tasks.py /status 完成时按 task_id UPDATE 回填 URL)
+            # 老代码忽略了 task_id 永远 uuid4(),tasks.py SELECT WHERE id=fal_task_id 永不命中 → 重复插
+            record_id = task_id if task_id else str(uuid.uuid4())
             cursor.execute("""
-                INSERT INTO generation_history
+                INSERT OR REPLACE INTO generation_history
                 (id, user_id, module, prompt, images, videos, cost)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (record_id, user_id, module, description,

@@ -73,12 +73,26 @@ def require_credits(module: str):
                 if isinstance(result, dict) and "description" in result:
                     description = result["description"]
 
+                # 从 result 提取 URL,sync API 立刻有,async API task_id 会留给后续 polling 回写
+                hist_images: list[str] = []
+                hist_videos: list[str] = []
+                if isinstance(result, dict):
+                    if result.get("image_url"):
+                        hist_images.append(result["image_url"])
+                    if result.get("video_url"):
+                        hist_videos.append(result["video_url"])
+
+                # 异步任务用 FAL task_id 作 record_id,后续 polling 完成时能 UPDATE 回填 URL
+                # sync API 没 task_id → 用内部 uuid
+                record_id = (result.get("task_id") if isinstance(result, dict) else None) or task_id
                 create_consumption_record(
                     user_id=user_id,
-                    task_id=task_id,
+                    task_id=record_id,
                     module=module,
                     cost=cost,
                     description=description,
+                    images=hist_images or None,
+                    videos=hist_videos or None,
                 )
 
                 # 异步任务:登记 fal task_id 备退款,polling 检测到 failed 时由 refund_tracker.try_refund 退

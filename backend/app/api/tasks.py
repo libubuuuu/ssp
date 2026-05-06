@@ -23,27 +23,34 @@ async def get_task_status(task_id: str, endpoint: Optional[str] = None, prompt: 
     result = await video_service.get_task_status(task_id, endpoint_hint=endpoint)
 
     if result.get("status") == "completed" and result.get("video_url"):
-        # 保存到历史记录
+        # 任务完成 → 回填 URL 到历史记录
+        # 装饰器现在把 FAL task_id 当 record_id 写入,这里 UPDATE 能命中
         try:
             from app.database import get_db
-            import uuid, json
+            import json
             with get_db() as conn:
                 cursor = conn.cursor()
-                # 检查是否已保存过（避免重复）
-                cursor.execute("SELECT id FROM generation_history WHERE id = ?", (task_id,))
-                if not cursor.fetchone():
-                    cursor.execute("""
+                cursor.execute(
+                    "UPDATE generation_history SET videos = ? WHERE id = ? AND user_id = ?",
+                    (json.dumps([result["video_url"]]), task_id, current_user["id"]),
+                )
+                if cursor.rowcount == 0:
+                    # 无装饰器记录(老路径),兜底 INSERT(module 这里没法精准还原,记 image-to-video)
+                    cursor.execute(
+                        """
                         INSERT INTO generation_history (id, user_id, module, prompt, videos, cost)
                         VALUES (?, ?, ?, ?, ?, ?)
-                    """, (
-                        task_id,
-                        current_user["id"],
-                        "video/image-to-video",
-                        prompt or "图生视频",
-                        json.dumps([result["video_url"]]),
-                        10
-                    ))
-                    conn.commit()
+                        """,
+                        (
+                            task_id,
+                            current_user["id"],
+                            "video/image-to-video",
+                            prompt or "图生视频",
+                            json.dumps([result["video_url"]]),
+                            10,
+                        ),
+                    )
+                conn.commit()
         except Exception as e:
             print(f"保存历史记录失败: {e}")
 

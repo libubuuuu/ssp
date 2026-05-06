@@ -41,6 +41,12 @@ export default function HistoryPage() {
     "voice/clone": t("tasks.mod_voice_clone"),
     "voice/tts": t("tasks.mod_tts"),
     "oral-broadcast": t("tasks.mod_oral"),
+    "ad_video/generate": "AI 带货视频",
+    "ad_video/analyze": "AI 带货 · 产品分析",
+    "ad_video/preview": "AI 带货 · 首帧预览",
+    "ad_video/scene_regen": "AI 带货 · 重写脚本",
+    "video/editor/compose": "视频剪辑合成",
+    "video/studio/clone": "长视频翻拍",
   };
 
   return (
