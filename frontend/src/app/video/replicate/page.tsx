@@ -34,11 +34,11 @@ export default function ReplicatePage() {
 
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [productFile, setProductFile] = useState<File | null>(null);
-  const [modelFile, setModelFile] = useState<File | null>(null);
+  const [productBackFile, setProductBackFile] = useState<File | null>(null);
 
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [productUrl, setProductUrl] = useState<string | null>(null);
-  const [modelUrl, setModelUrl] = useState<string | null>(null);
+  const [productBackUrl, setProductBackUrl] = useState<string | null>(null);
 
   const [scenes, setScenes] = useState<Scene[] | null>(null);
   const [detectedRatio, setDetectedRatio] = useState<string>("9:16");
@@ -87,14 +87,14 @@ export default function ReplicatePage() {
     } catch (e) { setError(errMsg(e, "上传产品图失败")); }
     finally { setLoading(false); setLoadingMsg(""); }
   };
-  const onPickModel = async (f: File | null) => {
+  const onPickProductBack = async (f: File | null) => {
     if (!f) return;
-    setModelFile(f); setError("");
-    setLoading(true); setLoadingMsg("上传模特图...");
+    setProductBackFile(f); setError("");
+    setLoading(true); setLoadingMsg("上传产品反面/侧面图...");
     try {
       const u = await uploadFile(f, "image");
-      setModelUrl(u);
-    } catch (e) { setError(errMsg(e, "上传模特图失败")); }
+      setProductBackUrl(u);
+    } catch (e) { setError(errMsg(e, "上传产品反面/侧面图失败")); }
     finally { setLoading(false); setLoadingMsg(""); }
   };
 
@@ -135,7 +135,7 @@ export default function ReplicatePage() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
         body: JSON.stringify({
           product_image_url: productUrl,
-          model_image_url: modelUrl,
+          product_back_image_url: productBackUrl,
           reference_video_url: videoUrl,
           script: { scenes, overall_setting: "", model_description: "A professional commercial model" },
           aspect_ratio: ratio,
@@ -202,7 +202,7 @@ export default function ReplicatePage() {
           <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>AI 创作工具</div>
           <h1 style={{ fontSize: "1.8rem", fontWeight: 400, margin: 0, fontFamily: "Georgia,serif" }}>视频<span style={{ fontStyle: "italic" }}> 复刻</span></h1>
           <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
-            上传参考视频 + 你的产品图(模特图可选) → AI 拆分镜 → 按你的产品复刻一条同风格视频
+            上传参考视频 + 产品图(可选反面/侧面) → AI 拆分镜 → 模特由 AI 自动生成 → 按你的产品复刻
           </div>
         </div>
 
@@ -220,9 +220,9 @@ export default function ReplicatePage() {
             preview={productUrl ? <img src={productUrl} alt="" style={{ maxWidth: 200, maxHeight: 200, marginTop: 6, borderRadius: 8 }} /> : null} />
         </Box>
 
-        <Box label="③ 模特图(可选 — 让 AI 知道是谁出镜)">
-          <FilePick file={modelFile} accept="image/*" onPick={onPickModel} label="点击上传模特图(可选)"
-            preview={modelUrl ? <img src={modelUrl} alt="" style={{ maxWidth: 200, maxHeight: 200, marginTop: 6, borderRadius: 8 }} /> : null} />
+        <Box label="③ 产品反面/侧面图(可选 — 锁住反面材质/logo/纹理)">
+          <FilePick file={productBackFile} accept="image/*" onPick={onPickProductBack} label="点击上传产品反面或侧面图(可选,二选一)"
+            preview={productBackUrl ? <img src={productBackUrl} alt="" style={{ maxWidth: 200, maxHeight: 200, marginTop: 6, borderRadius: 8 }} /> : null} />
         </Box>
 
         {videoUrl && !scenes && (

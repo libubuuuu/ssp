@@ -65,12 +65,12 @@ class ReplicateScript(BaseModel):
 
 
 class GenerateRequest(BaseModel):
-    product_image_url: str
-    model_image_url: Optional[str] = None
-    reference_video_url: str       # 复刻参考(传给 wan2.7 当 reference_video)
+    product_image_url: str                          # 产品正面图(必)
+    product_back_image_url: Optional[str] = None    # 产品反面/侧面图(可选,锁材质/logo)
+    reference_video_url: str                        # 复刻参考视频(传给 wan2.7 当 driving)
     script: ReplicateScript
-    aspect_ratio: str = "9:16"     # 9:16 / 16:9 / 1:1
-    engine: str = "aliyun-wan2.7-r2v"  # 目前先支持这一个
+    aspect_ratio: str = "9:16"
+    engine: str = "aliyun-wan2.7-r2v"
 
 
 # ================= 端点 1:上传视频 =================
@@ -282,7 +282,7 @@ async def generate(
         "title": f"视频复刻 ({total_duration:.0f}s,{len(req.script.scenes)} 段)",
         "params": {
             "product_image_url": req.product_image_url,
-            "model_image_url": req.model_image_url,
+            "product_back_image_url": req.product_back_image_url,
             "reference_video_url": req.reference_video_url,
             "scenes": [s.model_dump() for s in req.script.scenes],
             "overall_setting": req.script.overall_setting,

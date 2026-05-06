@@ -1651,7 +1651,7 @@ async def _run_replicate_job(params: dict) -> dict:
     product_image_url = params.get("product_image_url")
     if not product_image_url:
         raise RuntimeError("product_image_url 必填")
-    model_image_url = params.get("model_image_url")
+    product_back_image_url = params.get("product_back_image_url")  # 反面/侧面,可选
     reference_video_url = params.get("reference_video_url")
     if not reference_video_url:
         raise RuntimeError("reference_video_url 必填")
@@ -1660,31 +1660,50 @@ async def _run_replicate_job(params: dict) -> dict:
         raise RuntimeError("scenes 不能为空")
     aspect_ratio = params.get("aspect_ratio") or "9:16"
     overall_setting = params.get("overall_setting") or ""
-    model_description = params.get("model_description") or "A professional model"
+    model_description = params.get("model_description") or "A professional commercial model"
 
-    # ---- Step 1:每段并发出 GPT-Image 2 首帧(用产品图作 base + scene visual_prompt 重塑) ----
-    log_info(f"replicate Step 1:并发 {len(scenes)} 段 GPT-Image 2 首帧 ratio={aspect_ratio}")
+    # ---- Step 1A:scene 1 用 compose_first_frame 出 base(GPT-2 自己想模特 + 产品正反面) ----
+    # 这一步给后续段提供"模特身份锚点",防止每段 GPT-2 出不同的人
+    log_info(f"replicate Step 1A:base 首帧(产品正反面 → GPT-2 自动出模特) ratio={aspect_ratio}")
+    base_res = await ad_video_models.compose_first_frame(
+        product_image_url=product_image_url,
+        background_image_url=None,
+        model_description=model_description,
+        scene_visual_prompt=scenes[0].get("visual_prompt", ""),
+        product_back_image_url=product_back_image_url,
+        aspect_ratio=aspect_ratio,
+    )
+    if "error" in base_res or not base_res.get("image_url"):
+        raise RuntimeError(f"base 首帧合成失败: {base_res.get('error','?')}")
+    base_frame_url = base_res["image_url"]
+    log_info(f"replicate base OK url={base_frame_url[:60]}")
 
+    # ---- Step 1B:scene 1 直接用 base;scene 2..N 在 base 上调 visual_prompt(锁模特身份) ----
+    log_info(f"replicate Step 1B:并发 {len(scenes)-1} 段 scene 首帧(在 base 上)")
     sem_frame = _asyncio.Semaphore(3)
-    async def _gen_frame(scene):
+    async def _gen_scene_frame(scene):
         async with sem_frame:
             try:
                 fr = await ad_video_models.compose_first_frame_for_scene(
-                    base_image_url=product_image_url,
+                    base_image_url=base_frame_url,
                     scene=scene,
                     model_description=model_description,
                     overall_setting=overall_setting,
                     aspect_ratio=aspect_ratio,
                 )
                 if "error" in fr or not fr.get("image_url"):
-                    log_error(f"replicate frame {scene.get('id')} fail, fallback to product: {fr.get('error','?')}")
-                    return product_image_url
+                    log_error(f"replicate frame {scene.get('id')} fail, fallback to base: {fr.get('error','?')}")
+                    return base_frame_url
                 return fr["image_url"]
             except Exception as e:
                 log_error(f"replicate frame {scene.get('id')} exc: {e}")
-                return product_image_url
+                return base_frame_url
 
-    frames = await _asyncio.gather(*[_gen_frame(s) for s in scenes])
+    if len(scenes) == 1:
+        frames = [base_frame_url]
+    else:
+        rest = await _asyncio.gather(*[_gen_scene_frame(s) for s in scenes[1:]])
+        frames = [base_frame_url] + list(rest)
 
     # ---- Step 2:每段 aliyun-wan2.7-r2v ----
     aliyun = get_aliyun_wan_service()
@@ -1695,10 +1714,10 @@ async def _run_replicate_job(params: dict) -> dict:
         ref_imgs = []
         if frame_url:
             ref_imgs.append(frame_url)
-        if model_image_url and model_image_url not in ref_imgs:
-            ref_imgs.append(model_image_url)
         if product_image_url and product_image_url not in ref_imgs:
             ref_imgs.append(product_image_url)
+        if product_back_image_url and product_back_image_url not in ref_imgs:
+            ref_imgs.append(product_back_image_url)
         prompt = scene.get("visual_prompt") or "Cinematic product showcase, soft natural lighting"
         duration = max(2, min(15, int(round(scene.get("duration_sec", 5)))))
         submit = await aliyun.wan27_r2v_submit(
