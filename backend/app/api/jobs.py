@@ -2030,15 +2030,29 @@ async def _run_replicate_job(params: dict) -> dict:
 
 # ==================== 3 个引擎的视频段生成 helper(2026-05-07)====================
 
-async def _slice_video_by_scenes(reference_video_url: str, scenes: list, tmpdir: str) -> list:
+async def _slice_video_by_scenes(reference_video_url: str, scenes: list, tmpdir: str, aspect_ratio: str = "9:16") -> list:
     """ffmpeg 按 scene time_range 切参考视频成 N 段,上传 fal storage,返 fal URL 列表。
-    pixverse-swap / catvton-pixverse 都用这个切段。"""
+    pixverse-swap / catvton-pixverse 都用这个切段。
+
+    🚨 重要:强制 720p 输出(用户铁律)。fal pixverse-swap @720p $0.20/5s,
+    @1080p $0.40/5s — 不准跑 0.4 美金的!
+    """
     import asyncio as _asyncio
     import subprocess
     import os
     import httpx
     from app.services.fal_service import fal_upload_with_retry
     from app.services.logger import log_info, log_error
+
+    # 720p 分辨率映射(强制 downscale,确保 fal pixverse 计费 $0.20/5s)
+    scale_map = {
+        "9:16": "720:1280",
+        "16:9": "1280:720",
+        "1:1":  "720:720",
+        "3:4":  "720:960",
+        "4:3":  "960:720",
+    }
+    scale_str = scale_map.get((aspect_ratio or "").strip().lower(), "720:1280")
 
     # 1. 下载参考视频到 tmpdir
     local_path = os.path.join(tmpdir, "ref.mp4")
@@ -2047,9 +2061,9 @@ async def _slice_video_by_scenes(reference_video_url: str, scenes: list, tmpdir:
             with open(local_path, "wb") as f:
                 async for chunk in r.aiter_bytes(64 * 1024):
                     f.write(chunk)
-    log_info(f"slice_video: 下载 ref 到 {local_path}")
+    log_info(f"slice_video: 下载 ref 到 {local_path} 目标分辨率 {scale_str}")
 
-    # 2. 按 scene 切段
+    # 2. 按 scene 切段(同时 downscale 到 720p)
     seg_paths = []
     for sc in scenes:
         tr = sc.get("time_range") or "0-5s"
@@ -2062,15 +2076,20 @@ async def _slice_video_by_scenes(reference_video_url: str, scenes: list, tmpdir:
             start, dur = 0.0, float(sc.get("duration_sec", 5))
         sid = sc.get("id", len(seg_paths))
         seg_path = os.path.join(tmpdir, f"seg_{sid}.mp4")
+        # 关键:scale + setsar 强制 720p,pixverse 输出按 720p 计费($0.20/5s)
+        vf = f"scale={scale_str}:force_original_aspect_ratio=decrease,pad={scale_str}:(ow-iw)/2:(oh-ih)/2,setsar=1"
         cp = subprocess.run(
             ["ffmpeg", "-y", "-ss", str(start), "-i", local_path, "-t", str(dur),
-             "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", seg_path],
+             "-vf", vf,
+             "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+             "-c:a", "aac", "-b:a", "128k",
+             seg_path],
             capture_output=True,
         )
         if cp.returncode != 0 or not os.path.exists(seg_path):
-            raise RuntimeError(f"ffmpeg slice scene {sid} failed: {cp.stderr.decode()[:200]}")
+            raise RuntimeError(f"ffmpeg slice+scale scene {sid} failed: {cp.stderr.decode()[:200]}")
         seg_paths.append(seg_path)
-    log_info(f"slice_video: 切完 {len(seg_paths)} 段")
+    log_info(f"slice_video: 切完 {len(seg_paths)} 段(已强制 {scale_str} 720p)")
 
     # 3. 并发上传 fal storage
     seg_fal_urls = await _asyncio.gather(*[fal_upload_with_retry(p) for p in seg_paths])
@@ -2127,7 +2146,7 @@ async def _gen_videos_pixverse_swap(scenes: list, frames: list, reference_video_
         raise RuntimeError("pixverse-swap 服务未初始化")
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        seg_urls = await _slice_video_by_scenes(reference_video_url, scenes, tmpdir)
+        seg_urls = await _slice_video_by_scenes(reference_video_url, scenes, tmpdir, aspect_ratio=aspect_ratio)
 
         sem = _asyncio.Semaphore(3)
         async def _swap_one(idx: int, seg_url: str, frame_url: str) -> str:
@@ -2204,8 +2223,8 @@ async def _gen_videos_catvton_pixverse(scenes: list, frames: list, product_image
         vton_image_url = vton_res["image_url"]
         log_info(f"replicate catvton vton OK url={vton_image_url[:60]}")
 
-        # ---- Step 3:切参考视频成 N 段 + 上传 fal ----
-        seg_urls = await _slice_video_by_scenes(reference_video_url, scenes, tmpdir)
+        # ---- Step 3:切参考视频成 N 段 + 上传 fal(强制 720p,pixverse $0.20/5s)----
+        seg_urls = await _slice_video_by_scenes(reference_video_url, scenes, tmpdir, aspect_ratio=aspect_ratio)
 
         # ---- Step 4:每段 pixverse-swap(vton 图 + driving 段)----
         sem = _asyncio.Semaphore(3)
