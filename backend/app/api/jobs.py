@@ -1964,11 +1964,12 @@ async def _run_replicate_job(params: dict) -> dict:
         if "error" in submit:
             err = submit['error']
             if "FreeTierOnly" in err or "免费配额" in err or "exhaust" in err.lower():
-                raise RuntimeError(
-                    f"阿里云通义万相 wan2.7-r2v 免费配额已用完。"
-                    f"请到 https://dashscope.console.aliyun.com/ 控制台关闭"
-                    f""仅用免费配额"开关后重试(付费约 ¥0.5/秒)。原始错误: {err[:160]}"
+                hint = (
+                    "阿里云通义万相 wan2.7-r2v 免费配额已用完。"
+                    "请到 https://dashscope.console.aliyun.com/ 控制台关闭"
+                    "「仅用免费配额」开关后重试(付费约 ¥0.5/秒)。"
                 )
+                raise RuntimeError(f"{hint} 原始错误: {err[:160]}")
             raise RuntimeError(f"seg {idx} submit: {err}")
         task_id = submit["task_id"]
         # poll 上限 90 次 × 10s = 15 分钟
