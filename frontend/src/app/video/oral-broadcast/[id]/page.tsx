@@ -557,12 +557,6 @@ export default function OralBroadcastWorkbench() {
                     <input type="radio" name="tier" value={opt} checked={tier === opt}
                       onChange={() => setTier(opt)} style={{ marginRight: "0.5rem" }} />
                     <strong>{t(`oral.tier.${opt}`)}</strong>
-                    <span style={{ marginLeft: "0.8rem", color: "#888", fontSize: "0.85rem" }}>
-                      ¥{TIER_PRICE[opt].yuan}/分钟 · {Math.ceil(TIER_PRICE[opt].credits / 60 * sess.duration_seconds)} 积分
-                    </span>
-                    <div style={{ fontSize: "0.75rem", color: "#999", marginTop: 4 }}>
-                      {t(`oral.tierDesc.${opt}`)}
-                    </div>
                   </label>
                 );
               })}
