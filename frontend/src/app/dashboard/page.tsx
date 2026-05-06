@@ -43,23 +43,23 @@ export default function Dashboard() {
   return (
     <div style={{display:"flex",minHeight:"100vh",background:"#edeae4",fontFamily:"-apple-system,BlinkMacSystemFont,sans-serif"}}>
       <Sidebar/>
-      <main style={{flex:1,padding:"3rem 4rem",overflowY:"auto"}}>
+      <main style={{flex:1,padding:"3rem 4rem",overflowY:"auto",maxWidth:"1280px",width:"100%",margin:"0 auto"}}>
         <div style={{marginBottom:"3rem"}}>
           <div style={{fontSize:"0.9rem",color:"#888",marginBottom:"0.5rem"}}>{t("dashboard.welcomeBack")}</div>
           <h1 style={{fontSize:"2.4rem",fontWeight:300,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>{user.name||user.email.split("@")[0]},</h1>
           <h1 style={{fontSize:"2.4rem",fontWeight:300,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif",fontStyle:"italic"}}>{t("dashboard.todayCreate")}</h1>
         </div>
 
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:"1.25rem"}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))",gap:"1.5rem"}}>
           {FEATURES.map(f=>(
             <div key={f.key} onClick={()=>router.push("/"+f.key)}
-              style={{background:"#fff",borderRadius:"20px",padding:"2rem",cursor:"pointer",border:"1px solid rgba(0,0,0,0.04)",transition:"all 0.25s",minHeight:"180px",display:"flex",flexDirection:"column",justifyContent:"space-between"}}
+              style={{background:"#fff",borderRadius:"20px",padding:"2.5rem",cursor:"pointer",border:"1px solid rgba(0,0,0,0.04)",transition:"all 0.25s",minHeight:"220px",display:"flex",flexDirection:"column",justifyContent:"space-between"}}
               onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-4px)";e.currentTarget.style.boxShadow="0 16px 40px rgba(0,0,0,0.08)";}}
               onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="none";}}>
-              <div style={{width:"52px",height:"52px",borderRadius:"14px",background:f.color,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.6rem",color:"#0d0d0d"}}>{f.icon}</div>
+              <div style={{width:"64px",height:"64px",borderRadius:"16px",background:f.color,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"2rem",color:"#0d0d0d"}}>{f.icon}</div>
               <div>
-                <div style={{fontSize:"1.15rem",color:"#0d0d0d",marginBottom:"0.4rem",fontWeight:500}}>{f.label}</div>
-                <div style={{fontSize:"0.85rem",color:"#888",lineHeight:1.5}}>{f.desc}</div>
+                <div style={{fontSize:"1.3rem",color:"#0d0d0d",marginBottom:"0.5rem",fontWeight:500}}>{f.label}</div>
+                <div style={{fontSize:"0.95rem",color:"#888",lineHeight:1.5}}>{f.desc}</div>
               </div>
             </div>
           ))}

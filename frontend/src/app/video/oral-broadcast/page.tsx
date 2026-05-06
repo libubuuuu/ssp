@@ -267,7 +267,7 @@ export default function OralBroadcastListPage() {
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "#fbfaf6" }}>
       <Sidebar />
-      <main style={{ flex: 1, padding: "2rem 3rem", maxWidth: 1100 }}>
+      <main style={{ flex: 1, padding: "2rem 3rem", maxWidth: 1100, width: "100%", margin: "0 auto" }}>
         <div style={{ marginBottom: "2rem" }}>
           <h1 style={{ fontSize: "2rem", fontWeight: 600, margin: 0 }}>
             🎤 {t("oral.title")}
