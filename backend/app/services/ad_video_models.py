@@ -80,7 +80,7 @@ _SANITIZE_PAIRS = [
     ("hip", "lower torso area"),
     ("thigh", "leg"),
     ("thighs", "legs"),
-    ("butt", "lower back"),
+    # ("butt" 移除 — 会误匹配 button/butter,buttocks 已覆盖)
     ("buttocks", "lower back"),
     ("crotch", "lower garment area"),
     ("groin", "lower torso"),
@@ -138,14 +138,49 @@ _BANNED_WORDS_FINAL_CHECK = [
 
 def _sanitize_text(t: str) -> str:
     """统一敏感词替换 — 3 处 compose 函数共用。
-    替换后扫一遍 banned 词,有漏 log 警告(P157 自动 detect 漏词)。"""
+    P162(2026-05-07):加 regex 剥除促销文字(VLM 经常写 'ADD TO CART'/'$24.99' 等
+    会触发 fal content_checker)。"""
     if not t:
         return t
+    import re as _re
     out = t
+    # 1. 先做字符串映射替换(原有)
     for old, new in _SANITIZE_PAIRS:
         out = out.replace(old, new)
-    # detect 漏掉的 banned 词
-    leaks = [w for w in _BANNED_WORDS_FINAL_CHECK if w in out.lower()]
+    # 2. P162 regex 剥除促销文字
+    # 单/双引号包裹的全大写/数字/$/%/!/-/空格 promotional 字串(3-40 字符)
+    # 例:'ADD TO CART' / 'LAST 50 UNITS' / "50% OFF" / '$24.99'
+    # 单引号促销文字
+    out = _re.sub(r"'[\w\s$.%!\-]{2,40}'", "", out)
+    # 双引号促销文字  
+    out = _re.sub(r'"[\w\s$.%!\-]{2,40}"', "", out)
+    # 美元价单独($XX.XX / $XX / $X)
+    out = _re.sub(r"\$\d+(\.\d+)?", "", out)
+    # 百分比 OFF
+    out = _re.sub(r"\d+%\s*OFF", "", out, flags=_re.IGNORECASE)
+    # CTA / 促销关键词(整词替换为空,保留前后空格防词粘连)
+    promo_words = [
+        "ADD TO CART", "BUY NOW", "SHOP NOW", "ORDER NOW", "ADD TO BAG",
+        "countdown timer", "price tag", "Before/After tag",
+        r"LAST \d+ UNITS", r"\d+ LEFT", "limited stock", "limited time",
+        "bold text overlay", "text overlay", "floating text", "big text",
+        "flashing", "blinking", "pulsing",  # 装饰性文字闪动暗示
+    ]
+    for w in promo_words:
+        out = _re.sub(w, " ", out, flags=_re.IGNORECASE)
+    # 收拢多空格
+    out = _re.sub(r"\s{2,}", " ", out).strip()
+    # 3. detect 漏掉的 banned 词 — 短词用 word boundary 防 button/butter 误报
+    _short_words = {"butt", "bra", "bust", "hip", "hips"}
+    _out_lower = out.lower()
+    leaks = []
+    for w in _BANNED_WORDS_FINAL_CHECK:
+        if w in _short_words:
+            if _re.search(r"\b" + _re.escape(w) + r"\b", _out_lower):
+                leaks.append(w)
+        else:
+            if w in _out_lower:
+                leaks.append(w)
     if leaks:
         log_error(f"[sanitize-leak] 替换后仍含敏感词: {leaks[:5]} text[:200]={out[:200]!r}")
     return out
