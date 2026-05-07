@@ -321,7 +321,7 @@ async def generate(
 
     if not req.script.scenes:
         raise HTTPException(400, "至少 1 段")
-    _ALLOWED_ENGINES = ("kling-3-pro-i2v", "pixverse-swap", "catvton-pixverse")
+    _ALLOWED_ENGINES = ("seedance-lite-i2v", "kling-3-pro-i2v", "pixverse-swap", "pixverse-2step", "catvton-pixverse")
     if req.engine not in _ALLOWED_ENGINES:
         raise HTTPException(400, f"engine 必须是 {_ALLOWED_ENGINES} 之一(收到 {req.engine})")
 

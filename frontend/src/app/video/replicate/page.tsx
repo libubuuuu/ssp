@@ -27,7 +27,7 @@ const ASPECT_OPTIONS = [
 const ENGINE_OPTIONS = [
   { value: "pixverse-swap",     label: "动作复刻(单步)⭐穿戴类首选", desc: "单步替换模特 · 适合衣服/塑身衣/胸罩 · 复刻参考视频动作", color: "#0d8a3e" },
   { value: "pixverse-2step",    label: "动作复刻(双步)🎯手持类首选", desc: "先换产品后换模特 · 适合手机/包/水杯/化妆品 · 手物 100% 贴合", color: "#1d4ed8" },
-  { value: "kling-3-pro-i2v",   label: "AI 自由生成",     desc: "AI 自由生成动作(不复刻参考视频)", color: "#888" },
+  { value: "seedance-lite-i2v", label: "AI 自由生成",     desc: "AI 自由生成动作(不复刻参考视频)", color: "#888" },
 ];
 
 function token() {

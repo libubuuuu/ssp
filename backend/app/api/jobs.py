@@ -2074,8 +2074,9 @@ async def _run_replicate_job(params: dict) -> dict:
     # ---- Step 2:按 engine 分发到不同视频生成路径 ----
     engine = params.get("engine") or "pixverse-swap"
     log_info(f"replicate Step 2 engine={engine}")
-    if engine == "kling-3-pro-i2v":
-        seg_urls = await _gen_videos_kling_i2v(scenes, frames, aspect_ratio)
+    if engine in ("seedance-lite-i2v", "kling-3-pro-i2v"):
+        # P164:kling-3-pro-i2v 旧 value 保留兼容,实际跑 seedance-lite
+        seg_urls = await _gen_videos_seedance_lite_i2v(scenes, frames, aspect_ratio)
     elif engine == "pixverse-swap":
         seg_urls = await _gen_videos_pixverse_swap(scenes, frames, reference_video_url, aspect_ratio)
     elif engine == "pixverse-2step":
@@ -2193,8 +2194,12 @@ async def _slice_video_by_scenes(reference_video_url: str, scenes: list, tmpdir:
     return seg_fal_urls
 
 
-async def _gen_videos_kling_i2v(scenes: list, frames: list, aspect_ratio: str) -> list:
-    """引擎 1:kling-3-pro-i2v(¥2.5/5s,纯图生视频不要 driving)"""
+async def _gen_videos_seedance_lite_i2v(scenes: list, frames: list, aspect_ratio: str) -> list:
+    """引擎 3:seedance-lite-i2v(P164 替换 kling-3-pro-i2v,$0.80→$0.18/5s)
+
+    用户说 kling-3-pro $0.80/5s 太贵,目标 $0.2-0.3 平替 + AI 自由生成动作。
+    Seedance v1 Lite i2v $0.18/5s @720p,ByteDance 模型,效果接近 Pro 版的 70%。
+    """
     import asyncio as _asyncio
     import fal_client
     from app.services.logger import log_info, log_error
@@ -2206,12 +2211,14 @@ async def _gen_videos_kling_i2v(scenes: list, frames: list, aspect_ratio: str) -
             prompt = scene.get("visual_prompt") or "Cinematic product showcase"
             try:
                 result = await fal_client.run_async(
-                    "fal-ai/kling-video/v3/pro/image-to-video",
+                    "fal-ai/bytedance/seedance/v1/lite/image-to-video",
                     arguments={
                         "image_url": frame_url,
                         "prompt": prompt,
                         "duration": str(duration),
                         "aspect_ratio": aspect_ratio,
+                        "resolution": "720p",
+                        "enable_audio": False,
                     },
                 )
                 video = result.get("video") if isinstance(result, dict) else None
@@ -2219,15 +2226,19 @@ async def _gen_videos_kling_i2v(scenes: list, frames: list, aspect_ratio: str) -
                 if not vurl:
                     vurl = result.get("video_url") if isinstance(result, dict) else None
                 if not vurl:
-                    raise RuntimeError(f"kling-3-pro-i2v seg {idx} 未返 video URL")
-                log_info(f"replicate kling-i2v seg {idx} OK url={vurl[:60]}")
+                    raise RuntimeError(f"seedance-lite-i2v seg {idx} 未返 video URL")
+                log_info(f"replicate seedance-lite-i2v seg {idx} OK url={vurl[:60]}")
                 return vurl
             except Exception as e:
-                raise RuntimeError(f"kling-3-pro-i2v seg {idx} 失败: {str(e)[:200]}")
+                raise RuntimeError(f"seedance-lite-i2v seg {idx} 失败: {str(e)[:200]}")
 
     return await _asyncio.gather(*[
         _one(i, scenes[i], frames[i]) for i in range(len(scenes))
     ])
+
+
+# P164:旧函数名 alias 保留,避免破坏可能的引用(虽然 grep 没找到外部引用,但保险)
+_gen_videos_kling_i2v = _gen_videos_seedance_lite_i2v
 
 
 async def _gen_videos_pixverse_swap(scenes: list, frames: list, reference_video_url: str, aspect_ratio: str) -> list:
