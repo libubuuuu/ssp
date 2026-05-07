@@ -502,32 +502,46 @@ async def compose_first_frame(
         )
     full_prompt = " ".join(prompt_parts)
 
-    try:
-        result = await fal_client.run_async(
-            NANO_BANANA_EDIT_ENDPOINT,
-            arguments={
-                "prompt": full_prompt,
-                "image_urls": image_urls,
-                # P126: openai/gpt-image-2/edit schema(image_size 替代 aspect_ratio,无 guidance_scale)
-                "image_size": _img_size_for_aspect(aspect_ratio),
-                "num_images": 1,
-                "output_format": "png",
-            },
-        )
-        images = result.get("images", [])
-        if not images:
-            await circuit_breaker.record_failure(cb_key)
-            return {"error": "首帧未生成"}
+    # P165(2026-05-07):fal → OpenAI 上游瞬时错(Downstream service error)很常见,
+    # 加 2 次 retry,2s/4s 退避。content_policy_violation 不重试(改 prompt 也救不了)。
+    last_err: Optional[Exception] = None
+    for attempt in range(3):
+        try:
+            result = await fal_client.run_async(
+                NANO_BANANA_EDIT_ENDPOINT,
+                arguments={
+                    "prompt": full_prompt,
+                    "image_urls": image_urls,
+                    # P126: openai/gpt-image-2/edit schema(image_size 替代 aspect_ratio,无 guidance_scale)
+                    "image_size": _img_size_for_aspect(aspect_ratio),
+                    "num_images": 1,
+                    "output_format": "png",
+                },
+            )
+            images = result.get("images", [])
+            if not images:
+                await circuit_breaker.record_failure(cb_key)
+                return {"error": "首帧未生成"}
 
-        await circuit_breaker.record_success(cb_key)
-        return {
-            "image_url": images[0].get("url"),
-            "model": NANO_BANANA_EDIT_ENDPOINT,
-        }
-    except Exception as e:
-        await circuit_breaker.record_failure(cb_key)
-        log_error(f"Flux Kontext 合成首帧失败: {e}")
-        return {"error": f"首帧合成失败: {str(e)[:200]}"}
+            await circuit_breaker.record_success(cb_key)
+            return {
+                "image_url": images[0].get("url"),
+                "model": NANO_BANANA_EDIT_ENDPOINT,
+            }
+        except Exception as e:
+            last_err = e
+            err_str = str(e)
+            # content_policy 不重试 — 改 prompt 也救不了
+            if "content_policy_violation" in err_str or "content_checker" in err_str:
+                break
+            # 其他错(downstream_service_error / 网络抖动)retry
+            if attempt < 2:
+                log_info(f"compose_first_frame retry {attempt+1}/2 触发 (err={err_str[:80]})")
+                await asyncio.sleep(2 * (attempt + 1))
+                continue
+    await circuit_breaker.record_failure(cb_key)
+    log_error(f"Flux Kontext 合成首帧失败(已 retry 2 次): {last_err}")
+    return {"error": f"首帧合成失败: {str(last_err)[:200]}"}
 
 
 async def compose_first_frame_for_scene(
