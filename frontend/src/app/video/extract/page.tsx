@@ -1,0 +1,281 @@
+"use client";
+import { useState } from "react";
+import Sidebar from "@/components/Sidebar";
+import { adjustLocalUserCredits } from "@/lib/userState";
+import { errMsg } from "@/lib/utils/errors";
+import { serializeReplicateScenes, distributeSpeechToScenes } from "@/lib/scriptMarkdown";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
+
+interface Scene {
+  id: number;
+  time_range: string;
+  duration_sec: number;
+  shot: string;
+  action: string;
+  framing: string;
+  visual_prompt: string;
+  speech?: string;  // P183(2026-05-08):每段口播,从全段口播按时长分配 + 用户可改
+}
+
+function token() {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem("token") || "";
+}
+
+export default function VideoExtractPage() {
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [scenes, setScenes] = useState<Scene[] | null>(null);
+  const [detectedRatio, setDetectedRatio] = useState<string>("9:16");
+  const [originalSpeech, setOriginalSpeech] = useState<string>("");
+  const [speechAudioUrl, setSpeechAudioUrl] = useState<string>("");
+  const [hasBackgroundMusic, setHasBackgroundMusic] = useState<boolean>(false);
+  const [overallSetting, setOverallSetting] = useState<string>("");
+
+  const [loading, setLoading] = useState(false);
+  const [loadingMsg, setLoadingMsg] = useState("");
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  // ---- 上传视频(复用 replicate 的 endpoint)----
+  const onPickVideo = async (f: File | null) => {
+    if (!f) return;
+    setVideoFile(f); setError(""); setScenes(null); setOriginalSpeech(""); setSpeechAudioUrl("");
+    setLoading(true); setLoadingMsg("上传视频...");
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      const r = await fetch(`${API_BASE}/api/video/replicate/upload/video`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token()}` },
+        body: fd,
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      setVideoUrl(d.video_url);
+    } catch (e) { setError(errMsg(e, "上传视频失败")); }
+    finally { setLoading(false); setLoadingMsg(""); }
+  };
+
+  // ---- 提取脚本 = 调 replicate analyze ----
+  const extract = async () => {
+    if (!videoUrl) return;
+    setError(""); setLoading(true); setLoadingMsg("提交分析任务...");
+    try {
+      const r = await fetch(`${API_BASE}/api/video/replicate/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
+        body: JSON.stringify({ video_url: videoUrl }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      const aid = d.analyze_job_id;
+      if (!aid) throw new Error("没拿到 analyze_job_id");
+      adjustLocalUserCredits(-1);
+      setLoadingMsg("AI 分析视频中(qwen-vl 看画面 + wizper 转口播,30-180s)...");
+      let elapsed = 0;
+      const interval = setInterval(async () => {
+        elapsed += 6;
+        try {
+          const sr = await fetch(`${API_BASE}/api/video/replicate/analyze/status/${aid}`, {
+            headers: { Authorization: `Bearer ${token()}` },
+          });
+          if (!sr.ok) return;
+          const sd = await sr.json();
+          if (sd.status === "completed") {
+            clearInterval(interval);
+            // P183:scenes 加载时自动把整段口播按时长比例分到每段(用户可手动改)
+            const rawScenes = sd.scenes || [];
+            const fullSpeech = sd.original_speech || "";
+            let scenesWithSpeech = rawScenes;
+            if (fullSpeech && rawScenes.length > 0) {
+              const distributed = distributeSpeechToScenes(fullSpeech, rawScenes);
+              scenesWithSpeech = rawScenes.map((s: Scene, i: number) => ({ ...s, speech: distributed[i] || "" }));
+            }
+            setScenes(scenesWithSpeech);
+            setDetectedRatio(sd.detected_aspect_ratio || "9:16");
+            setOriginalSpeech(fullSpeech);
+            setSpeechAudioUrl(sd.speech_audio_url || "");
+            setHasBackgroundMusic(!!sd.has_background_music);
+            setLoading(false); setLoadingMsg("");
+          } else if (sd.status === "failed") {
+            clearInterval(interval);
+            setError(sd.error || "提取失败");
+            setLoading(false); setLoadingMsg("");
+          } else {
+            setLoadingMsg(`AI 分析中... 已用 ${elapsed}s`);
+          }
+        } catch {}
+      }, 6000);
+    } catch (e) { setError(errMsg(e, "提交失败")); setLoading(false); setLoadingMsg(""); }
+  };
+
+  const updateScene = (idx: number, key: keyof Scene, val: string) => {
+    if (!scenes) return;
+    setScenes(scenes.map((s, i) => i === idx ? { ...s, [key]: val } : s));
+  };
+
+  const buildMarkdown = () => {
+    if (!scenes) return "";
+    return serializeReplicateScenes(scenes, {
+      total_duration_sec: scenes.reduce((a, s) => a + (s.duration_sec || 5), 0),
+      overall_setting: overallSetting,
+      original_speech: originalSpeech || undefined,
+    });
+  };
+
+  const onCopy = async () => {
+    const md = buildMarkdown();
+    await navigator.clipboard.writeText(md);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  const onDownload = () => {
+    const md = buildMarkdown();
+    const blob = new Blob([md], { type: "text/markdown" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "video-script.md";
+    a.click();
+  };
+
+  // ---- UI ----
+  const Box = ({ children, label }: { children: React.ReactNode; label: string }) => (
+    <div style={{ background: "#fff", borderRadius: 14, padding: "1.2rem 1.4rem", marginBottom: "1.2rem", boxShadow: "0 2px 8px rgba(0,0,0,0.04)" }}>
+      <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.6rem", fontWeight: 500 }}>{label}</div>
+      {children}
+    </div>
+  );
+
+  return (
+    <div style={{ display: "flex", minHeight: "100vh", background: "#edeae4", fontFamily: "-apple-system,BlinkMacSystemFont,sans-serif" }}>
+      <Sidebar />
+      <main style={{ flex: 1, padding: "2rem 2.5rem", overflowY: "auto", maxWidth: 1100, width: "100%", margin: "0 auto" }}>
+        <div style={{ marginBottom: "1.5rem" }}>
+          <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>AI 创作工具</div>
+          <h1 style={{ fontSize: "1.8rem", fontWeight: 400, margin: 0, fontFamily: "Georgia,serif" }}>视频脚本<span style={{ fontStyle: "italic" }}> 提取</span></h1>
+          <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
+            上传任意视频 → AI 提取分镜 / 景别 / 动作 / 口播文字 → 一键复制成 markdown 粘贴到"AI 带货视频"快速建脚本
+          </div>
+        </div>
+
+        {error && (
+          <div style={{ background: "#fff3f3", border: "1px solid #fcc", color: "#c33", padding: "0.8rem 1rem", borderRadius: 10, marginBottom: "1rem", fontSize: "0.9rem" }}>{error}</div>
+        )}
+
+        <Box label="① 上传视频">
+          <label style={{ display: "block", border: "2px dashed #ddd", borderRadius: 10, padding: "1rem", textAlign: "center", cursor: "pointer", background: videoFile ? "#f9f7f2" : "#fff" }}>
+            <input type="file" accept="video/*" style={{ display: "none" }} onChange={e => onPickVideo(e.target.files?.[0] || null)} />
+            {videoFile ? (
+              <div>
+                <div style={{ fontSize: "0.85rem", color: "#0d0d0d", marginBottom: 6 }}>✓ {videoFile.name}</div>
+                {videoUrl && <video src={videoUrl} controls style={{ maxWidth: 280, maxHeight: 200, marginTop: 6, borderRadius: 8 }} />}
+              </div>
+            ) : (
+              <div style={{ color: "#999", fontSize: "0.9rem" }}>点击上传视频(MP4/MOV,≤100MB)</div>
+            )}
+          </label>
+        </Box>
+
+        {videoUrl && !scenes && (
+          <button onClick={extract} disabled={loading}
+            style={{ background: "#0d0d0d", color: "#fff", border: "none", padding: "0.9rem 1.6rem", borderRadius: 10, fontSize: "0.95rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1, marginBottom: "1rem" }}>
+            {loading ? loadingMsg || "提取中..." : "🔍 提取脚本(消耗 1 积分)"}
+          </button>
+        )}
+
+        {scenes && (originalSpeech || speechAudioUrl || hasBackgroundMusic) && (
+          <Box label={`② 提取的口播${hasBackgroundMusic ? " · 检测到背景音乐(已分离)" : " · 无背景音乐"}`}>
+            {originalSpeech ? (
+              <div style={{ marginBottom: speechAudioUrl ? 10 : 0 }}>
+                <div style={{ background: "#f9f7f2", padding: "0.7rem 0.9rem", borderRadius: 8, fontSize: "0.88rem", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+                  {originalSpeech}
+                </div>
+              </div>
+            ) : (
+              <div style={{ fontSize: "0.85rem", color: "#999" }}>原视频未识别到说话内容</div>
+            )}
+            {speechAudioUrl && (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: 4 }}>纯人声音轨(已剥离背景音乐):</div>
+                <audio src={speechAudioUrl} controls style={{ width: "100%", maxWidth: 480 }} />
+              </div>
+            )}
+          </Box>
+        )}
+
+        {scenes && (
+          <>
+            <Box label={`③ 提取的 ${scenes.length} 个分镜(可手动修改)`}>
+              <div style={{ fontSize: "0.78rem", color: "#999", marginBottom: 10 }}>
+                检测视频比例:{detectedRatio} · 修改下面任意字段,复制时会带上你的修改
+              </div>
+              {scenes.map((sc, idx) => (
+                <div key={sc.id} style={{ borderTop: idx > 0 ? "1px solid #eee" : "none", paddingTop: idx > 0 ? "1rem" : 0, marginTop: idx > 0 ? "1rem" : 0 }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
+                    <strong style={{ fontSize: "0.9rem" }}>镜 {sc.id}</strong>
+                    <input value={sc.time_range} onChange={e => updateScene(idx, "time_range", e.target.value)}
+                      style={{ width: 100, padding: "0.3rem 0.5rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.78rem" }} />
+                    <input value={sc.shot} onChange={e => updateScene(idx, "shot", e.target.value)} placeholder="景别"
+                      style={{ width: 110, padding: "0.3rem 0.5rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.78rem" }} />
+                    <span style={{ fontSize: "0.78rem", color: "#999" }}>{sc.duration_sec}s</span>
+                  </div>
+                  <div style={{ marginBottom: 6 }}>
+                    <div style={{ fontSize: "0.75rem", color: "#666", marginBottom: 2 }}>动作:</div>
+                    <input value={sc.action} onChange={e => updateScene(idx, "action", e.target.value)}
+                      style={{ width: "100%", padding: "0.4rem 0.6rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.82rem" }} />
+                  </div>
+                  <div style={{ marginBottom: 6 }}>
+                    <div style={{ fontSize: "0.75rem", color: "#666", marginBottom: 2 }}>画面 prompt:</div>
+                    <textarea value={sc.visual_prompt} onChange={e => updateScene(idx, "visual_prompt", e.target.value)} rows={2}
+                      style={{ width: "100%", padding: "0.4rem 0.6rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.82rem", fontFamily: "monospace", resize: "vertical" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "0.75rem", color: "#666", marginBottom: 2 }}>口播文字 <span style={{ color: "#999" }}>(已按时长比例自动分配,可手动调整)</span>:</div>
+                    <textarea value={sc.speech || ""} onChange={e => updateScene(idx, "speech" as keyof Scene, e.target.value)} rows={2}
+                      placeholder="这一段模特要说的话…"
+                      style={{ width: "100%", padding: "0.4rem 0.6rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.82rem", lineHeight: 1.5, resize: "vertical" }} />
+                  </div>
+                </div>
+              ))}
+              {originalSpeech && (
+                <div style={{ marginTop: 12, padding: "0.6rem 0.8rem", background: "#f0f7fb", borderRadius: 8, fontSize: "0.78rem", color: "#456" }}>
+                  💡 整段口播已按时长自动切到各段。如果切得不准,直接改上面的「口播文字」就行;<strong>每段必须有口播</strong>(空段会让 AI 带货视频生成失败)。
+                </div>
+              )}
+            </Box>
+
+            <Box label="④ 整体场景描述(可选,会写到 markdown 头部)">
+              <textarea value={overallSetting} onChange={e => setOverallSetting(e.target.value)} rows={2}
+                placeholder="例:室内客厅,白天自然光,简洁台面"
+                style={{ width: "100%", padding: "0.5rem 0.7rem", border: "1px solid #ddd", borderRadius: 8, fontSize: "0.85rem", resize: "vertical" }} />
+            </Box>
+
+            <Box label="⑤ 复制 / 下载 markdown 脚本">
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+                <button onClick={onCopy}
+                  style={{ background: copied ? "#0d8a3e" : "#0d0d0d", color: "#fff", border: "none", padding: "0.7rem 1.4rem", borderRadius: 8, fontSize: "0.9rem", cursor: "pointer", transition: "background 0.2s" }}>
+                  {copied ? "✓ 已复制" : "📋 复制全部 markdown"}
+                </button>
+                <button onClick={onDownload}
+                  style={{ background: "transparent", color: "#0d0d0d", border: "1px solid #ddd", padding: "0.7rem 1.4rem", borderRadius: 8, fontSize: "0.9rem", cursor: "pointer" }}>
+                  ⬇ 下载 .md 文件
+                </button>
+              </div>
+              <details style={{ fontSize: "0.82rem" }}>
+                <summary style={{ cursor: "pointer", color: "#666", marginBottom: 6 }}>预览 markdown 内容</summary>
+                <pre style={{ background: "#f9f7f2", padding: "0.8rem", borderRadius: 8, overflow: "auto", maxHeight: 400, fontSize: "0.78rem", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+                  {buildMarkdown()}
+                </pre>
+              </details>
+              <div style={{ marginTop: 12, padding: "0.7rem 0.9rem", background: "#f0f7fb", borderRadius: 8, fontSize: "0.82rem", color: "#1a4068" }}>
+                💡 复制后可直接粘贴到「AI 带货视频」的"粘贴脚本"模式,系统会自动解析填到分镜表里。
+              </div>
+            </Box>
+          </>
+        )}
+      </main>
+    </div>
+  );
+}

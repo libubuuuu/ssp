@@ -4,6 +4,7 @@ import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
 import { errMsg } from "@/lib/utils/errors";
 import { compressImage } from "@/lib/utils/imageCompress";
+import { parseMarkdown, toAdVideoScript, MARKDOWN_TEMPLATE_SAMPLE } from "@/lib/scriptMarkdown";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -55,6 +56,17 @@ export default function AdVideoPage() {
   // P32:用户自定义视频总时长(5-300s),analyze 时透传给 VLM 出 N 段脚本
   const [duration, setDuration] = useState(12);  // P40: v1.5/pro 单段上限
   const [region, setRegion] = useState<"CN" | "Global">("CN");  // P100: 国内抖音 / 海外 TikTok
+  // P180(2026-05-08):脚本模式 — auto = AI 自动生成 / paste = 用户粘贴 markdown
+  const [scriptMode, setScriptMode] = useState<"auto" | "paste">("auto");
+  const [pastedMarkdown, setPastedMarkdown] = useState<string>("");
+  const [pasteError, setPasteError] = useState<string>("");
+  // P186/P187(2026-05-08):参考视频 — grid + 中间帧 + VLM 判人物
+  const [styleRefVideo, setStyleRefVideo] = useState<File | null>(null);
+  const [styleRefGridUrl, setStyleRefGridUrl] = useState<string>("");
+  const [styleRefMiddleUrl, setStyleRefMiddleUrl] = useState<string>("");  // P187:中间帧
+  const [styleRefHasPeople, setStyleRefHasPeople] = useState<boolean | null>(null);  // P187:VLM 检测
+  const [styleRefUploading, setStyleRefUploading] = useState<boolean>(false);
+  const [styleRefError, setStyleRefError] = useState<string>("");
   // P133(2026-05-05):用户敲"Kling AI Avatar v2 Standard"($0.0562/s,5s = $0.28),
   // 砍掉视频引擎下拉选项 — 后端硬编码用 fal-ai/kling-video/ai-avatar/v2/standard。
   // 用户怒"v3 pro $0.84/5s 那么贵"。这个字段保留是为了兼容老 jobs API,实际后端 P133 不读。
@@ -142,7 +154,36 @@ export default function AdVideoPage() {
       if (typeof d.cost === "number" && d.cost > 0) adjustLocalUserCredits(-d.cost);
 
       setAudit(d.audit);
-      setScript(d.script);
+      // P180:粘贴模式 — 用户的 markdown 脚本覆盖 VLM 生成的脚本
+      if (scriptMode === "paste" && pastedMarkdown.trim()) {
+        try {
+          const parsed = parseMarkdown(pastedMarkdown);
+          const adScript = toAdVideoScript(parsed);
+          // 字段缺失兜底:复用 VLM 给的 model_description(粘贴的脚本里没写时)
+          if (!adScript.model_description.trim() && d.script?.model_description) {
+            adScript.model_description = d.script.model_description;
+          }
+          setScript(adScript);
+          // P184:粘贴模式从 markdown total_duration 字段或 scenes 算出总时长,覆盖默认 12s
+          let pastedTotal = parsed.total_duration_sec || 0;
+          if (!pastedTotal) {
+            // 从 scenes 算:解析每段 time_range 的 duration 之和
+            for (const s of adScript.scenes) {
+              const m = (s.time_range || "").match(/(\d+(?:\.\d+)?)\s*[-~到至]\s*(\d+(?:\.\d+)?)/);
+              if (m) pastedTotal += parseFloat(m[2]) - parseFloat(m[1]);
+            }
+          }
+          if (pastedTotal > 0 && pastedTotal <= 300) {
+            setDuration(Math.round(pastedTotal));
+          }
+        } catch (parseErr: unknown) {
+          // 解析失败 fallback 到 VLM 生成的脚本,但提示用户
+          setScript(d.script);
+          setErr(`粘贴的脚本解析失败,已 fallback 到 AI 生成版本:${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
+        }
+      } else {
+        setScript(d.script);
+      }
       // /analyze 内部已上传到 fal storage,直接复用 URL,后面 /preview 不用再传
       if (d.product_image_url) {
         setProductImageUrl(d.product_image_url);
@@ -160,6 +201,35 @@ export default function AdVideoPage() {
       setErr(errMsg(e));
     } finally {
       setLoading(false);
+    }
+  };
+
+  // P186/P187:上传参考视频 → 后端抽 grid + 中间帧 + VLM 判人物
+  const uploadStyleRefVideo = async (f: File) => {
+    setStyleRefVideo(f);
+    setStyleRefGridUrl("");
+    setStyleRefMiddleUrl("");
+    setStyleRefHasPeople(null);
+    setStyleRefError("");
+    setStyleRefUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      const r = await fetch(`${API_BASE}/api/ad-video/extract-style-frames`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token()}` },
+        body: fd,
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || "提取参考视频失败");
+      setStyleRefGridUrl(d.grid_image_url);
+      setStyleRefMiddleUrl(d.middle_frame_url || "");
+      setStyleRefHasPeople(typeof d.has_people === "boolean" ? d.has_people : null);
+    } catch (e) {
+      setStyleRefError(errMsg(e, "上传 / 抽帧失败"));
+      setStyleRefVideo(null);
+    } finally {
+      setStyleRefUploading(false);
     }
   };
 
@@ -201,6 +271,31 @@ export default function AdVideoPage() {
         setBgImageUrl(bUrl);
       }
 
+      // P182(2026-05-08):粘贴模式 + 没上传背景 + 脚本里有 overall_setting
+      // → GPT-Image 2 自动生成一张干净背景图(N 段共享)
+      // P189(2026-05-08):上传了参考视频时,中间帧已经能当背景,跳过 P182 避免多此一举
+      if (scriptMode === "paste" && !bUrl && script.overall_setting && !styleRefMiddleUrl) {
+        setLoadingMsg("根据脚本自动生成背景图(GPT-Image 2,30-180s)...");
+        try {
+          const bgRes = await fetch(`${API_BASE}/api/ad-video/generate-background`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
+            body: JSON.stringify({ scene_description: script.overall_setting, aspect_ratio: "9:16" }),
+          });
+          const bgData = await bgRes.json();
+          if (bgRes.ok && bgData.image_url) {
+            bUrl = bgData.image_url;
+            setBgImageUrl(bUrl);
+            if (typeof bgData.cost === "number" && bgData.cost > 0) adjustLocalUserCredits(-bgData.cost);
+          } else {
+            // 失败不阻塞,fallback 让 GPT-Image 2 在合成首帧时自己想象背景
+            console.warn("自动生成背景失败,fallback 到首帧自带:", bgData.detail);
+          }
+        } catch (bgErr) {
+          console.warn("自动生成背景异常:", bgErr);
+        }
+      }
+
       setLoadingMsg(`Seedream 合成 ${script.scenes.length} 张分镜首帧...`);
       const r = await fetch(`${API_BASE}/api/ad-video/preview`, {
         method: "POST",
@@ -212,6 +307,10 @@ export default function AdVideoPage() {
           product_image_url: pUrl,
           product_back_image_url: productBackImageUrl || null,
           background_image_url: bUrl || null,
+          style_reference_image_url: null,  // P191(2026-05-08):砍掉 grid 不再传 GPT(冗余)
+          // P192(2026-05-08):只有黏贴脚本模式才传参考视频帧 — auto 模式按提示词做,不蹭参考视频
+          reference_video_frame_url: scriptMode === "paste" ? (styleRefMiddleUrl || null) : null,
+          ref_video_has_people: scriptMode === "paste" ? styleRefHasPeople : null,
           script: script,  // P35: 整个 script,后端循环出 N 张
         }),
       });
@@ -257,6 +356,8 @@ export default function AdVideoPage() {
         setBgImageUrl(bUrl);
       }
 
+      // P184:实时按 scenes 算总时长(用户增删段后,duration state 可能滞后)
+      const liveDuration = Math.max(5, Math.round(computeTotalDuration(script.scenes)));
       setLoadingMsg("视频生成中...");
       const r = await fetch(`${API_BASE}/api/ad-video/generate`, {
         method: "POST",
@@ -270,8 +371,12 @@ export default function AdVideoPage() {
           product_image_url: pUrl,
           product_back_image_url: productBackImageUrl || null,
           background_image_url: bUrl || null,
+          style_reference_image_url: null,  // P191(2026-05-08):砍掉 grid 不再传 GPT(冗余)
+          // P192(2026-05-08):只有黏贴脚本模式才传参考视频帧 — auto 模式按提示词做,不蹭参考视频
+          reference_video_frame_url: scriptMode === "paste" ? (styleRefMiddleUrl || null) : null,
+          ref_video_has_people: scriptMode === "paste" ? styleRefHasPeople : null,
           script,
-          duration,
+          duration: liveDuration,
           aspect_ratio: "9:16",
           resolution: "720p",
           enable_audio: true,
@@ -331,10 +436,66 @@ export default function AdVideoPage() {
 
   // ============== Scene 编辑 ==============
 
+  // P184(2026-05-08):时间轴工具
+  const parseTimeRange = (tr: string): { start: number; end: number; duration: number } => {
+    const m = (tr || "").match(/(\d+(?:\.\d+)?)\s*[-~到至]\s*(\d+(?:\.\d+)?)\s*s?/);
+    if (!m) return { start: 0, end: 5, duration: 5 };
+    const start = parseFloat(m[1]);
+    const end = parseFloat(m[2]);
+    return { start, end, duration: Math.max(0.5, end - start) };
+  };
+  const formatTimeRange = (start: number, end: number): string => {
+    const fmt = (n: number) => Number.isInteger(n) ? String(n) : n.toFixed(1);
+    return `${fmt(start)}-${fmt(end)}s`;
+  };
+  /** 重新对齐 scenes 的 time_range,从 0 开始无缝衔接,各段保留自己的 duration */
+  const realignScenes = (scenes: Scene[]): Scene[] => {
+    let cursor = 0;
+    return scenes.map((s) => {
+      const { duration } = parseTimeRange(s.time_range);
+      const start = cursor;
+      const end = cursor + duration;
+      cursor = end;
+      return { ...s, time_range: formatTimeRange(start, end) };
+    });
+  };
+  const computeTotalDuration = (scenes: Scene[]): number => {
+    return scenes.reduce((acc, s) => acc + parseTimeRange(s.time_range).duration, 0);
+  };
+
   const updateScene = (idx: number, key: keyof Scene, value: string) => {
     if (!script) return;
-    const newScenes = script.scenes.map((s, i) => (i === idx ? { ...s, [key]: value } : s));
+    let newScenes = script.scenes.map((s, i) => (i === idx ? { ...s, [key]: value } : s));
+    // P184:用户改 time_range → 自动重新对齐后续段(避免段间空白/重叠)
+    if (key === "time_range") newScenes = realignScenes(newScenes);
     setScript({ ...script, scenes: newScenes });
+  };
+
+  /** P184:删除分镜 — 后续段 time_range 自动往前补 */
+  const deleteScene = (idx: number) => {
+    if (!script || script.scenes.length <= 1) return;
+    const filtered = script.scenes.filter((_, i) => i !== idx);
+    const realigned = realignScenes(filtered).map((s, i) => ({ ...s, id: i + 1 }));
+    setScript({ ...script, scenes: realigned });
+  };
+
+  /** P184:新增分镜 — 默认 5 秒接在末尾 */
+  const addScene = () => {
+    if (!script) return;
+    const lastEnd = script.scenes.length > 0
+      ? parseTimeRange(script.scenes[script.scenes.length - 1].time_range).end
+      : 0;
+    const newId = script.scenes.length + 1;
+    const newScene: Scene = {
+      id: newId,
+      time_range: formatTimeRange(lastEnd, lastEnd + 5),
+      purpose: "",
+      shot_language: "medium-shot",
+      content: "新增镜头",
+      visual_prompt: "Photorealistic commercial fashion shoot, medium shot, model presenting the item",
+      speech: "",
+    };
+    setScript({ ...script, scenes: [...script.scenes, newScene] });
   };
 
   const regenScene = async (idx: number) => {
@@ -384,6 +545,16 @@ export default function AdVideoPage() {
     setVideoUrl("");
     setJobProgress("");
     setErr("");
+    // P180:重置粘贴模式相关状态
+    setScriptMode("auto");
+    setPastedMarkdown("");
+    setPasteError("");
+    // P186/P187:重置参考视频相关
+    setStyleRefVideo(null);
+    setStyleRefGridUrl("");
+    setStyleRefMiddleUrl("");
+    setStyleRefHasPeople(null);
+    setStyleRefError("");
     if (pollRef.current) clearInterval(pollRef.current);
   };
 
@@ -418,6 +589,23 @@ export default function AdVideoPage() {
         {/* Step 1: 上传 */}
         {step === 1 && (
           <Card title="第一步:上传产品图" desc="建议白底图、4:5 或 1:1、主体居中、光线均匀。反面图能帮 AI 锁住材质/logo/标签细节,合成更真实">
+            {/* P180:脚本模式切换 — auto / paste */}
+            <div style={{ marginBottom: 18, padding: "0.6rem 0.8rem", background: "#f9f7f2", borderRadius: 10 }}>
+              <div style={{ fontSize: "0.85rem", fontWeight: 500, marginBottom: 8 }}>脚本来源</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <label style={{ flex: 1, padding: "0.6rem 0.8rem", border: scriptMode === "auto" ? "2px solid #0d0d0d" : "1px solid #ddd", background: scriptMode === "auto" ? "#fff" : "transparent", borderRadius: 8, cursor: "pointer" }}>
+                  <input type="radio" name="scriptMode" checked={scriptMode === "auto"} onChange={() => setScriptMode("auto")} style={{ marginRight: 6 }} />
+                  <strong style={{ fontSize: "0.88rem" }}>AI 自动生成脚本</strong>
+                  <div style={{ fontSize: "0.75rem", color: "#777", marginTop: 2 }}>VLM 看图自己写,适合不知道写什么的用户</div>
+                </label>
+                <label style={{ flex: 1, padding: "0.6rem 0.8rem", border: scriptMode === "paste" ? "2px solid #0d0d0d" : "1px solid #ddd", background: scriptMode === "paste" ? "#fff" : "transparent", borderRadius: 8, cursor: "pointer" }}>
+                  <input type="radio" name="scriptMode" checked={scriptMode === "paste"} onChange={() => setScriptMode("paste")} style={{ marginRight: 6 }} />
+                  <strong style={{ fontSize: "0.88rem" }}>我自己粘贴脚本</strong>
+                  <div style={{ fontSize: "0.75rem", color: "#777", marginTop: 2 }}>粘贴 markdown 跳过 AI 生成,可从「视频脚本提取」工具拷贝过来</div>
+                </label>
+              </div>
+            </div>
+
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
               <UploadBox
                 label="产品正面(必填)"
@@ -438,37 +626,121 @@ export default function AdVideoPage() {
                 hint="不传 AI 自动生成"
               />
             </div>
-            <div style={{ marginTop: 20 }}>
-              <label style={{ display: "block", fontSize: "0.9rem", color: "#444", marginBottom: 8, fontWeight: 500 }}>
-                视频总时长
-              </label>
-              <select
-                value={duration}
-                onChange={(e) => setDuration(Number(e.target.value))}
-                style={{
-                  width: "100%",
-                  padding: "0.7rem 0.9rem",
-                  border: "1px solid #ddd",
-                  borderRadius: 8,
-                  fontSize: "0.95rem",
-                  background: "#fff",
-                  cursor: "pointer",
-                }}
-              >
-                <option value={5}>5 秒(1 个分镜 · 5s)</option>
-                <option value={8}>8 秒(2 个分镜 · 5s+3s)</option>
-                <option value={10}>10 秒(2 个分镜 · 5s+5s)</option>
-                <option value={12}>12 秒(2 个分镜 · 5s+7s)</option>
-                <option value={30}>30 秒(3 个分镜 · 各 10s)</option>
-                <option value={60}>60 秒(6 个分镜 · 各 10s)</option>
-                <option value={120}>120 秒(12 个分镜 · 各 10s)</option>
-                <option value={180}>180 秒(18 个分镜 · 各 10s)</option>
-                <option value={300}>300 秒(30 个分镜 · 各 10s · 共 5 分钟)</option>
-              </select>
-              <div style={{ fontSize: "0.8rem", color: "#888", marginTop: 6 }}>
-                超过 15 秒会自动按分镜分段生成,最后无缝拼接
+
+            {/* P186(2026-05-08):粘贴模式可选上传参考视频(GPT 出图借风格)*/}
+            {scriptMode === "paste" && (
+              <div style={{ marginTop: 18 }}>
+                <label style={{ display: "block", fontSize: "0.9rem", color: "#444", marginBottom: 6, fontWeight: 500 }}>
+                  风格参考视频(可选,GPT 出图会借这视频的视觉风格)
+                </label>
+                <label style={{ display: "block", border: "2px dashed #ddd", borderRadius: 10, padding: "0.8rem", textAlign: "center", cursor: styleRefUploading ? "wait" : "pointer", background: styleRefVideo ? "#f9f7f2" : "#fff" }}>
+                  <input type="file" accept="video/*" style={{ display: "none" }} disabled={styleRefUploading}
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadStyleRefVideo(f); }} />
+                  {styleRefUploading ? (
+                    <div style={{ color: "#666", fontSize: "0.85rem" }}>上传 + ffmpeg 抽帧中...</div>
+                  ) : styleRefVideo && styleRefGridUrl ? (
+                    <div>
+                      <div style={{ fontSize: "0.82rem", color: "#0d8a3e", marginBottom: 6 }}>✓ {styleRefVideo.name}</div>
+                      <img src={styleRefGridUrl} alt="参考帧 grid 预览" style={{ maxWidth: 240, borderRadius: 6 }} />
+                      {styleRefHasPeople === true && (
+                        <div style={{ marginTop: 8, padding: "0.5rem 0.7rem", background: "#e8f5ec", border: "1px solid #b6dcc1", borderRadius: 6, fontSize: "0.78rem", color: "#0d6831" }}>
+                          <div style={{ marginBottom: 4 }}>✓ AI 检测到参考视频<strong>含人物</strong> → 生成模特出镜 + 口播带货视频(Kling Avatar)</div>
+                          <button onClick={(e) => { e.preventDefault(); setStyleRefHasPeople(false); }}
+                            style={{ background: "transparent", border: "1px solid #b6dcc1", padding: "2px 8px", borderRadius: 4, fontSize: "0.72rem", cursor: "pointer", color: "#0d6831" }}>
+                            AI 判错了 → 手动改成无人物
+                          </button>
+                        </div>
+                      )}
+                      {styleRefHasPeople === false && (
+                        <div style={{ marginTop: 8, padding: "0.5rem 0.7rem", background: "#fff8e6", border: "1px solid #f5d77a", borderRadius: 6, fontSize: "0.78rem", color: "#7a5800" }}>
+                          <div style={{ marginBottom: 4 }}>ℹ️ 参考视频<strong>无人物</strong> → 生成纯产品展示视频(无模特,seedance,有口播脚本时自动配 TTS)</div>
+                          <button onClick={(e) => { e.preventDefault(); setStyleRefHasPeople(true); }}
+                            style={{ background: "transparent", border: "1px solid #f5d77a", padding: "2px 8px", borderRadius: 4, fontSize: "0.72rem", cursor: "pointer", color: "#7a5800" }}>
+                            AI 判错了 → 手动改成有人物
+                          </button>
+                        </div>
+                      )}
+                      <div style={{ fontSize: "0.72rem", color: "#888", marginTop: 6 }}>
+                        参考视频中间帧会作为场景背景锁,出图风格/构图会贴近参考视频
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ color: "#999", fontSize: "0.85rem" }}>点击上传参考视频(MP4/MOV,≤50MB)— 不传也能生成,GPT 自由发挥</div>
+                  )}
+                </label>
+                {styleRefError && (
+                  <div style={{ marginTop: 6, padding: "0.4rem 0.7rem", background: "#fff3f3", border: "1px solid #fcc", color: "#c33", borderRadius: 6, fontSize: "0.8rem" }}>{styleRefError}</div>
+                )}
               </div>
-            </div>
+            )}
+
+            {/* P180:粘贴模式时显示 markdown 输入框 */}
+            {scriptMode === "paste" && (
+              <div style={{ marginTop: 18 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <label style={{ fontSize: "0.9rem", color: "#444", fontWeight: 500 }}>粘贴 markdown 脚本</label>
+                  <button
+                    type="button"
+                    onClick={() => { setPastedMarkdown(MARKDOWN_TEMPLATE_SAMPLE); setPasteError(""); }}
+                    style={{ fontSize: "0.75rem", color: "#0d0d0d", background: "transparent", border: "1px solid #ddd", padding: "0.3rem 0.6rem", borderRadius: 6, cursor: "pointer" }}>
+                    填入模板示例
+                  </button>
+                </div>
+                <textarea
+                  value={pastedMarkdown}
+                  onChange={(e) => { setPastedMarkdown(e.target.value); setPasteError(""); }}
+                  rows={12}
+                  placeholder={`# 视频脚本\n\n**总时长:** 15s\n**整体场景:** 客厅,自然光\n\n## 镜 1 · 中景 · 0-5s\n**动作:** xxx\n**画面:** xxx\n**口播:** xxx\n\n... 点"填入模板示例"看完整格式`}
+                  style={{ width: "100%", padding: "0.7rem 0.9rem", border: "1px solid #ddd", borderRadius: 8, fontSize: "0.83rem", fontFamily: "monospace", resize: "vertical", lineHeight: 1.5 }}
+                />
+                {pasteError && (
+                  <div style={{ marginTop: 6, padding: "0.5rem 0.8rem", background: "#fff3f3", border: "1px solid #fcc", color: "#c33", borderRadius: 6, fontSize: "0.82rem" }}>
+                    {pasteError}
+                  </div>
+                )}
+                <div style={{ fontSize: "0.78rem", color: "#888", marginTop: 6 }}>
+                  💡 从「视频脚本提取」(<a href="/video/extract" style={{ color: "#0d0d0d" }}>侧边栏 ⌬ 入口</a>)拷贝粘贴最快;粘贴后系统会解析填到分镜表,你还能手动改。
+                </div>
+              </div>
+            )}
+            {/* P184(2026-05-08):粘贴模式不需要选总时长,从脚本里 time_range 自动算 */}
+            {scriptMode === "auto" ? (
+              <div style={{ marginTop: 20 }}>
+                <label style={{ display: "block", fontSize: "0.9rem", color: "#444", marginBottom: 8, fontWeight: 500 }}>
+                  视频总时长
+                </label>
+                <select
+                  value={duration}
+                  onChange={(e) => setDuration(Number(e.target.value))}
+                  style={{
+                    width: "100%",
+                    padding: "0.7rem 0.9rem",
+                    border: "1px solid #ddd",
+                    borderRadius: 8,
+                    fontSize: "0.95rem",
+                    background: "#fff",
+                    cursor: "pointer",
+                  }}
+                >
+                  <option value={5}>5 秒(1 个分镜 · 5s)</option>
+                  <option value={8}>8 秒(2 个分镜 · 5s+3s)</option>
+                  <option value={10}>10 秒(2 个分镜 · 5s+5s)</option>
+                  <option value={12}>12 秒(2 个分镜 · 5s+7s)</option>
+                  <option value={30}>30 秒(3 个分镜 · 各 10s)</option>
+                  <option value={60}>60 秒(6 个分镜 · 各 10s)</option>
+                  <option value={120}>120 秒(12 个分镜 · 各 10s)</option>
+                  <option value={180}>180 秒(18 个分镜 · 各 10s)</option>
+                  <option value={300}>300 秒(30 个分镜 · 各 10s · 共 5 分钟)</option>
+                </select>
+                <div style={{ fontSize: "0.8rem", color: "#888", marginTop: 6 }}>
+                  超过 15 秒会自动按分镜分段生成,最后无缝拼接
+                </div>
+              </div>
+            ) : (
+              <div style={{ marginTop: 20, padding: "0.6rem 0.8rem", background: "#f0f7fb", borderRadius: 8, fontSize: "0.82rem", color: "#1a4068" }}>
+                💡 粘贴脚本模式不需要选总时长 — 系统会从你脚本里的 `**总时长:**` 字段或所有 `time_range` 自动算出。
+              </div>
+            )}
             {/* P100: 国内 / 海外 region 选择 */}
             <div style={{ marginTop: 20 }}>
               <label style={{ display: "block", fontSize: "0.9rem", color: "#444", marginBottom: 8, fontWeight: 500 }}>
@@ -514,8 +786,31 @@ export default function AdVideoPage() {
                 <br />
               </div>
             </div>
-            <PrimaryButton onClick={callAnalyze} disabled={!productFile} marginTop>
-              开始 AI 审核(消耗 1 积分) →
+            <PrimaryButton
+              onClick={() => {
+                // P180:粘贴模式先客户端 parse 验证
+                if (scriptMode === "paste") {
+                  if (!pastedMarkdown.trim()) {
+                    setPasteError("请粘贴 markdown 脚本,或切回「AI 自动生成」模式");
+                    return;
+                  }
+                  try {
+                    const parsed = parseMarkdown(pastedMarkdown);
+                    if (parsed.scenes.length === 0) {
+                      setPasteError("解析后没有任何镜头,请检查是否有 `## 镜 1 · 景别 · 时间` 这种标题行");
+                      return;
+                    }
+                    setPasteError("");
+                  } catch (e: unknown) {
+                    setPasteError(e instanceof Error ? e.message : String(e));
+                    return;
+                  }
+                }
+                callAnalyze();
+              }}
+              disabled={!productFile}
+              marginTop>
+              {scriptMode === "paste" ? "解析脚本 + AI 审核产品图(消耗 1 积分) →" : "开始 AI 审核(消耗 1 积分) →"}
             </PrimaryButton>
           </Card>
         )}
@@ -527,7 +822,29 @@ export default function AdVideoPage() {
               <AuditGrid audit={audit} />
             </Card>
 
-            <Card title="分镜脚本" desc={`${script.scenes.length} 个分镜 · 共 ${duration} 秒 · 可逐字编辑或点'重新生成'让 AI 改写`}>
+            {/* P182(2026-05-08):非服装大类 — 提示用户用「视频脚本提取」工具拿更好的脚本 */}
+            {(() => {
+              const cat = (audit.category || "").trim();
+              const isClothing = ["服装", "鞋", "包", "配饰"].some(p => cat.startsWith(p));
+              if (isClothing || !cat) return null;
+              return (
+                <div style={{ background: "#fff8e6", border: "1px solid #f5d77a", borderRadius: 10, padding: "0.9rem 1.1rem", marginBottom: "1rem", fontSize: "0.88rem", color: "#7a5800" }}>
+                  <div style={{ fontWeight: 500, marginBottom: 4 }}>💡 你的产品视觉不太明显(类目:{cat})</div>
+                  <div style={{ lineHeight: 1.6 }}>
+                    数码 / 小工具 / 日用 类产品 AI 自动写脚本时容易抓不到卖点(模特拿小物件画面单调)。
+                    <strong>建议先用「视频脚本提取」工具</strong>(侧栏 ⌬ 图标)从一个同类爆款视频提取脚本,
+                    粘贴回来覆盖 AI 生成的版本 → 出片效果会好很多。
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    <a href="/video/extract" style={{ background: "#0d0d0d", color: "#fff", padding: "0.4rem 0.9rem", borderRadius: 6, textDecoration: "none", fontSize: "0.82rem" }}>
+                      去提取脚本 →
+                    </a>
+                  </div>
+                </div>
+              );
+            })()}
+
+            <Card title="分镜脚本" desc={`${script.scenes.length} 个分镜 · 共 ${computeTotalDuration(script.scenes).toFixed(0)} 秒 · 可逐字编辑 / 删段 / 加段(时间轴自动对齐)`}>
               <FieldBlock label="整体设定">
                 <textarea
                   value={script.overall_setting}
@@ -551,8 +868,14 @@ export default function AdVideoPage() {
                   scene={sc}
                   onChange={(key, value) => updateScene(idx, key, value)}
                   onRegen={() => regenScene(idx)}
+                  onDelete={() => deleteScene(idx)}
+                  canDelete={script.scenes.length > 1}
                 />
               ))}
+              <button onClick={addScene}
+                style={{ width: "100%", padding: "0.8rem", background: "transparent", border: "2px dashed #ccc", borderRadius: 10, fontSize: "0.9rem", color: "#666", cursor: "pointer", marginTop: 8 }}>
+                + 新增分镜(末尾追加 5 秒)
+              </button>
             </Card>
 
             <ActionRow>
@@ -747,7 +1070,13 @@ function FieldBlock({ label, children }: { label: string; children: React.ReactN
   );
 }
 
-function SceneCard({ scene, onChange, onRegen }: { scene: Scene; onChange: (key: keyof Scene, value: string) => void; onRegen: () => void }) {
+function SceneCard({ scene, onChange, onRegen, onDelete, canDelete }: {
+  scene: Scene;
+  onChange: (key: keyof Scene, value: string) => void;
+  onRegen: () => void;
+  onDelete: () => void;
+  canDelete: boolean;
+}) {
   return (
     <div style={{ background: "#faf9f5", borderRadius: 12, padding: "1.2rem", marginBottom: 12, borderLeft: "3px solid #0d0d0d" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
@@ -760,11 +1089,23 @@ function SceneCard({ scene, onChange, onRegen }: { scene: Scene; onChange: (key:
             <div style={{ fontSize: "0.7rem", color: "#999" }}>{scene.time_range}</div>
           </div>
         </div>
-        <button onClick={onRegen} style={{ background: "transparent", border: "1px solid #ccc", padding: "4px 10px", borderRadius: 8, fontSize: "0.75rem", cursor: "pointer", color: "#666" }}>
-          ↻ 重新生成
-        </button>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={onRegen} style={{ background: "transparent", border: "1px solid #ccc", padding: "4px 10px", borderRadius: 8, fontSize: "0.75rem", cursor: "pointer", color: "#666" }}>
+            ↻ 重新生成
+          </button>
+          {canDelete && (
+            <button onClick={() => { if (confirm(`确认删除镜头 ${scene.id}?后续段会自动往前补,无空隙。`)) onDelete(); }}
+              style={{ background: "transparent", border: "1px solid #fcc", padding: "4px 10px", borderRadius: 8, fontSize: "0.75rem", cursor: "pointer", color: "#c33" }}>
+              ✕ 删除
+            </button>
+          )}
+        </div>
       </div>
 
+      <FieldBlock label="时间段(改了会自动对齐后续段)">
+        <input value={scene.time_range} onChange={(e) => onChange("time_range", e.target.value)}
+          style={{ width: 120, padding: "0.4rem 0.6rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.85rem" }} />
+      </FieldBlock>
       <FieldBlock label="镜头语言">
         <textarea value={scene.shot_language} onChange={(e) => onChange("shot_language", e.target.value)} style={textareaStyle} rows={2} />
       </FieldBlock>

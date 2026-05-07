@@ -23,6 +23,44 @@ from .circuit_breaker import get_circuit_breaker
 from .logger import log_info, log_error
 
 
+# P195(2026-05-08):VLM 检测出图有没有人(no_model 模式兜底)— 命中则 retry 加更狠 prompt
+_VLM_VISION_ENDPOINT = "openrouter/router/vision"
+_VLM_HAS_PEOPLE_PROMPT = (
+    "Does this image contain a clearly visible person — face, head, full body, or torso? "
+    "Hands alone do not count as a person. Just a hand holding a product is NOT a person. "
+    "Answer with EXACTLY one word: yes or no. No explanation."
+)
+
+async def _vlm_image_has_people(image_url: str) -> Optional[bool]:
+    """返回 True/False/None。None 表示 VLM 调用失败,调用方决定怎么处理。"""
+    try:
+        result = await asyncio.wait_for(
+            fal_client.run_async(
+                _VLM_VISION_ENDPOINT,
+                arguments={
+                    "image_urls": [image_url],
+                    "prompt": _VLM_HAS_PEOPLE_PROMPT,
+                    "model": "qwen/qwen3-vl-235b-a22b-instruct",
+                    "temperature": 0.0,
+                },
+            ),
+            timeout=20,
+        )
+        ans = (result.get("output") or "").strip().lower()
+        # 取首词
+        first = ans.split()[0] if ans else ""
+        first = first.rstrip(".,!。,!").lower()
+        if first.startswith("yes"):
+            return True
+        if first.startswith("no"):
+            return False
+        log_info(f"_vlm_image_has_people 不识别答案 ans={ans[:60]}")
+        return None
+    except Exception as e:
+        log_info(f"_vlm_image_has_people 失败(放过): {e}")
+        return None
+
+
 # P33 (2026-05-01):v2/pro/standard 实测 17min+ timeout fail,v2/fast NSFW 严拒真人,
 # v1.5/pro probe 70s 出 5s 视频(15x 提速)+ NSFW 通过。换 v1.5/pro。
 # 历史:fal-ai/bytedance/seedance/v2/pro/image-to-video
@@ -419,6 +457,8 @@ async def compose_first_frame(
     product_back_image_url: Optional[str] = None,  # P34
     aspect_ratio: str = "9:16",
     no_text: bool = False,  # P158(2026-05-07):AI 带货视频开启 → 严禁图里有任何字幕/文字
+    style_reference_image_url: Optional[str] = None,  # P186(2026-05-08):风格参考 grid(从用户上传的参考视频抽的 2x2 帧)
+    no_model: bool = False,  # P187(2026-05-08):参考视频无人物 → 不画模特,纯产品
 ) -> dict:
     """
     合成视频首帧:产品 + 背景 + 模特
@@ -440,7 +480,9 @@ async def compose_first_frame(
     if not circuit_breaker.is_available(cb_key):
         return {"error": "首帧合成服务暂时不可用,已熔断"}
 
-    # 拼参考图列表(P34: 顺序固定 — 产品正面 → 产品反面 → 背景)
+    # 拼参考图列表(P34/P186/P191: 顺序固定 — 产品正面 → 产品反面 → 背景/参考帧)
+    # P191(2026-05-08):用户怒"GPT 看图变乱",删 style_reference_image_url(grid)
+    # 只留 background(参考视频中间帧或用户上传背景)— GPT 输入 ≤3 张更稳
     image_urls: List[str] = [product_image_url]
     if product_back_image_url:
         image_urls.append(product_back_image_url)
@@ -451,14 +493,29 @@ async def compose_first_frame(
     # P98:base prompt 不写"holding or wearing"(避免暗示位置,让 visual_prompt 完全主导穿戴位置;
     # VLM 已被强制在 visual_prompt 里写"on waist/chest/hip" 等精确位置)
     # P102:加显式 strict 后缀 + 反向锁,提高 Flux Kontext prompt fidelity(从 80% → 95%)
-    prompt_parts = [
-        f"{model_description}, photorealistic e-commerce product showcase featuring the product from the reference images.",
-        scene_visual_prompt,
-        "STRICTLY follow the wearing position specified in the prompt above. "
-        "Do NOT default the product to the chest area unless the prompt explicitly says 'on chest'. "
-        "If the prompt says 'on waist/torso' the product MUST be at the waist (not chest). "
-        "If 'on hips/lower body' it MUST be at the hips. If 'on feet' it MUST be at the feet.",
-    ]
+    # P187(2026-05-08):no_model=True 时切到"纯产品"prompt,不画人
+    # P193(2026-05-08):软化措辞 — "no hands, no body parts"+脚本写"hand holding"+
+    # 圆柱发光电子产品 三者叠加触发 OpenAI content_policy_violation。
+    # 改正向措辞:不画 face/torso/full body,但允许 hand 持产品(电商常见镜头)。
+    if no_model:
+        prompt_parts = [
+            "Photorealistic e-commerce product photography. The product from the reference images "
+            "is the hero subject of the frame, fully visible and centered. "
+            "No model, no full person, no face, no torso. "
+            "Either the product alone in the scene, or only a hand holding/touching the product "
+            "(if the description requires it). No full human figure.",
+            scene_visual_prompt,
+            "Render only the product (and at most a hand if needed). No face, no torso, no full body.",
+        ]
+    else:
+        prompt_parts = [
+            f"{model_description}, photorealistic e-commerce product showcase featuring the product from the reference images.",
+            scene_visual_prompt,
+            "STRICTLY follow the wearing position specified in the prompt above. "
+            "Do NOT default the product to the chest area unless the prompt explicitly says 'on chest'. "
+            "If the prompt says 'on waist/torso' the product MUST be at the waist (not chest). "
+            "If 'on hips/lower body' it MUST be at the hips. If 'on feet' it MUST be at the feet.",
+        ]
     # P121(2026-05-05):背景图强约束 — 之前只说 "third is background scene",
     # Kontext 没听把背景换成白底。改成强制把模特+产品放进参考图的真实环境里。
     if product_back_image_url and background_image_url:
@@ -478,17 +535,33 @@ async def compose_first_frame(
             "textures, logos for accurate rendering at any rotation angle)."
         )
     elif background_image_url:
-        prompt_parts.append(
-            "The second reference image is the BACKGROUND ENVIRONMENT — "
-            "you MUST place the model INTO this exact background scene (its furniture, "
-            "walls, lighting, room layout). DO NOT use plain white studio background, "
-            "DO NOT swap the environment — model MUST be composed INTO this reference scene."
-        )
+        # P191(2026-05-08):no_model 时把"模特进场景"改成"产品进场景",
+        # 否则 GPT 看 prompt 里的 model 字会偷偷加人物
+        if no_model:
+            # P193(2026-05-08):软化"no hands"措辞,避免和"hand holding"脚本冲突触发 content_policy
+            prompt_parts.append(
+                "The second reference image is the EXACT SCENE TO REPLICATE — its environment, "
+                "furniture, walls, lighting, color tone, camera angle, composition, and overall "
+                "mood. You MUST place the product (from the FIRST reference image) INTO this exact "
+                "scene, replacing whatever object/product is currently in that scene's frame. "
+                "Match the scene's lighting direction, color temperature, depth of field, and "
+                "framing as closely as possible. DO NOT use a plain white studio background. "
+                "Do not add a full person or face — at most a hand if the scene requires it."
+            )
+        else:
+            prompt_parts.append(
+                "The second reference image is the BACKGROUND ENVIRONMENT — "
+                "you MUST place the model INTO this exact background scene (its furniture, "
+                "walls, lighting, room layout). DO NOT use plain white studio background, "
+                "DO NOT swap the environment — model MUST be composed INTO this reference scene."
+            )
     prompt_parts.append(
         "Photorealistic UGC selfie style, vertical 9:16 composition, "
         "natural lighting that matches the background reference, "
         "preserve the exact product details (front+back if both provided)."
     )
+    # P191(2026-05-08):删 style grid — 用户怒"还是不一样"。grid 把 GPT 搞乱(4 张图太多
+    # 还总想抄人物)。改成 background_image_url(参考视频中间帧)单独承担"复刻这一帧场景"。
     # P158(2026-05-07):AI 带货视频要求图里完全无文字/字幕(用户明确铁律)
     if no_text:
         prompt_parts.append(
@@ -528,16 +601,46 @@ async def compose_first_frame(
                 await circuit_breaker.record_failure(cb_key)
                 return {"error": "首帧未生成"}
 
+            output_url = images[0].get("url")
+            # P195(2026-05-08):no_model 模式 VLM 兜底 — 检测到人就用更狠 prompt 再生 1 次
+            if no_model and output_url and attempt < 2:
+                has_ppl = await _vlm_image_has_people(output_url)
+                if has_ppl is True:
+                    log_info(f"compose_first_frame P195 检测到人物,用极致 prompt 重生(attempt={attempt})")
+                    full_prompt = (
+                        "PRODUCT-ONLY photograph. Render ONLY the product from the reference images, "
+                        "placed in the scene from the second reference image (if provided). "
+                        "There is absolutely zero person in this photograph: "
+                        "no face, no head, no torso, no shoulders, no arms, no body of any kind. "
+                        "The product floats or sits naturally in the scene by itself. "
+                        "Vertical 9:16, photorealistic, natural lighting, no text in image."
+                    )
+                    await asyncio.sleep(1)
+                    continue
+
             await circuit_breaker.record_success(cb_key)
             return {
-                "image_url": images[0].get("url"),
+                "image_url": output_url,
                 "model": NANO_BANANA_EDIT_ENDPOINT,
             }
         except Exception as e:
             last_err = e
             err_str = str(e)
-            # content_policy 不重试 — 改 prompt 也救不了
+            # P193(2026-05-08):content_policy 兜底 — 用极简 prompt 再试一次,
+            # 砍掉所有"NO ..."强否定 + 圆柱/发光描述,只留产品+场景核心语义
             if "content_policy_violation" in err_str or "content_checker" in err_str:
+                if attempt == 0:
+                    log_info(f"compose_first_frame content_policy 触发,改极简 prompt 重试")
+                    minimal_prompt = (
+                        "Photorealistic e-commerce product photo. "
+                        "The product shown in the reference image is the main subject, "
+                        "displayed naturally in a clean indoor scene. "
+                        "Professional lighting, vertical 9:16 composition. "
+                        "No text or captions in the image."
+                    )
+                    full_prompt = minimal_prompt
+                    await asyncio.sleep(1)
+                    continue
                 break
             # 其他错(downstream_service_error / 网络抖动)retry
             if attempt < 2:
@@ -558,6 +661,8 @@ async def compose_first_frame_for_scene(
     product_image_url: Optional[str] = None,        # 用户产品正面图(锁产品材质)
     product_back_image_url: Optional[str] = None,   # 产品反面/侧面(锁背面/logo)
     exclude_base_image: bool = False,               # P157.5(2026-05-07):绕 fal image-level checker
+    style_reference_image_url: Optional[str] = None,  # P186(2026-05-08):风格参考 grid
+    no_model: bool = False,                         # P194(2026-05-08):无人物模式,prompt 整段切纯产品
 ) -> dict:
     """
     P32 一镜一图: 给单个分镜单独合成它的首帧
@@ -608,55 +713,82 @@ async def compose_first_frame_for_scene(
         product_position_safe = _sanitize_text((pp_raw or "").strip())
     hand_product_contact_safe = _sanitize_text(hand_product_contact)
 
-    # P157.5(2026-05-07):exclude_base_image=True 时不能引用 "reference image"
-    if exclude_base_image:
-        identity_lock = (
-            f"⚠️ HIGHEST PRIORITY — IDENTITY LOCK: Generate a model whose appearance EXACTLY matches "
-            f"this detailed identity description: {model_description}. "
-            f"Same face shape, same eye color/shape/size, same hairstyle, same skin tone, same lip "
-            f"shape, same eyebrows, same nose, same overall facial features. ZERO deviation. "
-            f"This text identity description IS the model — no visual reference is provided, "
-            f"but the generated person MUST match the description exactly. "
-            f"Generate this specific shot: {visual_safe}. "
-        )
+    # P194(2026-05-08):no_model=True 时整段切"纯产品"prompt — base_image 是无人产品场景,
+    # 本段只换镜头/姿态(产品角度/位置/特写),绝不出现人物。
+    if no_model:
+        if exclude_base_image:
+            prompt = (
+                f"Photorealistic e-commerce product photo of the product shown in the reference images. "
+                f"Render this specific shot of the SAME product: {visual_safe}. "
+                f"Maintain the overall scene/setting: {overall_setting}. "
+                f"No model, no full person, no face, no torso. "
+                f"At most a hand holding/touching the product if the description requires it. "
+                f"The product is the hero subject, fully visible. "
+                f"Vertical 9:16 composition, natural lighting, preserve exact product details. "
+                f"No text or captions in the image. "
+            )
+        else:
+            prompt = (
+                f"The reference image (FIRST image) is the SCENE ANCHOR — keep its overall scene, "
+                f"lighting, color tone, and product. Adjust it to show this specific shot of the SAME "
+                f"product: {visual_safe}. Different camera angle / framing / product pose, but SAME "
+                f"product and SAME scene. "
+                f"No model, no full person, no face, no torso. "
+                f"At most a hand holding/touching the product if the description requires it. "
+                f"The product is the hero subject, fully visible. "
+                f"Vertical 9:16 composition, natural lighting, preserve exact product details. "
+                f"No text or captions in the image. "
+            )
     else:
-        identity_lock = (
-            f"⚠️ HIGHEST PRIORITY — IDENTITY LOCK: The model in the output MUST be EXACTLY the same "
-            f"person as in the reference image. Same face shape, same eyes (color, shape, size), "
-            f"same hairstyle (length, color, style), same skin tone, same lip shape, same eyebrows, "
-            f"same nose, same overall facial features. ZERO deviation from reference identity. "
-            f"This is a DIFFERENT SHOT of the SAME PERSON, NOT a similar-looking model. "
-            f"Treat the reference face as a locked anchor that must NOT change. "
-            f"Adjust the reference image to show this specific shot: {visual_safe}. "
+        # P157.5(2026-05-07):exclude_base_image=True 时不能引用 "reference image"
+        if exclude_base_image:
+            identity_lock = (
+                f"⚠️ HIGHEST PRIORITY — IDENTITY LOCK: Generate a model whose appearance EXACTLY matches "
+                f"this detailed identity description: {model_description}. "
+                f"Same face shape, same eye color/shape/size, same hairstyle, same skin tone, same lip "
+                f"shape, same eyebrows, same nose, same overall facial features. ZERO deviation. "
+                f"This text identity description IS the model — no visual reference is provided, "
+                f"but the generated person MUST match the description exactly. "
+                f"Generate this specific shot: {visual_safe}. "
+            )
+        else:
+            identity_lock = (
+                f"⚠️ HIGHEST PRIORITY — IDENTITY LOCK: The model in the output MUST be EXACTLY the same "
+                f"person as in the reference image. Same face shape, same eyes (color, shape, size), "
+                f"same hairstyle (length, color, style), same skin tone, same lip shape, same eyebrows, "
+                f"same nose, same overall facial features. ZERO deviation from reference identity. "
+                f"This is a DIFFERENT SHOT of the SAME PERSON, NOT a similar-looking model. "
+                f"Treat the reference face as a locked anchor that must NOT change. "
+                f"Adjust the reference image to show this specific shot: {visual_safe}. "
+            )
+        prompt = (
+            identity_lock + " "
+            + f"Keep the model's identity consistent ({model_description}). "
+            + f"Maintain the overall setting: {overall_setting}. "
+            # P149 关键铁律 — 防 Kling Avatar 拒图(必须有清晰人脸 + 上半身)
+            f"CRITICAL — MUST INCLUDE: model's face and upper body clearly visible in the frame. "
+            f"Even product close-ups must show the model's face/upper body together with the product. "
+            # P155(2026-05-06)用户:产品类目会变,不能 hardcode "waist garment"
+            # 改抽象指"参考图里那个产品",让 GPT 看图自己识别(束腰/鞋/包/配饰...)
+            # P148 + P154 + P155 产品焦点 + 演示动作 + 类目无关
+            f"PRODUCT FOCUS: the product item shown in the reference image "
+            f"(the specific item the user uploaded — could be a garment, accessory, footwear, "
+            f"bag, beauty product, etc.) is the visual hero, clearly visible. "
+            f"Model's pose and gaze direct viewer attention TOWARD this specific product, "
+            f"NOT toward the model's other clothing/phone/background. "
+            f"PRODUCT DEMONSTRATION: model is ACTIVELY engaging with the reference product — "
+            f"touching/adjusting/showing/lifting/pointing at it with her hands. "
+            f"NOT just standing passively. Like a TikTok seller showing off their product. "
+            # P147 框架
+            f"Third-person professional commercial camera angle, NOT a mirror selfie. "
+            # P150(2026-05-06)用户:字幕后期自己加 — 图里不要任何文字
+            f"STRICT — NO TEXT IN IMAGE: absolutely NO text overlays, NO promotional text, "
+            f"NO captions, NO numbers (like '50 LEFT', '-2 inches', '24H'), NO countdown, "
+            f"NO call-to-action text, NO labels, NO Before/After tags. "
+            f"The image must be COMPLETELY TEXT-FREE — clean photograph only. "
+            f"Photorealistic commercial advertisement, vertical 9:16 composition, "
+            f"natural lighting, preserve the exact product details from reference. "
         )
-    prompt = (
-        identity_lock + " "
-        + f"Keep the model's identity consistent ({model_description}). "
-        + f"Maintain the overall setting: {overall_setting}. "
-        # P149 关键铁律 — 防 Kling Avatar 拒图(必须有清晰人脸 + 上半身)
-        f"CRITICAL — MUST INCLUDE: model's face and upper body clearly visible in the frame. "
-        f"Even product close-ups must show the model's face/upper body together with the product. "
-        # P155(2026-05-06)用户:产品类目会变,不能 hardcode "waist garment"
-        # 改抽象指"参考图里那个产品",让 GPT 看图自己识别(束腰/鞋/包/配饰...)
-        # P148 + P154 + P155 产品焦点 + 演示动作 + 类目无关
-        f"PRODUCT FOCUS: the product item shown in the reference image "
-        f"(the specific item the user uploaded — could be a garment, accessory, footwear, "
-        f"bag, beauty product, etc.) is the visual hero, clearly visible. "
-        f"Model's pose and gaze direct viewer attention TOWARD this specific product, "
-        f"NOT toward the model's other clothing/phone/background. "
-        f"PRODUCT DEMONSTRATION: model is ACTIVELY engaging with the reference product — "
-        f"touching/adjusting/showing/lifting/pointing at it with her hands. "
-        f"NOT just standing passively. Like a TikTok seller showing off their product. "
-        # P147 框架
-        f"Third-person professional commercial camera angle, NOT a mirror selfie. "
-        # P150(2026-05-06)用户:字幕后期自己加 — 图里不要任何文字
-        f"STRICT — NO TEXT IN IMAGE: absolutely NO text overlays, NO promotional text, "
-        f"NO captions, NO numbers (like '50 LEFT', '-2 inches', '24H'), NO countdown, "
-        f"NO call-to-action text, NO labels, NO Before/After tags. "
-        f"The image must be COMPLETELY TEXT-FREE — clean photograph only. "
-        f"Photorealistic commercial advertisement, vertical 9:16 composition, "
-        f"natural lighting, preserve the exact product details from reference. "
-    )
     # P157.5(2026-05-07):产品图索引根据 exclude_base 调整(没 base 图时索引前移)
     if product_image_url and product_back_image_url:
         front_idx = 1 if exclude_base_image else 2
@@ -695,35 +827,64 @@ async def compose_first_frame_for_scene(
             f"deviation in your hand pose means hands gesture in empty air instead of touching product. "
         )
 
-    try:
-        result = await fal_client.run_async(
-            NANO_BANANA_EDIT_ENDPOINT,
-            arguments={
-                "prompt": prompt,
-                "image_urls": (
-                ([] if exclude_base_image else [base_image_url])
-                + ([product_image_url] if product_image_url else [])
-                + ([product_back_image_url] if product_back_image_url else [])
-            ),
-                # P126: openai/gpt-image-2/edit schema(image_size 替代 aspect_ratio,无 guidance_scale)
-                "image_size": _img_size_for_aspect(aspect_ratio),
-                "num_images": 1,
-                "output_format": "png",
-            },
-        )
-        images = result.get("images", []) if isinstance(result, dict) else []
-        if not images:
-            await cb.record_failure(cb_key)
-            return {"error": "本段首帧未生成"}
-        await cb.record_success(cb_key)
-        return {
-            "image_url": images[0].get("url"),
-            "model": NANO_BANANA_EDIT_ENDPOINT,
-        }
-    except Exception as e:
-        await cb.record_failure(cb_key)
-        log_error(f"compose_first_frame_for_scene 失败 scene={scene.get('id')}: {e}")
-        return {"error": f"本段首帧合成失败: {str(e)[:200]}"}
+    # P191(2026-05-08):删 style grid — 用户怒"还是不一样"。grid 4 张图把 GPT 搞乱。
+    # base_image(共享首帧)已含场景/灯光/产品/模特,不再需要额外 style grid。
+
+    # P195(2026-05-08):no_model 模式最多重生 2 次,VLM 检测到人就改用极致 prompt 再来
+    image_urls_list = (
+        ([] if exclude_base_image else [base_image_url])
+        + ([product_image_url] if product_image_url else [])
+        + ([product_back_image_url] if product_back_image_url else [])
+    )
+    cur_prompt = prompt
+    output_url: Optional[str] = None
+    last_err: Optional[Exception] = None
+    for attempt in range(2):
+        try:
+            result = await fal_client.run_async(
+                NANO_BANANA_EDIT_ENDPOINT,
+                arguments={
+                    "prompt": cur_prompt,
+                    "image_urls": image_urls_list,
+                    "image_size": _img_size_for_aspect(aspect_ratio),
+                    "num_images": 1,
+                    "output_format": "png",
+                },
+            )
+            images = result.get("images", []) if isinstance(result, dict) else []
+            if not images:
+                await cb.record_failure(cb_key)
+                return {"error": "本段首帧未生成"}
+            output_url = images[0].get("url")
+            # no_model 模式 VLM 检测,有人就改 prompt 重生
+            if no_model and output_url and attempt == 0:
+                has_ppl = await _vlm_image_has_people(output_url)
+                if has_ppl is True:
+                    log_info(f"compose_first_frame_for_scene P195 检测到人,极致 prompt 重生 scene={scene.get('id')}")
+                    cur_prompt = (
+                        "PRODUCT-ONLY photograph. Render ONLY the product from the reference images, "
+                        "in the scene/lighting of the FIRST reference image. "
+                        "Absolutely zero person: no face, no head, no torso, no shoulders, no arms, "
+                        "no body of any kind. The product floats or sits naturally in the scene. "
+                        "Vertical 9:16, photorealistic, natural lighting, no text in image."
+                    )
+                    continue
+            await cb.record_success(cb_key)
+            return {
+                "image_url": output_url,
+                "model": NANO_BANANA_EDIT_ENDPOINT,
+            }
+        except Exception as e:
+            last_err = e
+            break
+    await cb.record_failure(cb_key)
+    if last_err:
+        log_error(f"compose_first_frame_for_scene 失败 scene={scene.get('id')}: {last_err}")
+        return {"error": f"本段首帧合成失败: {str(last_err)[:200]}"}
+    # 走到这里:VLM 还是检测到人 — 仍返回(交给视频层),但记录
+    log_info(f"compose_first_frame_for_scene P195 重生后 VLM 仍判有人,放过 scene={scene.get('id')}")
+    await cb.record_success(cb_key)
+    return {"image_url": output_url, "model": NANO_BANANA_EDIT_ENDPOINT}
 
 
 # ============== Seedance 2.0 reference-to-video (P36) ==============

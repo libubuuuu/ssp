@@ -1078,7 +1078,11 @@ class FalPixverseSwapService:
             return {"error": f"invalid mode={mode}"}
         try:
             args = {"video_url": video_url, "image_url": image_url, "mode": mode}
-            result = await fal_client.run_async(self.ENDPOINT, arguments=args)
+            # P179(2026-05-07):加 360s wait_for,防 fal hang 卡死整 job
+            result = await asyncio.wait_for(
+                fal_client.run_async(self.ENDPOINT, arguments=args),
+                timeout=360,
+            )
             await cb.record_success("pixverse-swap")
             video_obj = result.get("video") if isinstance(result, dict) else None
             video_url_out = (
@@ -1089,6 +1093,9 @@ class FalPixverseSwapService:
             if not video_url_out:
                 return {"error": "pixverse-swap 未返 video URL"}
             return {"video_url": video_url_out, "model": self.ENDPOINT}
+        except asyncio.TimeoutError:
+            await cb.record_failure("pixverse-swap")
+            return {"error": "pixverse-swap timeout (>360s)"}
         except Exception as e:
             await cb.record_failure("pixverse-swap")
             return {"error": str(e)}

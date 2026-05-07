@@ -55,6 +55,7 @@ class PreviewRequest(BaseModel):
     product_image_url: str = Field(..., description="产品正面图(已上传到 fal storage)")
     product_back_image_url: Optional[str] = Field(None, description="P34: 产品反面/侧面图(可选)")
     background_image_url: Optional[str] = Field(None, description="可选背景图")
+    style_reference_image_url: Optional[str] = Field(None, description="P186(2026-05-08):风格参考 grid(从用户上传的参考视频抽的 2x2 帧)")
     script: Script
 
 
@@ -67,6 +68,9 @@ class GenerateRequest(BaseModel):
     product_image_url: Optional[str] = Field(None, description="P36: 产品正面图 URL")
     product_back_image_url: Optional[str] = Field(None, description="P36: 产品反面/侧面图 URL")
     background_image_url: Optional[str] = Field(None, description="P36: 背景图 URL")
+    style_reference_image_url: Optional[str] = Field(None, description="P186(2026-05-08):风格参考 grid")
+    reference_video_frame_url: Optional[str] = Field(None, description="P187(2026-05-08):参考视频中间帧(强场景锁,会被当 background_image_url 用)")
+    ref_video_has_people: Optional[bool] = Field(None, description="P187:参考视频是否含人物(VLM 检测,无人物 → 跳过 Kling Avatar 走 seedance)")
     script: Script
     # P31 (2026-05-01):total_duration 上限 15 → 300。
     # >15 时 jobs.py 走 split_segments(每段 10s)+ N 段并发 + ffmpeg concat,
@@ -311,6 +315,7 @@ async def preview_first_frame(
         product_back_image_url=req.product_back_image_url,
         aspect_ratio=getattr(req, "aspect_ratio", None) or "9:16",
         no_text=True,  # P158(2026-05-07):AI 带货视频图严禁有任何字幕/文字
+        style_reference_image_url=req.style_reference_image_url,  # P186(2026-05-08)
     )
     if "error" in base_result or not base_result.get("image_url"):
         raise HTTPException(status_code=500, detail=base_result.get("error", "首帧合成失败"))
@@ -339,6 +344,7 @@ async def preview_first_frame(
                 model_description=req.script.model_description,
                 overall_setting=req.script.overall_setting,
                 aspect_ratio=getattr(req, "aspect_ratio", None) or "9:16",
+                style_reference_image_url=req.style_reference_image_url,  # P186
             )
             if sf.get("image_url"):
                 return await archive_url(sf["image_url"], current_user["id"], "image")
@@ -409,6 +415,9 @@ async def generate_ad_video(
             "product_image_url": req.product_image_url,
             "product_back_image_url": req.product_back_image_url,
             "background_image_url": req.background_image_url,
+            "style_reference_image_url": req.style_reference_image_url,  # P186(2026-05-08)
+            "reference_video_frame_url": req.reference_video_frame_url,  # P187(2026-05-08)
+            "ref_video_has_people": req.ref_video_has_people,  # P187(2026-05-08)
             "script": req.script.model_dump(),
             "duration": req.duration,
             "aspect_ratio": req.aspect_ratio,
@@ -459,6 +468,229 @@ async def regenerate_scene(
         raise HTTPException(status_code=400, detail="AI 重新生成的内容包含敏感词,请换个指令")
 
     return {"success": True, "scene": new_scene, "description": "重新生成分镜"}
+
+
+@router.post("/extract-style-frames")
+async def extract_style_frames(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """P186/P187(2026-05-08):粘贴脚本模式上传参考视频
+    → 抽 4 帧拼 2x2 grid + 单独留中间帧
+    → VLM 判断中间帧是否含人物(决定后续 pipeline 分流)
+    → fal 上传 grid + 中间帧
+    """
+    import asyncio
+    import tempfile, subprocess, os
+    import json as _j
+    from PIL import Image
+    from app.services.upload_guard import read_bounded
+
+    VIDEO_MIMES_LOCAL = ("video/mp4", "video/quicktime", "video/webm", "video/x-msvideo")
+    contents = await read_bounded(file, 50 * 1024 * 1024, VIDEO_MIMES_LOCAL, "风格参考视频")
+
+    suffix = ".mp4"
+    if file.filename and "." in file.filename:
+        suffix = "." + file.filename.rsplit(".", 1)[-1]
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(contents)
+        video_path = tmp.name
+
+    try:
+        # 1. ffprobe 拿时长
+        rr = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", video_path],
+            capture_output=True, text=True, timeout=30,
+        )
+        duration = 5.0
+        try:
+            duration = float(_j.loads(rr.stdout).get("format", {}).get("duration", 5.0))
+        except Exception:
+            pass
+        duration = max(2.0, duration)
+
+        # 2. ffmpeg 抽 4 帧:5%, 35%, 65%, 95%
+        timestamps = [duration * t for t in (0.05, 0.35, 0.65, 0.95)]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            frame_paths = []
+            for i, ts in enumerate(timestamps):
+                fp = os.path.join(tmpdir, f"frame_{i}.jpg")
+                cp = subprocess.run(
+                    ["ffmpeg", "-y", "-ss", f"{ts:.2f}", "-i", video_path, "-vframes", "1", "-q:v", "3", fp],
+                    capture_output=True, timeout=30,
+                )
+                if cp.returncode == 0 and os.path.exists(fp) and os.path.getsize(fp) > 1000:
+                    frame_paths.append(fp)
+            if len(frame_paths) < 2:
+                raise HTTPException(500, f"抽帧失败,只拿到 {len(frame_paths)} 帧")
+
+            # 3. PIL 拼 grid(用拿到的帧数,凑不齐 4 张就用 2x2 重复)
+            while len(frame_paths) < 4:
+                frame_paths.append(frame_paths[-1])
+            imgs = [Image.open(fp).convert("RGB") for fp in frame_paths[:4]]
+            W0, H0 = imgs[0].size
+            target_w = 512
+            target_h = max(1, int(H0 * target_w / W0))
+            imgs_resized = [img.resize((target_w, target_h), Image.LANCZOS) for img in imgs]
+            grid = Image.new("RGB", (target_w * 2, target_h * 2), (0, 0, 0))
+            grid.paste(imgs_resized[0], (0, 0))
+            grid.paste(imgs_resized[1], (target_w, 0))
+            grid.paste(imgs_resized[2], (0, target_h))
+            grid.paste(imgs_resized[3], (target_w, target_h))
+            grid_path = os.path.join(tmpdir, "style_grid.jpg")
+            grid.save(grid_path, "JPEG", quality=88)
+
+            # P187(2026-05-08):中间帧单独存,后续作 background_image_url 用 + VLM 检测人物
+            middle_frame_path = os.path.join(tmpdir, "middle_frame.jpg")
+            imgs[1].save(middle_frame_path, "JPEG", quality=92)  # 第 2 帧 ~35% 处
+
+            # P190(2026-05-08):并发上传 grid + middle frame + 原视频本身(给 qwen-vl 看整段)
+            grid_url, middle_url, video_fal_url = await asyncio.gather(
+                fal_upload_with_retry(grid_path),
+                fal_upload_with_retry(middle_frame_path),
+                fal_upload_with_retry(video_path),  # 原视频上 fal,给 qwen-vl 看整段时序
+            )
+
+            # P190:qwen-vl 看整段视频(多帧时序)判断是否含人物 — 比单帧准确得多
+            has_people = True  # 默认有,失败保底走 Kling Avatar
+            try:
+                from app.services.fal_service import get_aliyun_qwenvl_service
+                qwen_svc = get_aliyun_qwenvl_service()
+                if qwen_svc and qwen_svc.is_available():
+                    qwen_instruction = (
+                        "请仔细看完整段视频。"
+                        "视频里是否有 CLEARLY VISIBLE PERSON 作为主要拍摄对象?"
+                        "也就是说必须看到 FACE / HEAD / 上半身大部分(肩膀+躯干)清晰出镜。"
+                        "严格不算:只有手 / 只有手指 / 只有手臂 / 只有脚 / 任何 partial body part — "
+                        "这些都不算有人。"
+                        "只展示产品 / 物体 / 手拿产品 / 没脸没躯干的场景 → 答 no。"
+                        "请用 EXACTLY 一个英文单词回答: yes 或 no(不要解释,只回一个词)。"
+                    )
+                    qwen_res = await asyncio.wait_for(
+                        qwen_svc.analyze_video(video_fal_url, qwen_instruction),
+                        timeout=180,
+                    )
+                    if "error" in qwen_res:
+                        raise Exception(qwen_res["error"])
+                    ans = (qwen_res.get("text") or "").strip().lower()
+                    # 取第一个有意义的词
+                    first_word = ""
+                    for w in ans.replace(",", " ").replace(".", " ").split():
+                        if w in ("yes", "no", "是", "否", "有", "无"):
+                            first_word = w
+                            break
+                    if not first_word and ans:
+                        first_word = ans.split()[0].strip(".,!? ").lower()
+                    if first_word in ("no", "否", "无"):
+                        has_people = False
+                    elif first_word in ("yes", "是", "有"):
+                        has_people = True
+                    log_info(f"ad_video/extract-style-frames P190 qwen-vl(整段视频) has_people={has_people} ans='{ans[:80]}'")
+                else:
+                    log_info(f"ad_video/extract-style-frames qwen-vl 不可用,用 fal 单帧 fallback")
+                    raise Exception("qwen-vl 不可用")
+            except Exception as _qwen_err:
+                # qwen-vl 整段视频不可用 → fallback 到 fal openrouter VLM 看单帧(P190 收紧的 prompt)
+                log_info(f"ad_video/extract-style-frames qwen-vl 整段失败,fallback 单帧 VLM: {_qwen_err}")
+                try:
+                    import fal_client as _fc
+                    vlm_res = await asyncio.wait_for(
+                        _fc.run_async(
+                            "openrouter/router/vision",
+                            arguments={
+                                "image_urls": [middle_url],
+                                "prompt": (
+                                    "Look at this image carefully. Is there a CLEARLY VISIBLE PERSON "
+                                    "as a main subject — meaning a face, head, or substantial portion of "
+                                    "the upper body (torso/shoulders) is visible in the frame? "
+                                    "STRICTLY DO NOT count: a hand alone, a finger alone, an arm alone, "
+                                    "a foot alone, or any partial body part — those alone do NOT mean "
+                                    "there's a person in the frame. "
+                                    "If the image only shows products, objects, hands holding products, "
+                                    "or scenes without a face/torso/full body, answer 'no'. "
+                                    "Answer with EXACTLY one word: yes or no."
+                                ),
+                                "model": "qwen/qwen3-vl-235b-a22b-instruct",
+                            },
+                        ),
+                        timeout=60,
+                    )
+                    ans = (vlm_res.get("output") or "").strip().lower() if isinstance(vlm_res, dict) else ""
+                    if ans.startswith("no"):
+                        has_people = False
+                    elif ans.startswith("yes"):
+                        has_people = True
+                    log_info(f"ad_video/extract-style-frames fallback 单帧 has_people={has_people} ans='{ans[:30]}'")
+                except Exception as _vlm_err:
+                    log_info(f"ad_video/extract-style-frames 单帧 VLM 也失败(默认有人物): {_vlm_err}")
+
+            log_info(f"ad_video/extract-style-frames user={current_user.get('id')} dur={duration:.1f}s grid={grid_url[:60]} middle={middle_url[:60]} has_people={has_people}")
+            return {
+                "grid_image_url": grid_url,
+                "middle_frame_url": middle_url,
+                "has_people": has_people,
+                "duration_sec": duration,
+            }
+    finally:
+        try: os.unlink(video_path)
+        except Exception: pass
+
+
+@router.post("/generate-background")
+@require_credits("ad_video/preview")  # 复用 preview 的 credit hook(GPT-Image 2 一次调用)
+async def generate_background(
+    body: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """P182(2026-05-08):粘贴脚本模式没上传背景图时,根据脚本里的 overall_setting
+    用 GPT-Image 2 文生图生成一张干净背景(无人无产品),后续 N 段首帧共享。
+    """
+    import fal_client
+    import asyncio as _aio
+    from app.services.ad_video_models import _img_size_for_aspect
+
+    scene_description = (body.get("scene_description") or "").strip()
+    aspect_ratio = (body.get("aspect_ratio") or "9:16").strip()
+    if not scene_description:
+        raise HTTPException(400, "需要 scene_description(脚本里的整体场景描述)")
+
+    # 安全 prompt:明确"无人无产品",GPT-Image 2 才不会自己加模特
+    prompt = (
+        f"Photorealistic empty environment background photo: {scene_description}. "
+        f"Professional commercial photography style, soft natural lighting, "
+        f"clean composition, no people, no products, no text, no logos, no watermarks. "
+        f"Just the empty environment / scene as described."
+    )
+    log_info(f"ad_video/generate-bg user={current_user.get('id')} scene='{scene_description[:80]}' ratio={aspect_ratio}")
+
+    try:
+        # 360s wait_for 防 fal hang
+        result = await _aio.wait_for(
+            fal_client.run_async(
+                "openai/gpt-image-2",  # 不带 /edit,这是 text-to-image
+                arguments={
+                    "prompt": prompt,
+                    "image_size": _img_size_for_aspect(aspect_ratio),
+                    "num_images": 1,
+                    "quality": "high",
+                    "output_format": "png",
+                },
+            ),
+            timeout=360,
+        )
+        images = result.get("images") if isinstance(result, dict) else None
+        url = None
+        if isinstance(images, list) and images:
+            first = images[0]
+            url = first.get("url") if isinstance(first, dict) else first
+        if not url:
+            raise HTTPException(500, "GPT-Image 2 未返回图片 URL")
+        log_info(f"ad_video/generate-bg ok url={url[:80]}")
+        return {"image_url": url}
+    except _aio.TimeoutError:
+        raise HTTPException(504, "GPT-Image 2 超时(>6 min),请重试")
+    except Exception as e:
+        raise HTTPException(500, f"生成背景失败: {str(e)[:200]}")
 
 
 @router.post("/upload/image")

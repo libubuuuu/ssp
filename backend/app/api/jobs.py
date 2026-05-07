@@ -817,6 +817,36 @@ async def _run_ad_video_job(params: dict):
     aspect_ratio = params.get("aspect_ratio", "9:16")
     resolution = params.get("resolution", "720p")
 
+    # P187(2026-05-08):参考视频检测到无人物 → 强制无模特路径
+    # - compose_first_frame 不传 model_description,prompt 自动改"无人物纯产品"
+    # - 后续跳过 Kling Avatar,走 seedance i2v 静音
+    ref_has_people = params.get("ref_video_has_people")
+    if ref_has_people is False:
+        log_info(f"ad_video P187 参考视频无人物 → 走纯产品 seedance i2v 路径")
+        model_desc = ""  # 不写模特描述
+    # P187:参考视频中间帧用作 background_image_url(强场景锁) — 仅在用户没传背景图时
+    bg_url_for_compose = params.get("background_image_url")
+    bg_is_from_ref_video = False
+    if not bg_url_for_compose and params.get("reference_video_frame_url"):
+        bg_url_for_compose = params.get("reference_video_frame_url")
+        bg_is_from_ref_video = True
+        log_info(f"ad_video P187 用参考视频中间帧作背景: {bg_url_for_compose[:80]}")
+    # P189(2026-05-08):背景来自参考视频帧时,prompt 加强约束 — 防 GPT 把帧里原产品保留
+    if bg_is_from_ref_video and scenes:
+        for _sc in scenes:
+            _orig_vp = _sc.get("visual_prompt", "")
+            _sc["visual_prompt"] = (
+                _orig_vp + " "
+                "🚨 CRITICAL — PRODUCT REPLACEMENT: The background reference image is a FRAME "
+                "from a sample video and may show a DIFFERENT product/item than yours. "
+                "REPLACE any product/object/item visible in that background frame with the product "
+                "from the FIRST reference image (your actual product). The background frame is for "
+                "ENVIRONMENT, LIGHTING, COMPOSITION, MOOD only — NOT for product reference. "
+                "Do NOT keep, do NOT show, do NOT include any product from the background frame. "
+                "Only the FIRST reference image (and second if present) defines the product."
+            )
+        log_info(f"ad_video P189 已加强 prompt:scenes 加 PRODUCT REPLACEMENT 强约束")
+
     # P39 (2026-05-01):回 i2v 架构 + Flux Kontext 合首帧。
     # 痛点:ref2vid 改产品(用户实测产品被改) → 切 image edit SOTA 锁产品。
     # 路线:产品图 → Flux Kontext 17s 合"模特+产品+背景"首帧 → Seedance v1.5/pro
@@ -826,12 +856,14 @@ async def _run_ad_video_job(params: dict):
     first_scene = scenes[0] if scenes else {}
     base_result = await ad_video_models.compose_first_frame(
         product_image_url=params.get("product_image_url") or params.get("image_url"),
-        background_image_url=params.get("background_image_url"),
+        background_image_url=bg_url_for_compose,  # P187:可能是用户上传的或参考视频中间帧
         model_description=model_desc,
         scene_visual_prompt=first_scene.get("visual_prompt", ""),
         product_back_image_url=params.get("product_back_image_url"),
         aspect_ratio=params.get("aspect_ratio") or "9:16",
         no_text=True,  # P158(2026-05-07):AI 带货视频图严禁字幕
+        style_reference_image_url=params.get("style_reference_image_url"),  # P186(2026-05-08)
+        no_model=(ref_has_people is False),  # P187(2026-05-08):参考视频无人物 → 纯产品
     )
     if "error" in base_result or not base_result.get("image_url"):
         raise Exception(f"首帧合成失败: {base_result.get('error', '?')}")
@@ -844,7 +876,12 @@ async def _run_ad_video_job(params: dict):
     # 修法:5-12s 走双段拼接 — talking 0-1.5s 模特说话(嘴动开场)+ seedance 1.5-end
     # 产品演示动作。音频全程用 talking 的 5s(完整一句话不断),视觉前段说话+后段演示。
     # 并发跑 talking head + Seedance i2v(节省一半时间),ffmpeg 拼。
-    if duration <= 12 or len(scenes) <= 1:
+    # P187(2026-05-08):参考视频检测无人物 → 直接跳到多段 seedance i2v 路径(静音)
+    # 否则走 Kling Avatar 有声路径(模型不变)
+    if ref_has_people is False:
+        log_info("ad_video P187 跳过 Kling Avatar/talking head,直接走多段 seedance i2v")
+        # 设 duration > 12 不会跑下面的 talking head 分支,直接 fall through 到多段
+    elif duration <= 12 or len(scenes) <= 1:
         speech_text = (first_scene.get("speech") or "").strip() if first_scene else ""
         if not speech_text:
             raise Exception("scene speech 为空,无法生成 talking video")
@@ -1016,6 +1053,8 @@ async def _run_ad_video_job(params: dict):
                     model_description=model_desc,
                     overall_setting=overall,
                     aspect_ratio=params.get("aspect_ratio") or "9:16",
+                    style_reference_image_url=params.get("style_reference_image_url"),  # P186
+                    no_model=(ref_has_people is False),  # P194(2026-05-08):per-scene 也走纯产品分支
                 )
                 if isinstance(fr, dict) and "error" in fr:
                     raise Exception(f"段{idx} 分镜图失败: {fr['error']}")
@@ -1260,6 +1299,8 @@ async def _run_ad_video_job(params: dict):
                     model_description=model_desc,
                     overall_setting=overall,
                     aspect_ratio=params.get("aspect_ratio") or "9:16",
+                    style_reference_image_url=params.get("style_reference_image_url"),  # P186
+                    no_model=(ref_has_people is False),  # P194(2026-05-08)
                 )
                 if fr.get("image_url"):
                     scene_frame_url = fr["image_url"]
@@ -1348,6 +1389,86 @@ async def _run_ad_video_job(params: dict):
             )
             if r2.returncode != 0 or not merged.exists():
                 raise Exception(f"ffmpeg concat 失败: {r2.stderr[-500:]}")
+
+        # P188(2026-05-08):无人物模式如果脚本有口播 → 跑 TTS + ffmpeg overlay 把音轨叠到 silent 视频
+        if ref_has_people is False:
+            speech_segs = [(scenes_to_run[i].get("speech") or "").strip() for i in range(len(scenes_to_run))]
+            has_any_speech = any(speech_segs)
+            if has_any_speech:
+                log_info(f"ad_video P188 无人物 + 有口播 → TTS 配音 + ffmpeg overlay")
+                try:
+                    import fal_client as _fc
+                    sem_tts = asyncio.Semaphore(3)
+                    async def _tts_one(idx_t: int, text: str, dur: float) -> Path:
+                        async with sem_tts:
+                            audio_path = seg_root / f"tts_{idx_t:02d}.mp3"
+                            if not text:
+                                # 静音填充段(无口播段)
+                                subprocess.run(
+                                    ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
+                                     "-t", f"{max(0.5, dur):.2f}", "-q:a", "9", "-acodec", "libmp3lame", str(audio_path)],
+                                    capture_output=True, timeout=30,
+                                )
+                                return audio_path
+                            tts_res = await asyncio.wait_for(
+                                _fc.run_async(
+                                    "fal-ai/elevenlabs/tts/multilingual-v2",
+                                    arguments={"text": text[:500]},
+                                ),
+                                timeout=120,
+                            )
+                            audio_obj = tts_res.get("audio") if isinstance(tts_res.get("audio"), dict) else None
+                            aurl = audio_obj.get("url") if audio_obj else tts_res.get("audio_url")
+                            if not aurl:
+                                raise Exception(f"段 {idx_t} TTS 未返 audio_url")
+                            async with httpx.AsyncClient(timeout=120) as cli:
+                                rr = await cli.get(aurl)
+                                rr.raise_for_status()
+                                with open(audio_path, "wb") as f:
+                                    f.write(rr.content)
+                            return audio_path
+
+                    audio_paths = await asyncio.gather(
+                        *[_tts_one(i, speech_segs[i], float(seg_durs[i]) if i < len(seg_durs) else 5.0)
+                          for i in range(len(scenes_to_run))]
+                    )
+                    # concat 音频 → 一个完整音轨
+                    audio_concat_list = seg_root / "audio_concat.txt"
+                    with open(audio_concat_list, "w") as fp:
+                        for p in audio_paths:
+                            fp.write(f"file '{p}'\n")
+                    audio_merged = seg_root / "audio_merged.mp3"
+                    cp_a = subprocess.run(
+                        ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(audio_concat_list),
+                         "-c", "copy", str(audio_merged)],
+                        capture_output=True, text=True, timeout=60,
+                    )
+                    if cp_a.returncode != 0:
+                        # re-encode concat fallback
+                        cp_a2 = subprocess.run(
+                            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(audio_concat_list),
+                             "-c:a", "libmp3lame", "-q:a", "5", str(audio_merged)],
+                            capture_output=True, text=True, timeout=60,
+                        )
+                        if cp_a2.returncode != 0:
+                            raise Exception(f"音轨 concat 失败: {cp_a2.stderr[:300]}")
+                    # 把音轨叠到 silent 视频(只重编 audio,video stream copy)
+                    with_audio = seg_root / "final_with_audio.mp4"
+                    cp_v = subprocess.run(
+                        ["ffmpeg", "-y", "-i", str(merged), "-i", str(audio_merged),
+                         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                         "-map", "0:v:0", "-map", "1:a:0", "-shortest", str(with_audio)],
+                        capture_output=True, text=True, timeout=120,
+                    )
+                    if cp_v.returncode == 0 and with_audio.exists() and with_audio.stat().st_size > 0:
+                        merged = with_audio
+                        log_info(f"ad_video P188 TTS 音轨 overlay 完成 size={merged.stat().st_size}")
+                    else:
+                        from app.services.logger import log_warning
+                        log_warning(f"ad_video P188 ffmpeg overlay 失败,fallback 静音视频: {cp_v.stderr[-300:]}")
+                except Exception as audio_err:
+                    from app.services.logger import log_warning
+                    log_warning(f"ad_video P188 TTS overlay 异常,fallback 静音: {audio_err}")
 
         # 上传到 fal storage 拿可访问 URL(沿用现有归档/分发模式)
         final_url = await fal_upload_with_retry(str(merged))
@@ -1602,6 +1723,91 @@ async def clear_jobs(current_user: dict = Depends(get_current_user)):
 
 # ==================== 视频复刻 · 分析 worker(2026-05-06)====================
 
+async def _extract_speech_from_video(video_url: str) -> dict:
+    """P172(2026-05-07):从视频提取原说话内容(ASR + 音频隔离)。
+
+    流程:
+      1. ffmpeg 视频 → 本地 mp3 音频
+      2. fal_client.upload_file_async 上传 mp3 拿 fal storage URL
+      3. fal-ai/elevenlabs/audio-isolation 滤背景音乐 → vocals_url
+      4. fal-ai/wizper 对 vocals_url 做 ASR → text
+      5. 返回 {original_speech, speech_audio_url, has_background_music}
+
+    成本:audio-isolation $0.10/min + wizper $0.0005/min。5s 视频 ~$0.01,30s ~$0.05。
+    任何步骤失败都返回空字段(不打断主 analyze 流程)。
+    """
+    import subprocess as _sp
+    import tempfile as _tmp
+    import os as _os
+    import fal_client as _fc
+    from app.services.logger import log_info, log_error
+
+    out: dict = {"original_speech": "", "speech_audio_url": "", "has_background_music": False}
+
+    # 1. ffmpeg 提取音频
+    audio_path = _os.path.join(_tmp.gettempdir(), f"replicate_asr_{_os.getpid()}_{int(time.time())}.mp3")
+    try:
+        rr = _sp.run(
+            ["ffmpeg", "-y", "-i", video_url, "-vn", "-acodec", "mp3", "-ar", "44100", "-ab", "128k", audio_path],
+            capture_output=True, text=True, timeout=60,
+        )
+        if rr.returncode != 0:
+            log_error(f"replicate ASR ffmpeg 失败: {rr.stderr[:200]}")
+            return out
+        if not _os.path.exists(audio_path) or _os.path.getsize(audio_path) < 1024:
+            log_error("replicate ASR ffmpeg 输出为空(原视频无音轨?)")
+            return out
+    except Exception as e:
+        log_error(f"replicate ASR ffmpeg 异常: {e}")
+        return out
+
+    # 2. 上传到 fal
+    try:
+        audio_fal_url = await _fc.upload_file_async(audio_path)
+    except Exception as e:
+        log_error(f"replicate ASR fal upload 失败: {e}")
+        try: _os.remove(audio_path)
+        except: pass
+        return out
+
+    # 清理本地
+    try: _os.remove(audio_path)
+    except: pass
+
+    # 3 + 4 并发:audio-isolation + wizper(对原音频)
+    import asyncio as _aio
+    async def _iso():
+        try:
+            r = await _aio.wait_for(
+                _fc.run_async("fal-ai/elevenlabs/audio-isolation", arguments={"audio_url": audio_fal_url}),
+                timeout=180,
+            )
+            return r.get("audio", {}).get("url") if isinstance(r, dict) else None
+        except Exception as e:
+            log_error(f"replicate ASR audio-isolation 失败: {e}")
+            return None
+
+    async def _asr():
+        try:
+            r = await _aio.wait_for(
+                _fc.run_async("fal-ai/wizper", arguments={"audio_url": audio_fal_url, "task": "transcribe"}),
+                timeout=120,
+            )
+            return (r.get("text") or "").strip() if isinstance(r, dict) else ""
+        except Exception as e:
+            log_error(f"replicate ASR wizper 失败: {e}")
+            return ""
+
+    vocals_url, asr_text = await _aio.gather(_iso(), _asr())
+
+    out["original_speech"] = asr_text or ""
+    out["speech_audio_url"] = vocals_url or ""
+    # 简化判断:audio-isolation 输出了 → 大概率原音频有非人声成分(音乐/噪音)
+    out["has_background_music"] = bool(vocals_url and asr_text)
+    log_info(f"replicate ASR 完成: text_len={len(asr_text)} has_vocals_url={bool(vocals_url)}")
+    return out
+
+
 async def _run_replicate_analyze_job(params: dict) -> dict:
     """异步跑 qwen-vl 看视频出 N 段分镜 + 探比例。"""
     import re as _re
@@ -1671,11 +1877,26 @@ async def _run_replicate_analyze_job(params: dict) -> dict:
                 elif abs(ratio - 1.0) < 0.1: aspect = "1:1"
     except Exception as _e:
         log_error(f"ffprobe 失败(默认 9:16): {_e}")
-    log_info(f"replicate_analyze OK scenes={len(clean_scenes)} ratio={aspect}")
+    # P172(2026-05-07):额外提取原视频说话内容 + 音乐分离
+    speech_info = {"original_speech": "", "speech_audio_url": "", "has_background_music": False}
+    try:
+        speech_info = await _extract_speech_from_video(archived_url)
+    except Exception as _e:
+        log_error(f"replicate_analyze speech extract 异常(忽略,不影响 analyze): {_e}")
+
+    # P181(2026-05-08):提取 VLM 给的 model_identity + product_category
+    model_identity = (data.get("model_identity") or "").strip()
+    product_category = (data.get("product_category") or "其他").strip()
+    log_info(f"replicate_analyze OK scenes={len(clean_scenes)} ratio={aspect} speech_len={len(speech_info.get('original_speech',''))} category={product_category} model_id_len={len(model_identity)}")
     return {
         "scenes": clean_scenes,
         "total_duration": data.get("total_duration_seconds", sum(s.get("duration_sec", 5) for s in clean_scenes)),
         "detected_aspect_ratio": aspect,
+        "original_speech": speech_info.get("original_speech", ""),
+        "speech_audio_url": speech_info.get("speech_audio_url", ""),
+        "has_background_music": speech_info.get("has_background_music", False),
+        "model_identity": model_identity,
+        "product_category": product_category,
     }
 
 
@@ -2032,18 +2253,38 @@ async def _run_replicate_job(params: dict) -> dict:
             for p in seg_paths:
                 f.write(f"file '{p}'\n")
         out_path = os.path.join(tmpdir, "final.mp4")
-        # 用 -c copy 试,失败再 re-encode
+        # P178(2026-05-07):3 层 merge 兜底 — 静态帧 fallback 段可能无音轨,跟 pixverse 段拼会挂
+        # Tier 1:-c copy(最快,各段编码一致才成)
         cp = subprocess.run(
             ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", out_path],
             capture_output=True,
         )
         if cp.returncode != 0 or not os.path.exists(out_path):
-            # re-encode 兜底
-            subprocess.run(
+            log_info(f"replicate merge -c copy 失败,降级 re-encode 带音轨: {cp.stderr.decode()[-200:] if cp.stderr else '?'}")
+            # Tier 2:re-encode(各段编码不一致兜底)
+            r2 = subprocess.run(
                 ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file,
                  "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", out_path],
-                check=True, capture_output=True,
+                capture_output=True,
             )
+            if r2.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+                log_info(f"replicate merge re-encode 带音轨失败,降级 -an 无音轨: {r2.stderr.decode()[-200:] if r2.stderr else '?'}")
+                # Tier 3:-an 完全去音轨(静态帧 fallback 段无音轨,有时跟有音轨段拼不起来)
+                r3 = subprocess.run(
+                    ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file,
+                     "-c:v", "libx264", "-preset", "veryfast", "-an", out_path],
+                    capture_output=True,
+                )
+                if r3.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+                    # Tier 4:最后兜底 — 至少返第一段(用户至少能看到一段视频)
+                    log_error(f"replicate merge 三层全失败,最后兜底返第一段: {r3.stderr.decode()[-300:] if r3.stderr else '?'}")
+                    fal_final_url = seg_urls[0]
+                    total_dur = sum(int(round(s.get("duration_sec", 5))) for s in scenes)
+                    return {
+                        "video_url": fal_final_url,
+                        "type": "video/replicate",
+                        "description": f"视频复刻(降级版本,merge 失败仅返第一段)· {len(scenes)} 段 · {total_dur}s",
+                    }
         fal_final_url = await fal_upload_with_retry(out_path)
 
     total_dur = sum(int(round(s.get("duration_sec", 5))) for s in scenes)
@@ -2123,15 +2364,46 @@ async def _slice_video_by_scenes(reference_video_url: str, scenes: list, tmpdir:
     return seg_fal_urls
 
 
+async def _replicate_frame_to_static_video(image_url: str, duration_sec: float, ratio: str) -> str:
+    """P177(2026-05-07):module-level 共享兜底 — GPT 帧 → ffmpeg loop → fal 静态 mp4。
+    所有 engine(pixverse-swap / pixverse-2step / seedance-lite-i2v / 未来新 engine)
+    任何段失败时都用这个,保证不再"修一处漏一处"。
+    """
+    import urllib.request as _urlreq
+    import subprocess as _sp
+    import tempfile as _tmp
+    from app.services.fal_service import fal_upload_with_retry as _fup
+    dim = {"9:16": "720:1280", "16:9": "1280:720", "1:1": "720:720"}.get(ratio, "720:1280")
+    with _tmp.TemporaryDirectory() as _td:
+        img_path = os.path.join(_td, "frame.png")
+        _urlreq.urlretrieve(image_url, img_path)
+        out_path = os.path.join(_td, "static.mp4")
+        cmd = ["ffmpeg", "-y", "-loop", "1", "-i", img_path,
+               "-t", f"{max(1.0, duration_sec):.2f}",
+               "-vf", f"scale={dim}:force_original_aspect_ratio=decrease,pad={dim}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p",
+               "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+               "-pix_fmt", "yuv420p", "-r", "24", out_path]
+        r = _sp.run(cmd, capture_output=True, text=True, timeout=120)
+        if r.returncode != 0:
+            raise RuntimeError(f"ffmpeg image->video 失败: {r.stderr[:300]}")
+        return await _fup(out_path)
+
+
 async def _gen_videos_seedance_lite_i2v(scenes: list, frames: list, aspect_ratio: str) -> list:
     """引擎 3:seedance-lite-i2v(P164 替换 kling-3-pro-i2v,$0.80→$0.18/5s)
 
     用户说 kling-3-pro $0.80/5s 太贵,目标 $0.2-0.3 平替 + AI 自由生成动作。
     Seedance v1 Lite i2v $0.18/5s @720p,ByteDance 模型,效果接近 Pro 版的 70%。
+    P177(2026-05-07):补兜底,跟 pixverse-swap/2step 一样的策略 — 任何段挂都降级到静态帧
     """
     import asyncio as _asyncio
     import fal_client
     from app.services.logger import log_info, log_error
+
+    async def _seedance_fallback(idx: int, frame_url: str, reason: str) -> str:
+        log_info(f"replicate seedance-lite-i2v seg {idx} 降级用 GPT 帧静态视频:{reason}")
+        scene_dur = float(scenes[idx].get("duration_sec", 5)) if idx < len(scenes) else 5.0
+        return await _replicate_frame_to_static_video(frame_url, scene_dur, aspect_ratio)
 
     sem = _asyncio.Semaphore(3)
     async def _one(idx: int, scene: dict, frame_url: str) -> str:
@@ -2139,31 +2411,53 @@ async def _gen_videos_seedance_lite_i2v(scenes: list, frames: list, aspect_ratio
             duration = max(5, min(10, int(round(scene.get("duration_sec", 5)))))
             prompt = scene.get("visual_prompt") or "Cinematic product showcase"
             try:
-                result = await fal_client.run_async(
-                    "fal-ai/bytedance/seedance/v1/lite/image-to-video",
-                    arguments={
-                        "image_url": frame_url,
-                        "prompt": prompt,
-                        "duration": str(duration),
-                        "aspect_ratio": aspect_ratio,
-                        "resolution": "720p",
-                        "enable_audio": False,
-                    },
+                # P179(2026-05-07):360s wait_for 防 fal hang
+                result = await _asyncio.wait_for(
+                    fal_client.run_async(
+                        "fal-ai/bytedance/seedance/v1/lite/image-to-video",
+                        arguments={
+                            "image_url": frame_url,
+                            "prompt": prompt,
+                            "duration": str(duration),
+                            "aspect_ratio": aspect_ratio,
+                            "resolution": "720p",
+                            "enable_audio": False,
+                        },
+                    ),
+                    timeout=360,
                 )
                 video = result.get("video") if isinstance(result, dict) else None
                 vurl = video.get("url") if isinstance(video, dict) else None
                 if not vurl:
                     vurl = result.get("video_url") if isinstance(result, dict) else None
                 if not vurl:
-                    raise RuntimeError(f"seedance-lite-i2v seg {idx} 未返 video URL")
+                    return await _seedance_fallback(idx, frame_url, "未返 video URL")
                 log_info(f"replicate seedance-lite-i2v seg {idx} OK url={vurl[:60]}")
                 return vurl
             except Exception as e:
-                raise RuntimeError(f"seedance-lite-i2v seg {idx} 失败: {str(e)[:200]}")
+                try:
+                    return await _seedance_fallback(idx, frame_url, f"异常: {type(e).__name__}:{str(e)[:120]}")
+                except Exception as _fb:
+                    log_error(f"replicate seedance-lite-i2v seg {idx} fallback 失败: {_fb}")
+                    raise
 
-    return await _asyncio.gather(*[
+    results = await _asyncio.gather(*[
         _one(i, scenes[i], frames[i]) for i in range(len(scenes))
-    ])
+    ], return_exceptions=True)
+    # 完全炸 → 静态帧 retry 一次,再炸就 raise(seedance 没 ref 视频段可用作最终兜底)
+    final_urls = []
+    for i, r in enumerate(results):
+        if isinstance(r, Exception):
+            log_error(f"replicate seedance-lite-i2v seg {i} 完全失败,最后再 retry 静态帧: {r}")
+            try:
+                scene_dur = float(scenes[i].get("duration_sec", 5))
+                final_urls.append(await _replicate_frame_to_static_video(frames[i], scene_dur, aspect_ratio))
+            except Exception as _e:
+                log_error(f"replicate seedance-lite-i2v seg {i} 最后兜底也失败: {_e}")
+                raise RuntimeError(f"seedance-lite-i2v seg {i} 完全失败: {r}")
+        else:
+            final_urls.append(r)
+    return final_urls
 
 
 # P164:旧函数名 alias 保留,避免破坏可能的引用(虽然 grep 没找到外部引用,但保险)
@@ -2193,25 +2487,62 @@ async def _gen_videos_pixverse_swap(scenes: list, frames: list, reference_video_
 
     log_info(f"replicate pixverse: 每段独立用对应 GPT frame(GPT-2 直接出图,无后处理)")
 
+    # P176(2026-05-07):单步 pixverse-swap 也加兜底,跟 2-step 一样的策略
+    async def _swap_fallback(idx: int, frame_url: str, reason: str) -> str:
+        log_info(f"replicate pixverse-swap seg {idx} 降级用 GPT 帧静态视频:{reason}")
+        scene_dur = float(scenes[idx].get("duration_sec", 5)) if idx < len(scenes) else 5.0
+        # 复用 2-step 的 helper(同文件,同模块作用域)
+        import urllib.request as _urlreq, subprocess as _sp
+        from app.services.fal_service import fal_upload_with_retry as _fup
+        dim = {"9:16": "720:1280", "16:9": "1280:720", "1:1": "720:720"}.get(aspect_ratio, "720:1280")
+        with tempfile.TemporaryDirectory() as _td:
+            img_path = os.path.join(_td, "frame.png")
+            _urlreq.urlretrieve(frame_url, img_path)
+            out_path = os.path.join(_td, "static.mp4")
+            cmd = ["ffmpeg", "-y", "-loop", "1", "-i", img_path,
+                   "-t", f"{max(1.0, scene_dur):.2f}",
+                   "-vf", f"scale={dim}:force_original_aspect_ratio=decrease,pad={dim}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p",
+                   "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                   "-pix_fmt", "yuv420p", "-r", "24", out_path]
+            r = _sp.run(cmd, capture_output=True, text=True, timeout=120)
+            if r.returncode != 0:
+                raise RuntimeError(f"ffmpeg image->video 失败: {r.stderr[:300]}")
+            return await _fup(out_path)
+
     with tempfile.TemporaryDirectory() as tmpdir:
         seg_urls = await _slice_video_by_scenes(reference_video_url, scenes, tmpdir, aspect_ratio=aspect_ratio)
 
         sem = _asyncio.Semaphore(3)
         async def _swap_one(idx: int, seg_url: str, frame_url: str) -> str:
             async with sem:
-                # frame_url 是 GPT-Image 2 出的图,直接喂 pixverse(不经 cat-vton 等后处理)
-                result = await pix.swap(video_url=seg_url, image_url=frame_url)
-                if "error" in result:
-                    raise RuntimeError(f"pixverse-swap seg {idx}: {result['error']}")
-                vurl = result.get("video_url")
-                if not vurl:
-                    raise RuntimeError(f"pixverse-swap seg {idx} 未返 url")
-                log_info(f"replicate pixverse seg {idx} OK url={vurl[:60]}")
-                return vurl
+                try:
+                    result = await pix.swap(video_url=seg_url, image_url=frame_url)
+                    if "error" in result:
+                        return await _swap_fallback(idx, frame_url, f"swap error: {str(result['error'])[:120]}")
+                    vurl = result.get("video_url")
+                    if not vurl:
+                        return await _swap_fallback(idx, frame_url, "swap 无 url")
+                    log_info(f"replicate pixverse seg {idx} OK url={vurl[:60]}")
+                    return vurl
+                except Exception as _e:
+                    try:
+                        return await _swap_fallback(idx, frame_url, f"swap 异常: {type(_e).__name__}:{str(_e)[:120]}")
+                    except Exception as _fb_err:
+                        log_error(f"replicate pixverse-swap seg {idx} fallback 失败: {_fb_err}")
+                        raise
 
-        return await _asyncio.gather(*[
+        results = await _asyncio.gather(*[
             _swap_one(i, seg_urls[i], frames[i]) for i in range(len(scenes))
-        ])
+        ], return_exceptions=True)
+        # 最后兜底:用原始 ref 视频段
+        final_urls = []
+        for i, r in enumerate(results):
+            if isinstance(r, Exception):
+                log_error(f"replicate pixverse-swap seg {i} 完全失败,最后兜底用原 ref 视频段: {r}")
+                final_urls.append(seg_urls[i])
+            else:
+                final_urls.append(r)
+        return final_urls
 
 
 async def _gen_videos_pixverse_2step(scenes: list, frames: list, reference_video_url: str, aspect_ratio: str, product_image_url: str = None) -> list:
@@ -2242,35 +2573,86 @@ async def _gen_videos_pixverse_2step(scenes: list, frames: list, reference_video
 
     log_info(f"replicate pixverse 2-step: object swap → person swap(N={len(scenes)} 段)")
 
+    # P174(2026-05-07):Step A 失败兜底 — GPT 帧 → ffmpeg loop → 静态视频
+    async def _frame_to_static_video(image_url: str, duration_sec: float, ratio: str) -> str:
+        import urllib.request as _urlreq
+        import subprocess as _sp
+        from app.services.fal_service import fal_upload_with_retry as _fup
+        dim = {"9:16": "720:1280", "16:9": "1280:720", "1:1": "720:720"}.get(ratio, "720:1280")
+        with tempfile.TemporaryDirectory() as _td:
+            img_path = os.path.join(_td, "frame.png")
+            _urlreq.urlretrieve(image_url, img_path)
+            out_path = os.path.join(_td, "static.mp4")
+            cmd = ["ffmpeg", "-y", "-loop", "1", "-i", img_path,
+                   "-t", f"{max(1.0, duration_sec):.2f}",
+                   "-vf", f"scale={dim}:force_original_aspect_ratio=decrease,pad={dim}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p",
+                   "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                   "-pix_fmt", "yuv420p", "-r", "24", out_path]
+            r = _sp.run(cmd, capture_output=True, text=True, timeout=120)
+            if r.returncode != 0:
+                raise RuntimeError(f"ffmpeg image->video 失败: {r.stderr[:300]}")
+            return await _fup(out_path)
+
     with tempfile.TemporaryDirectory() as tmpdir:
         seg_urls = await _slice_video_by_scenes(reference_video_url, scenes, tmpdir, aspect_ratio=aspect_ratio)
 
         sem = _asyncio.Semaphore(3)
+        async def _step_a_fallback(idx: int, person_ref: str, reason: str) -> str:
+            log_info(f"replicate pixverse seg {idx} Step A 降级用 GPT 帧静态视频:{reason}")
+            scene_dur = float(scenes[idx].get("duration_sec", 5)) if idx < len(scenes) else 5.0
+            return await _frame_to_static_video(person_ref, scene_dur, aspect_ratio)
+
         async def _two_step_swap(idx: int, seg_url: str, person_ref: str) -> str:
             async with sem:
+                # P175(2026-05-07):Step A/B 任何错误都降级,不只 mask
                 # Step A: object swap
-                log_info(f"replicate pixverse seg {idx} Step A(object swap)…")
-                step_a = await pix.swap(video_url=seg_url, image_url=product_image_url, mode="object")
-                if "error" in step_a:
-                    raise RuntimeError(f"pixverse seg {idx} Step A object: {step_a['error']}")
-                step_a_url = step_a.get("video_url")
-                if not step_a_url:
-                    raise RuntimeError(f"pixverse seg {idx} Step A 无 url")
-                log_info(f"replicate pixverse seg {idx} Step A OK url={step_a_url[:60]}")
-                # Step B: person swap
-                log_info(f"replicate pixverse seg {idx} Step B(person swap)…")
-                step_b = await pix.swap(video_url=step_a_url, image_url=person_ref, mode="person")
-                if "error" in step_b:
-                    raise RuntimeError(f"pixverse seg {idx} Step B person: {step_b['error']}")
-                step_b_url = step_b.get("video_url")
-                if not step_b_url:
-                    raise RuntimeError(f"pixverse seg {idx} Step B 无 url")
-                log_info(f"replicate pixverse seg {idx} 2-step OK final={step_b_url[:60]}")
-                return step_b_url
+                step_a_url: str = ""
+                try:
+                    log_info(f"replicate pixverse seg {idx} Step A(object swap)…")
+                    step_a = await pix.swap(video_url=seg_url, image_url=product_image_url, mode="object")
+                    if "error" in step_a:
+                        return await _step_a_fallback(idx, person_ref, f"Step A error: {str(step_a['error'])[:120]}")
+                    step_a_url = step_a.get("video_url") or ""
+                    if not step_a_url:
+                        return await _step_a_fallback(idx, person_ref, "Step A 无 url")
+                    log_info(f"replicate pixverse seg {idx} Step A OK url={step_a_url[:60]}")
+                except Exception as _e_a:
+                    try:
+                        return await _step_a_fallback(idx, person_ref, f"Step A 异常: {type(_e_a).__name__}:{str(_e_a)[:120]}")
+                    except Exception as _fb_err:
+                        log_error(f"replicate pixverse seg {idx} Step A fallback 也失败: {_fb_err}")
+                        raise RuntimeError(f"pixverse seg {idx} Step A object 异常 + fallback 失败: {_e_a}")
 
-        return await _asyncio.gather(*[
+                # Step B: person swap
+                try:
+                    log_info(f"replicate pixverse seg {idx} Step B(person swap)…")
+                    step_b = await pix.swap(video_url=step_a_url, image_url=person_ref, mode="person")
+                    if "error" in step_b:
+                        log_info(f"replicate pixverse seg {idx} Step B 跳过(error: {str(step_b['error'])[:80]}),降级用 Step A 视频")
+                        return step_a_url
+                    step_b_url = step_b.get("video_url")
+                    if not step_b_url:
+                        log_info(f"replicate pixverse seg {idx} Step B 无 url,降级用 Step A 视频")
+                        return step_a_url
+                    log_info(f"replicate pixverse seg {idx} 2-step OK final={step_b_url[:60]}")
+                    return step_b_url
+                except Exception as _e_b:
+                    log_info(f"replicate pixverse seg {idx} Step B 异常({type(_e_b).__name__}:{str(_e_b)[:80]}),降级用 Step A 视频")
+                    return step_a_url
+
+        # P175:gather 用 return_exceptions=True 做最后一道保险
+        results = await _asyncio.gather(*[
             _two_step_swap(i, seg_urls[i], frames[min(i, len(frames)-1)]) for i in range(len(scenes))
-        ])
+        ], return_exceptions=True)
+        # 如果某段彻底炸(连 fallback 都失败),最后兜底:用原始 ref 视频段
+        final_urls = []
+        for i, r in enumerate(results):
+            if isinstance(r, Exception):
+                log_error(f"replicate pixverse seg {i} 完全失败,最后兜底用原 ref 视频段: {r}")
+                final_urls.append(seg_urls[i])
+            else:
+                final_urls.append(r)
+        return final_urls
 
 
 async def _gen_videos_catvton_pixverse(scenes: list, frames: list, product_image_url: str, reference_video_url: str, aspect_ratio: str) -> list:

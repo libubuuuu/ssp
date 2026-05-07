@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
 import { errMsg } from "@/lib/utils/errors";
+import { serializeReplicateScenes } from "@/lib/scriptMarkdown";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -35,6 +36,13 @@ function token() {
   return localStorage.getItem("token") || "";
 }
 
+// P181(2026-05-08):视频复刻只允许服装大类(穿戴/鞋包/配饰)
+const CLOTHING_CATEGORY_PREFIXES = ["服装", "鞋", "包", "配饰"];
+function isClothingCategory(category: string): boolean {
+  if (!category) return false;
+  return CLOTHING_CATEGORY_PREFIXES.some(p => category.startsWith(p));
+}
+
 export default function ReplicatePage() {
   const router = useRouter();
 
@@ -50,6 +58,14 @@ export default function ReplicatePage() {
   const [detectedRatio, setDetectedRatio] = useState<string>("9:16");
   const [chosenRatio, setChosenRatio] = useState<string>("auto");
   const [chosenEngine, setChosenEngine] = useState<string>("pixverse-swap");
+
+  const [originalSpeech, setOriginalSpeech] = useState<string>("");
+  const [speechAudioUrl, setSpeechAudioUrl] = useState<string>("");
+  const [hasBackgroundMusic, setHasBackgroundMusic] = useState<boolean>(false);
+
+  // P181(2026-05-08):VLM 提取的人物相貌 + 产品大类
+  const [modelIdentity, setModelIdentity] = useState<string>("");
+  const [productCategory, setProductCategory] = useState<string>("");
 
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState("");
@@ -135,6 +151,12 @@ export default function ReplicatePage() {
             clearInterval(interval);
             setScenes(sd.scenes || []);
             setDetectedRatio(sd.detected_aspect_ratio || "9:16");
+            setOriginalSpeech(sd.original_speech || "");
+            setSpeechAudioUrl(sd.speech_audio_url || "");
+            setHasBackgroundMusic(!!sd.has_background_music);
+            // P181:VLM 提取的人物 + 产品大类
+            setModelIdentity(sd.model_identity || "");
+            setProductCategory(sd.product_category || "");
             setLoading(false); setLoadingMsg("");
           } else if (sd.status === "failed") {
             clearInterval(interval);
@@ -168,7 +190,7 @@ export default function ReplicatePage() {
           product_image_url: productUrl,
           product_back_image_url: productBackUrl,
           reference_video_url: videoUrl,
-          script: { scenes, overall_setting: "", model_description: "A professional commercial model" },
+          script: { scenes, overall_setting: "", model_description: modelIdentity || "A professional commercial model" },
           aspect_ratio: ratio,
           engine: chosenEngine,
         }),
@@ -235,6 +257,10 @@ export default function ReplicatePage() {
           <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
             上传参考视频 + 产品图(可选反面/侧面) → AI 拆分镜 → 模特由 AI 自动生成 → 按你的产品复刻
           </div>
+          <div style={{ marginTop: 8, padding: "0.6rem 0.9rem", background: "#fffbf0", border: "1px solid #f5e6a8", borderRadius: 8, fontSize: "0.85rem", color: "#7a5800", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: "1.1rem" }}>⚠️</span>
+            <span><strong>这个功能比较适合复刻服装类产品</strong>(衣服/塑身衣/胸罩等穿戴品)。手持产品(手机/水杯/化妆品)选"动作复刻(双步)",数码小配件可以试 AI 自由生成。</span>
+          </div>
         </div>
 
         {error && (
@@ -263,8 +289,70 @@ export default function ReplicatePage() {
           </button>
         )}
 
-        {scenes && (
+        {scenes && (originalSpeech || speechAudioUrl) && (
+          <Box label={`原视频口播提取${hasBackgroundMusic ? " · 检测到背景音乐(已分离)" : " · 无背景音乐"}`}>
+            {originalSpeech ? (
+              <div style={{ marginBottom: speechAudioUrl ? 10 : 0 }}>
+                <div style={{ fontSize: "0.8rem", color: "#666", marginBottom: 4 }}>识别到的口播文字</div>
+                <div style={{ background: "#f9f7f2", padding: "0.7rem 0.9rem", borderRadius: 8, fontSize: "0.88rem", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+                  {originalSpeech}
+                </div>
+                <button
+                  onClick={() => navigator.clipboard.writeText(originalSpeech)}
+                  style={{ marginTop: 6, background: "transparent", border: "1px solid #ddd", padding: "0.35rem 0.7rem", borderRadius: 6, fontSize: "0.78rem", cursor: "pointer" }}>
+                  复制文字
+                </button>
+              </div>
+            ) : (
+              <div style={{ fontSize: "0.85rem", color: "#999" }}>原视频未识别到说话内容(可能纯展示/纯音乐)</div>
+            )}
+            {speechAudioUrl && (
+              <div>
+                <div style={{ fontSize: "0.8rem", color: "#666", marginBottom: 4 }}>纯人声音轨(已剥离背景音乐)</div>
+                <audio src={speechAudioUrl} controls style={{ width: "100%", maxWidth: 480 }} />
+              </div>
+            )}
+          </Box>
+        )}
+
+        {/* P181:产品大类不是服装 → 拦截,引导去 ad-video */}
+        {scenes && productCategory && !isClothingCategory(productCategory) && (
+          <Box label="⚠️ 产品类目不匹配 — 视频复刻仅支持服装类产品">
+            <div style={{ background: "#fff3f3", border: "1px solid #fcc", color: "#8a3a3a", padding: "1rem 1.2rem", borderRadius: 10, marginBottom: 12 }}>
+              <div style={{ fontSize: "0.95rem", fontWeight: 500, marginBottom: 6 }}>
+                AI 检测到你的产品类目:<strong>{productCategory}</strong>
+              </div>
+              <div style={{ fontSize: "0.85rem", lineHeight: 1.6 }}>
+                视频复刻功能针对<strong>服装/鞋/包/配饰</strong>类产品做了专项优化(模特换装、动作复刻)。
+                <br />
+                你的产品不在覆盖范围 — 强行生成效果会很差(产品形状失真 / 手物贴合差)。
+                <br /><br />
+                <strong>推荐改用「AI 带货视频」</strong>功能 — 那个功能更适合数码/美妆/家居/食品/日用类,直接出口播带货视频,不需要参考视频。
+              </div>
+            </div>
+            <button onClick={() => router.push("/ad-video")}
+              style={{ background: "#0d0d0d", color: "#fff", border: "none", padding: "0.7rem 1.4rem", borderRadius: 8, fontSize: "0.9rem", cursor: "pointer", marginRight: 8 }}>
+              去 AI 带货视频 →
+            </button>
+            <button onClick={() => { setScenes(null); setProductCategory(""); setVideoFile(null); setVideoUrl(null); }}
+              style={{ background: "transparent", color: "#666", border: "1px solid #ddd", padding: "0.7rem 1.4rem", borderRadius: 8, fontSize: "0.9rem", cursor: "pointer" }}>
+              重新上传别的视频
+            </button>
+          </Box>
+        )}
+
+        {scenes && (!productCategory || isClothingCategory(productCategory)) && (
           <>
+            {productCategory && (
+              <div style={{ marginBottom: 12, padding: "0.6rem 0.9rem", background: "#f0f7fb", border: "1px solid #b8d8ee", borderRadius: 8, fontSize: "0.85rem", color: "#1a4068" }}>
+                ✓ 产品类目:<strong>{productCategory}</strong> — 适配视频复刻
+                {modelIdentity && (
+                  <div style={{ marginTop: 4, fontSize: "0.78rem", color: "#456" }}>
+                    AI 提取的模特特征(后续 GPT-Image 2 出图会按此还原):{modelIdentity.length > 100 ? modelIdentity.slice(0, 100) + "..." : modelIdentity}
+                  </div>
+                )}
+              </div>
+            )}
             <Box label={`④ 输出比例(检测到 ${detectedRatio})`}>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {ASPECT_OPTIONS.map(o => (
@@ -310,6 +398,35 @@ export default function ReplicatePage() {
                     style={{ width: "100%", padding: "0.6rem", border: "1px solid #ddd", borderRadius: 8, fontSize: "0.85rem", fontFamily: "monospace", resize: "vertical" }} />
                 </div>
               ))}
+              <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #eee", display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  onClick={() => {
+                    const md = serializeReplicateScenes(scenes, {
+                      total_duration_sec: scenes.reduce((a, s) => a + (s.duration_sec || 5), 0),
+                      original_speech: originalSpeech || undefined,
+                    });
+                    navigator.clipboard.writeText(md);
+                    alert("已复制 markdown 脚本,可粘贴到 AI 带货视频(/ad-video)使用");
+                  }}
+                  style={{ background: "#0d0d0d", color: "#fff", border: "none", padding: "0.55rem 1rem", borderRadius: 8, fontSize: "0.82rem", cursor: "pointer" }}>
+                  📋 复制脚本(markdown)
+                </button>
+                <button
+                  onClick={() => {
+                    const md = serializeReplicateScenes(scenes, {
+                      total_duration_sec: scenes.reduce((a, s) => a + (s.duration_sec || 5), 0),
+                      original_speech: originalSpeech || undefined,
+                    });
+                    const blob = new Blob([md], { type: "text/markdown" });
+                    const a = document.createElement("a");
+                    a.href = URL.createObjectURL(blob);
+                    a.download = "video-script.md";
+                    a.click();
+                  }}
+                  style={{ background: "transparent", color: "#0d0d0d", border: "1px solid #ddd", padding: "0.55rem 1rem", borderRadius: 8, fontSize: "0.82rem", cursor: "pointer" }}>
+                  ⬇ 下载 .md
+                </button>
+              </div>
             </Box>
 
             {!jobId && (

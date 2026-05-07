@@ -69,11 +69,18 @@ export default function Sidebar() {
         ▶
       </button>
 
-      <button onClick={()=>router.push("/video/replicate")} title="视频复刻"
+      <button onClick={()=>router.push("/video/replicate")} title="视频复刻(适合服装产品)"
         style={{width:"48px",height:"48px",borderRadius:"12px",border:"none",background:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.2rem",color:"#666",transition:"all 0.15s"}}
         onMouseEnter={e=>{e.currentTarget.style.background="#f9f7f2";}}
         onMouseLeave={e=>{e.currentTarget.style.background="none";}}>
         ⎘
+      </button>
+
+      <button onClick={()=>router.push("/video/extract")} title="视频脚本提取"
+        style={{width:"48px",height:"48px",borderRadius:"12px",border:"none",background:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.2rem",color:"#666",transition:"all 0.15s"}}
+        onMouseEnter={e=>{e.currentTarget.style.background="#f9f7f2";}}
+        onMouseLeave={e=>{e.currentTarget.style.background="none";}}>
+        ⌬
       </button>
 
       <button onClick={()=>router.push("/pricing")} title={t("sidebar.pricing")}

@@ -140,10 +140,21 @@ async def upload_image(
 # ================= 端点 3:分析参考视频 → N 段分镜 =================
 
 _ANALYZE_INSTRUCTION = """你是视频复刻专家。看完这段视频,按时序拆成 N 个分镜(每段 5 秒为基准,余数并入末段)。
+**同时还要提取两个 top-level 字段(关键!不要漏)**:
+1. `model_identity`:视频里出镜模特的相貌特征英文描述,150-300 字符,用于后续 GPT-Image 2 出图保持人物相似。
+   覆盖:种族(Asian/Caucasian/African/Latina)、性别、年龄段、脸型、肤色、发型(长/短/卷/直)、发色、身材(slim/average/curvy)、原视频穿什么。
+   示例:"Asian woman, mid 20s, oval face, fair skin tone, long straight black hair, slim build, wearing white casual top and blue jeans"
+2. `product_category`:产品大类,只能是以下值之一:
+   `服装/上衣` `服装/下装` `服装/连衣裙` `服装/外套` `服装/内衣` `服装/塑身衣` `服装/泳装` `服装/睡衣`
+   `鞋子` `包/箱包` `配饰/帽子围巾手套` `配饰/首饰`
+   `数码/电子` `美妆/护肤` `家居` `食品` `日用` `其他`
+
 对每段输出 JSON,严格按下面格式,不加任何 markdown:
 
 {
   "total_duration_seconds": 总秒数,
+  "model_identity": "Asian woman, mid 20s, ...",
+  "product_category": "服装/上衣",
   "scenes": [
     {
       "id": 1,
