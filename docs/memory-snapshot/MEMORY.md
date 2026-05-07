@@ -1,4 +1,5 @@
 - [SSP 项目结构与栈](project_ssp.md) — 路径、技术栈、deploy/rollback 脚本位置
+- [SSP 口播 V3 P15 最终架构](project_ssp_oral_v3.md) — Seedream 首帧 + kling i2v + 无水印,2026-04-30 实测 4 分 16 秒出 19s 成片
 - [SSP 编码约定与禁忌](feedback_ssp_conventions.md) — `??` 不用 `||`、i18n、不改 main、不提交敏感文件
 - [SSP 生产 bug 立即修复约定](feedback_ssp_bug_fix.md) — 用户报 bug 时立刻动手改代码,不只是诊断/指引
 - [SSP 前端改动必须独立复核](feedback_ssp_frontend_verify.md) — Edit 工具返"成功"不算数,必须 grep 看真值 + npm run build 才能 commit/deploy
@@ -6,6 +7,17 @@
 - [SSP rsync 后必须 chown](feedback_ssp_deploy_chown.md) — rsync /root → /opt 用 root 跑后,文件 owner 变 root,backend 起不来
 - [SSP rsync 严禁多 source 形式](feedback_ssp_rsync_safety.md) — 多 source 把目录内容污染 prod,P16 已踩(blue EXITED)
 - [SSP 多文件批量替换不用 sed -i](feedback_ssp_no_sed_batch.md) — sed -i 偶发清空文件已踩 2 次,用 Edit 单处替换
-- [SSP 口播 V3 P15 最终架构](project_ssp_oral_v3.md) — Seedream 首帧 + kling i2v + 无水印,2026-04-30 实测 4 分 16 秒出 19s 成片
 - [SSP fal 端点切换前必须 probe](feedback_ssp_fal_probe_first.md) — 改 fal endpoint/引擎前用真 KEY 实测 submit+result+NSFW,不要 deploy 打地鼠
 - [SSP 不脑补,verify 而后说](feedback_ssp_no_pattern_match.md) — fal 引擎能力/schema 等技术事实,实测 verify 后才能下结论,不许 pattern-match 推断
+- [pixverse-swap 必须 720p 输出](feedback_pixverse_720p_only.md) — 不准跑 $0.40/5s 的 1080p,锁死 $0.20/5s
+- [视频复刻图必须 GPT-Image 2 出](feedback_image_must_be_gpt2.md) — 不准 cat-vton 等后处理,GPT 直接出图喂 pixverse
+- [AI 带货视频出图严禁字幕](feedback_ad_video_no_subtitles.md) — /ad-video 出图禁 text/CTA/数字/标签,字幕用户后期加
+- [AI 带货视频时长必须严格相等](feedback_ad_video_strict_duration.md) — 选 10s 必须出 10s,VLM 超字 worker 截断
+- [replicate fal checker 是 image-level](feedback_replicate_fal_image_checker.md) — base 图含敏感产品 fal 直接拒,要有"无 base"fallback
+- [pixverse object 模式不支持穿戴类](feedback_pixverse_object_mode_no_clothing.md) — 服装/塑身衣/内衣 mode=object 报 "Could not generate mask",别再提 2 步方案
+- [pixverse person 特写镜头要降级](feedback_pixverse_person_mode_close_up_fallback.md) — 产品 macro/特写没清晰脸 mode=person 也报 "Could not generate mask",Step B fail → 用 Step A 视频
+- [修 bug 必先扫所有同类路径](feedback_audit_all_paths_before_claiming_fixed.md) — 不能只改报错那条,要 grep 找所有 `_gen_videos_*` / 同 pattern 入口,一次性扫完
+- [blue 重启杀 in-flight job](feedback_deploy_window_kills_running_job.md) — 部署前先看 jobs.json 没 running 再重启,否则用户 job 变孤儿
+- [复刻 AI 自由生成价格红线 $0.30/5s](feedback_replicate_no_kling_pro_i2v.md) — Kling 3 Pro $0.80 被毙,当前 Seedance v1 Lite $0.18
+- [国内模式必须亚洲面孔](feedback_cn_mode_must_asian_face.md) — region=CN 出图严禁 Caucasian/blonde,VLM prompt 已强制写"亚洲面孔"
+- [带货参考视频仅黏贴模式用](feedback_ad_video_ref_video_only_paste_mode.md) — auto 模式 ref_video_* 强制 null,paste 模式才传
