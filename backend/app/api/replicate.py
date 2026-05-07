@@ -65,6 +65,7 @@ class AnalyzeResponse(BaseModel):
 
 
 class ReplicateScript(BaseModel):
+    model_config = {"protected_namespaces": ()}
     scenes: List[Scene]
     overall_setting: str = ""
     model_description: str = ""

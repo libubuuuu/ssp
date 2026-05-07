@@ -64,6 +64,40 @@ def _save_jobs():
 JOBS: Dict[str, dict] = _load_jobs()
 
 
+def cleanup_orphan_jobs_on_startup() -> int:
+    """启动时把 status='running' 的 job 标 failed + 退积分。
+
+    背景:worker 用 asyncio.create_task 注册 in-memory,blue 重启时 task 丢失但
+    jobs.json 里仍 status=running → 用户看到永远 running。
+
+    本函数在 lifespan startup 调用,扫 JOBS 把孤儿全标 failed 退积分。
+    """
+    try:
+        from app.services.billing import add_credits  # 延迟 import 避开循环
+    except Exception as e:
+        print(f"cleanup_orphan_jobs: import billing failed: {e}")
+        return 0
+    n = 0
+    for jid, j in list(JOBS.items()):
+        if j.get("status") != "running":
+            continue
+        j["status"] = "failed"
+        j["error"] = "服务重启时任务丢失,已自动退还积分,请重新提交"
+        j["finished_at"] = time.time()
+        try:
+            uid = j.get("user_numeric_id") or j.get("user_id")
+            cost = j.get("cost", 0) or 0
+            if uid and cost > 0:
+                add_credits(uid, cost, reason="task_refund", ref_id=jid, module=j.get("module") or j.get("type"))
+        except Exception as e:
+            print(f"cleanup_orphan_jobs: refund {jid} failed: {e}")
+        n += 1
+    if n:
+        _save_jobs()
+        print(f"[startup] cleanup_orphan_jobs: 标 failed + 退积分 {n} 个孤儿")
+    return n
+
+
 class SubmitJobRequest(BaseModel):
     type: str
     params: Dict[str, Any]

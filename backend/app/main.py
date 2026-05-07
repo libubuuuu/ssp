@@ -50,6 +50,14 @@ async def lifespan(app: FastAPI):
     """应用生命周期:取代 deprecated @app.on_event('startup'/'shutdown')"""
     # 启动
     log_info("AI 创意平台 启动成功")
+    # P163: 服务重启时把 jobs.json 里 status=running 的孤儿 job 标 failed + 退积分
+    try:
+        from app.api.jobs import cleanup_orphan_jobs_on_startup
+        n = cleanup_orphan_jobs_on_startup()
+        if n:
+            log_info(f"启动清理: {n} 个孤儿 job 标 failed + 退积分")
+    except Exception as e:
+        print(f"orphan cleanup failed at startup: {e}")
     yield
     # 关闭
     log_info("AI 创意平台 正在关闭...")

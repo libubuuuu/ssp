@@ -44,6 +44,7 @@ class Scene(BaseModel):
 
 
 class Script(BaseModel):
+    model_config = {"protected_namespaces": ()}
     overall_setting: str
     model_description: str
     scenes: List[Scene]
