@@ -30,10 +30,9 @@ PRICING: Dict[str, int] = {
     # preview: Nano Banana 单图,成本约 $0.04 → 2 积分
     # scene_regen: VLM 文本调用,几乎免费 → 1 积分
     # generate: Seedance 2.0 1080p 15s 带音,成本约 $4.20 → 30 积分(留毛利)
-    "ad_video/analyze": 1,
-    "ad_video/preview": 2,
-    "ad_video/scene_regen": 1,
-    "ad_video/generate": 30,
+
+
+
 
     # 七十七续:口播带货工作台 3 档定价(每分钟成片;按秒折算见 oral.compute_charge)
     # 经济 ¥80 / 标准 ¥180 / 顶级 ¥350,假设 1 积分 ≈ ¥0.50
