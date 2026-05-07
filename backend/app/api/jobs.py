@@ -2025,27 +2025,30 @@ async def _run_replicate_job(params: dict) -> dict:
             log_info(f"replicate grid n={n} OK(原 prompt),省 {n-1} 次 GPT 调用")
             return panels
 
-        # Attempt 2:简化 prompt 重试(仅 content_policy 才值得重试)
+        # P168(2026-05-07):content_policy 错误是 fal image-level checker 拒 base 图,
+        # 跑 attempt 2 简化 prompt(3:34)和 scene-by-scene fallback(3:44)注定也失败,
+        # 加起来浪费 ~7 分钟。立刻全 fallback 到 base_frame_url,Seedance 自由生成动作。
         if err and ("content_policy" in err or "content_checker" in err):
-            log_error(f"replicate grid n={n} 原 prompt 拒,简化 prompt retry: {err[:120]}")
-            simplified_chunk = []
-            for sc in chunk:
-                shot = sc.get("shot") or "medium-shot"
-                sc_simple = dict(sc)
-                sc_simple["visual_prompt"] = (
-                    f"Photorealistic commercial fashion shoot, {shot}, "
-                    f"professional studio lighting, model presenting the item, "
-                    f"third-person camera, face and upper body visible"
-                )
-                simplified_chunk.append(sc_simple)
-            panels, err2 = await _try_grid(simplified_chunk)
-            if panels:
-                log_info(f"replicate grid n={n} 简化 prompt OK")
-                return panels
-            log_error(f"replicate grid n={n} 简化 prompt 仍失败,逐段降级: {err2[:120] if err2 else '?'}")
-        else:
-            log_error(f"replicate grid n={n} 非 content_policy 错误,逐段降级: {err[:120] if err else '?'}")
+            log_error(f"replicate grid n={n} content_policy 拒(穿戴类常见),P168 fast-fail 全 fallback base 图,省 ~7 分钟")
+            return [base_frame_url] * n
 
+        # 非 content_policy 错(网络抖动/服务异常),仍走原 attempt 2 + scene-by-scene 重试链
+        log_error(f"replicate grid n={n} 非 content_policy 错,简化 prompt retry: {err[:120] if err else '?'}")
+        simplified_chunk = []
+        for sc in chunk:
+            shot = sc.get("shot") or "medium-shot"
+            sc_simple = dict(sc)
+            sc_simple["visual_prompt"] = (
+                f"Photorealistic commercial fashion shoot, {shot}, "
+                f"professional studio lighting, model presenting the item, "
+                f"third-person camera, face and upper body visible"
+            )
+            simplified_chunk.append(sc_simple)
+        panels, err2 = await _try_grid(simplified_chunk)
+        if panels:
+            log_info(f"replicate grid n={n} 简化 prompt OK")
+            return panels
+        log_error(f"replicate grid n={n} 简化 prompt 仍失败,逐段降级: {err2[:120] if err2 else '?'}")
         # 最终降级:逐段单出(单出自身有 3 段 retry)
         return await _asyncio.gather(*[_gen_single_scene(sc) for sc in chunk])
 
