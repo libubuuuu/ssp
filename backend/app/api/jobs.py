@@ -1552,79 +1552,6 @@ def _studio_sessions_as_virtual_jobs(user_id: str) -> list[dict]:
         })
     return out
 
-
-def _oral_sessions_as_virtual_jobs(user_id: str) -> list[dict]:
-    """把当前用户的 oral 口播 session 转成虚拟 job 给 My Tasks 显示。
-    跟 studio 同样的桥接思路 — oral 不写 JOBS 字典,SQL 表 oral_sessions 是真源,
-    这里读出来按 JobPanel 期望的 schema 拼一份只读视图。
-    """
-    try:
-        from app.database import get_db
-    except Exception:
-        return []
-    out = []
-    try:
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT id, status, duration_seconds, final_video_url,
-                       thumbnail_url, created_at
-                  FROM oral_sessions
-                 WHERE user_id = ? AND archived_at IS NULL
-              ORDER BY created_at DESC
-                 LIMIT 50
-                """,
-                (user_id,),
-            )
-            rows = cursor.fetchall()
-    except Exception:
-        return []
-    import time as _t
-    from datetime import datetime as _dt
-    for r in rows:
-        d = dict(r)
-        sid = d["id"]
-        status_raw = d.get("status") or "pending"
-        if status_raw == "completed":
-            v_status = "completed"
-        elif str(status_raw).startswith("failed"):
-            v_status = "failed"
-        else:
-            v_status = "running"
-        duration = d.get("duration_seconds") or 0
-        title = f"口播带货 {duration:.0f}s"
-        result = {}
-        if d.get("final_video_url"):
-            result["video_url"] = d["final_video_url"]
-        if d.get("thumbnail_url"):
-            result["image_url"] = d["thumbnail_url"]
-        # created_at: TEXT(ISO) → epoch float, 排序用
-        ca = d.get("created_at")
-        ca_num = 0.0
-        if isinstance(ca, (int, float)):
-            ca_num = float(ca)
-        elif isinstance(ca, str) and ca:
-            try:
-                ca_num = _dt.fromisoformat(ca.replace(" ", "T")).timestamp()
-            except Exception:
-                ca_num = 0.0
-        out.append({
-            "id": f"oral_{sid}",
-            "user_id": user_id,
-            "user_numeric_id": user_id,
-            "type": "oral_broadcast",
-            "title": title,
-            "status": v_status,
-            "created_at": ca_num,
-            "result": result,
-            "_long_video": True,  # 复用现有"虚拟 job 不可删 + 可点跳转"渲染分支
-            "_session_id": sid,
-            "_route": f"/video/oral-broadcast/{sid}",
-        })
-    return out
-
-
 @router.get("/list")
 async def list_jobs(current_user: dict = Depends(get_current_user)):
     """七十五续:My Tasks 列表合并 long-video sessions(虚拟 job 视图)"""
@@ -1632,7 +1559,6 @@ async def list_jobs(current_user: dict = Depends(get_current_user)):
     mine = [j for j in JOBS.values() if j.get("user_id") == user_id]
     # 追加 long-video 虚拟 jobs
     mine.extend(_studio_sessions_as_virtual_jobs(user_id))
-    mine.extend(_oral_sessions_as_virtual_jobs(user_id))
     mine.sort(key=lambda x: x.get("created_at", 0), reverse=True)
     return {"jobs": mine[:50]}
 

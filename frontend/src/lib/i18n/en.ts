@@ -47,7 +47,6 @@ export const en = {
     adminDashboard: "Monitor",
     adminSettings: "Admin",
     adVideo: "AI Product Video",
-    oralBroadcast: "Oral Broadcast Studio",
   },
   dashboard: {
     todayCreate: "What do you want to create today?",
