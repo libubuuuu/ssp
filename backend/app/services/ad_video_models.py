@@ -521,7 +521,7 @@ async def compose_first_frame(
                         "output_format": "png",
                     },
                 ),
-                timeout=90,
+                timeout=360,  # P167: OpenAI gpt-image-2 高峰期 4-5 分钟,给足余地
             )
             images = result.get("images", [])
             if not images:
