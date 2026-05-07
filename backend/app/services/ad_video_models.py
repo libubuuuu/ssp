@@ -504,19 +504,24 @@ async def compose_first_frame(
 
     # P165(2026-05-07):fal → OpenAI 上游瞬时错(Downstream service error)很常见,
     # 加 2 次 retry,2s/4s 退避。content_policy_violation 不重试(改 prompt 也救不了)。
+    # P166(2026-05-07):fal_client.run_async 默认无 timeout,fal 上游挂了会卡死 worker。
+    # 加 asyncio.wait_for 90s hard timeout,fal hang 自动转 retry 不再卡死整个 job。
     last_err: Optional[Exception] = None
     for attempt in range(3):
         try:
-            result = await fal_client.run_async(
-                NANO_BANANA_EDIT_ENDPOINT,
-                arguments={
-                    "prompt": full_prompt,
-                    "image_urls": image_urls,
-                    # P126: openai/gpt-image-2/edit schema(image_size 替代 aspect_ratio,无 guidance_scale)
-                    "image_size": _img_size_for_aspect(aspect_ratio),
-                    "num_images": 1,
-                    "output_format": "png",
-                },
+            result = await asyncio.wait_for(
+                fal_client.run_async(
+                    NANO_BANANA_EDIT_ENDPOINT,
+                    arguments={
+                        "prompt": full_prompt,
+                        "image_urls": image_urls,
+                        # P126: openai/gpt-image-2/edit schema(image_size 替代 aspect_ratio,无 guidance_scale)
+                        "image_size": _img_size_for_aspect(aspect_ratio),
+                        "num_images": 1,
+                        "output_format": "png",
+                    },
+                ),
+                timeout=90,
             )
             images = result.get("images", [])
             if not images:
