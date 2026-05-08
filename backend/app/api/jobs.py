@@ -321,20 +321,41 @@ async def _p135_concat_simple(
             streams = _json.loads(probe.stdout).get("streams", [])
             v_dur = next((float(s.get("duration", 0)) for s in streams if s.get("codec_type") == "video"), 0)
             a_dur = next((float(s.get("duration", 0)) for s in streams if s.get("codec_type") == "audio"), 0)
-            target_dur = min(v_dur, a_dur) if v_dur > 0 and a_dur > 0 else max(v_dur, a_dur)
-            if abs(v_dur - a_dur) > 0.1:
-                log_warning(f"P151 段 {i+1} desync: video={v_dur:.2f}s audio={a_dur:.2f}s,trim 到 {target_dur:.2f}s")
+            # P198(2026-05-08):支持 silent 段(没 audio stream),用 anullsrc 补静音轨
+            # 用户:speech 空段不要被跳过,该段纯画面静音,跟 talking 段一起 concat
+            has_audio = a_dur > 0
+            if has_audio:
+                target_dur = min(v_dur, a_dur) if v_dur > 0 else a_dur
+                if abs(v_dur - a_dur) > 0.1:
+                    log_warning(f"P151 段 {i+1} desync: video={v_dur:.2f}s audio={a_dur:.2f}s,trim 到 {target_dur:.2f}s")
+            else:
+                target_dur = v_dur
+                log_info(f"P198 段 {i+1} silent(无 audio stream),用 anullsrc 补 {target_dur:.2f}s 静音")
             trimmed = Path(work) / f"seg_{i+1}.mp4"
             # ffmpeg trim 到 target_dur(re-encode 保证关键帧对齐)
-            r2 = _sp.run(
-                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                 "-i", raw, "-t", str(target_dur),
-                 "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-                 "-c:a", "aac", "-b:a", "128k",
-                 "-movflags", "+faststart",
-                 str(trimmed)],
-                capture_output=True, text=True, timeout=120,
-            )
+            if has_audio:
+                ff_cmd = [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", raw, "-t", str(target_dur),
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                    "-c:a", "aac", "-b:a", "128k",
+                    "-movflags", "+faststart",
+                    str(trimmed),
+                ]
+            else:
+                # P198:silent 段加 anullsrc 静音 audio
+                ff_cmd = [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", raw,
+                    "-f", "lavfi", "-t", str(target_dur), "-i", "anullsrc=r=44100:cl=stereo",
+                    "-map", "0:v:0", "-map", "1:a:0",
+                    "-t", str(target_dur),
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                    "-c:a", "aac", "-b:a", "128k",
+                    "-movflags", "+faststart",
+                    str(trimmed),
+                ]
+            r2 = _sp.run(ff_cmd, capture_output=True, text=True, timeout=120)
             if r2.returncode != 0:
                 log_warning(f"P151 段 {i+1} trim 失败,用 raw: {r2.stderr[:200]}")
                 local_paths.append(raw)
@@ -1022,11 +1043,14 @@ async def _run_ad_video_job(params: dict):
             # bug:8/10/12s 用户选时长被拉成 12/14/16s,根因 P149 多段路径无 per-scene 截断
             # 速率:elevenlabs multilingual-v2 实测中文 5 字/秒,英文 14 字符/秒
             import re as __re_p158
-            seg_speeches = []
+            # P198(2026-05-08):speech 空段不再跳过 — 用户:粘贴脚本里某段 speech 留空 →
+            # 不要 VLM 自动补话术,该段视频走 Seedance i2v 纯画面无声 + concat 时 anullsrc 补静音
+            seg_units = []  # list of (idx, sp_or_None, mode)  mode in {talking, silent}
             for i, sc in enumerate(scenes):
                 sp = (sc.get("speech") or "").strip()
                 if not sp:
-                    log_warning(f"ad_video P139 段{i+1} speech 空,该段跳过")
+                    seg_units.append((i + 1, None, "silent"))
+                    log_info(f"ad_video P198 段{i+1} speech 空 → silent(Seedance i2v 纯画面)")
                     continue
                 seg_dur = float(sc.get("duration_sec") or 5)
                 has_cn = bool(__re_p158.search(r"[\u4e00-\u9fff]", sp))
@@ -1037,10 +1061,13 @@ async def _run_ad_video_job(params: dict):
                         f"(seg_dur={seg_dur}s lang={'CN' if has_cn else 'EN'}),截断"
                     )
                     sp = sp[:max_chars]
-                seg_speeches.append((i + 1, sp))
+                seg_units.append((i + 1, sp, "talking"))
 
-            if not seg_speeches:
-                raise Exception("P139 全部段 speech 都空,VLM 没写台词")
+            if not seg_units:
+                raise Exception("P198 没 scenes")
+            seg_speeches = [(idx, sp) for (idx, sp, mode) in seg_units if mode == "talking"]
+            silent_idxs = [idx for (idx, _, mode) in seg_units if mode == "silent"]
+            log_info(f"ad_video P198 talking={len(seg_speeches)} silent={len(silent_idxs)}")
 
             # P149:N 段并发独立 GPT-Image 2(每张 portrait_16_9 = 9:16)
             log_info(f"ad_video P149 阶段 A1:并发 {len(seg_speeches)} 段 GPT-Image 2(每张 9:16 独立图)")
@@ -1064,7 +1091,8 @@ async def _run_ad_video_job(params: dict):
                 log_info(f"ad_video P149 段{idx} GPT-Image 2 9:16 分镜图 OK url={url[:60]}")
                 return (idx, url)
 
-            valid_idxs = [idx for idx, _ in seg_speeches]
+            # P198:全段都出图(talking + silent),不光 talking
+            valid_idxs = [idx for (idx, _, _) in seg_units]
             frame_results = await asyncio.gather(
                 *[_frame_for_seg(idx) for idx in valid_idxs],
                 return_exceptions=True,
@@ -1195,19 +1223,54 @@ async def _run_ad_video_job(params: dict):
                 log_info(f"ad_video P138 段{idx} Kling Avatar OK url={v[:60]}")
                 return (idx, v)
 
-            ka_results = await asyncio.gather(
-                *[_ka_for_seg(idx, audio) for idx, audio in seg_audios],
-                return_exceptions=True,
+            # P198(2026-05-08):silent 段并发走 Seedance i2v(纯画面,无 audio)
+            async def _seedance_for_silent(idx: int):
+                scene = scenes[idx - 1] if idx - 1 < len(scenes) else {}
+                seg_dur = max(4, min(12, int(scene.get("duration_sec") or 5)))
+                visual = (scene.get("visual_prompt") or "").strip()
+                # 复用 _build_p118_seedance_prompt 风格,但对单 scene
+                sd_prompt = (
+                    f"{visual}. Showing the product clearly, model performs natural action "
+                    f"matching the visual description. No talking, no lip movement (silent shot). "
+                    f"Vertical 9:16, photorealistic commercial style."
+                ) if visual else (
+                    f"Model performs natural product demonstration action. No talking. "
+                    f"Vertical 9:16, photorealistic commercial style."
+                )
+                seg_img = seg_frames.get(idx, base_image_url)
+                res = await _fc.subscribe_async(
+                    "fal-ai/bytedance/seedance/v1/pro/image-to-video",
+                    arguments={
+                        "image_url": seg_img,
+                        "prompt": sd_prompt,
+                        "duration": str(seg_dur),
+                        "resolution": "720p",
+                        "aspect_ratio": params.get("aspect_ratio") or "9:16",
+                        "enable_audio": False,
+                    },
+                )
+                v = (res.get("video") or {}).get("url") if isinstance(res.get("video"), dict) else None
+                if not v:
+                    raise Exception(f"段{idx} silent Seedance 未返 video_url")
+                log_info(f"ad_video P198 段{idx} silent Seedance OK url={v[:60]}")
+                return (idx, v)
+
+            ka_results, silent_results = await asyncio.gather(
+                asyncio.gather(*[_ka_for_seg(idx, audio) for idx, audio in seg_audios], return_exceptions=True),
+                asyncio.gather(*[_seedance_for_silent(idx) for idx in silent_idxs], return_exceptions=True),
             )
-            # 按 idx 排序保证段顺序
-            seg_video_urls = []
-            for r in sorted([x for x in ka_results if not isinstance(x, Exception)], key=lambda t: t[0]):
-                seg_video_urls.append(r[1])
-            for r in ka_results:
+            # 收齐 talking + silent,按 idx 排序保证段顺序
+            all_seg_results = list(ka_results) + list(silent_results)
+            seg_video_pairs = []  # list of (idx, url)
+            for r in all_seg_results:
                 if isinstance(r, Exception):
-                    log_warning(f"ad_video P135 Kling Avatar 段失败,跳过: {str(r)[:200]}")
+                    log_warning(f"ad_video P198 段失败,跳过: {str(r)[:200]}")
+                    continue
+                seg_video_pairs.append(r)
+            seg_video_pairs.sort(key=lambda t: t[0])
+            seg_video_urls = [u for (_idx, u) in seg_video_pairs]
             if not seg_video_urls:
-                raise Exception("P135 全部段 Kling Avatar 失败")
+                raise Exception("P198 全部段(talking + silent)都失败")
 
             # P135 阶段 C:ffmpeg concat demuxer 完整段拼接(不 trim 不 xfade)
             user_id = params.get("_user_id", "anon")
