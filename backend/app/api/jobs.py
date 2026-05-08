@@ -1853,13 +1853,15 @@ async def _extract_speech_from_video(video_url: str) -> dict:
             return None
 
     async def _asr():
-        # P199:chunk_level="segment" 让 wizper 返句子级 chunks,带 timestamp
+        # P201(2026-05-08):chunk_level="word" 逐词时间戳 — segment 太粗
+        # 实测 segment 把 648 字切成只 2 个长 chunks,6 个 scenes 都 overlap
+        # 同样的整段文字 → 每段 speech 看起来都一样。word 级才能精确归属。
         try:
             r = await _aio.wait_for(
                 _fc.run_async("fal-ai/wizper", arguments={
                     "audio_url": audio_fal_url,
                     "task": "transcribe",
-                    "chunk_level": "segment",
+                    "chunk_level": "word",
                 }),
                 timeout=120,
             )
