@@ -8,6 +8,9 @@ import { useLocalStorageItem } from "@/lib/hooks/useLocalStorageItem";
 const FEATURE_KEYS = [
   { key:"image", i18nKey:"image", icon:"◧", color:"#f0e8d5" },
   { key:"video", i18nKey:"video", icon:"▶", color:"#e5e0d0" },
+  { key:"video/general", i18nKey:"general", icon:"✦", color:"#fce7e7", labelFallback:"通用产品视频", descFallback:"任意品类·多图参考·真人模特" },
+  { key:"video/replicate", i18nKey:"replicate", icon:"⎘", color:"#e0ecdb", labelFallback:"视频复刻", descFallback:"上传参考视频·AI 拆分镜出片" },
+  { key:"video/extract", i18nKey:"extract", icon:"⌬", color:"#e7e0ec", labelFallback:"视频脚本提取", descFallback:"任意视频提取分镜+口播文字" },
   { key:"video/studio", i18nKey:"studio", icon:"▦", color:"#ead8c0" },
   { key:"tasks/history", i18nKey:"history", icon:"☰", color:"#f2ece0" },
   { key:"pricing", i18nKey:"pricing", icon:"✦", color:"#ebe5d5" },
@@ -27,11 +30,16 @@ export default function Dashboard() {
     if (!userJson) return null;
     try { return JSON.parse(userJson) as DashboardUser; } catch { return null; }
   }, [userJson]);
-  const FEATURES = FEATURE_KEYS.map(f => ({
-    ...f,
-    label: t(`dashboard.features.${f.i18nKey}.label`),
-    desc: t(`dashboard.features.${f.i18nKey}.desc`),
-  }));
+  const FEATURES = FEATURE_KEYS.map(f => {
+    const labelKey = `dashboard.features.${f.i18nKey}.label`;
+    const descKey = `dashboard.features.${f.i18nKey}.desc`;
+    const labelT = t(labelKey);
+    const descT = t(descKey);
+    // 缺 i18n 时 fallback 到 hardcoded 中文
+    const label = labelT === labelKey && (f as { labelFallback?: string }).labelFallback ? (f as { labelFallback?: string }).labelFallback! : labelT;
+    const desc = descT === descKey && (f as { descFallback?: string }).descFallback ? (f as { descFallback?: string }).descFallback! : descT;
+    return { ...f, label, desc };
+  });
 
   // 未登录 → 跳 /auth(用 effect 因为 router.push 在 render 期不允许)
   useEffect(() => {
