@@ -1602,6 +1602,12 @@ async def _execute_job(job_id: str):
             t = job["type"]
             if t == "image":
                 result = await _run_image_job(job["params"])
+            # P215(2026-05-08):video_general* 必须在 startswith("video_") 之前匹配
+            elif t == "video_general_analyze":
+                result = await _run_video_general_analyze_job(job["params"])
+            elif t == "video_general":
+                job["params"]["_user_id"] = job.get("user_id") or job.get("user_numeric_id") or "anon"
+                result = await _run_video_general_job(job["params"])
             elif t.startswith("video_"):
                 result = await _run_video_job(job["params"], t)
             elif t == "ad_video":
@@ -3032,3 +3038,260 @@ async def _gen_videos_catvton_pixverse(scenes: list, frames: list, product_image
         return final_urls
 
 
+
+
+# ==================== P215 通用产品视频 worker(2026-05-08)====================
+
+async def _run_video_general_analyze_job(params: dict) -> dict:
+    """qwen-vl 看多张产品图 → 品类 + 卖点 + N 段脚本"""
+    import re as _re
+    import json as _json
+    from app.services.fal_service import get_aliyun_qwenvl_service
+    from app.services.logger import log_info, log_error
+
+    product_image_urls = params.get("product_image_urls") or []
+    instruction = params.get("instruction") or ""
+    if not product_image_urls or not instruction:
+        raise RuntimeError("product_image_urls 或 instruction 缺")
+
+    svc = get_aliyun_qwenvl_service()
+    if not svc or not svc.is_available():
+        raise RuntimeError("qwen-vl 服务不可用")
+
+    # qwen-vl 看多图,这里复用 analyze_video 接口(其实它支持多图,只是 video_url 字段)
+    # 实际上 qwen-vl 多图分析需要 analyze_image,先用 analyze_video 兼容(传第 1 张就当 base)
+    # 简化:先归档第 1 张主图给 qwen-vl 看(暂时单图分析,多图后续优化)
+    primary_image = product_image_urls[0]
+    log_info(f"video_general_analyze 多图分析(主图 {primary_image[:60]} + {len(product_image_urls)-1} 张辅图)")
+
+    # 拼一个 instruction 让 qwen-vl 知道有多图(虽然只看到主图)
+    enhanced_instruction = (
+        f"用户上传了 {len(product_image_urls)} 张产品图。" +
+        instruction
+    )
+
+    # qwen-vl analyze_image(看单张产品图)+ retry
+    import asyncio as _asyncio
+    res = None
+    for attempt in range(3):
+        try:
+            # 复用现有接口(analyze_video 也接受 image url)
+            res = await svc.analyze_video(primary_image, enhanced_instruction)
+            if "error" not in res:
+                break
+            err_text = str(res.get("error", ""))
+            is_throttled = any(k in err_text for k in ["503", "Too many requests", "Throttled", "ServiceUnavailable"])
+            if not is_throttled or attempt == 2:
+                break
+            wait = 2 * (2 ** attempt)
+            log_warning(f"video_general_analyze qwen-vl 503,P215 retry {attempt+1}/3 等 {wait}s")
+            await _asyncio.sleep(wait)
+        except Exception as e:
+            log_error(f"video_general_analyze qwen-vl 异常: {e}")
+            if attempt == 2:
+                raise
+
+    if not res or "error" in res:
+        raise RuntimeError(f"qwen-vl 失败: {(res or {}).get('error', '?')[:200]}")
+
+    text = (res.get("text") or "").strip()
+    text = _re.sub(r"^```(?:json)?\s*", "", text)
+    text = _re.sub(r"\s*```$", "", text)
+    try:
+        data = _json.loads(text)
+    except Exception as e:
+        log_error(f"video_general_analyze JSON parse fail: {e} text[:200]={text[:200]}")
+        raise RuntimeError("qwen-vl 输出解析失败")
+
+    category = (data.get("category") or "其他").strip()
+    selling_points = data.get("selling_points") or []
+    scenes = data.get("scenes") or []
+    if not scenes:
+        raise RuntimeError("qwen-vl 未返分镜")
+
+    log_info(f"video_general_analyze OK category={category} scenes={len(scenes)} selling_points={len(selling_points)}")
+    return {
+        "category": category,
+        "selling_points": selling_points,
+        "scenes": scenes,
+        "total_duration": params.get("total_duration", 15),
+    }
+
+
+async def _run_video_general_job(params: dict) -> dict:
+    """通用产品视频生成:多产品图 + 可选模特 → cat-vton + pixverse 出片
+    
+    流程:
+      Step A: 用产品主图 + 模特图(用户传或 GPT 出)调 cat-vton 出"模特持/穿/用产品"图
+      Step B: 用 cat-vton 输出图作 first frame,Seedance i2v 出每段视频
+      Step C: ffmpeg concat
+    """
+    from app.services.fal_service import get_vton_service, fal_upload_with_retry
+    from app.services.logger import log_info, log_error, log_warning
+    from app.services import ad_video_models
+    import asyncio as _aio
+    import tempfile as _tmp
+    import subprocess as _sp
+    import httpx as _httpx
+    import os as _os
+    from pathlib import Path as _Path
+
+    product_image_urls = params.get("product_image_urls") or []
+    if not product_image_urls:
+        raise RuntimeError("product_image_urls 缺")
+    primary_product = product_image_urls[0]
+    product_back = product_image_urls[1] if len(product_image_urls) > 1 else None
+
+    model_image_url = params.get("model_image_url")
+    model_video_url = params.get("model_video_url")
+    category = params.get("category") or "其他"
+    scenes = params.get("scenes") or []
+    aspect_ratio = params.get("aspect_ratio") or "9:16"
+    total_duration = params.get("total_duration", 15)
+    user_id = params.get("_user_id", "anon")
+
+    log_info(f"video_general 启动 category={category} n_scenes={len(scenes)} n_products={len(product_image_urls)} model_video={'yes' if model_video_url else 'no'} model_image={'yes' if model_image_url else 'no'}")
+
+    # Step A:base 模特图来源
+    # 1) 用户上传模特视频 → 已在 upload 阶段抽中间帧 → model_image_url 已填
+    # 2) 用户上传模特图 → 直接用
+    # 3) 都没传 → GPT-Image 2 出一张模特图
+    if not model_image_url:
+        log_info(f"video_general 用户没传模特,GPT-Image 2 出模特")
+        first_visual = (scenes[0].get("visual_prompt") if scenes else "") or "Photorealistic e-commerce model showcasing product"
+        base_res = await ad_video_models.compose_first_frame(
+            product_image_url=primary_product,
+            background_image_url=None,
+            model_description="Asian woman, East Asian features, natural yellow skin, black hair, 22-30 yrs",
+            scene_visual_prompt=first_visual,
+            product_back_image_url=product_back,
+            aspect_ratio=aspect_ratio,
+            no_text=True,
+            no_model=False,
+        )
+        if "error" in base_res or not base_res.get("image_url"):
+            raise Exception(f"模特首帧合成失败: {base_res.get('error', '?')}")
+        model_image_url = base_res["image_url"]
+        log_info(f"video_general GPT 出模特图 OK url={model_image_url[:60]}")
+
+    # Step B:N 段并发 — 每段 cat-vton(模特+产品)+ Seedance i2v
+    vton = get_vton_service()
+    if not vton:
+        raise RuntimeError("cat-vton 服务未初始化")
+
+    # 品类 → cat-vton cloth_type 映射
+    cloth_type_map = {
+        "服装": "upper",
+        "上衣": "upper",
+        "T恤": "upper",
+        "裤子": "lower",
+        "下装": "lower",
+        "连衣裙": "overall",
+    }
+    cloth_type = "upper"
+    for k, v in cloth_type_map.items():
+        if k in category:
+            cloth_type = v
+            break
+    # 食品/日用品/化妆品/3C 等品类:cat-vton 不适用 → 走 GPT-Image 2 直接合成 + Seedance
+    use_catvton = any(k in category for k in ["服装", "上衣", "下装", "连衣裙", "T恤", "裤子", "裙"])
+    log_info(f"video_general category={category} use_catvton={use_catvton} cloth_type={cloth_type}")
+
+    sem = _aio.Semaphore(3)
+
+    async def _gen_seg(idx: int, scene: dict):
+        async with sem:
+            visual = (scene.get("visual_prompt") or "").strip()
+            seg_dur = max(4, min(12, int(scene.get("duration_sec") or 5)))
+
+            # Step B1:本段首帧
+            if use_catvton:
+                # 服装类:cat-vton 真试穿
+                vton_res = await vton.try_on(
+                    human_image_url=model_image_url,
+                    garment_image_url=primary_product,
+                    cloth_type=cloth_type,
+                )
+                if "error" in vton_res:
+                    log_warning(f"video_general seg {idx} cat-vton 失败,降级用模特图: {str(vton_res['error'])[:120]}")
+                    seg_frame = model_image_url
+                else:
+                    seg_frame = vton_res.get("image_url") or model_image_url
+                    log_info(f"video_general seg {idx} cat-vton OK url={seg_frame[:60]}")
+            else:
+                # 非服装类:GPT-Image 2 出"模特+产品"合成图
+                fr = await ad_video_models.compose_first_frame_for_scene(
+                    base_image_url=model_image_url,
+                    scene=scene,
+                    model_description="Asian woman as product user/model",
+                    overall_setting=f"Real-world scene showing {category} product use",
+                    aspect_ratio=aspect_ratio,
+                    product_image_url=primary_product,
+                    product_back_image_url=product_back,
+                    no_model=False,
+                )
+                if "error" in fr or not fr.get("image_url"):
+                    log_warning(f"video_general seg {idx} GPT-Image 2 失败,降级模特图: {fr.get('error', '?')[:120]}")
+                    seg_frame = model_image_url
+                else:
+                    seg_frame = fr["image_url"]
+                    log_info(f"video_general seg {idx} GPT-Image 2 OK url={seg_frame[:60]}")
+
+            # Step B2:Seedance i2v 出动作视频
+            seedance_prompt = visual or f"Showing the {category} product naturally, model demonstrates use"
+            sub = await ad_video_models.submit_seedance_video(
+                image_url=seg_frame,
+                script={"overall_setting": "", "model_description": "", "scenes": [scene]},
+                duration=seg_dur,
+                aspect_ratio=aspect_ratio,
+                resolution="720p",
+                enable_audio=False,
+            )
+            if sub.get("error"):
+                raise Exception(f"seg {idx} Seedance: {sub['error']}")
+            tid = sub.get("task_id")
+            for _ in range(180):
+                await _aio.sleep(5)
+                st = await ad_video_models.poll_seedance_status(tid)
+                if st.get("status") == "completed" and st.get("video_url"):
+                    log_info(f"video_general seg {idx} Seedance OK url={st['video_url'][:60]}")
+                    return st["video_url"]
+                if st.get("status") == "failed":
+                    raise Exception(f"seg {idx} Seedance failed: {st.get('error')}")
+            raise Exception(f"seg {idx} 超时")
+
+    seg_urls = await _aio.gather(*[_gen_seg(i, s) for i, s in enumerate(scenes)])
+
+    # Step C:ffmpeg concat
+    log_info(f"video_general Step C:ffmpeg concat {len(seg_urls)} 段")
+    seg_root = _Path(_tmp.mkdtemp(prefix="video_general_"))
+    try:
+        local_paths = []
+        async with _httpx.AsyncClient(timeout=180) as cli:
+            for i, vu in enumerate(seg_urls):
+                p = seg_root / f"seg_{i:02d}.mp4"
+                r = await cli.get(vu); r.raise_for_status()
+                p.write_bytes(r.content)
+                local_paths.append(str(p))
+
+        list_path = seg_root / "concat.txt"
+        list_path.write_text("\n".join(f"file '{p}'" for p in local_paths) + "\n")
+        merged = seg_root / "final.mp4"
+        cp = _sp.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(list_path),
+             "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+             "-an", "-movflags", "+faststart", str(merged)],
+            capture_output=True, text=True, timeout=300,
+        )
+        if cp.returncode != 0:
+            raise Exception(f"ffmpeg concat 失败: {cp.stderr[-500:]}")
+
+        final_url = await fal_upload_with_retry(str(merged))
+        log_info(f"video_general 完成 final_url={final_url[:80]}")
+        return {"video_url": final_url, "type": "video", "category": category}
+    finally:
+        try:
+            import shutil as _sh
+            _sh.rmtree(seg_root, ignore_errors=True)
+        except Exception:
+            pass
