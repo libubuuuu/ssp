@@ -57,6 +57,7 @@ export default function VideoClonePage() {
   // P218.2 压缩取消信号(ref 持 controller,state 控制 UI 显示)
   const compressAbortRef = useRef<AbortController | null>(null);
   const [compressing, setCompressing] = useState(false);
+  const [imageMsg, setImageMsg] = useState("");
 
   // P217 素材引用列表(@Video1 + @ImageN)— stable id 防顺序变化错位
   const assets: MentionAsset[] = useMemo(() => {
@@ -206,23 +207,41 @@ export default function VideoClonePage() {
   const onPickImage = async (f: File) => {
     if (imageItems.length >= 9) { setError("最多 9 张参考图"); return; }
     setError("");
+    setImageMsg(`处理图片 ${f.name} (${fmtMB(f.size)})...`);
     try {
-      // P218 浏览器侧压缩(原 10MB → 通常 < 1MB,Web Worker 不卡 UI)
+      // P218.4 压缩前置 5s 超时(Web Worker 卡死直接降级原图);上传走 XHR 看进度
       let toUpload: File = f;
-      try {
-        toUpload = await compressImage(f, { maxSizeMB: 0.8, maxWidthOrHeight: 1920 });
-      } catch { /* fall through, send original */ }
-      const fd = new FormData();
-      fd.append("file", toUpload);
-      const r = await fetch(`${API_BASE}/api/video/clone/upload/image`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token()}` },
-        body: fd,
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const d = await r.json();
+      if (f.size > 800 * 1024) {
+        setImageMsg(`压缩图片 ${fmtMB(f.size)}...`);
+        try {
+          toUpload = await Promise.race<File>([
+            compressImage(f, { maxSizeMB: 0.8, maxWidthOrHeight: 1920 }),
+            new Promise<File>((_, rej) => setTimeout(() => rej(new Error("压缩超时")), 8000)),
+          ]);
+          if (toUpload.size < f.size) {
+            setImageMsg(`压缩 ${fmtMB(f.size)} → ${fmtMB(toUpload.size)},上传中...`);
+          }
+        } catch {
+          toUpload = f;
+          setImageMsg(`(压缩跳过,直传 ${fmtMB(f.size)})`);
+        }
+      }
+      // 用 XHR 走 progress(fetch 不支持上传进度)
+      const r = await uploadWithRetry(
+        `${API_BASE}/api/video/clone/upload/image`, toUpload, token(),
+        (pct) => setImageMsg(`上传图片 ${fmtMB(toUpload.size)}... ${pct}%`),
+      );
+      if (!r.ok) {
+        const dd = (() => { try { return JSON.parse(r.text); } catch { return {}; } })();
+        throw new Error((dd as { detail?: string })?.detail || `HTTP ${r.status}`);
+      }
+      const d = JSON.parse(r.text);
       setImageItems(items => [...items, { id: newId(), url: d.image_url, filename: f.name }]);
-    } catch (e) { setError(errMsg(e, "图片上传失败")); }
+      setImageMsg("");
+    } catch (e) {
+      setError(errMsg(e, "图片上传失败"));
+      setImageMsg("");
+    }
   };
 
   // P217 删除参考图前检查 prompt 引用
@@ -420,12 +439,17 @@ export default function VideoClonePage() {
               </div>
             ))}
             {imageItems.length < 9 && (
-              <label style={{ width: 120, height: 120, border: "2px dashed #ddd", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#999", fontSize: "0.8rem" }}>
-                <input type="file" accept="image/jpeg,image/png,image/webp,image/avif" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) { onPickImage(f); e.target.value = ""; } }} />
-                + 加图
+              <label style={{ width: 120, height: 120, border: "2px dashed #ddd", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#999", fontSize: "0.8rem", textAlign: "center", padding: 4 }}>
+                <input type="file" accept="image/*" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) { onPickImage(f); e.target.value = ""; } }} />
+                {imageMsg ? <span style={{ fontSize: "0.7rem", color: "#444" }}>{imageMsg}</span> : "+ 加图"}
               </label>
             )}
           </div>
+          {imageMsg && (
+            <div style={{ marginTop: 8, fontSize: "0.75rem", color: "#666" }}>
+              {imageMsg}
+            </div>
+          )}
         </Box>
 
         <Box label="③ Prompt(打 @ 选素材,或点 ✨ 让 AI 帮你写)">
