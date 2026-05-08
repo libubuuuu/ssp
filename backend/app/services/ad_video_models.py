@@ -335,17 +335,28 @@ async def compose_storyboard_grid(
           "interaction style — exact spatial replication is mandatory."
     )
     # 产品图作为额外参考 — 每个 panel 里的产品都要严格匹配
+    # P205(2026-05-08):用户反馈"上传粉色产品出来视频是藏青色" → 加最强颜色锁
+    # GPT-Image 2 自由发挥重新上色,旧 "Do NOT improvise" 太弱压不住
     if product_image_url and product_back_image_url:
         prompt += (
-            " CRITICAL PRODUCT REFERENCE: After the base image, image 2 is product FRONT view "
-            "and image 3 is BACK/SIDE view. EVERY panel's product MUST match these references "
-            "EXACTLY — same fabric texture, logo placement, color, and design. Do NOT improvise."
+            " ⚠️⚠️⚠️ ABSOLUTE COLOR & APPEARANCE LOCK ⚠️⚠️⚠️ "
+            "After the base image, image 2 is product FRONT view, image 3 is BACK/SIDE view. "
+            "EVERY panel's product MUST be a PIXEL-LEVEL COPY of these references — "
+            "same EXACT color (if reference shows pink, output MUST be pink — NOT navy, NOT blue, "
+            "NOT any other color), same hue, same saturation, same brightness, same fabric texture, "
+            "same logo placement, same pattern, same design. "
+            "Color deviation is FORBIDDEN. Hue shift is FORBIDDEN. Recoloring is FORBIDDEN. "
+            "If the reference product is pink, render pink. If red, render red. If green, render green. "
+            "Whatever color the reference shows IS the color of the output product — NO exceptions."
         )
     elif product_image_url:
         prompt += (
-            " CRITICAL PRODUCT REFERENCE: After the base image, image 2 is the user's exact product. "
-            "EVERY panel's product MUST match this reference EXACTLY (fabric, logo, color, design). "
-            "Do NOT change product appearance across panels."
+            " ⚠️⚠️⚠️ ABSOLUTE COLOR & APPEARANCE LOCK ⚠️⚠️⚠️ "
+            "After the base image, image 2 is the user's exact product. "
+            "EVERY panel's product MUST be a PIXEL-LEVEL COPY — "
+            "same EXACT color (do NOT change pink to navy, do NOT change red to black, do NOT "
+            "shift any hue), same saturation, same brightness, same fabric, same pattern, same design. "
+            "Color deviation is FORBIDDEN. Whatever color the reference shows IS the output color."
         )
 
     try:
@@ -559,6 +570,14 @@ async def compose_first_frame(
         "Photorealistic UGC selfie style, vertical 9:16 composition, "
         "natural lighting that matches the background reference, "
         "preserve the exact product details (front+back if both provided)."
+    )
+    # P205(2026-05-08):base 首帧也加最强颜色锁 — 用户:粉色产品出来变藏青色
+    prompt_parts.append(
+        "⚠️⚠️⚠️ ABSOLUTE PRODUCT COLOR LOCK: the product's color in the output MUST be "
+        "PIXEL-IDENTICAL to the product reference image(s) — same hue, same saturation, "
+        "same brightness. If reference shows pink, output is pink. If red, red. If green, "
+        "green. NEVER substitute color. NEVER hue-shift. NEVER recolor. "
+        "Color deviation is FORBIDDEN."
     )
     # P191(2026-05-08):删 style grid — 用户怒"还是不一样"。grid 把 GPT 搞乱(4 张图太多
     # 还总想抄人物)。改成 background_image_url(参考视频中间帧)单独承担"复刻这一帧场景"。
