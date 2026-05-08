@@ -1952,8 +1952,22 @@ async def _run_replicate_analyze_job(params: dict) -> dict:
 
     log_info(f"replicate_analyze qwen-vl 调用 video={archived_url[:80]}")
     import time as _t
+    # P207(2026-05-08):qwen-vl 503 Throttled 自动 retry,最多 3 次,2s/4s/8s 退避
+    # 阿里云容量瓶颈实测频发,503 不重试 → 用户立刻被退积分 + 提示"服务不可用",体验差
+    import asyncio as _asyncio_p207
     t0 = _t.time()
-    res = await svc.analyze_video(archived_url, instruction)
+    res = None
+    for _attempt in range(3):
+        res = await svc.analyze_video(archived_url, instruction)
+        if "error" not in res:
+            break
+        err_text = str(res.get("error", ""))
+        is_throttled = ("503" in err_text or "Too many requests" in err_text or "Throttled" in err_text or "ServiceUnavailable" in err_text)
+        if not is_throttled or _attempt == 2:
+            break
+        wait = 2 * (2 ** _attempt)  # 2s, 4s, 8s
+        log_warning(f"replicate_analyze qwen-vl 503 Throttled,P207 retry {_attempt+1}/3 等 {wait}s: {err_text[:120]}")
+        await _asyncio_p207.sleep(wait)
     log_info(f"replicate_analyze qwen-vl 返回 elapsed={_t.time()-t0:.1f}s keys={list(res.keys())}")
     if "error" in res:
         log_error(f"replicate_analyze qwen-vl 失败: {res.get('error','?')}")
