@@ -50,8 +50,8 @@ IMAGE_MIMES = ("image/jpeg", "image/png", "image/webp", "image/avif")
 
 MAX_VIDEO_SIZE = 50 * 1024 * 1024   # 50 MB
 MAX_IMAGE_SIZE = 10 * 1024 * 1024   # 10 MB
-VIDEO_MIN_SEC = 3.0
-VIDEO_MAX_SEC = 15.0
+# P218.3 (2026-05-08) 不再硬卡时长 3-15s,仅 size 限。
+# 时长由前端展示给用户参考;模型若拒长视频会走 jobs.py 失败路径自动退积分
 
 # Seedance 2.0 Fast r2v 价格(720p):$0.1452/秒
 PRICE_USD_PER_SEC = 0.1452
@@ -72,7 +72,7 @@ async def upload_video(
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user),
 ):
-    """上传参考视频(≤50MB,3-15s)"""
+    """上传参考视频(≤50MB,任意时长;模型若拒长视频会自动退积分)"""
     contents = await read_bounded(file, MAX_VIDEO_SIZE, VIDEO_MIMES, "参考视频")
     suffix = ".mp4"
     if file.filename and "." in file.filename:
@@ -81,22 +81,17 @@ async def upload_video(
         tmp.write(contents)
         video_path = tmp.name
     try:
-        # ffprobe 检查时长
+        # ffprobe 仅探测时长展示给用户参考,不卡阈值
         import subprocess as _sp, json as _j
-        rr = _sp.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "json", video_path],
-            capture_output=True, text=True, timeout=30,
-        )
         try:
+            rr = _sp.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "json", video_path],
+                capture_output=True, text=True, timeout=30,
+            )
             dur = float(_j.loads(rr.stdout).get("format", {}).get("duration", 0))
         except Exception:
             dur = 0
-        if dur < VIDEO_MIN_SEC or dur > VIDEO_MAX_SEC:
-            raise HTTPException(
-                400,
-                f"视频时长 {dur:.1f}s 超出范围(要求 {VIDEO_MIN_SEC}-{VIDEO_MAX_SEC}s)",
-            )
         url = await fal_upload_with_retry(video_path)
     finally:
         try: os.unlink(video_path)

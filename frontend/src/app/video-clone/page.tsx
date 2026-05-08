@@ -367,7 +367,7 @@ export default function VideoClonePage() {
           <div style={{ background: "#fff3f3", border: "1px solid #fcc", color: "#c33", padding: "0.8rem 1rem", borderRadius: 10, marginBottom: "1rem", fontSize: "0.9rem", whiteSpace: "pre-wrap" }}>{error}</div>
         )}
 
-        <Box label="① 参考视频(必填,3-15s,≤50MB)">
+        <Box label="① 参考视频(必填,任意时长,≤50MB)">
           <label style={{ display: "block", border: "2px dashed #ddd", borderRadius: 10, padding: "1rem", textAlign: "center", cursor: "pointer", background: videoFile ? "#f9f7f2" : "#fff" }}>
             <input type="file" accept="video/mp4,video/quicktime,video/webm,video/x-m4v,image/gif" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) onPickVideo(f); }} />
             {videoFile ? (
@@ -392,7 +392,7 @@ export default function VideoClonePage() {
                 {video?.url && !uploading && <video src={video.url} controls style={{ maxWidth: 320, maxHeight: 220, marginTop: 8, borderRadius: 8 }} />}
               </div>
             ) : (
-              <div style={{ color: "#999", fontSize: "0.9rem" }}>点击上传参考视频(MP4/MOV/WebM/M4V/GIF, 3-15s, ≤50MB)</div>
+              <div style={{ color: "#999", fontSize: "0.9rem" }}>点击上传参考视频(MP4/MOV/WebM/M4V/GIF, ≤50MB)</div>
             )}
           </label>
           {video && (
