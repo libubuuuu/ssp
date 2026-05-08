@@ -1,10 +1,11 @@
 "use client";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import MentionTextarea, { MentionAsset } from "@/components/MentionTextarea";
 import { adjustLocalUserCredits } from "@/lib/userState";
 import { errMsg } from "@/lib/utils/errors";
 import { compressImage } from "@/lib/utils/imageCompress";
+import { compressVideoSilent } from "@/lib/utils/videoCompressSilent";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -52,6 +53,10 @@ export default function VideoClonePage() {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiResult, setAiResult] = useState<string>("");
   const [aiWarn, setAiWarn] = useState<string>("");
+
+  // P218.2 压缩取消信号(ref 持 controller,state 控制 UI 显示)
+  const compressAbortRef = useRef<AbortController | null>(null);
+  const [compressing, setCompressing] = useState(false);
 
   // P217 素材引用列表(@Video1 + @ImageN)— stable id 防顺序变化错位
   const assets: MentionAsset[] = useMemo(() => {
@@ -128,6 +133,19 @@ export default function VideoClonePage() {
 
   const fmtMB = (b: number) => (b / 1024 / 1024).toFixed(1) + " MB";
 
+  const _doUpload = async (toUpload: File, displayName: string) => {
+    const r = await uploadWithRetry(
+      `${API_BASE}/api/video/clone/upload/video`, toUpload, token(),
+      (pct) => setUploadMsg(`上传 ${displayName} (${fmtMB(toUpload.size)})... ${pct}%`),
+    );
+    if (!r.ok) {
+      const d = (() => { try { return JSON.parse(r.text); } catch { return {}; } })();
+      const detail = (d as { detail?: string })?.detail || `HTTP ${r.status}`;
+      throw new Error(detail);
+    }
+    return JSON.parse(r.text);
+  };
+
   const onPickVideo = async (f: File) => {
     setError(""); setVideoFile(f);
     if (f.size > 50 * 1024 * 1024) {
@@ -135,26 +153,54 @@ export default function VideoClonePage() {
       setVideoFile(null); return;
     }
     setUploading(true);
-    setUploadMsg(`开始上传 ${fmtMB(f.size)}...`);
     try {
-      const r = await uploadWithRetry(
-        `${API_BASE}/api/video/clone/upload/video`, f, token(),
-        (pct) => setUploadMsg(`上传视频 ${fmtMB(f.size)}... ${pct}%`),
-      );
-      if (!r.ok) {
-        const d = (() => { try { return JSON.parse(r.text); } catch { return {}; } })();
-        const detail = (d as { detail?: string })?.detail || `HTTP ${r.status}`;
-        throw new Error(detail);
+      // P218.2 muted 模式压缩 + 60s 超时 + 可取消;任何分支失败都 fallback 直传
+      let toUpload: File = f;
+      if (f.size > 3 * 1024 * 1024) {
+        const ac = new AbortController();
+        compressAbortRef.current = ac;
+        setCompressing(true);
+        setUploadMsg(`压缩视频中... 0% (原 ${fmtMB(f.size)},点跳过可直接上传)`);
+        try {
+          const cr = await compressVideoSilent(f, {
+            maxWidth: 1280,
+            videoBitrate: 1_500_000,
+            signal: ac.signal,
+            totalTimeoutMs: 60_000,
+            onProgress: (pct) => setUploadMsg(`压缩视频中... ${pct}% (原 ${fmtMB(f.size)},点跳过可直接上传)`),
+          });
+          if (cr.compressed) {
+            toUpload = cr.file;
+            setUploadMsg(`压缩完成 ${fmtMB(f.size)} → ${fmtMB(cr.compressedSize)},开始上传...`);
+          } else {
+            setUploadMsg(`(压缩跳过${cr.reason ? ":" + cr.reason : ""},直传 ${fmtMB(f.size)})`);
+          }
+        } catch {
+          // compressVideoSilent 内部已 fallback 但保险:任何 throw 都直传
+          setUploadMsg(`(压缩失败,直传 ${fmtMB(f.size)})`);
+        } finally {
+          compressAbortRef.current = null;
+          setCompressing(false);
+        }
       }
-      const d = JSON.parse(r.text);
+      const d = await _doUpload(toUpload, f.name);
       setVideo({
         id: newId(),
         url: d.video_url,
         filename: f.name,
         duration_sec: d.duration_sec ?? 0,
       });
-    } catch (e) { setError(errMsg(e, "视频上传失败")); setVideoFile(null); }
+    } catch (e) {
+      compressAbortRef.current = null;
+      setError(errMsg(e, "视频上传失败"));
+      setVideoFile(null);
+    }
     finally { setUploading(false); setUploadMsg(""); }
+  };
+
+  const cancelCompress = () => {
+    compressAbortRef.current?.abort();
+    compressAbortRef.current = null;
   };
 
   const onPickImage = async (f: File) => {
@@ -329,7 +375,20 @@ export default function VideoClonePage() {
                 <div style={{ fontSize: "0.85rem", color: "#0d0d0d", marginBottom: 6 }}>
                   ✓ {videoFile.name} {video && video.duration_sec > 0 && `(${video.duration_sec.toFixed(1)}s)`} · 引用为 <span style={{ color: "#1d4ed8", fontWeight: 500 }}>@Video1</span>
                 </div>
-                {uploading && <div style={{ fontSize: "0.78rem", color: "#888" }}>{uploadMsg}</div>}
+                {uploading && (
+                  <div style={{ fontSize: "0.78rem", color: "#888", display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}>
+                    <span>{uploadMsg}</span>
+                    {compressing && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); cancelCompress(); }}
+                        style={{ background: "transparent", color: "#dc2626", border: "1px solid #fecaca", padding: "2px 8px", borderRadius: 4, fontSize: "0.72rem", cursor: "pointer" }}
+                      >
+                        跳过压缩,直接上传
+                      </button>
+                    )}
+                  </div>
+                )}
                 {video?.url && !uploading && <video src={video.url} controls style={{ maxWidth: 320, maxHeight: 220, marginTop: 8, borderRadius: 8 }} />}
               </div>
             ) : (
