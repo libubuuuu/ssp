@@ -251,8 +251,23 @@ async def analyze_product(
             },
         )
 
-    # 二次过滤生成的脚本(防 VLM 写出违禁词)
+    # P214(2026-05-08):region 与 model_description 兜底强制对齐
+    # 用户:"选国内市场为什么出来国外长相" → VLM 偶尔不听 viral_model_desc 提示
+    # 后端检查 model_description 是否含 region 关键字,缺则强制 prepend
     script = result.get("script", {})
+    md = (script.get("model_description") or "").strip()
+    if safe_region == "CN":
+        _has_asian = any(k in md.lower() for k in ["asian", "chinese", "korean", "japanese", "亚洲", "东方", "中国"])
+        if not _has_asian:
+            log_info(f"ad_video/analyze P214 region=CN 但 model_description 缺亚洲关键字,强制 prepend: {md[:80]}")
+            script["model_description"] = "Asian woman (East Asian features, natural yellow skin tone, black or dark brown hair). " + md
+    else:  # Global
+        _has_western = any(k in md.lower() for k in ["western", "caucasian", "european", "american", "black", "latina", "latino", "diverse", "white"])
+        if not _has_western:
+            log_info(f"ad_video/analyze P214 region=Global 但 model_description 缺西方关键字,强制 prepend: {md[:80]}")
+            script["model_description"] = "Western/Caucasian/Black/Latina woman (diverse Western look, authentic UGC vibe). " + md
+
+    # 二次过滤生成的脚本(防 VLM 写出违禁词)
     for scene in script.get("scenes", []):
         try:
             assert_safe_prompt(scene.get("content", ""))

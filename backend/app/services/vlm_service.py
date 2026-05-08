@@ -268,9 +268,17 @@ def _build_analysis_prompt(total_duration: int = 15, region: str = "CN") -> str:
     viral_block = _format_viral_block(region)
 
     # f-string 不支持 \n,所以 region 相关文本块在外面拼好再传进去
+    # P214(2026-05-08):viral_model_desc 升级为 MUST 强约束(用户:选 CN 出来 caucasian)
     if region == "CN":
         viral_lang_label = "国内抖音爆款话术(speech 中文,model_description 亚洲面孔)"
-        viral_model_desc = "- 模特特征:亚洲面孔(东方五官)/ 自然黄皮肤 / 黑色或棕黑色头发 / 真实素颜或淡妆 / 22-30 岁"
+        viral_model_desc = (
+            "- ⚠️⚠️⚠️ MUST 铁律(region=CN):model_description **必须**以 'Asian woman' 开头,"
+            "**必须**包含 'East Asian features' / 'natural yellow skin' / 'black or dark brown hair'。"
+            "**严禁**写 caucasian / blonde / Western / European / red hair / blue eyes 等西方特征,"
+            "否则后端会直接拒(P214 兜底)。\n"
+            "- 模特特征示例:'Asian woman, East Asian features, natural yellow skin tone, "
+            "straight black or dark brown shoulder-length hair, natural makeup, 22-30 yrs'"
+        )
         viral_rules = (
             "- speech 中文爆款话术 4 条铁律:\n"
             "  ⭐ 每 2-3 秒一个 punch — 不要通用形容词(\"好/超棒/不错\"),要具体数字+具体动作+具体场景\n"
@@ -290,7 +298,15 @@ def _build_analysis_prompt(total_duration: int = 15, region: str = "CN") -> str:
         )
     else:  # GLOBAL
         viral_lang_label = "海外 TikTok 爆款话术(speech English, model_description Western/diverse)"
-        viral_model_desc = "- Model traits: Western/Caucasian/Black/Latina/diverse / natural skin / 22-32 yrs / authentic UGC look"
+        viral_model_desc = (
+            "- ⚠️⚠️⚠️ MUST RULE (region=Global): model_description **MUST** start with "
+            "'Western woman' or 'Caucasian woman' or 'Black woman' or 'Latina woman'. "
+            "**FORBIDDEN** to write 'Asian' / 'Chinese' / 'Korean' / 'Japanese' / "
+            "'East Asian' / 'yellow skin' (region=Global)."
+            " Backend will reject (P214) if Asian keywords appear. \n"
+            "- Model traits example: 'Western/Caucasian/Black/Latina woman, natural skin, "
+            "22-32 yrs, authentic UGC look, diverse Western features'"
+        )
         viral_rules = (
             "- speech English TikTok 爆款话术 4 rules:\n"
             "  ⭐ Punch every 2-3 sec — no generic adjectives, use specific numbers + actions + scenes\n"

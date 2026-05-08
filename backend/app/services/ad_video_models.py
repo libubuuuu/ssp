@@ -520,7 +520,14 @@ async def compose_first_frame(
         ]
     else:
         prompt_parts = [
-            f"{model_description}, photorealistic e-commerce product showcase featuring the product from the reference images.",
+            # P214(2026-05-08):model_description 提到 Asian/Western/Caucasian 时,
+            # 显式让 GPT-Image 2 按地域出图(GPT 默认偏白人,不强压会漂)
+            f"{model_description}. ⚠️ MODEL ETHNICITY LOCK: strictly render the model's ethnicity, "
+            f"skin tone, hair color, and facial features EXACTLY as described above. Do NOT default "
+            f"to a different ethnicity. If model_description says 'Asian', the model MUST be East Asian "
+            f"(yellow skin, black/dark brown hair, East Asian features) — NOT Caucasian. If 'Western', "
+            f"the model MUST be Western — NOT Asian.",
+            "Photorealistic e-commerce product showcase featuring the product from the reference images.",
             scene_visual_prompt,
             "STRICTLY follow the wearing position specified in the prompt above. "
             "Do NOT default the product to the chest area unless the prompt explicitly says 'on chest'. "
