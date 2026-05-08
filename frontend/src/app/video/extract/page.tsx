@@ -39,20 +39,74 @@ export default function VideoExtractPage() {
   const [copied, setCopied] = useState(false);
 
   // ---- 上传视频(复用 replicate 的 endpoint)----
+  // P200(2026-05-08):上传换 XHR + 4 次指数退避 retry — 救家庭 wifi 上行抖断
+  // 真因:之前裸 fetch 一断就死,nginx 看到 status=400 + upstream_time=- + resp_bytes=0
+  // (15:43 / 15:51 实测两次连断,33s / 51s 上传过程中 reset)
+  const uploadWithRetry = (
+    url: string, file: File, tk: string, onProgress?: (pct: number) => void,
+  ): Promise<{ status: number; ok: boolean; text: string }> => {
+    const tryOnce = () => new Promise<{ status: number; ok: boolean; text: string }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", url, true);
+      xhr.setRequestHeader("Authorization", `Bearer ${tk}`);
+      xhr.timeout = 5 * 60 * 1000;  // 5 min
+      xhr.upload.onprogress = (ev) => {
+        if (ev.lengthComputable && onProgress) onProgress(Math.round(ev.loaded / ev.total * 100));
+      };
+      xhr.onload = () => resolve({ status: xhr.status, ok: xhr.status >= 200 && xhr.status < 300, text: xhr.responseText });
+      xhr.onerror = () => reject(new Error("network"));
+      xhr.ontimeout = () => reject(new Error("timeout"));
+      xhr.onabort = () => reject(new Error("abort"));
+      const fd = new FormData();
+      fd.append("file", file);
+      xhr.send(fd);
+    });
+    return (async () => {
+      const max = 4;
+      let lastErr: unknown = null;
+      for (let i = 1; i <= max; i++) {
+        try {
+          const r = await tryOnce();
+          // 4xx(除 408/429)永久错,直接返
+          if (r.status >= 400 && r.status < 500 && r.status !== 408 && r.status !== 429) return r;
+          if (r.ok) return r;
+          lastErr = new Error(`HTTP ${r.status}`);
+        } catch (e) { lastErr = e; }
+        if (i < max) {
+          const wait = Math.min(1000 * Math.pow(2, i - 1), 8000);
+          setLoadingMsg(`上传断了,${wait/1000}s 后重试(第 ${i + 1} 次,共 ${max} 次)...`);
+          await new Promise((r) => setTimeout(r, wait));
+        }
+      }
+      throw lastErr instanceof Error ? lastErr : new Error("上传失败");
+    })();
+  };
+
   const onPickVideo = async (f: File | null) => {
     if (!f) return;
     setVideoFile(f); setError(""); setScenes(null); setOriginalSpeech(""); setSpeechAudioUrl("");
     setLoading(true); setLoadingMsg("上传视频...");
     try {
-      const fd = new FormData();
-      fd.append("file", f);
-      const r = await fetch(`${API_BASE}/api/video/replicate/upload/video`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token()}` },
-        body: fd,
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const d = await r.json();
+      const r = await uploadWithRetry(
+        `${API_BASE}/api/video/replicate/upload/video`,
+        f,
+        token(),
+        (pct) => setLoadingMsg(`上传视频... ${pct}%`),
+      );
+      if (!r.ok) {
+        // 401 / 413 / 415 等永久错,给清晰提示
+        if (r.status === 401) throw new Error("登录已过期,请刷新页面重新登录");
+        if (r.status === 413) throw new Error("视频太大(>100MB)");
+        if (r.status === 415) throw new Error("视频格式不支持(请用 MP4/MOV/WebM)");
+        // 其他错从 body 取 detail
+        let msg = `上传失败 HTTP ${r.status}`;
+        try {
+          const d = JSON.parse(r.text);
+          if (d?.detail) msg = String(d.detail);
+        } catch {}
+        throw new Error(msg);
+      }
+      const d = JSON.parse(r.text);
       setVideoUrl(d.video_url);
     } catch (e) { setError(errMsg(e, "上传视频失败")); }
     finally { setLoading(false); setLoadingMsg(""); }
