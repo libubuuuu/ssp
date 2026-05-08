@@ -2372,22 +2372,28 @@ async def _run_replicate_job(params: dict) -> dict:
     if len(scenes) == 1:
         frames = [base_frame_url]
     else:
-        # scene 0 = base; scenes[1:] 按 4 个一组分块走 grid
+        # P206(2026-05-08):scenes[1:] chunks 并发(原串行)
+        # scenes >= 5 段(>=2 chunk)直接省 3 分钟,scenes 3-4 不变
         rest = scenes[1:]
-        frame_chunks: list = []
+        chunk_specs: list = []  # list of ('grid', chunk_list) | ('single', scene)
         i = 0
         while i < len(rest):
             chunk_size = min(4, len(rest) - i)
-            # 末尾如果只剩 1,合并到上一块? 简化:剩 1 单出
-            if chunk_size == 1 and frame_chunks:
-                # 单段加在末尾
-                single_url = await _gen_single_scene(rest[i])
-                frame_chunks.append([single_url])
+            if chunk_size == 1 and chunk_specs:
+                chunk_specs.append(('single', rest[i]))
             else:
-                panels = await _gen_grid_panels(rest[i:i+chunk_size])
-                frame_chunks.append(panels)
+                chunk_specs.append(('grid', rest[i:i+chunk_size]))
             i += chunk_size
-        rest_frames = [u for chunk in frame_chunks for u in chunk]
+
+        async def _resolve_chunk(spec):
+            kind, payload = spec
+            if kind == 'single':
+                return [await _gen_single_scene(payload)]
+            return await _gen_grid_panels(payload)
+
+        log_info(f"replicate Step 1B 并发 {len(chunk_specs)} 个 chunk(P206)")
+        chunk_results = await _asyncio.gather(*[_resolve_chunk(spec) for spec in chunk_specs])
+        rest_frames = [u for chunk in chunk_results for u in chunk]
         frames = [base_frame_url] + rest_frames
         log_info(f"replicate Step 1B 完成 N={len(scenes)} frames={len(frames)}")
 
