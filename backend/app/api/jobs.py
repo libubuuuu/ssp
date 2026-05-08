@@ -1608,6 +1608,10 @@ async def _execute_job(job_id: str):
             elif t == "video_general":
                 job["params"]["_user_id"] = job.get("user_id") or job.get("user_numeric_id") or "anon"
                 result = await _run_video_general_job(job["params"])
+            # P216(2026-05-08):video_clone(Seedance r2v Fast)同样优先匹配
+            elif t == "video_clone":
+                job["params"]["_user_id"] = job.get("user_id") or job.get("user_numeric_id") or "anon"
+                result = await _run_video_clone_job(job["params"])
             elif t.startswith("video_"):
                 result = await _run_video_job(job["params"], t)
             elif t == "ad_video":
@@ -3295,3 +3299,116 @@ async def _run_video_general_job(params: dict) -> dict:
             _sh.rmtree(seg_root, ignore_errors=True)
         except Exception:
             pass
+
+
+# ==================== P216 视频复刻 Seedance 2.0 r2v Fast worker(2026-05-08)====================
+
+async def _run_video_clone_job(params: dict) -> dict:
+    """Seedance 2.0 Fast r2v:1 视频 + 0-9 图 + prompt → 复刻视频
+    
+    流程:
+      1. fal_client.submit_async("bytedance/seedance-2.0/fast/reference-to-video", args)
+      2. polling 每 5s 一次,最多 5 分钟
+      3. completed → 拿 video_url 归档到 /uploads
+      4. count > 1 时并发 N 次 submit
+    """
+    import fal_client as _fc
+    import asyncio as _aio
+    from app.services.logger import log_info, log_error, log_warning
+    from app.services.media_archiver import archive_url
+
+    prompt = params.get("prompt") or ""
+    video_url = params.get("reference_video_url")
+    image_urls = params.get("reference_image_urls") or []
+    duration = params.get("duration") or "5"
+    aspect_ratio = params.get("aspect_ratio") or "9:16"
+    generate_audio = params.get("generate_audio", True)
+    count = int(params.get("count") or 1)
+    user_id = params.get("_user_id", "anon")
+
+    if not video_url:
+        raise Exception("reference_video_url 缺")
+    if not prompt.strip():
+        raise Exception("prompt 缺")
+
+    args = {
+        "prompt": prompt,
+        "video_urls": [video_url],
+        "image_urls": image_urls,
+        "resolution": "720p",  # Fast 只支持 720p
+        "duration": duration,
+        "aspect_ratio": aspect_ratio,
+        "generate_audio": generate_audio,
+    }
+    log_info(f"video_clone P216 submit endpoint=seedance-2.0/fast/r2v count={count} duration={duration} ratio={aspect_ratio} prompt_len={len(prompt)} n_images={len(image_urls)}")
+
+    async def _one_call(call_idx: int) -> str:
+        """一次 r2v 调用:submit → polling → return video_url"""
+        # P216:1 次 retry on transient error
+        last_err = None
+        for attempt in range(2):
+            try:
+                handler = await _fc.submit_async(
+                    "bytedance/seedance-2.0/fast/reference-to-video",
+                    arguments=args,
+                )
+                request_id = handler.request_id
+                log_info(f"video_clone P216 call {call_idx}/{count} attempt {attempt+1} submitted request_id={request_id}")
+                # polling 每 5s,最多 60 次(5 分钟)
+                for poll_n in range(60):
+                    await _aio.sleep(5)
+                    status = await _fc.status_async(
+                        "bytedance/seedance-2.0/fast/reference-to-video",
+                        request_id,
+                        with_logs=False,
+                    )
+                    s_type = type(status).__name__
+                    if s_type == "Completed":
+                        result = await _fc.result_async(
+                            "bytedance/seedance-2.0/fast/reference-to-video",
+                            request_id,
+                        )
+                        video_obj = result.get("video") if isinstance(result.get("video"), dict) else None
+                        vurl = video_obj.get("url") if video_obj else result.get("video_url")
+                        if not vurl:
+                            raise Exception(f"call {call_idx} 完成但无 video_url, result keys={list(result.keys())}")
+                        log_info(f"video_clone P216 call {call_idx} OK url={vurl[:80]}")
+                        return vurl
+                    if s_type in ("Failed", "Error"):
+                        raise Exception(f"call {call_idx} fal failed: {status}")
+                    # InQueue / InProgress 继续轮询
+                raise Exception(f"call {call_idx} 5min 超时")
+            except Exception as e:
+                last_err = e
+                err_text = str(e)
+                # 瞬时错误 retry
+                is_transient = any(k in err_text.lower() for k in ["unavailable", "503", "502", "504", "timeout", "downstream"])
+                if not is_transient or attempt == 1:
+                    break
+                wait = 5
+                log_warning(f"video_clone P216 call {call_idx} attempt {attempt+1} 瞬时错 retry {wait}s: {err_text[:120]}")
+                await _aio.sleep(wait)
+        raise last_err if last_err else Exception(f"call {call_idx} 失败")
+
+    # count 个并发调用
+    if count == 1:
+        vurl = await _one_call(0)
+        archived = await archive_url(vurl, user_id, "video")
+        return {"video_url": archived, "type": "video", "count": 1}
+    else:
+        results = await _aio.gather(*[_one_call(i) for i in range(count)], return_exceptions=True)
+        success_urls = []
+        for i, r in enumerate(results):
+            if isinstance(r, Exception):
+                log_warning(f"video_clone P216 call {i} 失败: {str(r)[:200]}")
+                continue
+            archived = await archive_url(r, user_id, "video")
+            success_urls.append(archived)
+        if not success_urls:
+            raise Exception(f"video_clone {count} 次调用全部失败")
+        return {
+            "video_url": success_urls[0],
+            "video_urls": success_urls,
+            "type": "video",
+            "count": len(success_urls),
+        }
