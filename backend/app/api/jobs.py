@@ -1853,15 +1853,15 @@ async def _extract_speech_from_video(video_url: str) -> dict:
             return None
 
     async def _asr():
-        # P201(2026-05-08):chunk_level="word" 逐词时间戳 — segment 太粗
-        # 实测 segment 把 648 字切成只 2 个长 chunks,6 个 scenes 都 overlap
-        # 同样的整段文字 → 每段 speech 看起来都一样。word 级才能精确归属。
+        # P202(2026-05-08):chunk_level 回退 segment(wizper 只支持这个,P201 'word' 422)
+        # + 后处理把每个 segment chunk 按字符比例细化成伪 word chunks,精确到字
+        # → 每个字一个 timestamp,N scenes 各自按 time_range overlap 拿到自己的字
         try:
             r = await _aio.wait_for(
                 _fc.run_async("fal-ai/wizper", arguments={
                     "audio_url": audio_fal_url,
                     "task": "transcribe",
-                    "chunk_level": "word",
+                    "chunk_level": "segment",
                 }),
                 timeout=120,
             )
@@ -1869,7 +1869,8 @@ async def _extract_speech_from_video(video_url: str) -> dict:
                 return ("", [])
             text = (r.get("text") or "").strip()
             chunks_raw = r.get("chunks") or []
-            chunks_clean = []
+            # 先收原始 segment chunks
+            segs = []
             for c in chunks_raw:
                 if not isinstance(c, dict):
                     continue
@@ -1882,7 +1883,31 @@ async def _extract_speech_from_video(video_url: str) -> dict:
                     e = float(ts[1]) if ts and len(ts) > 1 and ts[1] is not None else s
                 except Exception:
                     s, e = 0.0, 0.0
-                chunks_clean.append({"start": s, "end": e, "text": ct})
+                segs.append({"start": s, "end": e, "text": ct})
+            # P202:把每个 segment 按字符比例细化成伪 word chunks(粒度 1 字/chunk)
+            # 中文 1 字 = 1 chunk;英文按空格切词 1 词 = 1 chunk
+            chunks_clean = []
+            for seg in segs:
+                seg_dur = max(0.001, seg["end"] - seg["start"])
+                seg_text = seg["text"]
+                # 中英文混合:有中文就按字切,纯英文按空格切词
+                import re as _re_p202
+                if _re_p202.search(r"[一-鿿]", seg_text):
+                    units = list(seg_text)  # 每个字符(含标点)一个单位
+                else:
+                    units = seg_text.split()  # 按空格切词
+                if not units:
+                    chunks_clean.append(seg)
+                    continue
+                step = seg_dur / len(units)
+                for i, u in enumerate(units):
+                    if not u.strip():
+                        continue
+                    chunks_clean.append({
+                        "start": seg["start"] + i * step,
+                        "end": seg["start"] + (i + 1) * step,
+                        "text": u,
+                    })
             return (text, chunks_clean)
         except Exception as e:
             log_error(f"replicate ASR wizper 失败: {e}")
@@ -2006,6 +2031,9 @@ async def _run_replicate_analyze_job(params: dict) -> dict:
                 return None
 
         matched_count = 0
+        # P202(2026-05-08):chunks 现在是字/词级伪 word(P202 后处理细化),
+        # 中文按字 join "" 不带空格,英文按词 join " " 保空格
+        import re as _re_p202_join
         for sc in clean_scenes:
             tr = _parse_tr(sc.get("time_range") or "")
             if not tr:
@@ -2017,7 +2045,12 @@ async def _run_replicate_analyze_job(params: dict) -> dict:
                 if c_s < s_end and c_e > s_start:
                     seg_text.append(c.get("text") or "")
             if seg_text:
-                sc["speech"] = " ".join(t.strip() for t in seg_text if t.strip())
+                full = "".join(seg_text)
+                has_cn = bool(_re_p202_join.search(r"[一-鿿]", full))
+                if has_cn:
+                    sc["speech"] = "".join(t for t in seg_text if t.strip()).strip()
+                else:
+                    sc["speech"] = " ".join(t.strip() for t in seg_text if t.strip())
                 matched_count += 1
         log_info(f"replicate_analyze P199 时间戳分配 matched_scenes={matched_count}/{len(clean_scenes)} chunks={len(speech_chunks)}")
 
