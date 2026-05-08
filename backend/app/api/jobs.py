@@ -2340,15 +2340,17 @@ async def _run_replicate_job(params: dict) -> dict:
             log_info(f"replicate grid n={n} OK(原 prompt),省 {n-1} 次 GPT 调用")
             return panels
 
-        # P168(2026-05-07):content_policy 错误是 fal image-level checker 拒 base 图,
-        # 跑 attempt 2 简化 prompt(3:34)和 scene-by-scene fallback(3:44)注定也失败,
-        # 加起来浪费 ~7 分钟。立刻全 fallback 到 base_frame_url,Seedance 自由生成动作。
+        # P204(2026-05-08):删除 P168 content_policy fast-fail。
+        # P168 当时为"省 7 分钟"直接 [base_frame_url] * n,但导致用户看到"部分段像原视频"
+        # —— 所有段拿同一张原视频帧当首帧,i2v 出来段间无差异化 = 复刻成原片。
+        # 用户:"哪里能这样啊"。优先质量,不优先速度。
+        # content_policy 也走下面的简化 prompt 重试链,通用 prompt 大概率过 NSFW checker。
         if err and ("content_policy" in err or "content_checker" in err):
-            log_error(f"replicate grid n={n} content_policy 拒(穿戴类常见),P168 fast-fail 全 fallback base 图,省 ~7 分钟")
-            return [base_frame_url] * n
+            log_warning(f"replicate grid n={n} content_policy 拒,P204 走简化 prompt 重试(不再 fast-fail base)")
 
-        # 非 content_policy 错(网络抖动/服务异常),仍走原 attempt 2 + scene-by-scene 重试链
-        log_error(f"replicate grid n={n} 非 content_policy 错,简化 prompt retry: {err[:120] if err else '?'}")
+        # 简化 prompt retry(原 attempt 2 + scene-by-scene 重试链)
+        if err and "content_policy" not in err and "content_checker" not in err:
+            log_error(f"replicate grid n={n} 非 content_policy 错,简化 prompt retry: {err[:120] if err else '?'}")
         simplified_chunk = []
         for sc in chunk:
             shot = sc.get("shot") or "medium-shot"
