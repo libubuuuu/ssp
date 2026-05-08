@@ -2705,21 +2705,45 @@ async def _gen_videos_pixverse_swap(scenes: list, frames: list, reference_video_
         sem = _asyncio.Semaphore(3)
         async def _swap_one(idx: int, seg_url: str, frame_url: str) -> str:
             async with sem:
-                try:
-                    result = await pix.swap(video_url=seg_url, image_url=frame_url)
-                    if "error" in result:
-                        return await _swap_fallback(idx, frame_url, f"swap error: {str(result['error'])[:120]}")
-                    vurl = result.get("video_url")
-                    if not vurl:
-                        return await _swap_fallback(idx, frame_url, "swap 无 url")
-                    log_info(f"replicate pixverse seg {idx} OK url={vurl[:60]}")
-                    return vurl
-                except Exception as _e:
+                # P208(2026-05-08):pixverse fal 'Downstream service unavailable' 是
+                # 瞬时错(实测 18:28 seg 1 触发),不 retry 直接降级静态 → 用户看到该段
+                # 完全不动 = "像原视频"。加 3 次 retry,2s/4s/8s 退避,再降级。
+                last_err = ""
+                for attempt in range(3):
                     try:
-                        return await _swap_fallback(idx, frame_url, f"swap 异常: {type(_e).__name__}:{str(_e)[:120]}")
-                    except Exception as _fb_err:
-                        log_error(f"replicate pixverse-swap seg {idx} fallback 失败: {_fb_err}")
-                        raise
+                        result = await pix.swap(video_url=seg_url, image_url=frame_url)
+                        if "error" in result:
+                            err_text = str(result['error'])
+                            last_err = f"swap error: {err_text[:120]}"
+                            # 'Downstream service unavailable' / '503' / 'timeout' 这类瞬时错 retry
+                            is_transient = any(k in err_text for k in
+                                ['unavailable', '503', '502', '504', 'timeout', 'Downstream'])
+                            if not is_transient or attempt == 2:
+                                break
+                            wait = 2 * (2 ** attempt)
+                            log_warning(f"replicate pixverse seg {idx} attempt {attempt+1} 瞬时错,P208 等 {wait}s retry: {err_text[:80]}")
+                            await _asyncio.sleep(wait)
+                            continue
+                        vurl = result.get("video_url")
+                        if not vurl:
+                            last_err = "swap 无 url"
+                            if attempt == 2: break
+                            await _asyncio.sleep(2 * (2 ** attempt))
+                            continue
+                        log_info(f"replicate pixverse seg {idx} OK url={vurl[:60]} (attempt {attempt+1})")
+                        return vurl
+                    except Exception as _e:
+                        last_err = f"swap 异常: {type(_e).__name__}:{str(_e)[:120]}"
+                        if attempt == 2: break
+                        wait = 2 * (2 ** attempt)
+                        log_warning(f"replicate pixverse seg {idx} attempt {attempt+1} 异常,P208 等 {wait}s retry: {str(_e)[:80]}")
+                        await _asyncio.sleep(wait)
+                # 3 次都失败,降级静态
+                try:
+                    return await _swap_fallback(idx, frame_url, last_err)
+                except Exception as _fb_err:
+                    log_error(f"replicate pixverse-swap seg {idx} fallback 失败: {_fb_err}")
+                    raise
 
         results = await _asyncio.gather(*[
             _swap_one(i, seg_urls[i], frames[i]) for i in range(len(scenes))
