@@ -752,14 +752,24 @@ async def compose_first_frame_for_scene(
                 f"Generate this specific shot: {visual_safe}. "
             )
         else:
+            # P197(2026-05-08):IDENTITY LOCK 只锁身份(脸/发/肤色/服装),
+            # 不锁姿势/动作/镜头/角度 — 用户反馈"ZERO deviation"压住了变化,
+            # 多段图全是同样姿势,失去多镜头叙事感。改成只锁身份,显式
+            # 强调动作/姿势/镜头/构图必须差异化。
             identity_lock = (
-                f"⚠️ HIGHEST PRIORITY — IDENTITY LOCK: The model in the output MUST be EXACTLY the same "
-                f"person as in the reference image. Same face shape, same eyes (color, shape, size), "
-                f"same hairstyle (length, color, style), same skin tone, same lip shape, same eyebrows, "
-                f"same nose, same overall facial features. ZERO deviation from reference identity. "
-                f"This is a DIFFERENT SHOT of the SAME PERSON, NOT a similar-looking model. "
-                f"Treat the reference face as a locked anchor that must NOT change. "
-                f"Adjust the reference image to show this specific shot: {visual_safe}. "
+                f"⚠️ HIGHEST PRIORITY — IDENTITY LOCK (face only, NOT pose): "
+                f"The model's IDENTITY must match the reference image — same face shape, "
+                f"same eyes (color, shape, size), same hairstyle (length, color, style), "
+                f"same skin tone, same lip shape, same eyebrows, same nose. "
+                f"This is the SAME PERSON as in the reference, NOT a similar-looking model. "
+                f"BUT pose / body angle / camera framing / hand position / facial expression "
+                f"MUST be DIFFERENT from the reference image — this is a NEW SHOT with a NEW "
+                f"action, not a copy of the reference pose. "
+                f"Render this specific new shot: {visual_safe}. "
+                f"The pose, action, and camera angle described above OVERRIDE whatever pose "
+                f"the reference image shows. Only the face/hair/skin must match — everything "
+                f"else (body pose, hand gesture, camera angle, framing, expression) follows "
+                f"the new shot description. "
             )
         prompt = (
             identity_lock + " "
