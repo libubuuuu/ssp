@@ -35,6 +35,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from app.api.auth import get_current_user
+from app.config import get_settings
 from app.services.billing import deduct_credits
 from app.services.fal_service import fal_upload_with_retry
 from app.services.logger import log_info, log_error
@@ -152,7 +153,15 @@ async def generate(
     req: CloneGenerateRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """推 JOBS 队列异步跑 video_clone(Seedance 2.0 r2v Fast)"""
+    """推 JOBS 队列异步跑 video_clone(Seedance 2.0 r2v Fast)
+
+    P219 默认关闭(走 /video-clone-vidu)。开启需 env ENABLE_SEEDANCE_VIDEO_CLONE=true
+    """
+    if not get_settings().ENABLE_SEEDANCE_VIDEO_CLONE:
+        raise HTTPException(
+            503,
+            "Seedance 视频复刻链路已下线,请改用 /video-clone-vidu(Vidu Q2 Pro,单段定额 ¥2.2)"
+        )
     # duration 解析(用于扣费)
     if req.duration == "auto":
         duration_sec = 10  # auto 估 10s 扣费

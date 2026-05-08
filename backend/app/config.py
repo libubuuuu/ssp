@@ -74,6 +74,12 @@ class Settings(BaseSettings):
     STORAGE_DURATION_SECONDS: int = 900          # 临时凭证有效期(15 分钟,够大文件上传)
     STORAGE_BUCKET_PREFIX: str = "uploads/"      # 限制 STS 凭证只能写这个前缀,防越权
 
+    # P219 (2026-05-09) /video-clone 旧 Seedance 链路开关
+    # 默认关:Vidu Q2 Pro 链路上线后,Seedance 单价高且中段易漏 prompt,新功能走 /video-clone-vidu
+    # /api/video/clone/generate 在关闭时返 503,引导用户走 /video-clone-vidu
+    # 1 个月观察期后(2026-06-09 之后)再决定是否删除全部 Seedance 代码
+    ENABLE_SEEDANCE_VIDEO_CLONE: bool = False
+
     # 六十八续:微信支付 V3(默认关,等用户开商户号 + 配 cert 后启用)
     WECHAT_PAY_ENABLED: bool = False
     WECHAT_PAY_MCH_ID: str = ""                  # 商户号(10 位数字)
