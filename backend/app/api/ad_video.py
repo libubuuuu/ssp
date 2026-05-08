@@ -554,6 +554,11 @@ async def extract_style_frames(
                 fal_upload_with_retry(middle_frame_path),
             )
 
+            # P213(2026-05-08):VLM prompt 改成"宽容"判 has_people。
+            # 用户:视频里有模特动作但没拍到脸 → 旧 prompt "STRICTLY DO NOT count hand
+            # /finger/arm" → 误判 no people → 走纯产品路径丢弃模特复刻。
+            # 改:任何人体部位都算 has_people=True(脸/手/手臂/腿/任何身体痕迹)。
+            # 只有画面 100% 是物品/场景没任何人体痕迹才算 no。
             has_people = True  # 默认有,失败保底走 Kling Avatar
             try:
                 import fal_client as _fc
@@ -563,14 +568,14 @@ async def extract_style_frames(
                         arguments={
                             "image_urls": [middle_url],
                             "prompt": (
-                                "Look at this image carefully. Is there a CLEARLY VISIBLE PERSON "
-                                "as a main subject — meaning a face, head, or substantial portion of "
-                                "the upper body (torso/shoulders) is visible in the frame? "
-                                "STRICTLY DO NOT count: a hand alone, a finger alone, an arm alone, "
-                                "a foot alone, or any partial body part — those alone do NOT mean "
-                                "there's a person in the frame. "
-                                "If the image only shows products, objects, hands holding products, "
-                                "or scenes without a face/torso/full body, answer 'no'. "
+                                "Look at this image carefully. Does it show ANY trace of a human "
+                                "person, including: face, head, hair, hand, finger, arm, leg, "
+                                "torso, shoulder, foot, or ANY body part — even if only partially "
+                                "visible? Even a single hand or arm counts as a person. Even a "
+                                "blurred or out-of-focus body part counts. "
+                                "ONLY answer 'no' if the image is 100% pure product/object/scene "
+                                "with absolutely zero human body presence. "
+                                "When in doubt, answer 'yes'. "
                                 "Answer with EXACTLY one word: yes or no."
                             ),
                             "model": "qwen/qwen3-vl-235b-a22b-instruct",
@@ -583,7 +588,7 @@ async def extract_style_frames(
                     has_people = False
                 elif ans.startswith("yes"):
                     has_people = True
-                log_info(f"ad_video/extract-style-frames has_people={has_people} ans='{ans[:30]}'")
+                log_info(f"ad_video/extract-style-frames P213 has_people={has_people} ans='{ans[:30]}'")
             except Exception as _vlm_err:
                 log_info(f"ad_video/extract-style-frames VLM 失败(默认有人物): {_vlm_err}")
 

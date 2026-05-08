@@ -1550,12 +1550,27 @@ async def _run_ad_video_job(params: dict):
                         )
                         if cp_a2.returncode != 0:
                             raise Exception(f"音轨 concat 失败: {cp_a2.stderr[:300]}")
-                    # 把音轨叠到 silent 视频(只重编 audio,video stream copy)
+                    # P212(2026-05-08):把音轨叠到 silent 视频
+                    # bug:旧 -shortest 让视频被 TTS 音频长度砍(17s 视频被砍成 2s,
+                    # 因为 25 字中文 TTS 才几秒)。改:audio 不够长 apad 静音补齐到 video。
+                    # 探 video 时长
+                    _probe_p212 = subprocess.run(
+                        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                         "-of", "default=noprint_wrappers=1:nokey=1", str(merged)],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    try:
+                        vid_dur_p212 = float(_probe_p212.stdout.strip())
+                    except Exception:
+                        vid_dur_p212 = sum(float(seg_durs[i]) for i in range(min(len(seg_durs), len(scenes_to_run))))
                     with_audio = seg_root / "final_with_audio.mp4"
                     cp_v = subprocess.run(
                         ["ffmpeg", "-y", "-i", str(merged), "-i", str(audio_merged),
                          "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-                         "-map", "0:v:0", "-map", "1:a:0", "-shortest", str(with_audio)],
+                         "-map", "0:v:0", "-map", "1:a:0",
+                         "-af", "apad",  # P212:audio 末尾补静音
+                         "-t", f"{vid_dur_p212:.2f}",  # 总长锁定 video,删 -shortest 防被 audio 砍
+                         str(with_audio)],
                         capture_output=True, text=True, timeout=120,
                     )
                     if cp_v.returncode == 0 and with_audio.exists() and with_audio.stat().st_size > 0:
