@@ -237,10 +237,10 @@ export default function VideoExtractPage() {
           </label>
         </Box>
 
-        {videoUrl && !scenes && (
+        {videoUrl && (
           <button onClick={extract} disabled={loading}
             style={{ background: "#0d0d0d", color: "#fff", border: "none", padding: "0.9rem 1.6rem", borderRadius: 10, fontSize: "0.95rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1, marginBottom: "1rem" }}>
-            {loading ? loadingMsg || "提取中..." : "🔍 提取脚本(消耗 1 积分)"}
+            {loading ? loadingMsg || "提取中..." : (scenes ? "🔄 重新提取(消耗 1 积分)" : "🔍 提取脚本(消耗 1 积分)")}
           </button>
         )}
 
