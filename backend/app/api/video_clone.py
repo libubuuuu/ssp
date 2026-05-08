@@ -24,11 +24,13 @@
 """
 import asyncio
 import os
+import re
 import time
 import uuid
 import tempfile
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
+import fal_client
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
@@ -204,4 +206,120 @@ async def generate(
         "status": "pending",
         "cost_credits": cost,
         "estimated_time_sec": 30 * req.count + 60,
+    }
+
+
+# ============== P217 (2026-05-08) AI 帮我写 prompt ==============
+# 走 fal openrouter/router(纯文本端点,无需 image_urls,比 vision 端点快 + 不会卡 placeholder 404)
+# 默认 qwen3-vl-235b-instruct(快+便宜,中文强),失败降级 gemini-2.5-flash,再失败本地模板。
+# 用户若想换 claude-sonnet-4.6,把 _PROMPT_LLM_MODEL 改成 "anthropic/claude-sonnet-4.6" 即可
+_PROMPT_LLM_ENDPOINT = "openrouter/router"
+_PROMPT_LLM_MODEL = "qwen/qwen3-vl-235b-a22b-instruct"
+_PROMPT_LLM_FALLBACK = "google/gemini-2.5-flash"
+
+_PROMPT_LLM_SYSTEM = """你是 Seedance 2.0 视频生成模型的 prompt 工程师。用户会上传一段参考视频和若干图片,并用大白话描述他想要的复刻效果。你的任务是输出一个专业的英文 prompt 给 Seedance 2.0。
+
+规则:
+1. 用 @Video1 引用参考视频,用 @Image1 / @Image2 等引用图片
+2. 必须明确指示模型保留参考视频的镜头、运镜、节奏、光线、构图
+3. 必须指明每张图的角色(谁是人物、哪个是产品、哪个是场景)
+4. Prompt 长度控制在 60-120 词
+5. 用电影分镜的语言,不要用关键词堆砌
+6. 输出纯 prompt,不要解释,不要 markdown,不要前缀"Prompt:"或编号
+
+输出格式:纯文本 prompt,以 "Based on @Video1," 开头。"""
+
+
+class GeneratePromptImageItem(BaseModel):
+    id: str = Field(..., description="稳定 id(前端生成,删图重排不影响)")
+    label: str = Field(..., description="占位符标签,如 Image1 / Image2")
+    user_label: Optional[str] = Field(None, description="用户对该图的描述,可选")
+    filename: Optional[str] = Field(None, description="原文件名,可选")
+
+
+class GeneratePromptRequest(BaseModel):
+    user_description: str = Field(..., min_length=1, max_length=1000,
+                                  description="用户大白话需求")
+    reference_video_url: Optional[str] = Field(None, description="参考视频 URL(已上传)")
+    reference_video_summary: Optional[str] = Field(None, max_length=500,
+                                                   description="可选:视频内容简介")
+    image_urls: List[GeneratePromptImageItem] = Field(default_factory=list, max_length=9)
+
+
+def _fallback_prompt(images: List[GeneratePromptImageItem]) -> str:
+    """LLM 调用失败时的本地兜底模板"""
+    refs = ", ".join(f"@{img.label}" for img in images) or "the reference media"
+    return (
+        f"Based on @Video1, recreate the same scene with elements from {refs}, "
+        f"preserving the original camera motion, pacing, lighting, and composition."
+    )
+
+
+@router.post("/generate-prompt")
+async def generate_prompt(
+    req: GeneratePromptRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """大白话 → 专业 Seedance 2.0 prompt(含 @Video1/@Image1 占位符)"""
+    images_desc = ", ".join(
+        f"@{img.label}: {img.user_label or img.filename or '参考图'}"
+        for img in req.image_urls
+    ) or "(无参考图)"
+    video_desc = req.reference_video_summary or (
+        "用户上传的参考视频" if req.reference_video_url else "(无参考视频)"
+    )
+
+    user_msg = (
+        f"用户描述: {req.user_description}\n"
+        f"视频信息: {video_desc}\n"
+        f"图片列表: {images_desc}\n\n"
+        f"请输出一个专业的英文 prompt,严格遵守上述规则。"
+    )
+
+    text = ""
+    used_model = _PROMPT_LLM_MODEL
+    err: Optional[str] = None
+    for model in (_PROMPT_LLM_MODEL, _PROMPT_LLM_FALLBACK):
+        try:
+            result = await asyncio.wait_for(
+                fal_client.run_async(
+                    _PROMPT_LLM_ENDPOINT,
+                    arguments={
+                        "prompt": user_msg,
+                        "system_prompt": _PROMPT_LLM_SYSTEM,
+                        "model": model,
+                        "temperature": 0.8,
+                    },
+                ),
+                timeout=40,  # 单模型 40s 上限,留足两次 + CF 100s 余量
+            )
+            text = (result.get("output") or "").strip()
+            if text:
+                used_model = model
+                break
+        except Exception as e:
+            err = str(e)[:200]
+            log_error(f"generate-prompt LLM={model} 失败: {err}")
+            continue
+
+    has_mentions = False
+    if text:
+        # 去 markdown / 引号外壳(以防模型不听话)
+        text = re.sub(r"^```(?:[a-z]*)?\s*|\s*```$", "", text, flags=re.MULTILINE).strip()
+        text = text.strip('"').strip()
+        has_mentions = bool(re.search(r"@(Video|Image)\d+", text))
+    else:
+        text = _fallback_prompt(req.image_urls)
+        has_mentions = True
+        used_model = "fallback-template"
+
+    log_info(
+        f"generate-prompt user={current_user.get('id')} "
+        f"model={used_model} len={len(text)} mentions={has_mentions} "
+        f"desc_len={len(req.user_description)}"
+    )
+    return {
+        "generated_prompt": text,
+        "has_mentions": has_mentions,
+        "model": used_model,
     }
