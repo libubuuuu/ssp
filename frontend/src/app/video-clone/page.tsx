@@ -4,6 +4,8 @@ import Sidebar from "@/components/Sidebar";
 import MentionTextarea, { MentionAsset } from "@/components/MentionTextarea";
 import { adjustLocalUserCredits } from "@/lib/userState";
 import { errMsg } from "@/lib/utils/errors";
+import { compressVideo } from "@/lib/utils/videoCompress";
+import { compressImage } from "@/lib/utils/imageCompress";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -125,13 +127,35 @@ export default function VideoClonePage() {
     })();
   };
 
+  const fmtMB = (b: number) => (b / 1024 / 1024).toFixed(1) + " MB";
+
   const onPickVideo = async (f: File) => {
     setError(""); setVideoFile(f);
-    setUploading(true); setUploadMsg("上传参考视频...");
+    setUploading(true);
     try {
+      // P218 浏览器侧压缩(原 50MB → 通常 3-8MB,上传时间 1/5 - 1/10)
+      let toUpload: File = f;
+      if (f.size > 3 * 1024 * 1024) {
+        setUploadMsg(`压缩视频中... 0% (原 ${fmtMB(f.size)})`);
+        try {
+          const cr = await compressVideo(f, {
+            maxWidth: 1280,
+            videoBitrate: 1_500_000,
+            onProgress: (pct) => setUploadMsg(`压缩视频中... ${pct}% (原 ${fmtMB(f.size)})`),
+          });
+          if (cr.compressed && cr.compressedSize < f.size) {
+            toUpload = cr.file;
+            setUploadMsg(`压缩完成 ${fmtMB(f.size)} → ${fmtMB(cr.compressedSize)},开始上传...`);
+          } else {
+            setUploadMsg(`(浏览器不支持压缩,直传原文件 ${fmtMB(f.size)}...)`);
+          }
+        } catch {
+          setUploadMsg(`(压缩失败,直传原文件 ${fmtMB(f.size)}...)`);
+        }
+      }
       const r = await uploadWithRetry(
-        `${API_BASE}/api/video/clone/upload/video`, f, token(),
-        (pct) => setUploadMsg(`上传视频... ${pct}%`),
+        `${API_BASE}/api/video/clone/upload/video`, toUpload, token(),
+        (pct) => setUploadMsg(`上传视频 ${fmtMB(toUpload.size)}... ${pct}%`),
       );
       if (!r.ok) {
         const d = (() => { try { return JSON.parse(r.text); } catch { return {}; } })();
@@ -153,8 +177,13 @@ export default function VideoClonePage() {
     if (imageItems.length >= 9) { setError("最多 9 张参考图"); return; }
     setError("");
     try {
+      // P218 浏览器侧压缩(原 10MB → 通常 < 1MB,Web Worker 不卡 UI)
+      let toUpload: File = f;
+      try {
+        toUpload = await compressImage(f, { maxSizeMB: 0.8, maxWidthOrHeight: 1920 });
+      } catch { /* fall through, send original */ }
       const fd = new FormData();
-      fd.append("file", f);
+      fd.append("file", toUpload);
       const r = await fetch(`${API_BASE}/api/video/clone/upload/image`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token()}` },
