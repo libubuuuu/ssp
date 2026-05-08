@@ -875,20 +875,39 @@ async def _run_ad_video_job(params: dict):
 
     # 第 1 步:用产品图 + 第 1 段 visual 调 Flux Kontext 合共享 base 首帧
     first_scene = scenes[0] if scenes else {}
-    base_result = await ad_video_models.compose_first_frame(
-        product_image_url=params.get("product_image_url") or params.get("image_url"),
-        background_image_url=bg_url_for_compose,  # P187:可能是用户上传的或参考视频中间帧
-        model_description=model_desc,
-        scene_visual_prompt=first_scene.get("visual_prompt", ""),
-        product_back_image_url=params.get("product_back_image_url"),
-        aspect_ratio=params.get("aspect_ratio") or "9:16",
-        no_text=True,  # P158(2026-05-07):AI 带货视频图严禁字幕
-        style_reference_image_url=params.get("style_reference_image_url"),  # P186(2026-05-08)
-        no_model=(ref_has_people is False),  # P187(2026-05-08):参考视频无人物 → 纯产品
-    )
-    if "error" in base_result or not base_result.get("image_url"):
-        raise Exception(f"首帧合成失败: {base_result.get('error', '?')}")
-    base_image_url = base_result["image_url"]
+    _no_model_p211 = (ref_has_people is False)
+    # P211(2026-05-08):no_model 模式 base 异步启动,后续多段 panels 并发跑(用 product 作 anchor)
+    # base + panels 串行 6 分钟 → 并发 max(3,5) = 5 分钟,省 1-2 分钟
+    base_image_url = params.get("product_image_url") or params.get("image_url")  # 默认 fallback
+    base_task_p211 = None
+    if _no_model_p211:
+        base_task_p211 = asyncio.create_task(ad_video_models.compose_first_frame(
+            product_image_url=params.get("product_image_url") or params.get("image_url"),
+            background_image_url=bg_url_for_compose,
+            model_description=model_desc,
+            scene_visual_prompt=first_scene.get("visual_prompt", ""),
+            product_back_image_url=params.get("product_back_image_url"),
+            aspect_ratio=params.get("aspect_ratio") or "9:16",
+            no_text=True,
+            style_reference_image_url=params.get("style_reference_image_url"),
+            no_model=True,
+        ))
+        log_info(f"ad_video P211 no_model 模式:base 异步启动,panels 用 product_image 直接并发出图")
+    else:
+        base_result = await ad_video_models.compose_first_frame(
+            product_image_url=params.get("product_image_url") or params.get("image_url"),
+            background_image_url=bg_url_for_compose,
+            model_description=model_desc,
+            scene_visual_prompt=first_scene.get("visual_prompt", ""),
+            product_back_image_url=params.get("product_back_image_url"),
+            aspect_ratio=params.get("aspect_ratio") or "9:16",
+            no_text=True,
+            style_reference_image_url=params.get("style_reference_image_url"),
+            no_model=False,
+        )
+        if "error" in base_result or not base_result.get("image_url"):
+            raise Exception(f"首帧合成失败: {base_result.get('error', '?')}")
+        base_image_url = base_result["image_url"]
 
     # ---------- 单段模式(<=12s,P118 双段拼接) ----------
     # P104(2026-05-05):TTS + omnihuman talking head 一步到位
@@ -1356,14 +1375,18 @@ async def _run_ad_video_job(params: dict):
             # Step A: 每段在共享 base 上调 Flux Kontext 合本段独立首帧(锁模特身份+按本段 visual)
             scene_frame_url = base_image_url  # fallback
             try:
+                # P210(2026-05-08):no_model 模式 panels 用 product_image 作 anchor,
+                # 不依赖 base 帧 → base + panels 完全并发 → P187 路径省 3 分钟
+                _no_model = (ref_has_people is False)
                 fr = await ad_video_models.compose_first_frame_for_scene(
-                    base_image_url=base_image_url,
+                    base_image_url=(params.get("product_image_url") or base_image_url) if _no_model else base_image_url,
                     scene=scene,
                     model_description=model_desc,
                     overall_setting=overall,
                     aspect_ratio=params.get("aspect_ratio") or "9:16",
                     style_reference_image_url=params.get("style_reference_image_url"),  # P186
-                    no_model=(ref_has_people is False),  # P194(2026-05-08)
+                    no_model=_no_model,  # P194(2026-05-08)
+                    exclude_base_image=_no_model,  # P210:no_model 走 exclude_base 分支,prompt 不引用 base
                 )
                 if fr.get("image_url"):
                     scene_frame_url = fr["image_url"]
@@ -1407,9 +1430,21 @@ async def _run_ad_video_job(params: dict):
                     raise Exception(f"段 {idx+1}/{n_actual}: {st.get('error')}")
             raise Exception(f"段 {idx+1}/{n_actual}: 超时(15 min)")
 
-    seg_urls = await asyncio.gather(
-        *[_run_scene(i, s) for i, s in enumerate(scenes_to_run)]
-    )
+    # P211(2026-05-08):no_model 模式 base 跟 panels 并发,gather 时一起等
+    if _no_model_p211 and base_task_p211 is not None:
+        results_p211 = await asyncio.gather(
+            asyncio.gather(*[_run_scene(i, s) for i, s in enumerate(scenes_to_run)]),
+            base_task_p211,
+        )
+        seg_urls = results_p211[0]
+        _br = results_p211[1]
+        if isinstance(_br, dict) and _br.get("image_url"):
+            base_image_url = _br["image_url"]
+        log_info(f"ad_video P211 base + panels 并发完成,base_url={base_image_url[:60]}")
+    else:
+        seg_urls = await asyncio.gather(
+            *[_run_scene(i, s) for i, s in enumerate(scenes_to_run)]
+        )
 
     # ---------- 下载 + ffmpeg concat ----------
     import tempfile, shutil, subprocess
