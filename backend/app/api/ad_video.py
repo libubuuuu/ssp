@@ -544,85 +544,48 @@ async def extract_style_frames(
             middle_frame_path = os.path.join(tmpdir, "middle_frame.jpg")
             imgs[1].save(middle_frame_path, "JPEG", quality=92)  # 第 2 帧 ~35% 处
 
-            # P190(2026-05-08):并发上传 grid + middle frame + 原视频本身(给 qwen-vl 看整段)
-            grid_url, middle_url, video_fal_url = await asyncio.gather(
+            # P196(2026-05-08):砍 qwen-vl 整段视频判断 + 原视频 fal 上传
+            # 真因:Cloudflare origin timeout 100s,qwen-vl 看整段最坏 180s,
+            # 加上 ffmpeg + 3 路 fal upload 总链路超 100s,前端拿到 CF 524 HTML
+            # 触发 "Unexpected token '<'" JSON parse 失败。
+            # 解:只用单帧 VLM 判 has_people(P190 之前的方案),整段视频判断废弃。
+            grid_url, middle_url = await asyncio.gather(
                 fal_upload_with_retry(grid_path),
                 fal_upload_with_retry(middle_frame_path),
-                fal_upload_with_retry(video_path),  # 原视频上 fal,给 qwen-vl 看整段时序
             )
 
-            # P190:qwen-vl 看整段视频(多帧时序)判断是否含人物 — 比单帧准确得多
             has_people = True  # 默认有,失败保底走 Kling Avatar
             try:
-                from app.services.fal_service import get_aliyun_qwenvl_service
-                qwen_svc = get_aliyun_qwenvl_service()
-                if qwen_svc and qwen_svc.is_available():
-                    qwen_instruction = (
-                        "请仔细看完整段视频。"
-                        "视频里是否有 CLEARLY VISIBLE PERSON 作为主要拍摄对象?"
-                        "也就是说必须看到 FACE / HEAD / 上半身大部分(肩膀+躯干)清晰出镜。"
-                        "严格不算:只有手 / 只有手指 / 只有手臂 / 只有脚 / 任何 partial body part — "
-                        "这些都不算有人。"
-                        "只展示产品 / 物体 / 手拿产品 / 没脸没躯干的场景 → 答 no。"
-                        "请用 EXACTLY 一个英文单词回答: yes 或 no(不要解释,只回一个词)。"
-                    )
-                    qwen_res = await asyncio.wait_for(
-                        qwen_svc.analyze_video(video_fal_url, qwen_instruction),
-                        timeout=180,
-                    )
-                    if "error" in qwen_res:
-                        raise Exception(qwen_res["error"])
-                    ans = (qwen_res.get("text") or "").strip().lower()
-                    # 取第一个有意义的词
-                    first_word = ""
-                    for w in ans.replace(",", " ").replace(".", " ").split():
-                        if w in ("yes", "no", "是", "否", "有", "无"):
-                            first_word = w
-                            break
-                    if not first_word and ans:
-                        first_word = ans.split()[0].strip(".,!? ").lower()
-                    if first_word in ("no", "否", "无"):
-                        has_people = False
-                    elif first_word in ("yes", "是", "有"):
-                        has_people = True
-                    log_info(f"ad_video/extract-style-frames P190 qwen-vl(整段视频) has_people={has_people} ans='{ans[:80]}'")
-                else:
-                    log_info(f"ad_video/extract-style-frames qwen-vl 不可用,用 fal 单帧 fallback")
-                    raise Exception("qwen-vl 不可用")
-            except Exception as _qwen_err:
-                # qwen-vl 整段视频不可用 → fallback 到 fal openrouter VLM 看单帧(P190 收紧的 prompt)
-                log_info(f"ad_video/extract-style-frames qwen-vl 整段失败,fallback 单帧 VLM: {_qwen_err}")
-                try:
-                    import fal_client as _fc
-                    vlm_res = await asyncio.wait_for(
-                        _fc.run_async(
-                            "openrouter/router/vision",
-                            arguments={
-                                "image_urls": [middle_url],
-                                "prompt": (
-                                    "Look at this image carefully. Is there a CLEARLY VISIBLE PERSON "
-                                    "as a main subject — meaning a face, head, or substantial portion of "
-                                    "the upper body (torso/shoulders) is visible in the frame? "
-                                    "STRICTLY DO NOT count: a hand alone, a finger alone, an arm alone, "
-                                    "a foot alone, or any partial body part — those alone do NOT mean "
-                                    "there's a person in the frame. "
-                                    "If the image only shows products, objects, hands holding products, "
-                                    "or scenes without a face/torso/full body, answer 'no'. "
-                                    "Answer with EXACTLY one word: yes or no."
-                                ),
-                                "model": "qwen/qwen3-vl-235b-a22b-instruct",
-                            },
-                        ),
-                        timeout=60,
-                    )
-                    ans = (vlm_res.get("output") or "").strip().lower() if isinstance(vlm_res, dict) else ""
-                    if ans.startswith("no"):
-                        has_people = False
-                    elif ans.startswith("yes"):
-                        has_people = True
-                    log_info(f"ad_video/extract-style-frames fallback 单帧 has_people={has_people} ans='{ans[:30]}'")
-                except Exception as _vlm_err:
-                    log_info(f"ad_video/extract-style-frames 单帧 VLM 也失败(默认有人物): {_vlm_err}")
+                import fal_client as _fc
+                vlm_res = await asyncio.wait_for(
+                    _fc.run_async(
+                        "openrouter/router/vision",
+                        arguments={
+                            "image_urls": [middle_url],
+                            "prompt": (
+                                "Look at this image carefully. Is there a CLEARLY VISIBLE PERSON "
+                                "as a main subject — meaning a face, head, or substantial portion of "
+                                "the upper body (torso/shoulders) is visible in the frame? "
+                                "STRICTLY DO NOT count: a hand alone, a finger alone, an arm alone, "
+                                "a foot alone, or any partial body part — those alone do NOT mean "
+                                "there's a person in the frame. "
+                                "If the image only shows products, objects, hands holding products, "
+                                "or scenes without a face/torso/full body, answer 'no'. "
+                                "Answer with EXACTLY one word: yes or no."
+                            ),
+                            "model": "qwen/qwen3-vl-235b-a22b-instruct",
+                        },
+                    ),
+                    timeout=25,
+                )
+                ans = (vlm_res.get("output") or "").strip().lower() if isinstance(vlm_res, dict) else ""
+                if ans.startswith("no"):
+                    has_people = False
+                elif ans.startswith("yes"):
+                    has_people = True
+                log_info(f"ad_video/extract-style-frames has_people={has_people} ans='{ans[:30]}'")
+            except Exception as _vlm_err:
+                log_info(f"ad_video/extract-style-frames VLM 失败(默认有人物): {_vlm_err}")
 
             log_info(f"ad_video/extract-style-frames user={current_user.get('id')} dur={duration:.1f}s grid={grid_url[:60]} middle={middle_url[:60]} has_people={has_people}")
             return {

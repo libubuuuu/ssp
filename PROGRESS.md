@@ -1,6 +1,89 @@
 项目进度日志,每次收工前更新
 
-## 2026-04-30 八十四续 P1-P6(口播全链路重做:VTON 路线 + 拆段 + 上传链路 + COS 直传 + 图片切 Seedream)
+## 2026-05-08 P196(/ad-video extract-style-frames Cloudflare 100s 超时 hotfix)
+
+### 用户反馈
+"风格参考视频上传不了,Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON"
+
+### 真因
+域名走了 Cloudflare 反代(nginx 看到 client IP 全是 CF 段:172.71.x / 162.158.x / 141.101.x),
+**CF 免费/Pro plan origin response timeout 100 秒不可调**。
+
+`/api/ad-video/extract-style-frames` 端点最坏链路:
+- ffmpeg 抽 4 帧 (~15s)
+- **3 路 fal upload 并发**(grid + middle + 整段视频原片,~30s)
+- **qwen-vl 看整段视频(timeout=180s)**
+- fallback 单帧 VLM(timeout=60s)
+
+总最坏 > 200s,远超 CF 100s。证据:`upload_debug.log` 14:27 那次
+`status=499 req_time=144.87 upstream_time=125.01` — nginx 看到客户端断,
+真因是 CF 100s 时已经把 524 HTML 返给浏览器,前端 `r.json()` 直接撞 SyntaxError。
+
+### 修(commit 待 push)
+**`backend/app/api/ad_video.py` extract_style_frames**:
+- 砍掉 qwen-vl 看整段视频(180s)+ 原视频 fal upload(节省一并发)
+- 只保留单帧 VLM 判 has_people(P190 之前的方案,本来够用)
+- 单帧 VLM timeout 60 → 25s
+- 总链路压到 ~70s,稳在 CF 100s 以下
+
+### 部署
+- cp /root/ssp/backend/app/api/ad_video.py → /opt/ssp/...
+- chown ssp-app:ssp-app
+- supervisorctl restart ssp-backend-blue
+- 验证:`curl POST /api/ad-video/extract-style-frames` 返 401 JSON(端点活着,无 5xx)
+
+### 同时跑监控埋点周复核(原约 5/7,迟 1 天)
+全文件(含 .log.1/.log.2/.log.3)grep:
+- upload_no_duration_metadata = 0
+- voice_clone_text_truncated = 0
+- voice_clone_retry = 0
+- voice_clone_fal_fault_full_refund = 0
+
+四项全 0,说明八十一/八十三/八十四 修过的 fal 故障路径没复发。
+
+---
+
+## 2026-04-30 ~ 2026-05-08 P30-P195 归档(commit log 总览,详见 git log)
+
+近 8 天工作量爆炸(80+ commits),按主线归档:
+
+### 主线 1 — 口播工作台 V3 → V4(P30-P89)
+- P30-P49:多模型工作台(模型 A/B 互备)、Kling O3 v2v、pixverse-swap、demucs 音轨分离
+- P50-P64:Kling O3 r2v 提核心档、wan-2-2 animate-replace 引入再删除、Best-of-2 + InsightFace 自动选优、auto-cheap 全免费链路、本地 InsightFace face-swap、prompt identity locking、Kling 强锁 wardrobe
+- P66-P74:catvton-pixverse 主路接通、qwen-vl 自动分镜 prompt、VACE Fun NSFW prompt sanitize
+- P75-P85:vace-mask 真分层(SAM2 + Wan VACE Fun)、qwen-vl 精细分镜、双轨 prompt(用户看完整 / VACE 收核心)、按时间拆段并发、`/generate-segment` 改异步后台 task、VACE Fun 输出后接 InsightFace 换脸
+
+### 主线 2 — AI 带货视频 (P90-P195)
+- P90-P115:omnihuman talking head 改造、爆款话术库扩到 1001 条 + 实时抽样、Kling Avatar v2 接入与回退、几宫格分镜图 + PIL 切图
+- P115-P140:N 段独立 GPT-Image 2 分镜、IDENTITY LOCK 强约束、ffmpeg trim/concat、PRODUCT FOCUS、reframe 跳过省时、产品类目无关
+- P145-P171:NO TEXT 铁律、reverted/重建带货视频功能反复几次(P169 隐藏 → P170 删 → revert → P171 误删口播工作台修正)
+- P172-P195(commit cc18c93):/video/replicate 健壮性、/ad-video 黏贴脚本/参考视频/无人物路径、/video/extract 工具
+
+### 主线 3 — /video/replicate 视频复刻工作台
+- 新增工作台 dbfb957:上传参考视频 → AI 拆分镜 → GPT-Image 2 出首帧 → aliyun-wan2.7-r2v 出片
+- /analyze 改异步绕 CF/nginx 100s 超时(bb97b3e — 跟 P196 同一类问题)
+- 视频归档到国内 /uploads 后再喂 qwen-vl(防跨境下载超时)
+- 替换 aliyun-wan2.7 → fal 三引擎可选(pixverse / catvton / kling)
+- catvton-pixverse 全程绕过 GPT-Image 2 根治 fal content_checker 拒收敏感品类
+- pixverse-swap 段视频强制 downscale 720p 锁死 $0.20/5s
+- P163-P168(2026-05-07~08):服务启动清理孤儿 running job + 退积分、Seedance v1 Lite 替换 Kling 3 Pro i2v 降价、base 帧 retry/timeout/fast-fail content_policy
+
+### 主线 4 — 功能裁剪(产品聚焦)
+- 删除数字人(/avatar + /digital-human)、语音克隆(/voice-clone)、快速带货、独立分镜图工作台
+- 网站标题改 "XIAO Liai",favicon 'xL' 蓝色蝴蝶蓝
+- dashboard 卡片放大、三个工作台主区居中、口播档位简化(只留经济档)
+- 一键清空"我的任务"、口播 session 桥接 /api/jobs/list
+
+### 主线 5 — credits 加固 (P156-P161)
+- admin 原子 UPDATE + credits_ledger 流水表
+- B+ 8 件加固 + 测试覆盖
+
+### 主线 6 — 11 条新 feedback 记忆入仓(commit 6aa4e51)
+详见 `/root/.claude/projects/-root/memory/MEMORY.md`
+
+---
+
+
 
 ### 起点
 P0(commit `13e05f0`):bypass 开关激活,ORAL_BYPASS_VOICE_CLONE 跳过 minimax voice-clone。
