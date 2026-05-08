@@ -85,11 +85,16 @@ export default function VideoExtractPage() {
           const sd = await sr.json();
           if (sd.status === "completed") {
             clearInterval(interval);
-            // P183:scenes 加载时自动把整段口播按时长比例分到每段(用户可手动改)
-            const rawScenes = sd.scenes || [];
+            // P199(2026-05-08):后端用 wizper chunks 时间戳已按 scene.time_range
+            // 精确预填每段 speech;只有后端没填(老数据/wizper chunks 拿不到)才 fallback
+            // 用 distributeSpeechToScenes(整段口播按时长比例硬切)
+            const rawScenes: Scene[] = sd.scenes || [];
             const fullSpeech = sd.original_speech || "";
-            let scenesWithSpeech = rawScenes;
-            if (fullSpeech && rawScenes.length > 0) {
+            let scenesWithSpeech: Scene[] = rawScenes;
+            const hasBackendSpeech = rawScenes.some(s => (s.speech || "").trim().length > 0);
+            if (hasBackendSpeech) {
+              scenesWithSpeech = rawScenes;  // 后端已精准分配
+            } else if (fullSpeech && rawScenes.length > 0) {
               const distributed = distributeSpeechToScenes(fullSpeech, rawScenes);
               scenesWithSpeech = rawScenes.map((s: Scene, i: number) => ({ ...s, speech: distributed[i] || "" }));
             }

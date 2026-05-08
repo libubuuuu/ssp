@@ -1805,7 +1805,9 @@ async def _extract_speech_from_video(video_url: str) -> dict:
     import fal_client as _fc
     from app.services.logger import log_info, log_error
 
-    out: dict = {"original_speech": "", "speech_audio_url": "", "has_background_music": False}
+    # P199(2026-05-08):speech_chunks = wizper segment-level chunks([(start, end, text), ...])
+    # 用户要求 extract 工具按真实时间戳精确分配每段口播,不再前端按时长比例硬切
+    out: dict = {"original_speech": "", "speech_audio_url": "", "has_background_music": False, "speech_chunks": []}
 
     # 1. ffmpeg 提取音频
     audio_path = _os.path.join(_tmp.gettempdir(), f"replicate_asr_{_os.getpid()}_{int(time.time())}.mp3")
@@ -1851,23 +1853,47 @@ async def _extract_speech_from_video(video_url: str) -> dict:
             return None
 
     async def _asr():
+        # P199:chunk_level="segment" 让 wizper 返句子级 chunks,带 timestamp
         try:
             r = await _aio.wait_for(
-                _fc.run_async("fal-ai/wizper", arguments={"audio_url": audio_fal_url, "task": "transcribe"}),
+                _fc.run_async("fal-ai/wizper", arguments={
+                    "audio_url": audio_fal_url,
+                    "task": "transcribe",
+                    "chunk_level": "segment",
+                }),
                 timeout=120,
             )
-            return (r.get("text") or "").strip() if isinstance(r, dict) else ""
+            if not isinstance(r, dict):
+                return ("", [])
+            text = (r.get("text") or "").strip()
+            chunks_raw = r.get("chunks") or []
+            chunks_clean = []
+            for c in chunks_raw:
+                if not isinstance(c, dict):
+                    continue
+                ts = c.get("timestamp") or [None, None]
+                ct = (c.get("text") or "").strip()
+                if not ct:
+                    continue
+                try:
+                    s = float(ts[0]) if ts and ts[0] is not None else 0.0
+                    e = float(ts[1]) if ts and len(ts) > 1 and ts[1] is not None else s
+                except Exception:
+                    s, e = 0.0, 0.0
+                chunks_clean.append({"start": s, "end": e, "text": ct})
+            return (text, chunks_clean)
         except Exception as e:
             log_error(f"replicate ASR wizper 失败: {e}")
-            return ""
+            return ("", [])
 
-    vocals_url, asr_text = await _aio.gather(_iso(), _asr())
+    vocals_url, (asr_text, asr_chunks) = await _aio.gather(_iso(), _asr())
 
     out["original_speech"] = asr_text or ""
     out["speech_audio_url"] = vocals_url or ""
+    out["speech_chunks"] = asr_chunks  # P199:[{start, end, text}]
     # 简化判断:audio-isolation 输出了 → 大概率原音频有非人声成分(音乐/噪音)
     out["has_background_music"] = bool(vocals_url and asr_text)
-    log_info(f"replicate ASR 完成: text_len={len(asr_text)} has_vocals_url={bool(vocals_url)}")
+    log_info(f"replicate ASR 完成: text_len={len(asr_text)} chunks={len(asr_chunks)} has_vocals_url={bool(vocals_url)}")
     return out
 
 
@@ -1950,6 +1976,49 @@ async def _run_replicate_analyze_job(params: dict) -> dict:
     # P181(2026-05-08):提取 VLM 给的 model_identity + product_category
     model_identity = (data.get("model_identity") or "").strip()
     product_category = (data.get("product_category") or "其他").strip()
+
+    # P199(2026-05-08):用 wizper segment chunks 时间戳,按 scene.time_range overlap
+    # 精确把每句话分到对应分镜,不再前端按时长比例估算
+    speech_chunks = speech_info.get("speech_chunks") or []
+    if speech_chunks and clean_scenes:
+        def _parse_tr(tr_str: str):
+            """'0-3s' / '3.5-5s' / '0:00-0:03' → (start_sec, end_sec) | None"""
+            if not tr_str:
+                return None
+            s = str(tr_str).strip().replace("s", "").replace("S", "").strip()
+            if "-" not in s:
+                return None
+            a, b = s.split("-", 1)
+            def _to_sec(x):
+                x = x.strip()
+                if ":" in x:
+                    parts = x.split(":")
+                    if len(parts) == 2:
+                        return float(parts[0]) * 60 + float(parts[1])
+                    if len(parts) == 3:
+                        return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+                return float(x)
+            try:
+                return (_to_sec(a), _to_sec(b))
+            except Exception:
+                return None
+
+        matched_count = 0
+        for sc in clean_scenes:
+            tr = _parse_tr(sc.get("time_range") or "")
+            if not tr:
+                continue
+            s_start, s_end = tr
+            seg_text = []
+            for c in speech_chunks:
+                c_s, c_e = c.get("start", 0), c.get("end", 0)
+                if c_s < s_end and c_e > s_start:
+                    seg_text.append(c.get("text") or "")
+            if seg_text:
+                sc["speech"] = " ".join(t.strip() for t in seg_text if t.strip())
+                matched_count += 1
+        log_info(f"replicate_analyze P199 时间戳分配 matched_scenes={matched_count}/{len(clean_scenes)} chunks={len(speech_chunks)}")
+
     log_info(f"replicate_analyze OK scenes={len(clean_scenes)} ratio={aspect} speech_len={len(speech_info.get('original_speech',''))} category={product_category} model_id_len={len(model_identity)}")
     return {
         "scenes": clean_scenes,
@@ -1958,6 +2027,7 @@ async def _run_replicate_analyze_job(params: dict) -> dict:
         "original_speech": speech_info.get("original_speech", ""),
         "speech_audio_url": speech_info.get("speech_audio_url", ""),
         "has_background_music": speech_info.get("has_background_music", False),
+        "speech_chunks": speech_chunks,  # P199:前端可选展示时间戳分布
         "model_identity": model_identity,
         "product_category": product_category,
     }
