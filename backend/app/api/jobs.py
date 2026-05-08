@@ -2869,14 +2869,116 @@ async def _gen_videos_pixverse_2step(scenes: list, frames: list, reference_video
         return final_urls
 
 
-async def _gen_videos_catvton_pixverse(scenes: list, frames: list, product_image_url: str, reference_video_url: str, aspect_ratio: str) -> list:
-    """引擎 3:catvton-pixverse(已废弃 cat-vton 中间步) — 现在等同 pixverse-swap。
-    
-    用户铁律:图必须交给 gpt2 做,不准 cat-vton 后处理。
-    所以这条路径也直接调 _gen_videos_pixverse_swap,frames 已经是 GPT 直出图。
-    
-    保留 engine 选项是为了兼容老的 job(用户已选 catvton-pixverse 时不报错)。
+async def _gen_videos_catvton_pixverse(scenes: list, frames: list, product_image_url: str, reference_video_url: str, aspect_ratio: str, cloth_type: str = "upper") -> list:
+    """引擎 3:catvton-pixverse(P209 2026-05-08 真 cat-vton 中间步,严守产品图)
+
+    用户怒"产品没参考上传图" → 用户铁律变了,改回真 cat-vton 路径。
+    每段流程:
+      Step A: 用 GPT 出的 frame(模特身份+大致产品)作 cat-vton 输入的 human_image
+      Step B: cat-vton(human_image=GPT 帧, garment=用户产品图, cloth_type=upper)
+              → 模特真穿用户产品(产品颜色/材质/Logo 100% 保留)
+      Step C: pixverse-swap(原视频段, cat-vton 输出帧, mode=person)
+              → 复刻视频动作
     """
-    return await _gen_videos_pixverse_swap(scenes, frames, reference_video_url, aspect_ratio)
+    import asyncio as _asyncio
+    import tempfile
+    from app.services.fal_service import get_pixverse_swap_service, get_vton_service
+    from app.services.logger import log_info, log_error, log_warning
+
+    pix = get_pixverse_swap_service()
+    vton = get_vton_service()
+    if not pix:
+        raise RuntimeError("pixverse-swap 服务未初始化")
+    if not vton:
+        raise RuntimeError("cat-vton 服务未初始化")
+    if not frames or len(frames) < len(scenes):
+        raise RuntimeError(f"catvton-pixverse 需要 N={len(scenes)} 张 GPT frames")
+    if not product_image_url:
+        raise RuntimeError("catvton-pixverse 需要 product_image_url 作 garment")
+
+    log_info(f"replicate catvton-pixverse: 每段 cat-vton 真试穿 + pixverse 复刻动作 N={len(scenes)} cloth_type={cloth_type}")
+
+    async def _frame_to_static_video(image_url: str, duration_sec: float, ratio: str) -> str:
+        import urllib.request as _urlreq, subprocess as _sp
+        from app.services.fal_service import fal_upload_with_retry as _fup
+        dim = {"9:16": "720:1280", "16:9": "1280:720", "1:1": "720:720"}.get(ratio, "720:1280")
+        with tempfile.TemporaryDirectory() as _td:
+            img_path = os.path.join(_td, "frame.png")
+            _urlreq.urlretrieve(image_url, img_path)
+            out_path = os.path.join(_td, "static.mp4")
+            cmd = ["ffmpeg", "-y", "-loop", "1", "-i", img_path,
+                   "-t", f"{max(1.0, duration_sec):.2f}",
+                   "-vf", f"scale={dim}:force_original_aspect_ratio=decrease,pad={dim}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p",
+                   "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                   "-pix_fmt", "yuv420p", "-r", "24", out_path]
+            r = _sp.run(cmd, capture_output=True, text=True, timeout=120)
+            if r.returncode != 0:
+                raise RuntimeError(f"ffmpeg image->video 失败: {r.stderr[:300]}")
+            return await _fup(out_path)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        seg_urls = await _slice_video_by_scenes(reference_video_url, scenes, tmpdir, aspect_ratio=aspect_ratio)
+
+        sem = _asyncio.Semaphore(3)
+
+        async def _catvton_then_swap(idx: int, seg_url: str, frame_url: str) -> str:
+            async with sem:
+                # Step B: cat-vton 真试穿
+                vton_image_url = frame_url  # 兜底
+                try:
+                    vton_res = await vton.try_on(
+                        human_image_url=frame_url,
+                        garment_image_url=product_image_url,
+                        cloth_type=cloth_type,
+                    )
+                    if "error" in vton_res:
+                        log_warning(f"replicate catvton seg {idx} cat-vton 失败,降级用 GPT 帧: {str(vton_res['error'])[:120]}")
+                    else:
+                        vton_image_url = vton_res.get("image_url") or frame_url
+                        log_info(f"replicate catvton seg {idx} cat-vton OK url={vton_image_url[:60]}")
+                except Exception as _e:
+                    log_warning(f"replicate catvton seg {idx} cat-vton 异常,降级用 GPT 帧: {type(_e).__name__}:{str(_e)[:120]}")
+
+                # Step C: pixverse-swap(用 cat-vton 输出 / 兜底 GPT 帧)+ 3 次 retry
+                last_err = ""
+                for attempt in range(3):
+                    try:
+                        result = await pix.swap(video_url=seg_url, image_url=vton_image_url)
+                        if "error" in result:
+                            err_text = str(result['error'])
+                            last_err = f"swap error: {err_text[:120]}"
+                            is_transient = any(k in err_text for k in ['unavailable', '503', '502', '504', 'timeout', 'Downstream'])
+                            if not is_transient or attempt == 2:
+                                break
+                            await _asyncio.sleep(2 * (2 ** attempt))
+                            continue
+                        vurl = result.get("video_url")
+                        if not vurl:
+                            last_err = "swap 无 url"
+                            if attempt == 2: break
+                            await _asyncio.sleep(2 * (2 ** attempt))
+                            continue
+                        log_info(f"replicate catvton seg {idx} pixverse OK url={vurl[:60]} (attempt {attempt+1})")
+                        return vurl
+                    except Exception as _e:
+                        last_err = f"swap 异常: {type(_e).__name__}:{str(_e)[:120]}"
+                        if attempt == 2: break
+                        await _asyncio.sleep(2 * (2 ** attempt))
+                # 3 次都失败,降级静态(用 cat-vton 输出帧 — 至少产品对的)
+                log_warning(f"replicate catvton seg {idx} pixverse 3 次失败,降级静态: {last_err}")
+                scene_dur = float(scenes[idx].get("duration_sec", 5)) if idx < len(scenes) else 5.0
+                return await _frame_to_static_video(vton_image_url, scene_dur, aspect_ratio)
+
+        results = await _asyncio.gather(*[
+            _catvton_then_swap(i, seg_urls[i], frames[i]) for i in range(len(scenes))
+        ], return_exceptions=True)
+        final_urls = []
+        for i, r in enumerate(results):
+            if isinstance(r, Exception):
+                log_error(f"replicate catvton seg {i} 完全失败,最后兜底用原 ref 视频段: {r}")
+                final_urls.append(seg_urls[i])
+            else:
+                final_urls.append(r)
+        return final_urls
 
 

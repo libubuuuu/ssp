@@ -26,9 +26,10 @@ const ASPECT_OPTIONS = [
 ];
 
 const ENGINE_OPTIONS = [
-  { value: "pixverse-swap",     label: "动作复刻(单步)⭐穿戴类首选", desc: "单步替换模特 · 适合衣服/塑身衣/胸罩 · 复刻参考视频动作", color: "#0d8a3e" },
-  { value: "pixverse-2step",    label: "动作复刻(双步)🎯手持类首选", desc: "先换产品后换模特 · 适合手机/包/水杯/化妆品 · 手物 100% 贴合", color: "#1d4ed8" },
-  { value: "seedance-lite-i2v", label: "AI 自由生成",     desc: "AI 自由生成动作(不复刻参考视频)", color: "#888" },
+  { value: "catvton-pixverse",  label: "真模特试穿(穿戴类首选)⭐ 产品 100% 严守", desc: "cat-vton 真把你的产品穿到模特身上 · 产品颜色/材质/Logo 像素级保留 · 适合衣服/塑身衣/胸罩 · P209", color: "#dc2626" },
+  { value: "pixverse-2step",    label: "动作复刻(双步)🎯手持类首选 · 产品 100% 严守", desc: "先用你产品图做 object swap 再换模特 · 适合手机/包/水杯/化妆品 · 手物 100% 贴合", color: "#1d4ed8" },
+  { value: "pixverse-swap",     label: "动作复刻(单步,GPT 自由发挥)", desc: "GPT-Image 2 出图 + pixverse 复刻动作 · 产品颜色/形状会漂 · 仅作快速预览", color: "#888" },
+  { value: "seedance-lite-i2v", label: "AI 自由生成",     desc: "AI 自由生成动作(不复刻参考视频)· 产品也会漂", color: "#aaa" },
 ];
 
 function token() {
@@ -57,7 +58,7 @@ export default function ReplicatePage() {
   const [scenes, setScenes] = useState<Scene[] | null>(null);
   const [detectedRatio, setDetectedRatio] = useState<string>("9:16");
   const [chosenRatio, setChosenRatio] = useState<string>("auto");
-  const [chosenEngine, setChosenEngine] = useState<string>("pixverse-swap");
+  const [chosenEngine, setChosenEngine] = useState<string>("catvton-pixverse");
 
   const [originalSpeech, setOriginalSpeech] = useState<string>("");
   const [speechAudioUrl, setSpeechAudioUrl] = useState<string>("");
