@@ -20,8 +20,9 @@
 | 2 | 单一 estimate 入口 | 加 `/preview-segments` + estimate 双模(single / ultimate) | 用户拿到分段缩略图后才好选档 |
 | 3 | 切片仅返回 plan | 切片同时为每段抽缩略图(ffmpeg 中间帧) | 前端 UI 选档时展示 |
 | 4 | 单段任务 type 不存在 | 显式 `type=single\|ultimate` | 区分计费模型 + DB 查询效率 |
-| 5 | 段长 < input_seconds 无策略 | 前端 UI 灰掉该 tier(段长 < tier 输入秒数 → 不许选) | 防"用户付贵价但段不够长" |
-| 6 | 三档(economy/standard/premium) | 全局两档:economy + standard,premium 砍掉 | UI 整齐 + 减 30% 测试用例 |
+| 5 | 段长 < input_seconds 无策略 | ~~前端 UI 灰掉该 tier~~ → **2026-05-10 砍单档:不再有 tier 概念,无此问题** | 历史:防"用户付贵价但段不够长" |
+| 6 | 三档(economy/standard/premium) | ~~全局两档:economy + standard~~ → **2026-05-10 进一步砍单档:全局单档,fal 行为同质** | 实测 fal 端 economy/standard 资源参数完全等价,分档只是 UI 噱头 |
+| 6.5 | 双档(economy + standard) | **全局单档:每段 ¥19.9 / 20 积分,无档位选择** | 2026-05-10 commit 3 实施 |
 | 7 | 一刀切 ai 替换全段 | ⭐ **功能 1+2:replacement_mode(partial/full)+ 每段 AI / 原片段切换** | 部分段选"原视频片段"则跳 fal 不计费,直接拼接 |
 | 8 | 单一 image_urls 数组 | ⭐ **功能 3:每张图标 role(product/person/scene/reference),后端拼 prompt 用 @ 语法** | 提示模型识别参考素材身份 |
 | 9 | 用户写 prompt | ⭐ **功能 4:5 个 prompt 模板按钮**(婴儿用品带货 / 服装试穿 / 美食制作 / 数码开箱 / 美妆护肤) | 模板填入后用户可改 |
@@ -54,9 +55,11 @@
 # services/video_clone_v2_pricing.py(新建)
 
 # ⭐ 全局两档(用户最终决议):premium 已砍掉
-TIER_INPUT_SECONDS = {"economy": 2, "standard": 4}
-TIER_CREDITS       = {"economy": 15, "standard": 20}
-TIER_DISPLAY_RMB   = {"economy": "14.9", "standard": "19.9"}  # ¥0.10 自吞
+# 2026-05-10 commit 3 砍单档:三个 dict 统一成单档常量
+SEGMENT_CREDITS:           Final[int] = 20      # 每个 ai 段固定扣 20 积分
+SEGMENT_DISPLAY_RMB:       Final[str] = "19.9"  # 前端营销展示价
+SEGMENT_LABEL:             Final[str] = "AI 替换"
+SEGMENT_INPUT_SECONDS_MAX: Final[int] = 8       # worst-case 估算上限,实际段长 4-8s
 
 # fal 端固定参数(仅 v2 用)
 FAL_ENDPOINT       = "bytedance/seedance-2.0/fast/reference-to-video"
@@ -140,14 +143,10 @@ POST /api/video/clone-v2/preview-segments
 { "type": "ultimate",
   "segments": [
     { "idx": 0, "start": 0,    "duration": 8.0,
-      "thumbnail_url": "https://ailixiao.com/uploads/video_clone_v2/preview/{token}_0.jpg",
-      "allowed_tiers": ["economy", "standard"] },
-    { "idx": 1, "start": 8.0,  "duration": 8.0,
-      "thumbnail_url": "...", "allowed_tiers": ["economy", "standard"] },
-    { "idx": 2, "start": 16.0, "duration": 8.0,
-      "thumbnail_url": "...", "allowed_tiers": ["economy", "standard"] },
-    { "idx": 3, "start": 24.0, "duration": 8.5,
-      "thumbnail_url": "...", "allowed_tiers": ["economy", "standard"] }
+      "thumbnail_url": "https://ailixiao.com/uploads/video_clone_v2/preview/{token}_0.jpg" },
+    { "idx": 1, "start": 8.0,  "duration": 8.0, "thumbnail_url": "..." },
+    { "idx": 2, "start": 16.0, "duration": 8.0, "thumbnail_url": "..." },
+    { "idx": 3, "start": 24.0, "duration": 8.5, "thumbnail_url": "..." }
   ],
   "preview_token": "uuid-for-cache-cleanup"
 }
@@ -155,7 +154,7 @@ POST /api/video/clone-v2/preview-segments
 
 **业务**:跟 v3 一样(详见 v3 的 §3.3),preview-segments **不知道 replacement_mode**。前端拿到 segments 后:
 - 若用户选 `replacement_mode=partial` → 默认所有段 source_type='original',用户勾要 AI 的段
-- 若用户选 `replacement_mode=full` → 默认所有段 source_type='ai' + tier='economy',用户可勾掉
+- 若用户选 `replacement_mode=full` → 默认所有段 source_type='ai',用户可勾掉单段切回原视频
 
 **short-circuit**:`type=single` 时返一段,前端 UI 一张缩略图 + 单段功能 1+2 的 UI(局部/全方位 + AI/原片段)。
 
@@ -163,14 +162,14 @@ POST /api/video/clone-v2/preview-segments
 ```
 POST /api/video/clone-v2/estimate
 ```
-**Body**(⭐ 功能 1+2:每段含 source_type + tier):
+**Body**(⭐ 功能 1+2:每段含 source_type,2026-05-10 砍单档后无 tier 字段):
 ```json
 { "type": "ultimate",
   "replacement_mode": "partial",
   "segments": [
-    { "idx": 0, "source_type": "ai",       "tier": "standard" },
+    { "idx": 0, "source_type": "ai" },
     { "idx": 1, "source_type": "original" },
-    { "idx": 2, "source_type": "ai",       "tier": "economy" },
+    { "idx": 2, "source_type": "ai" },
     { "idx": 3, "source_type": "original" }
   ]
 }
@@ -191,7 +190,8 @@ POST /api/video/clone-v2/estimate
 **校验**:
 - `type=single`:segments 长度 = 1
 - `type=ultimate`:`len(segments) ∈ [1, 8]`,**至少 1 段 source_type='ai'**(否则没 AI 工作可做,纯原视频拼接 → 拒;前端 UI 也禁掉这种状态)
-- 每段 `source_type ∈ {ai, original}`,**ai 段必须有 tier(economy/standard),original 段不能有 tier**
+- 每段 `source_type ∈ {ai, original}`(2026-05-10 砍单档,tier 字段删除)
+- Pydantic SegmentPlanItem 加 `extra="forbid"`,传 tier 字段会被拒 422
 - `replacement_mode ∈ {partial, full}`(不强校验跟 segments 默认值的对应,纯前端语义)
 - `MAX_ORDER_COST_USD` 估算超 → 400
 
@@ -204,9 +204,9 @@ POST /api/video/clone-v2/create
 { "type": "ultimate",
   "replacement_mode": "partial",
   "segments": [
-    { "idx": 0, "source_type": "ai", "tier": "standard" },
+    { "idx": 0, "source_type": "ai" },
     { "idx": 1, "source_type": "original" },
-    { "idx": 2, "source_type": "ai", "tier": "economy" },
+    { "idx": 2, "source_type": "ai" },
     { "idx": 3, "source_type": "original" }
   ],
   "video_url": "https://v3.fal.media/.../input.mp4",
@@ -223,7 +223,7 @@ POST /api/video/clone-v2/create
 ```json
 { "type": "single",
   "replacement_mode": "full",
-  "segments": [{ "idx": 0, "source_type": "ai", "tier": "standard" }],
+  "segments": [{ "idx": 0, "source_type": "ai" }],
   "video_url": "...", "video_duration_sec": 6.5,
   "image_urls": [{"url": "...", "role": "product"}],
   "prompt": "...", "disclaimer_acknowledged": true }
@@ -242,14 +242,13 @@ POST /api/video/clone-v2/create
 2. **disclaimer 留痕**:`INSERT INTO video_clone_v2_disclaimer_log (...)` 写 user_id / ip / video_sha256 / job_id
 3. **prompt 内容审核**:`content_filter.check_text(prompt)` 命中 → 400
 4. **切片重算**:后端用 `plan_segments_v2(video_duration_sec)` 重算 plan,跟前端传的 `len(segments)` 不一致 → 400(防前端篡改)
-5. **每段 source_type / tier 验证**:
-   - 至少 1 段 ai(否则 400)
-   - 每个 ai 段:tier ∈ allowed_tiers(allowed_tiers 是后端按段长算的,详见 §5.5),否则 400
-   - 每个 original 段:tier 必须缺省/null
+5. **每段 source_type 验证**(2026-05-10 砍单档,tier / allowed_tiers 字段删除):
+   - 至少 1 段 source_type='ai'(全 original 没工作 → 400)
+   - Pydantic extra='forbid' 拒废弃字段(传 tier → 422)
 6. **价格 + 保险 2**:算总积分 + 估算 fal 成本(只算 ai 段),超 `MAX_ORDER_COST_USD` → 400
 7. **额度检查 + 扣费**:`deduct_credits(user_id, total_credits)` 失败 → 402
 8. **prompt 拼接(⭐ 功能 3)**:`build_prompt(prompt, image_urls)` 加 @ 语法(详见 §5.6)
-9. **DB 写入**:`INSERT INTO video_clone_v2_jobs (...)` status='processing',segments_plan 包含每段 source_type / tier / start / duration / thumbnail_url
+9. **DB 写入**:`INSERT INTO video_clone_v2_jobs (...)` status='processing',segments_plan 包含每段 source_type / start / duration / input_seconds / thumbnail_url(2026-05-10 砍单档,tier 字段已删)
 10. **异步推**:`asyncio.create_task(_process_v2_job(job_id))`
 11. **立即返回** job_id
 
@@ -265,13 +264,13 @@ GET /api/video/clone-v2/jobs/{job_id}
   "replacement_mode": "partial", "status": "processing",
   "progress": { "completed": 1, "total_ai": 2, "total_original": 2 },
   "segments": [
-    {"idx": 0, "source_type": "ai", "tier": "standard", "status": "completed", "output_url": "..."},
+    {"idx": 0, "source_type": "ai", "status": "completed", "output_url": "..."},
     {"idx": 1, "source_type": "original", "status": "ready"},
-    {"idx": 2, "source_type": "ai", "tier": "economy",  "status": "processing"},
+    {"idx": 2, "source_type": "ai", "status": "processing"},
     {"idx": 3, "source_type": "original", "status": "ready"}
   ],
   "final_video_url": null,
-  "total_credits_charged": 35, "total_credits_refunded": 0,
+  "total_credits_charged": 40, "total_credits_refunded": 0,
   "error": null }
 ```
 
@@ -317,7 +316,7 @@ GET /api/video/clone-v2/prompt-templates
 - `id` / `user_id`
 - 计费模型:`type`(single/ultimate)/ `replacement_mode`(partial/full)/ `tier`(已废弃留空)/ `segment_tiers`(已废弃留空)
 - 输入:`input_video_url` / `input_video_duration_sec` / `input_video_sha256` / **`image_urls`** (JSON: `[{url, role}]`,⭐ 功能 3)/ `prompt` / `prompt_compiled`(⭐ 功能 3:后端拼好的带 @ 语法的最终 prompt)
-- 计划:`segments_plan` JSON: `[{idx, start, duration, source_type, tier, input_seconds, thumbnail_url}]`(⭐ 加 source_type)
+- 计划:`segments_plan` JSON: `[{idx, start, duration, source_type, input_seconds, thumbnail_url}]`(2026-05-10 砍单档,tier 字段已删,input_seconds 保留作 fallback,后续 cleanup commit 决定是否删)
 - 结果:`segments_results` JSON: `[{idx, source_type, fal_request_id, status, output_url, retry_count, actual_cost_usd, error}]`
 - 成片:`final_video_url` / `final_video_local_path`
 - 计费:`total_credits_charged` / `total_credits_refunded` / `fal_cost_total_usd`
@@ -476,18 +475,9 @@ async def call_fal_seedance(video_url: str, plan_item: dict, job: dict, seed: in
     )
 ```
 
-### 5.5 段长 vs tier UI 约束(全局两档简化版)
+### 5.5 ~~段长 vs tier UI 约束~~(已废弃)
 
-后端切片返回的 `allowed_tiers` 规则:
-- 段长 < 2.0s:`[]` — 整体回退或拒绝
-- 段长 [2.0, 4.0):`["economy"]` 单选
-- 段长 ≥ 4.0:`["economy", "standard"]` 全开
-
-前端 UI:不允许的 tier 灰掉 + 鼠标悬浮提示"该段太短,不能选标准档"。
-
-后端 `/create` 入口校验:每个 ai 段所选 tier ∈ `allowed_tiers`,否则 400。
-
-**简化收益**(对照之前三档):每张段卡 2 个 radio(原 3 个);测试组合 3^N → 2^N(N 段)。
+**2026-05-10 commit 3 砍单档,本节失效**。原 allowed_tiers 规则随 _allowed_tiers 函数一并删除。所有段统一定价,无段长档位约束。
 
 ### 5.6 ⭐ 功能 3:Prompt 拼接(`build_prompt`)
 
@@ -594,7 +584,7 @@ V1 实现(本期):
 
 **不做**:colorbalance / 跨段 LUT 归一化(留 P221b)。
 
-**末段长 8.5 秒 + standard 档的 fal 成本**:standard 输入截 4s 恒定(`prepare_segment_input` 第二步),不会因段长 > 8 多扣。
+**末段长 8.5 秒 / 12 秒(并段后)的 fal 成本**:2026-05-10 砍单档后段输入 = 段实际秒数(4-12s),fal duration 字段对齐到 [4,15] 区间,worst-case 按 SEGMENT_INPUT_SECONDS_MAX × $0.0925 × 1.3 估算。
 
 ---
 
@@ -612,7 +602,7 @@ class Settings(BaseSettings):
 **保险 1 — 单段 ai fal 实扣超限**:
 - 触发点:`call_fal_seedance` 完成后查 `actual_cost_usd`
 - 超 → `add_credits` 全额退 + alert
-- fallback(fal 不返 cost):用 `tier_input × $0.0925/s × 1.3` 估,超阈值也触发
+- fallback(fal 不返 cost):用 `SEGMENT_INPUT_SECONDS_MAX × $0.0925/s × 1.3` 估,超阈值也触发
 
 **保险 2 — 单订单总额上限**:
 - 触发点:`/estimate` 和 `/create` 入口
@@ -649,7 +639,7 @@ class Settings(BaseSettings):
 | 场景 | 退款金额 | 触发位置 |
 |---|---|---|
 | 全 ai 段失败 | 全额(total_credits_charged) | processor 第 5 步 |
-| 部分 ai 段失败 | 按各失败段所选 tier 价格累加退(`sum(TIER_CREDITS[failed.tier])`),失败段在拼接时跳过(不补原视频) | processor 第 7 步 |
+| 部分 ai 段失败 | 单档:每失败段统一退 SEGMENT_CREDITS(=20 积分),`refund = len(failed_ai) × SEGMENT_CREDITS`,失败段在拼接时跳过 | processor 第 7 步 |
 | 用户主动取消(未扣 fal) | 全额 | `/cancel` 端点 |
 | 保险 1 触发 | 全额 | processor 第 4 步 |
 | fal NSFW 拦 | 该段 tier 价格(走 ai 段失败路径) | call_fal_seedance |

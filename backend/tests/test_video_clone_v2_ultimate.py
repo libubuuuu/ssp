@@ -18,7 +18,7 @@ import pytest
 
 from app.database import get_db
 from app.services import video_clone_v2_processor as proc_mod
-from app.services.video_clone_v2_pricing import TIER_CREDITS
+from app.services.video_clone_v2_pricing import SEGMENT_CREDITS
 
 
 P220_VIDEO = "/opt/ssp/uploads/probe/p220_balance_test/result_480p_2s_input.mp4"
@@ -210,7 +210,7 @@ class TestProcessUltimate:
         with get_db() as conn:
             conn.execute("UPDATE users SET credits = ? WHERE id = ?", (100, user["id"]))
             total_credits = sum(
-                TIER_CREDITS.get(p.get("tier"), 0)
+                SEGMENT_CREDITS
                 for p in plan_segments if p.get("source_type") == "ai"
             )
             job_id = str(uuid.uuid4())
@@ -291,8 +291,8 @@ class TestProcessUltimate:
         monkeypatch.setattr(proc_mod, "_archive_local_dual", _fake_archive)
 
         plan = [
-            {"idx": 0, "start": 0.0, "duration": 2.0, "source_type": "ai", "tier": "economy"},
-            {"idx": 1, "start": 2.0, "duration": 2.0, "source_type": "ai", "tier": "economy"},
+            {"idx": 0, "start": 0.0, "duration": 2.0, "source_type": "ai"},
+            {"idx": 1, "start": 2.0, "duration": 2.0, "source_type": "ai"},
         ]
         user_id, job_id, charged = self._setup_job(plan)
 
@@ -354,9 +354,9 @@ class TestProcessUltimate:
         monkeypatch.setattr(proc_mod, "_archive_local_dual", _fake_archive)
 
         plan = [
-            {"idx": 0, "start": 0.0, "duration": 2.0, "source_type": "ai", "tier": "economy"},
-            {"idx": 1, "start": 2.0, "duration": 2.0, "source_type": "ai", "tier": "economy"},
-            {"idx": 2, "start": 4.0, "duration": 2.0, "source_type": "ai", "tier": "economy"},
+            {"idx": 0, "start": 0.0, "duration": 2.0, "source_type": "ai"},
+            {"idx": 1, "start": 2.0, "duration": 2.0, "source_type": "ai"},
+            {"idx": 2, "start": 4.0, "duration": 2.0, "source_type": "ai"},
         ]
         user_id, job_id, charged = self._setup_job(plan)
         # _setup_job UPDATE credits = 100 直接(没走真实扣款),所以 balance_before = 100
@@ -393,8 +393,8 @@ class TestProcessUltimate:
                 "SELECT credits FROM users WHERE id = ?", (user_id,)
             ).fetchone()[0]
         assert row[0] == "completed", f"期望 completed(部分成功也算),实际:{row[0]}"
-        assert row[1] == TIER_CREDITS["economy"]   # 退段 1 = 15 积分
-        assert user_credits == balance_before + TIER_CREDITS["economy"]
+        assert row[1] == SEGMENT_CREDITS   # 退段 1 = 20 积分(单档)
+        assert user_credits == balance_before + SEGMENT_CREDITS
 
     @patch("app.services.video_clone_v2_processor.fal_client")
     def test_all_segs_fail_marks_failed_and_partial_refunds(
@@ -407,8 +407,8 @@ class TestProcessUltimate:
         mock_fal.subscribe_async = _all_fail
 
         plan = [
-            {"idx": 0, "start": 0.0, "duration": 2.0, "source_type": "ai", "tier": "economy"},
-            {"idx": 1, "start": 2.0, "duration": 2.0, "source_type": "ai", "tier": "standard"},
+            {"idx": 0, "start": 0.0, "duration": 2.0, "source_type": "ai"},
+            {"idx": 1, "start": 2.0, "duration": 2.0, "source_type": "ai"},
         ]
         user_id, job_id, charged = self._setup_job(plan)
 
@@ -440,7 +440,78 @@ class TestProcessUltimate:
                 (job_id,),
             ).fetchone()
         assert row[0] == "failed"
-        assert row[1] == TIER_CREDITS["economy"] + TIER_CREDITS["standard"]   # 全段都退
+        assert row[1] == 2 * SEGMENT_CREDITS   # 全段都退,单档 2 × 20 = 40
+
+
+# ─── Pydantic extra="forbid" 安全网测试 ────────────────────────────────
+
+class TestPydanticForbidSafetyNet:
+    """🚩 单档:Pydantic Request 类加了 extra="forbid",防老 client 传废弃 tier 字段被静默接受"""
+
+    def _make_client_and_token(self, monkeypatch):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from app.api import video_clone_v2 as v2_module
+        from app.api.auth import create_jwt_token
+        from app.services.auth import create_user
+
+        monkeypatch.setenv("ENABLE_VIDEO_CLONE_V2", "true")
+        from app.config import get_settings
+        get_settings.cache_clear()
+
+        app = FastAPI()
+        app.include_router(v2_module.router, prefix="/api/video/clone-v2")
+        c = TestClient(app)
+
+        em = f"u{uuid.uuid4().hex[:8]}@test.com"
+        u = create_user(email=em, password="x" * 8)
+        token = create_jwt_token(u["id"], em, "user")
+        return c, token
+
+    def test_segment_with_tier_field_rejected(self, monkeypatch):
+        """单档:API body 传废弃的 tier 字段必须 422,不能静默接受"""
+        c, token = self._make_client_and_token(monkeypatch)
+        body = {
+            "type": "single",
+            "replacement_mode": "partial",
+            "segments": [
+                {"idx": 0, "source_type": "ai", "tier": "economy"},  # ⚠️ 旧前端遗留废弃字段
+            ],
+            "video_url": "https://fake.fal.media/v.mp4",
+            "video_duration_sec": 6.0,
+            "video_sha256": "a" * 64,
+            "image_urls": [],
+            "prompt": "测试",
+            "disclaimer_acknowledged": True,
+        }
+        r = c.post("/api/video/clone-v2/create", json=body,
+                   headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 422, f"期望 422 拒 tier 字段,实际:{r.status_code} body={r.text[:200]}"
+        assert "tier" in r.text.lower(), f"422 错误信息应提到 tier,实际:{r.text[:200]}"
+
+    def test_request_without_unknown_fields_passes_pydantic(self, monkeypatch):
+        """对照测试:body 不含废弃字段 → 不被 Pydantic 拒(可能业务 4xx 但不是 422 schema 错)"""
+        c, token = self._make_client_and_token(monkeypatch)
+        body = {
+            "type": "single",
+            "replacement_mode": "partial",
+            "segments": [{"idx": 0, "source_type": "ai"}],  # ✅ 没有 tier
+            "video_url": "https://fake.fal.media/v.mp4",
+            "video_duration_sec": 6.0,
+            "video_sha256": "a" * 64,
+            "image_urls": [],
+            "prompt": "测试",
+            "disclaimer_acknowledged": True,
+        }
+        # mock process_v2_job 不真跑
+        from app.api import video_clone_v2 as v2_module
+        async def _noop(jid): pass
+        monkeypatch.setattr(v2_module, "process_v2_job", _noop)
+
+        r = c.post("/api/video/clone-v2/create", json=body,
+                   headers={"Authorization": f"Bearer {token}"})
+        # 不是 422(Pydantic 不报)。可能 200 / 业务 4xx,不能是 schema 错
+        assert r.status_code != 422, f"合法 body 不该被 Pydantic 拒,实际:{r.status_code} {r.text[:200]}"
 
 
 # ─── /create 端点测试(API 层) ─────────────────────────────────────────
@@ -485,8 +556,8 @@ class TestCreateUltimateApi:
             "type": "ultimate",
             "replacement_mode": "partial",
             "segments": [
-                {"idx": 0, "source_type": "ai", "tier": "economy"},
-                {"idx": 1, "source_type": "ai", "tier": "standard"},
+                {"idx": 0, "source_type": "ai"},
+                {"idx": 1, "source_type": "ai"},
             ],
             "video_url": "https://fake.fal.media/v.mp4",
             "video_duration_sec": 18.0,
@@ -514,7 +585,7 @@ class TestCreateUltimateApi:
         assert row[2] == 16.0
         assert row[3] == 18.0
         assert row[4] == 2.0
-        assert row[5] == TIER_CREDITS["economy"] + TIER_CREDITS["standard"]
+        assert row[5] == 2 * SEGMENT_CREDITS
         assert row[6] == 2  # 2 段(plan 用 effective=16s 算)
 
         # ── 同一 client 测中段 drop:18s 视频丢中间 [8, 10] 2s → effective 16s → 2 段 ──
@@ -764,7 +835,7 @@ class TestSSRFGuard:
         base_body = {
             "type": "single",
             "replacement_mode": "partial",
-            "segments": [{"idx": 0, "source_type": "ai", "tier": "economy"}],
+            "segments": [{"idx": 0, "source_type": "ai"}],
             "video_url": "PLACEHOLDER",
             "video_duration_sec": 6.0,
             "video_sha256": "a" * 64,

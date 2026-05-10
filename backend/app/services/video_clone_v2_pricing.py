@@ -9,14 +9,16 @@ import hashlib
 from typing import Final, Mapping, Sequence
 
 
-# ⭐ 全局两档(用户最终决议:premium 已砍掉)
-# 2026-05-10:input 秒数都改成 8 — fal 端点 duration 最低值是 4(实测枚举仅 'auto', 4-15),
-# 且 input < output 会触发模型 hallucinate(后段失参考)。改成 input=output=8s,
-# reference 全程不漂。tier 区别保留作产品分档,fal 行为一致,定价不变(用户明令)。
-TIER_INPUT_SECONDS: Final[Mapping[str, int]] = {"economy": 8, "standard": 8}
-TIER_CREDITS:       Final[Mapping[str, int]] = {"economy": 15, "standard": 20}
-# 前端展示价(¥0.10 自吞 — 营销价 vs 实扣积分):
-TIER_DISPLAY_RMB:   Final[Mapping[str, str]] = {"economy": "14.9", "standard": "19.9"}
+# ⭐ 全局单档(2026-05-10 砍 economy/standard,只留一档)
+# 决策依据:
+# - fal 端点 duration 最低 4 + input<output 触发 hallucinate(2026-05-10 probe 验证)
+#   → 全段 input=output=N 秒(N ∈ [4,8],plan_segments_v2 决定)
+# - 砍单档后 economy/standard 行为已等价(同端点/同分辨率/同参数),分档只是 UI 噱头
+# - 占位定价用原 standard 档上限值(20 积分 / ¥19.9),commit 5 真测 fal cost 后重定
+SEGMENT_CREDITS:       Final[int] = 20      # 每个 ai 段固定扣 20 积分
+SEGMENT_DISPLAY_RMB:   Final[str] = "19.9"  # 前端营销展示价
+SEGMENT_LABEL:         Final[str] = "AI 替换"  # 前端段卡片显示名
+SEGMENT_INPUT_SECONDS_MAX: Final[int] = 8   # worst-case 估算上限,实际段长 4-8s
 
 
 # fal 端固定参数(改要测过)
@@ -78,22 +80,15 @@ WATERMARK_FONT_FAMILY:        Final[str]   = "Noto Sans CJK SC Bold"  # 六审�
 
 
 def calc_total_credits(segments: Sequence[Mapping]) -> int:
-    """算订单总积分(忽略 source_type='original' 段,只对 ai 段按 tier 累加)。
+    """算订单总积分(忽略 source_type='original' 段,只对 ai 段累加单档单价)。
 
     Args:
-        segments: [{"source_type": "ai"|"original", "tier": "economy"|"standard"|None}, ...]
+        segments: [{"source_type": "ai"|"original", ...}, ...]
     Returns:
-        总积分(int)
+        总积分(int)= ai 段数 × SEGMENT_CREDITS
     """
-    total = 0
-    for seg in segments:
-        if seg.get("source_type") != "ai":
-            continue  # original 段不计费
-        tier = seg.get("tier")
-        if tier not in TIER_CREDITS:
-            raise ValueError(f"非法 tier: {tier!r}(必须 ∈ {tuple(TIER_CREDITS.keys())})")
-        total += TIER_CREDITS[tier]
-    return total
+    ai_count = sum(1 for seg in segments if seg.get("source_type") == "ai")
+    return ai_count * SEGMENT_CREDITS
 
 
 # alias 对齐 A2 任务清单命名("calc_credits");新代码调用方推荐用 calc_credits

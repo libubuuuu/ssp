@@ -1,19 +1,17 @@
-"""P221 视频复刻 V2 — 切片算法 + allowed_tiers + check_duration(智能切片提示)
+"""P221 视频复刻 V2 — 切片算法 + check_duration(智能切片提示)
 
 详见 docs/P221-API-SCHEMA.md(v4)§6 + docs/P221-CHECK-DURATION-UI.md(智能切片设计)。
 
-切片规则:
-- total < 2     → 拒绝
-- [2, 4)        → 单段,仅 economy
-- [4, 8]        → 单段,两档可选
+切片规则(2026-05-10 砍单档后):
+- total < 4     → 拒绝(fal duration 最低 4 秒,< 4 段无法处理)
+- [4, 8]        → 单段
 - (8, 64],非 8 倍数 → 弹窗让用户选丢哪段(target = floor(total/8)*8)
 - 8 / 16 / 24 / ... / 64 整数倍 → 完美分段
 - > 64          → 拒绝
+- 末段 < 4 秒并到前一段(最多 12 秒;fal 接受 4-15s 输入)
 
-allowed_tiers:
-- < 2.0s:[]
-- [2.0, 4.0):["economy"]
-- ≥ 4.0s:    ["economy", "standard"]
+⚠ 历史:本模块原有 _allowed_tiers + allowed_tiers 字段,2026-05-10 砍 economy/standard 单档后删除。
+       所有段统一单价,无需 tier 选项。
 """
 from __future__ import annotations
 import asyncio
@@ -26,20 +24,11 @@ from .video_clone_v2_pricing import (
 )
 
 
-def _allowed_tiers(seg_duration: float) -> List[str]:
-    """根据段长决定可选 tier 列表(全局两档,详见 §5.5)。"""
-    if seg_duration < 2.0:
-        return []
-    if seg_duration < 4.0:
-        return ["economy"]
-    return ["economy", "standard"]
-
-
 def plan_segments_v2(total_sec: float) -> List[Dict[str, Any]]:
-    """切片(不带 source_type / tier — 那是前端用户选完才知道)。
+    """切片(不带 source_type — 那是前端用户选完才知道)。
 
     Returns:
-        [{"idx", "start", "duration", "allowed_tiers"}, ...]
+        [{"idx", "start", "duration"}, ...]
     Raises:
         ValueError: total_sec < 4 / > 64 / 段数 > MAX_ULTIMATE_SEGMENTS
     """
@@ -55,7 +44,6 @@ def plan_segments_v2(total_sec: float) -> List[Dict[str, Any]]:
             "idx": 0,
             "start": 0.0,
             "duration": float(total_sec),
-            "allowed_tiers": _allowed_tiers(total_sec),
         }]
 
     segments: List[Dict[str, Any]] = []
@@ -71,16 +59,13 @@ def plan_segments_v2(total_sec: float) -> List[Dict[str, Any]]:
         cur += seg_dur
         idx += 1
 
-    # 末段 < 4 秒并到前一段(最多 12 秒;fal 接受 ~15s 输入)
+    # 末段 < 4 秒并到前一段(最多 12 秒;fal 接受 4-15s 输入)
     if len(segments) > 1 and segments[-1]["duration"] < 4.0:
         last = segments.pop()
         segments[-1]["duration"] += last["duration"]
 
     if len(segments) > MAX_ULTIMATE_SEGMENTS:
         raise ValueError(f"段数超限({len(segments)} > {MAX_ULTIMATE_SEGMENTS})")
-
-    for seg in segments:
-        seg["allowed_tiers"] = _allowed_tiers(seg["duration"])
 
     return segments
 

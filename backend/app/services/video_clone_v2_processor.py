@@ -25,8 +25,8 @@ from .billing import add_credits
 from .logger import log_info, log_error
 from .video_clone_v2_archive import archive_dual_versions
 from .video_clone_v2_pricing import (
-    TIER_INPUT_SECONDS,
-    TIER_CREDITS,
+    SEGMENT_CREDITS,
+    SEGMENT_INPUT_SECONDS_MAX,
     FAL_ENDPOINT,
     FAL_RESOLUTION,
     FAL_OUTPUT_DURATION,
@@ -39,7 +39,8 @@ from .video_clone_v2_pricing import (
 
 
 # fallback fal 单段成本估算($0.0925/s = ¥0.66/s ÷ 7.2 USD/CNY):
-# fal API 不返 actual_cost 时用 tier_input_seconds × 这个数字 × 1.3 倍率估
+# fal API 不返 actual_cost → worst-case 按 SEGMENT_INPUT_SECONDS_MAX × 这个数字 × 1.3 估算
+# 保证不少扣,真实 cost 以 fal dashboard 为准
 FAL_FALLBACK_USD_PER_INPUT_SEC = 0.0925
 FAL_FALLBACK_OVERESTIMATE = 1.3
 
@@ -85,7 +86,7 @@ def _compute_keep_ranges(
     return keeps
 
 
-# ─── ffmpeg 切片 + tier 输入截短 ────────────────────────────────────────
+# ─── ffmpeg 切片 ────────────────────────────────────────────────────────
 
 async def _ffprobe_duration(path: str) -> float:
     proc = await asyncio.create_subprocess_exec(
@@ -215,7 +216,6 @@ async def call_fal_seedance(
     *,
     job_id: str = "",
     seg_idx: int = -1,
-    seg_tier: str = "",
     input_duration_sec: float = 8.0,
 ) -> Dict[str, Any]:
     """实际调 fal seedance r2v fast。
@@ -234,7 +234,7 @@ async def call_fal_seedance(
     input_hash = sha256_url_first8(video_url)
     fal_duration = _fal_duration_for_input(input_duration_sec)
     log_info(
-        f"[V2-FAL] job={job_id} seg={seg_idx} tier={seg_tier} "
+        f"[V2-FAL] job={job_id} seg={seg_idx} "
         f"input_hash={input_hash} prompt={prompt_compiled[:50]!r} seed={seed} "
         f"aspect={aspect_ratio} input_dur={input_duration_sec:.1f}s fal_duration={fal_duration!r}"
     )
@@ -276,9 +276,14 @@ async def call_fal_seedance(
     }
 
 
-def _estimate_cost_usd(tier: str) -> float:
-    """fallback:fal 不返 cost 时按 tier 输入秒数估算(× 1.3 倍率,触发保险更敏感)。"""
-    return TIER_INPUT_SECONDS[tier] * FAL_FALLBACK_USD_PER_INPUT_SEC * FAL_FALLBACK_OVERESTIMATE
+def _estimate_cost_usd() -> float:
+    """fallback:fal 不返 cost 时按 worst-case 8s × $0.0925 × 1.3 = $0.962 估算。
+
+    2026-05-10 砍单档:所有 ai 段 fal duration 都按段实际秒数(4-8s),
+    fallback 一律按 SEGMENT_INPUT_SECONDS_MAX(8s)上限估算保证不少扣。
+    commit 5 真测后基于 fal dashboard 真实 cost 重定常数。
+    """
+    return SEGMENT_INPUT_SECONDS_MAX * FAL_FALLBACK_USD_PER_INPUT_SEC * FAL_FALLBACK_OVERESTIMATE
 
 
 # ─── 单段调度(A2 范围)─────────────────────────────────────────────────
@@ -309,12 +314,12 @@ async def _run_one_ai_segment(
         prepared_dur = await _ffprobe_duration(prepared)
         result = await call_fal_seedance(
             input_url, url_only, prompt_compiled, seed, aspect_ratio,
-            job_id=job_id, seg_idx=idx, seg_tier=plan_item["tier"],
+            job_id=job_id, seg_idx=idx,
             input_duration_sec=prepared_dur,
         )
         actual_cost = result["actual_cost_usd"]
         if actual_cost is None:
-            actual_cost = _estimate_cost_usd(plan_item["tier"])
+            actual_cost = _estimate_cost_usd()
         return {
             "idx": idx,
             "source_type": "ai",
@@ -1024,8 +1029,12 @@ async def _process_ultimate(
         if r["status"] in ("completed",):
             continue
         # 失败 / cost_overflow / 任何非完成态 → 按段退
+        # 留这行 future-safe:future 改退款逻辑可能要从 plan_item 读字段
+        # 注意 next() 找不到匹配会 StopIteration,plan/results 数据一致性保证不发生
         plan_item = next(p for p in plan if p["idx"] == r["idx"])
-        seg_credits = TIER_CREDITS.get(plan_item.get("tier"), 0)
+        # 单档:每段失败统一退 SEGMENT_CREDITS(=20 积分)
+        # 老 job(commit 3 之前)有 tier 字段,但 prod 已 verify 无 in-flight 老 job,deploy 不会处理它们
+        seg_credits = SEGMENT_CREDITS
         await _refund_partial(job, r["idx"], seg_credits)
 
     # 4. 决定是否还有段能拼

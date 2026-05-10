@@ -2,30 +2,14 @@
 
 覆盖:
 - 边界:total < 4 / total > 64 / 等
-- 段长 → allowed_tiers
 - 末段 < 4 秒并到前段
 - 段数限制
+
+⚠ 历史:本文件原有 _allowed_tiers 测试组,2026-05-10 砍单档后删除。
 """
 import pytest
 
-from app.services.video_clone_v2_split import plan_segments_v2, _allowed_tiers
-
-
-# ─── allowed_tiers ───────────────────────────────────────────────────
-
-class TestAllowedTiers:
-    def test_below_2s_returns_empty(self):
-        assert _allowed_tiers(1.5) == []
-        assert _allowed_tiers(0.0) == []
-
-    def test_2_to_4s_only_economy(self):
-        assert _allowed_tiers(2.0) == ["economy"]
-        assert _allowed_tiers(3.99) == ["economy"]
-
-    def test_above_4s_both_tiers(self):
-        assert _allowed_tiers(4.0) == ["economy", "standard"]
-        assert _allowed_tiers(8.0) == ["economy", "standard"]
-        assert _allowed_tiers(12.0) == ["economy", "standard"]
+from app.services.video_clone_v2_split import plan_segments_v2
 
 
 # ─── plan_segments_v2 ────────────────────────────────────────────────
@@ -48,13 +32,13 @@ class TestPlanSegmentsV2:
         assert len(plan) == 1
         assert plan[0]["start"] == 0.0
         assert plan[0]["duration"] == 4.0
-        assert plan[0]["allowed_tiers"] == ["economy", "standard"]
+        assert "allowed_tiers" not in plan[0]
 
     def test_exactly_8s_single_segment(self):
         plan = plan_segments_v2(8.0)
         assert len(plan) == 1
         assert plan[0]["duration"] == 8.0
-        assert plan[0]["allowed_tiers"] == ["economy", "standard"]
+        assert "allowed_tiers" not in plan[0]
 
     def test_just_above_8s_two_segments_with_merge(self):
         # 8.5s:第二段 0.5s < 4 → 并到第一段 → 1 段(8.5s)
@@ -69,8 +53,8 @@ class TestPlanSegmentsV2:
         assert len(plan) == 2
         assert plan[0]["start"] == 0.0 and plan[0]["duration"] == 8.0
         assert plan[1]["start"] == 8.0 and plan[1]["duration"] == 4.0
-        assert plan[0]["allowed_tiers"] == ["economy", "standard"]
-        assert plan[1]["allowed_tiers"] == ["economy", "standard"]
+        assert "allowed_tiers" not in plan[0]
+        assert "allowed_tiers" not in plan[1]
 
     def test_15s_merge_last_short(self):
         # 15s:[8, 7] → 第二段 7s 不 merge → 2 段
@@ -105,12 +89,12 @@ class TestPlanSegmentsV2:
         plan = plan_segments_v2(64.0)
         assert len(plan) == 8
 
-    def test_short_segment_only_economy(self):
-        # 12.5s:[8, 4.5] → 第二段 4.5 ≥ 4 不 merge,但 4.5 < 8 → allowed=[economy, standard]
-        # 实际 4.5 ≥ 4 → both 都在
+    def test_short_last_segment_kept(self):
+        """12.5s:[8, 4.5] → 第二段 4.5 ≥ 4 不 merge → 2 段"""
         plan = plan_segments_v2(12.5)
+        assert len(plan) == 2
+        assert plan[0]["duration"] == 8.0
         assert plan[1]["duration"] == 4.5
-        assert plan[1]["allowed_tiers"] == ["economy", "standard"]
 
     def test_idx_continuous(self):
         plan = plan_segments_v2(32.5)

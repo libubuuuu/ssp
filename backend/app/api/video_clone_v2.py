@@ -39,9 +39,9 @@ from app.services.video_clone_v2_pricing import (
     PROMPT_TEMPLATES,
     IMAGE_ROLES,
     REPLACEMENT_MODES,
-    TIER_INPUT_SECONDS,
-    TIER_CREDITS,
-    TIER_DISPLAY_RMB,
+    SEGMENT_CREDITS,
+    SEGMENT_DISPLAY_RMB,
+    SEGMENT_INPUT_SECONDS_MAX,
     MAX_ULTIMATE_SECONDS,
     MAX_ULTIMATE_SEGMENTS,
     build_prompt,
@@ -146,31 +146,38 @@ MAX_IMAGE_SIZE = 10 * 1024 * 1024
 
 # ---------------------------------------------------------------- Pydantic ----
 
+# ⚠️ Request 类 BaseModel 必须加 model_config = {"extra": "forbid"}
+# Response 类保持默认 extra='allow' 以保留 schema 演化兼容性
+# 设计原则:对内严(Request),对外松(Response)
+
+# ✋ Response 子模型不加 forbid(纯输出,后端自己构造,无 round-trip)
 class SegmentChoice(BaseModel):
     idx: int = Field(..., ge=0)
     start: float = Field(..., ge=0)
     duration: float = Field(..., gt=0)
     thumbnail_url: Optional[str] = None
-    allowed_tiers: List[Literal["economy", "standard"]] = Field(default_factory=list)
 
 
 class SegmentPlanItem(BaseModel):
+    model_config = {"extra": "forbid"}
     idx: int = Field(..., ge=0)
     source_type: Literal["ai", "original"]
-    tier: Optional[Literal["economy", "standard"]] = None
 
 
 class ImageRef(BaseModel):
+    model_config = {"extra": "forbid"}
     url: str
     role: Literal["product", "person", "scene", "reference"]
 
 
 class EstimateRequest(BaseModel):
+    model_config = {"extra": "forbid"}
     type: Literal["single", "ultimate"]
     replacement_mode: Literal["partial", "full"]
     segments: List[SegmentPlanItem]
 
 
+# ✋ Response 类不加 forbid
 class EstimateResponse(BaseModel):
     type: str
     replacement_mode: str
@@ -183,6 +190,7 @@ class EstimateResponse(BaseModel):
 
 
 class CreateRequest(BaseModel):
+    model_config = {"extra": "forbid"}
     type: Literal["single", "ultimate"]
     replacement_mode: Literal["partial", "full"]
     segments: List[SegmentPlanItem]
@@ -204,6 +212,7 @@ class CreateRequest(BaseModel):
     )
 
 
+# ✋ Response 类不加 forbid
 class CreateResponse(BaseModel):
     job_id: str
     status: str
@@ -216,10 +225,12 @@ class CreateResponse(BaseModel):
 
 
 class PreviewSegmentsRequest(BaseModel):
+    model_config = {"extra": "forbid"}
     video_url: str
     video_duration_sec: float = Field(..., gt=0)
 
 
+# ✋ Response 类不加 forbid
 class PreviewSegmentsResponse(BaseModel):
     type: Literal["single", "ultimate"]
     segments: List[SegmentChoice]
@@ -227,6 +238,7 @@ class PreviewSegmentsResponse(BaseModel):
 
 
 class CheckDurationRequest(BaseModel):
+    model_config = {"extra": "forbid"}
     video_duration_sec: float = Field(..., gt=0)
     # Path B(本地缓存优先):前端把 upload/video 返的 sha256 一起带回来,后端先查
     # /tmp/v2_cache/{sha256}.mp4 直读本地(<1s);miss → fallback 走 fal CDN URL(6-9s)
@@ -234,6 +246,7 @@ class CheckDurationRequest(BaseModel):
     video_url: Optional[str] = Field(None, description="upload/video 返的 fal storage URL,缓存 miss 时 fallback")
 
 
+# ✋ Response 子模型不加 forbid(TrimCandidate 是 CheckDurationResponse.suggestions 的元素)
 class TrimCandidate(BaseModel):
     label: str
     position: Literal["head", "middle", "tail"]
@@ -243,6 +256,7 @@ class TrimCandidate(BaseModel):
     recommended: bool = False
 
 
+# ✋ Response 类不加 forbid
 class CheckDurationResponse(BaseModel):
     needs_trim: bool
     current_duration: float
@@ -256,7 +270,12 @@ class CheckDurationResponse(BaseModel):
 def _validate_segments(
     type_: str, segments: List[SegmentPlanItem], plan_back: list
 ) -> None:
-    """create / estimate 共用校验:对照后端重算的 plan,前端 segments 必须长度匹配 + tier 合法。"""
+    """create / estimate 共用校验:对照后端重算的 plan,前端 segments 必须长度匹配。
+
+    2026-05-10 砍单档后:
+    - 删 tier 校验(单档无需选)
+    - 仍校验:segments 数量匹配 / single 必 1 段 / ultimate 段数 1-MAX / 至少 1 段 ai
+    """
     if len(segments) != len(plan_back):
         raise HTTPException(
             400, f"segments 数量({len(segments)})跟切片不匹配({len(plan_back)})"
@@ -266,22 +285,7 @@ def _validate_segments(
     if type_ == "ultimate" and not (1 <= len(segments) <= MAX_ULTIMATE_SEGMENTS):
         raise HTTPException(400, f"ultimate 模式段数必须 1-{MAX_ULTIMATE_SEGMENTS}")
 
-    has_ai = False
-    for seg, back in zip(segments, plan_back):
-        if seg.source_type == "ai":
-            has_ai = True
-            if seg.tier is None:
-                raise HTTPException(400, f"段 {seg.idx} ai 必须有 tier")
-            if seg.tier not in back["allowed_tiers"]:
-                raise HTTPException(
-                    400,
-                    f"段 {seg.idx} 段长 {back['duration']:.1f}s 不允许 tier={seg.tier};"
-                    f"允许:{back['allowed_tiers']}"
-                )
-        else:  # original
-            if seg.tier is not None:
-                raise HTTPException(400, f"段 {seg.idx} original 不能有 tier")
-    if not has_ai:
+    if not any(seg.source_type == "ai" for seg in segments):
         raise HTTPException(400, "至少要有 1 段 source_type=ai(全 original 没工作可做)")
 
 
@@ -476,7 +480,7 @@ async def preview_segments(
         SegmentChoice(
             idx=p["idx"], start=p["start"], duration=p["duration"],
             thumbnail_url=None,  # A2 简版,B 阶段补
-            allowed_tiers=p["allowed_tiers"],
+            # 2026-05-10 砍单档:allowed_tiers 跟随 SegmentChoice 模型一起删
         ) for p in plan
     ]
     preview_token = uuid.uuid4().hex
@@ -495,42 +499,27 @@ async def estimate(
     """
     _guard_enabled()
 
-    # 简化校验:不重算 plan(因为 estimate 没传 video_duration_sec)
-    # tier / source_type 字段合法性靠 Pydantic;ai 段必须有 tier 这里手动查
-    has_ai = False
-    for seg in req.segments:
-        if seg.source_type == "ai":
-            has_ai = True
-            if seg.tier is None:
-                raise HTTPException(400, f"段 {seg.idx} ai 必须有 tier")
-        else:
-            if seg.tier is not None:
-                raise HTTPException(400, f"段 {seg.idx} original 不能有 tier")
-    if not has_ai:
+    # 单档:tier 校验已删,只需要校验"至少 1 段 ai"
+    if not any(seg.source_type == "ai" for seg in req.segments):
         raise HTTPException(400, "至少要有 1 段 source_type=ai")
 
-    # 算总积分
+    # 算总积分(calc_credits 单档版:ai 段数 × SEGMENT_CREDITS)
     seg_dicts = [s.model_dump() for s in req.segments]
-    try:
-        total_credits = calc_credits(seg_dicts)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    total_credits = calc_credits(seg_dicts)
 
-    # 估算 fal 成本(check 保险 2)
+    # 估算 fal 成本(check 保险 2)— worst-case 8s × $0.0925 × 1.3 / ai 段
     settings = get_settings()
-    estimated_usd = sum(
-        TIER_INPUT_SECONDS[s.tier] * 0.0925 * 1.3
-        for s in req.segments if s.source_type == "ai" and s.tier
-    )
+    ai_count = sum(1 for s in req.segments if s.source_type == "ai")
+    estimated_usd = ai_count * SEGMENT_INPUT_SECONDS_MAX * 0.0925 * 1.3
     if estimated_usd > settings.VC2_MAX_ORDER_COST_USD:
         raise HTTPException(
             400,
             f"订单估算成本 ${estimated_usd:.2f} 超上限 ${settings.VC2_MAX_ORDER_COST_USD}"
         )
 
-    ai_count = sum(1 for s in req.segments if s.source_type == "ai")
     original_count = len(req.segments) - ai_count
-    rmb_display = f"{total_credits - 0.1 * ai_count:.1f}"  # ¥0.10 自吞:每 ai 段标价比积分少 0.1
+    # rmb_display 直接按"ai 段数 × 单价"算,跟积分系统解耦(memory 教训:不强绑定汇率)
+    rmb_display = f"{ai_count * float(SEGMENT_DISPLAY_RMB):.1f}"
     estimated_minutes = max(2, ai_count * 2)  # 粗略每段 2 分钟
 
     return EstimateResponse(
@@ -639,10 +628,8 @@ async def create(
     settings = get_settings()
     seg_dicts = [s.model_dump() for s in req.segments]
     total_credits = calc_credits(seg_dicts)
-    estimated_usd = sum(
-        TIER_INPUT_SECONDS[s.tier] * 0.0925 * 1.3
-        for s in req.segments if s.source_type == "ai" and s.tier
-    )
+    ai_count = sum(1 for s in req.segments if s.source_type == "ai")
+    estimated_usd = ai_count * SEGMENT_INPUT_SECONDS_MAX * 0.0925 * 1.3
     if estimated_usd > settings.VC2_MAX_ORDER_COST_USD:
         raise HTTPException(400, f"订单估算成本超上限 ${settings.VC2_MAX_ORDER_COST_USD}")
 
@@ -658,7 +645,8 @@ async def create(
     image_urls_obj = [img.model_dump() for img in req.image_urls]
     prompt_compiled = build_prompt(req.prompt, image_urls_obj)
 
-    # 7. segments_plan 合并前端 segments + 后端 plan_back(start/duration/allowed_tiers)
+    # 7. segments_plan 合并前端 segments + 后端 plan_back(单档:不再有 tier 字段)
+    # input_seconds 字段保留作 fallback,跟段实际秒数对齐(memory: feedback_ssp_verify_before_delete)
     segments_plan = []
     for seg, back in zip(req.segments, plan_back):
         segments_plan.append({
@@ -666,8 +654,7 @@ async def create(
             "start": back["start"],
             "duration": back["duration"],
             "source_type": seg.source_type,
-            "tier": seg.tier,
-            "input_seconds": TIER_INPUT_SECONDS[seg.tier] if seg.tier else None,
+            "input_seconds": back["duration"],  # 段实际秒数
             "thumbnail_url": None,
         })
 
@@ -766,7 +753,7 @@ async def get_job(
         seg_view.append({
             "idx": p["idx"],
             "source_type": p["source_type"],
-            "tier": p.get("tier"),
+            # 2026-05-10 砍单档:tier 字段不再返(前端 JobView.segments 也已删)
             "status": r.get("status", "pending"),
             "output_url": r.get("output_url"),
         })

@@ -8,7 +8,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 const RANGE_COLORS = ["#dc2626", "#f97316", "#9333ea", "#06b6d4"] as const;
 const MAX_RANGES = 4;
 
-type Tier = "economy" | "standard";
+// 2026-05-10 砍单档:Tier type 删除
 type Role = "product" | "person" | "scene" | "reference";
 type SourceType = "ai" | "original";
 type ReplacementMode = "partial" | "full";
@@ -26,7 +26,7 @@ interface SegmentChoice {
   start: number;
   duration: number;
   thumbnail_url: string | null;
-  allowed_tiers: Tier[];
+  // 2026-05-10 砍单档:allowed_tiers 字段删除(后端 SegmentChoice 模型同步删)
 }
 interface PreviewResp {
   type: "single" | "ultimate";
@@ -72,7 +72,7 @@ interface JobView {
   replacement_mode: string;
   status: string;
   progress: { completed: number; total_ai: number; total_original: number };
-  segments: Array<{ idx: number; source_type: string; tier: string | null; status: string; output_url: string | null }>;
+  segments: Array<{ idx: number; source_type: string; status: string; output_url: string | null }>;
   final_video_url: string | null;
   final_video_url_watermarked: string | null;
   final_video_url_raw: string | null;
@@ -88,15 +88,18 @@ const ROLE_LABELS: Record<Role, string> = {
   reference: "参考",
 };
 
-const TIER_DISPLAY: Record<Tier, { rmb: string; credits: number; label: string; input: string }> = {
-  economy: { rmb: "14.9", credits: 15, label: "经济档", input: "输入 8s" },
-  standard: { rmb: "19.9", credits: 20, label: "标准档", input: "输入 8s" },
-};
+// 2026-05-10 砍单档:TIER_DISPLAY 删除,改 SEGMENT_PRICE 单档常量
+// 占位定价用原 standard 档值,commit 5 真测后基于 fal cost 重定
+const SEGMENT_PRICE = {
+  rmb: "19.9",
+  credits: 20,
+  label: "AI 替换",
+} as const;
 
 // 每段独立选择
 interface SegmentSelection {
   source_type: SourceType;
-  tier: Tier | null; // ai 必有,original 必空
+  // 2026-05-10 砍单档:tier 字段删除
 }
 
 export default function VideoCloneV2Page() {
@@ -121,8 +124,7 @@ export default function VideoCloneV2Page() {
   // 切片预览(post-trim)
   const [preview, setPreview] = useState<PreviewResp | null>(null);
 
-  // single 模式 tier(单段路径用一个全局选择)
-  const [tier, setTier] = useState<Tier>("standard");
+  // 2026-05-10 砍单档:全局 tier state 删除(single 模式无需选档位)
 
   // ultimate 模式:每段独立选择
   const [segSelections, setSegSelections] = useState<Record<number, SegmentSelection>>({});
@@ -207,18 +209,13 @@ export default function VideoCloneV2Page() {
       .then((d: PreviewResp) => {
         setPreview(d);
         if (d.type === "single") {
-          // single:沿用全局 tier 选择;allowed 不含则降级
-          if (d.segments[0] && !d.segments[0].allowed_tiers.includes(tier)) {
-            setTier(d.segments[0].allowed_tiers[0] ?? "economy");
-          }
+          // 单档:不需要 tier 推断,single 模式段卡片直接走
           setSegSelections({});
         } else {
-          // ultimate:每段默认 ai + 优先 standard(allowed 不含则降级 economy)
+          // ultimate:每段默认 ai(单档无 tier)
           const init: Record<number, SegmentSelection> = {};
           for (const s of d.segments) {
-            const defaultTier: Tier = s.allowed_tiers.includes("standard") ? "standard"
-              : s.allowed_tiers.includes("economy") ? "economy" : "economy";
-            init[s.idx] = { source_type: "ai", tier: defaultTier };
+            init[s.idx] = { source_type: "ai" };
           }
           setSegSelections(init);
         }
@@ -250,14 +247,15 @@ export default function VideoCloneV2Page() {
   // ─── 拉估价(single + ultimate 共用)───
   useEffect(() => {
     if (!preview) return;
+    // 单档:body segments 不传 tier(后端 SegmentPlanItem 已加 extra="forbid",传 tier 会被拒 422)
     const segments = preview.type === "single"
-      ? [{ idx: preview.segments[0].idx, source_type: "ai", tier }]
+      ? [{ idx: preview.segments[0].idx, source_type: "ai" }]
       : preview.segments.map((s) => {
           const sel = segSelections[s.idx];
-          if (!sel) return { idx: s.idx, source_type: "ai", tier: s.allowed_tiers[0] ?? "economy" };
-          return sel.source_type === "ai"
-            ? { idx: s.idx, source_type: "ai", tier: sel.tier ?? s.allowed_tiers[0] ?? "economy" }
-            : { idx: s.idx, source_type: "original" };
+          if (!sel || sel.source_type === "ai") {
+            return { idx: s.idx, source_type: "ai" };
+          }
+          return { idx: s.idx, source_type: "original" };
         });
     fetch(`${API_BASE}/api/video/clone-v2/estimate`, {
       method: "POST",
@@ -276,7 +274,7 @@ export default function VideoCloneV2Page() {
         setEstimate(d);
       })
       .catch(() => {});
-  }, [preview, tier, segSelections, replacementMode]);
+  }, [preview, segSelections, replacementMode]);
 
   // ─── 视频上传 handler ───
   async function handleVideoUpload(file: File) {
@@ -350,14 +348,15 @@ export default function VideoCloneV2Page() {
     if (!disclaimerChecked) { setError("请勾选《视频复刻 V2 上传声明书》"); return; }
 
     // 构造 segments(single / ultimate 不同)
-    let segments: Array<{ idx: number; source_type: SourceType; tier?: Tier }>;
+    // 单档:body segments 不传 tier(后端 forbid 会拒)
+    let segments: Array<{ idx: number; source_type: SourceType }>;
     if (preview.type === "single") {
-      segments = [{ idx: preview.segments[0].idx, source_type: "ai", tier }];
+      segments = [{ idx: preview.segments[0].idx, source_type: "ai" }];
     } else {
       segments = preview.segments.map((s) => {
         const sel = segSelections[s.idx];
         if (!sel || sel.source_type === "ai") {
-          return { idx: s.idx, source_type: "ai", tier: sel?.tier ?? s.allowed_tiers[0] ?? "economy" };
+          return { idx: s.idx, source_type: "ai" };
         }
         return { idx: s.idx, source_type: "original" };
       });
@@ -459,7 +458,7 @@ export default function VideoCloneV2Page() {
             视频<span style={{ fontStyle: "italic" }}> 复刻 V2</span> · Seedance r2v 双版本下载
           </h1>
           <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
-            支持 4-64 秒视频 · 经济档 ¥14.9 / 标准档 ¥19.9 · 输出含 xiaoLi ai · AI 生成水印 + 无标识版自选下载
+            支持 4-64 秒视频 · ¥19.9 / 段 · 输出含 xiaoLi ai · AI 生成水印 + 无标识版自选下载
           </div>
         </div>
 
@@ -519,43 +518,10 @@ export default function VideoCloneV2Page() {
           )}
         </Section>
 
-        {/* Step 3 - single:档位选择 */}
-        {preview && preview.type === "single" && preview.segments[0] && (
-          <Section title="3. 选择质量档位">
-            <div style={{ display: "flex", gap: 12 }}>
-              {(["economy", "standard"] as Tier[]).map((t) => {
-                const allowed = preview.segments[0].allowed_tiers.includes(t);
-                const selected = tier === t;
-                return (
-                  <button
-                    key={t}
-                    disabled={!allowed}
-                    onClick={() => setTier(t)}
-                    style={{
-                      flex: 1,
-                      padding: "1rem",
-                      border: selected ? "2px solid #2563eb" : "1px solid #ddd",
-                      borderRadius: 10,
-                      background: selected ? "#eff6ff" : allowed ? "#fff" : "#f5f5f5",
-                      cursor: allowed ? "pointer" : "not-allowed",
-                      opacity: allowed ? 1 : 0.5,
-                      textAlign: "left",
-                    }}
-                  >
-                    <div style={{ fontWeight: 500 }}>{TIER_DISPLAY[t].label}</div>
-                    <div style={{ fontSize: "1.2rem", color: "#2563eb", margin: "4px 0" }}>¥{TIER_DISPLAY[t].rmb}</div>
-                    <div style={{ fontSize: "0.78rem", color: "#666" }}>
-                      {TIER_DISPLAY[t].input} → 输出 8s
-                      <br />
-                      实扣 {TIER_DISPLAY[t].credits} 积分
-                    </div>
-                    {!allowed && <div style={{ fontSize: "0.7rem", color: "#999", marginTop: 4 }}>段长不足</div>}
-                  </button>
-                );
-              })}
-            </div>
-          </Section>
-        )}
+        {/* 2026-05-10 砍单档:single 模式不再需要档位选择 UI(整段删除)
+            用户上传 ≤ 8s 视频走 single → 直接进 Step 4 prompt + 模板
+            单价显示在 Step 4 价格预估里(SEGMENT_PRICE.rmb)
+            Step 编号重排留给 commit 3.5 单独 commit */}
 
         {/* Step 3 - ultimate:多段独立选档 + replacement_mode */}
         {preview && preview.type === "ultimate" && preview.segments.length > 0 && (
@@ -576,7 +542,7 @@ export default function VideoCloneV2Page() {
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
               {preview.segments.map((s) => {
-                const sel = segSelections[s.idx] ?? { source_type: "ai" as SourceType, tier: (s.allowed_tiers[0] ?? "economy") as Tier };
+                const sel = segSelections[s.idx] ?? { source_type: "ai" as SourceType };
                 return (
                   <div key={s.idx} style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: 12 }}>
                     {/* ⭐ 缩略图:点播放该 8s 段,直观看每段是啥再决定 AI/原 */}
@@ -607,7 +573,7 @@ export default function VideoCloneV2Page() {
                         return (
                           <button
                             key={st}
-                            onClick={() => updateSeg(s.idx, { source_type: st, tier: st === "ai" ? (sel.tier ?? s.allowed_tiers[0] ?? "economy") : null })}
+                            onClick={() => updateSeg(s.idx, { source_type: st })}
                             style={{
                               flex: 1,
                               padding: "0.4rem 0.6rem",
@@ -624,35 +590,18 @@ export default function VideoCloneV2Page() {
                       })}
                     </div>
 
-                    {sel.source_type === "ai" && (
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                        {(["economy", "standard"] as Tier[]).map((t) => {
-                          const allowed = s.allowed_tiers.includes(t);
-                          const selected = sel.tier === t;
-                          return (
-                            <button
-                              key={t}
-                              disabled={!allowed}
-                              onClick={() => updateSeg(s.idx, { tier: t })}
-                              style={{
-                                flex: 1,
-                                padding: "0.35rem 0.4rem",
-                                border: selected ? "1.5px solid #2563eb" : "1px solid #ddd",
-                                borderRadius: 6,
-                                background: selected ? "#eff6ff" : allowed ? "#fff" : "#f5f5f5",
-                                cursor: allowed ? "pointer" : "not-allowed",
-                                opacity: allowed ? 1 : 0.45,
-                                fontSize: "0.75rem",
-                                textAlign: "left",
-                              }}
-                            >
-                              <div style={{ fontWeight: 500 }}>{TIER_DISPLAY[t].label}</div>
-                              <div style={{ color: "#2563eb" }}>¥{TIER_DISPLAY[t].rmb}</div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
+                    {/* 2026-05-10 砍单档:档位选择 UI 删除,改成动态单价显示 */}
+                    <div style={{ fontSize: "0.78rem", marginTop: 4 }}>
+                      {sel.source_type === "ai" ? (
+                        <span style={{ color: "#666" }}>
+                          {SEGMENT_PRICE.label} · ¥{SEGMENT_PRICE.rmb} / 段
+                        </span>
+                      ) : (
+                        <span style={{ color: "#999" }}>
+                          保留原视频 · 免费
+                        </span>
+                      )}
+                    </div>
 
                     {sel.source_type === "original" && (
                       <div style={{ fontSize: "0.75rem", color: "#999", marginTop: 4 }}>

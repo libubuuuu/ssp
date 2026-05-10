@@ -5,7 +5,7 @@ import tempfile
 import pytest
 
 from app.services.video_clone_v2_pricing import (
-    TIER_CREDITS,
+    SEGMENT_CREDITS,
     calc_credits,
     calc_total_credits,
     build_prompt,
@@ -20,34 +20,34 @@ class TestCalcCredits:
     def test_alias_equality(self):
         assert calc_credits is calc_total_credits
 
-    def test_single_economy(self):
-        segs = [{"source_type": "ai", "tier": "economy"}]
-        assert calc_credits(segs) == 15
+    def test_single_ai_segment(self):
+        """1 段 ai:扣 SEGMENT_CREDITS"""
+        segs = [{"source_type": "ai"}]
+        assert calc_credits(segs) == SEGMENT_CREDITS
 
-    def test_single_standard(self):
-        segs = [{"source_type": "ai", "tier": "standard"}]
-        assert calc_credits(segs) == 20
+    def test_four_ai_segments(self):
+        """4 段 ai(典型 ultimate 30s 视频):扣 4 × SEGMENT_CREDITS"""
+        segs = [{"source_type": "ai"} for _ in range(4)]
+        assert calc_credits(segs) == 4 * SEGMENT_CREDITS
 
-    def test_mixed_segments(self):
+    def test_mixed_ai_and_original(self):
+        """混合 AI/原片:只对 ai 段扣费,original 不扣"""
         segs = [
-            {"source_type": "ai", "tier": "standard"},
+            {"source_type": "ai"},
             {"source_type": "original"},
-            {"source_type": "ai", "tier": "economy"},
+            {"source_type": "ai"},
             {"source_type": "original"},
         ]
-        # 20 + 0 + 15 + 0 = 35
-        assert calc_credits(segs) == 35
+        assert calc_credits(segs) == 2 * SEGMENT_CREDITS
 
     def test_all_original_zero(self):
+        """全 original:0 积分"""
         segs = [{"source_type": "original"}, {"source_type": "original"}]
         assert calc_credits(segs) == 0
 
     def test_empty_zero(self):
+        """空 list:0 积分"""
         assert calc_credits([]) == 0
-
-    def test_invalid_tier_raises(self):
-        with pytest.raises(ValueError, match="非法 tier"):
-            calc_credits([{"source_type": "ai", "tier": "premium"}])
 
 
 # ─── build_prompt ────────────────────────────────────────────────────
