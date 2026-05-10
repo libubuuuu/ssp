@@ -42,15 +42,18 @@ else
 fi
 log "  active: backend=$ACTIVE_BACKEND, frontend=$ACTIVE_FRONTEND"
 
-# 0.2 V2 flag 必须 False(防擅自上线)
+# 0.2 V2 flag 状态(2026-05-10 起仅 warning 不 abort)
+# 2026-05-10 修:V2 已正式上线(commit a733e50 起 prod 跑 V2),这条 abort 检查过时
+# 改成 warning 不 abort,保留 V2 flag 状态可视(deploy 后能查 prod V2 是否 active)
+# 何时该恢复 abort:如果未来再有 V3 / V4 灰度上线流程,可复用本检查模板,
+# 把 ENABLE_VIDEO_CLONE_V2 换成对应 flag,abort 防擅自上线
 ACTIVE_PID=$(supervisorctl pid "$ACTIVE_BACKEND")
 V2_FLAG=$(cat "/proc/$ACTIVE_PID/environ" 2>/dev/null | tr '\0' '\n' | grep -E "^ENABLE_VIDEO_CLONE_V2=" || echo "")
 if [ -n "$V2_FLAG" ] && [ "$V2_FLAG" != "ENABLE_VIDEO_CLONE_V2=false" ]; then
-    log "  ❌ ENABLE_VIDEO_CLONE_V2 当前已开,违反 deploy 前必须 False 规则,中止"
-    log "     environ: $V2_FLAG"
-    exit 1
+    log "  ⚠️  V2 flag = $V2_FLAG(V2 已上线,跳过 deploy 前必须 false 检查)"
+else
+    log "  V2 flag: ${V2_FLAG:-(未设置=默认 false)}"
 fi
-log "  V2 flag: ${V2_FLAG:-(未设置=默认 false)} ✅"
 
 # 0.3 running session 检查
 JOBS_RUNNING=$(python3 -c "
