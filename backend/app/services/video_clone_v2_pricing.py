@@ -23,7 +23,7 @@ SEGMENT_INPUT_SECONDS_MAX: Final[int] = 8   # worst-case 估算上限,实际段�
 
 
 # fal 端固定参数(改要测过)
-FAL_ENDPOINT:        Final[str] = "bytedance/seedance-2.0/reference-to-video"
+FAL_ENDPOINT:        Final[str] = "bytedance/seedance-2.0/fast/reference-to-video"
 FAL_RESOLUTION:      Final[str] = "480p"
 # fal 端点接受 duration ∈ {'auto', '4', '5', ..., '15'}(2026-05-10 probe 验证)
 # processor 会按段实际秒数对齐到 [4, 15] 区间,不再用此固定值;保留作 fallback
