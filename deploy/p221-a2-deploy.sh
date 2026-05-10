@@ -146,13 +146,13 @@ log "  ✅ /health = 200"
 
 NEW_PID=$(supervisorctl pid "$ACTIVE_BACKEND")
 NEW_FLAG=$(cat "/proc/$NEW_PID/environ" 2>/dev/null | tr '\0' '\n' | grep -E "^ENABLE_VIDEO_CLONE_V2=" || echo "")
+# 2026-05-10 修:V2 已正式上线,这条 abort 检查过时(同 L48 修)
+# 保留检查作 warning,不再触发 rollback
 if [ -n "$NEW_FLAG" ] && [ "$NEW_FLAG" != "ENABLE_VIDEO_CLONE_V2=false" ]; then
-    log "  ❌ V2 flag 不是 false:$NEW_FLAG"
-    log "  → 触发回滚"
-    bash "$0".rollback "$ARCHIVE_DIR"
-    exit 1
+    log "  ⚠️  V2 flag = $NEW_FLAG(V2 已上线,deploy 后 V2 仍 active 是预期)"
+else
+    log "  V2 flag = false"
 fi
-log "  ✅ V2 flag = false"
 
 TRIM_COLS=$(sqlite3 /opt/ssp/backend/dev.db "PRAGMA table_info(video_clone_v2_jobs);" | grep -cE "trim_start|trim_end|trimmed_seconds")
 if [ "$TRIM_COLS" != "3" ]; then
