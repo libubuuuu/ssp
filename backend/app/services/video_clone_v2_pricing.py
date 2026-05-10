@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 import hashlib
+import re
 from typing import Final, Mapping, Sequence
 
 
@@ -115,30 +116,61 @@ def sha256_url_first8(url: str) -> str:
 
 
 def build_prompt(user_prompt: str, image_urls: Sequence[Mapping]) -> str:
-    """把 image_urls 的 role 拼成 @ 语法附加到用户 prompt 末尾(⭐ 功能 3)。
+    """把 image_urls 拼成 fal 标准 @Image{N} 占位符附加到用户 prompt 末尾。
+
+    fal seedance r2v(fast/reference-to-video)占位符约定:@Image1 / @Image2 / ... 引用
+    image_urls 数组中对应位置(1-based)。中文 @ 写法 fal 不识别 → 当作普通文本 → 模型不看图。
+
+    本函数行为:
+    1. user_prompt 里的中文 @ 引用(@产品N / @人物N / @场景N / @图N)按 role 内序号
+       查 image_urls 中对应全局位置 → 替换成 @Image{global_idx}
+    2. 末尾追加(参考素材:@Image1, @Image2, ...)列出所有图
+
+    设计选择(2026-05-10 commit 4):
+    - 前端 / 用户层保持中文 @ 友好,后端透明转 fal 标准 — 前端 prompt 模板不动
+    - 用户引用不存在的图(@产品3 但只上传 2 张 product)→ 保留原文,不擅自重定向
 
     Args:
-        user_prompt: 用户自填或模板填入的文字
+        user_prompt: 用户填的 prompt(可能含中文 @ 引用)
         image_urls:  [{"url": "...", "role": "product"}, ...](role ∈ IMAGE_ROLES)
     Returns:
-        "{user_prompt}(参考素材:@产品1, @人物1, @场景1)"
+        fal 端能识别的 prompt(中文 @ 已转 @Image{N})
 
     示例:
-        user_prompt="婴儿在睡袋上抬头"
-        images=[{role:"product"}, {role:"product"}, {role:"person"}]
-        → "婴儿在睡袋上抬头(参考素材:@产品1, @产品2, @人物1)"
+        user_prompt="@产品1 替换视频中的裤子"
+        image_urls=[{role:"product"}, {role:"person"}]
+        → "@Image1 替换视频中的裤子(参考素材:@Image1, @Image2)"
     """
     if not image_urls:
         return user_prompt
 
-    refs = []
-    counters = {role: 0 for role in IMAGE_ROLES}
-    for img in image_urls:
+    # 1. 算每张图的 (role, role_inner_seq) → 全局 1-based idx
+    fal_idx_by_role_seq: dict[tuple[str, int], int] = {}
+    role_seen = {role: 0 for role in IMAGE_ROLES}
+    for global_idx, img in enumerate(image_urls, start=1):
         role = img.get("role", "reference")
         if role not in IMAGE_ROLES:
             role = "reference"
-        counters[role] += 1
-        label = ROLE_TO_AT_LABEL[role]
-        refs.append(f"@{label}{counters[role]}")
+        role_seen[role] += 1
+        fal_idx_by_role_seq[(role, role_seen[role])] = global_idx
 
-    return f"{user_prompt}(参考素材:{', '.join(refs)})"
+    # 2. user_prompt 里的中文 @{label}{N?} → @Image{global_idx}
+    transformed = user_prompt
+    for role, label in ROLE_TO_AT_LABEL.items():
+        pattern = re.compile(re.escape(f"@{label}") + r"(\d*)")
+
+        def _make_replacer(_role: str):
+            def _replace(m: re.Match) -> str:
+                num_str = m.group(1)
+                n = int(num_str) if num_str else 1
+                global_idx = fal_idx_by_role_seq.get((_role, n))
+                if global_idx is None:
+                    return m.group(0)  # 用户引用不存在的图 — 保留原文
+                return f"@Image{global_idx}"
+            return _replace
+
+        transformed = pattern.sub(_make_replacer(role), transformed)
+
+    # 3. 末尾追加(参考素材:@Image1, @Image2, ...)
+    refs = [f"@Image{i}" for i in range(1, len(image_urls) + 1)]
+    return f"{transformed}(参考素材:{', '.join(refs)})"

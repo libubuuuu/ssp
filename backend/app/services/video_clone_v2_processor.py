@@ -238,12 +238,13 @@ async def call_fal_seedance(
         f"input_hash={input_hash} prompt={prompt_compiled[:50]!r} seed={seed} "
         f"aspect={aspect_ratio} input_dur={input_duration_sec:.1f}s fal_duration={fal_duration!r}"
     )
-    # ⚠️ fal seedance r2v 端点的参考图字段名是 reference_image_urls,
-    # 不是 image_urls — 写错会被 fal 默默丢弃,模型完全不看产品图
-    # 同项目 ad_video_models.py:949 已验证此字段名(同一 r2v 端点系)
+    # fal seedance r2v 端点(fast/reference-to-video)真实字段名 = image_urls
+    # 出处:fal 官方文档 + V1 项目内同端点用法 backend/app/api/jobs.py:3337
+    # 注:ad_video_models.py 用的是 bytedance/seedance-2.0/reference-to-video(无 fast/),
+    # 是不同端点,字段名规则不能直接对照
     arguments = {
         "video_urls": [video_url],
-        "reference_image_urls": image_urls,
+        "image_urls": image_urls,
         "audio_urls": [],
         "prompt": prompt_compiled,
         "resolution": FAL_RESOLUTION,
