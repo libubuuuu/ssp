@@ -172,9 +172,11 @@ fi
 # ──────────────────────────────────────────────────
 log ""
 log "[5/9] rsync /root/ssp/frontend → /opt/ssp/frontend"
-# .next 不带过去:跨境访问 Google Fonts 必失败,prod .next 是用户离线 build 好的,保留
+# 2026-05-10 修:支持 prod 端 npm build 后 deploy。
+# 原设计假设 prod 不 build,.next 离线传,但实际工作流是 prod 端 root 用户 npm build → rsync 到 /opt。
+# 现在 .next 带过去,/opt 跑的是 /root build 出来的最新版本。
 rsync -av --delete \
-  --exclude='node_modules/' --exclude='.next/' \
+  --exclude='node_modules/' \
   /root/ssp/frontend/ /opt/ssp/frontend/ 2>&1 | tail -3 | tee -a "$LOG"
 
 chown -R ssp-app:ssp-app /opt/ssp/frontend
