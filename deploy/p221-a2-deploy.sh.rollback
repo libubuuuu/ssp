@@ -1,0 +1,81 @@
+#!/bin/bash
+# P221 A2 deploy 回滚脚本
+# 用法:bash /root/ssp/deploy/p221-a2-deploy.sh.rollback /root/.p221-a2-prod-archive-{TS}
+
+set -e
+LOG="/var/log/p221-a2-rollback.log"
+
+ARCHIVE_DIR="$1"
+if [ -z "$ARCHIVE_DIR" ] || [ ! -d "$ARCHIVE_DIR" ]; then
+    echo "❌ 用法:$0 <archive_dir>"
+    echo "   示例:$0 /root/.p221-a2-prod-archive-20260509-220000"
+    exit 1
+fi
+
+log() { echo "[$(date '+%H:%M:%S')] $1" | tee -a "$LOG"; }
+
+log "════════════════════════════════════════════════"
+log "P221 A2 ROLLBACK 开始 archive=$ARCHIVE_DIR"
+log "════════════════════════════════════════════════"
+
+# 1. 找当前 active backend
+CURRENT_BACKEND=$(grep -oP 'proxy_pass http://127.0.0.1:\K[0-9]+' /etc/nginx/sites-enabled/default | grep -E "^(8000|8001)$" | head -1)
+if [ "$CURRENT_BACKEND" = "8001" ]; then
+    ACTIVE_PROGRAM="ssp-backend-green"
+elif [ "$CURRENT_BACKEND" = "8000" ]; then
+    ACTIVE_PROGRAM="ssp-backend-blue"
+else
+    log "❌ nginx backend port 异常,中止"
+    exit 1
+fi
+log "active program: $ACTIVE_PROGRAM"
+
+# 2. 停 active(防 db 写入冲突)
+log "[1/4] 停 $ACTIVE_PROGRAM"
+supervisorctl stop "$ACTIVE_PROGRAM" 2>&1 | tee -a "$LOG"
+sleep 2
+
+# 3. 还原代码(prod 代码 archive → /opt)
+log "[2/4] 还原 backend 代码"
+rsync -a --delete \
+  --exclude='venv/' --exclude='dev.db*' --exclude='.env*' \
+  "$ARCHIVE_DIR/backend-before-A2/" /opt/ssp/backend/
+
+# 4. 还原 db
+log "[3/4] 还原 dev.db"
+cp "$ARCHIVE_DIR/dev.db.before-A2" /opt/ssp/backend/dev.db
+[ -f "$ARCHIVE_DIR/dev.db-shm" ] && cp "$ARCHIVE_DIR/dev.db-shm" /opt/ssp/backend/
+[ -f "$ARCHIVE_DIR/dev.db-wal" ] && cp "$ARCHIVE_DIR/dev.db-wal" /opt/ssp/backend/
+
+# 5. 还原 .env.enc
+[ -f "$ARCHIVE_DIR/.env.enc.before-A2" ] && cp "$ARCHIVE_DIR/.env.enc.before-A2" /opt/ssp/backend/.env.enc
+
+# 6. chown
+chown -R ssp-app:ssp-app /opt/ssp/backend
+
+# 6.1 移除 v2-cache-gc cron(本次 deploy 加在 ssp-app crontab,回滚一并撤掉)
+# 后端代码回退后 cache 模块没了,cron 会报 ImportError 刷日志
+if sudo -u ssp-app crontab -l 2>/dev/null | grep -qF "/opt/ssp/deploy/v2-cache-gc.sh"; then
+    sudo -u ssp-app crontab -l 2>/dev/null \
+        | grep -vF "/opt/ssp/deploy/v2-cache-gc.sh" \
+        | sudo -u ssp-app crontab -
+    log "  ✅ 已从 ssp-app crontab 移除 v2-cache-gc"
+fi
+
+# 7. 重启
+log "[4/4] 重启 $ACTIVE_PROGRAM"
+supervisorctl start "$ACTIVE_PROGRAM" 2>&1 | tee -a "$LOG"
+sleep 5
+
+HEALTH=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$CURRENT_BACKEND/health")
+log "/health = $HEALTH"
+
+if [ "$HEALTH" = "200" ]; then
+    log "════════════════════════════════════════════════"
+    log "✅ ROLLBACK 完成"
+    log "════════════════════════════════════════════════"
+else
+    log "❌ ROLLBACK 失败,health=$HEALTH"
+    log "需要人工介入查 supervisorctl tail -f $ACTIVE_PROGRAM stderr"
+    exit 1
+fi

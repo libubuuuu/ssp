@@ -53,6 +53,27 @@ def _patch_users_columns(cursor):
                 raise
 
 
+def _patch_video_clone_v2_columns(cursor):
+    """幂等地补齐 video_clone_v2_jobs 表后加列(P221 A2 智能切片提示)。
+
+    新加列 trimmed_seconds / trim_start / trim_end 用于记录用户主动丢弃的段。
+    """
+    patches = [
+        ("trimmed_seconds", "ALTER TABLE video_clone_v2_jobs ADD COLUMN trimmed_seconds REAL DEFAULT 0"),
+        ("trim_start",      "ALTER TABLE video_clone_v2_jobs ADD COLUMN trim_start REAL"),
+        ("trim_end",        "ALTER TABLE video_clone_v2_jobs ADD COLUMN trim_end REAL"),
+        # B 阶段:多段 drop 的 JSON([[s1,e1],[s2,e2],...]) processor 实际读这个字段
+        # legacy trim_start/end 仅作单段 drop 兼容(/create 自动转成 1-elem JSON)
+        ("trim_drop_ranges_json", "ALTER TABLE video_clone_v2_jobs ADD COLUMN trim_drop_ranges_json TEXT"),
+    ]
+    for col_name, sql in patches:
+        try:
+            cursor.execute(sql)
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+
+
 def _patch_oral_columns(cursor):
     """幂等地补齐 oral_sessions 表的后加列(七十七续 P9b 双 mask 双轮 inpaint)。
 
@@ -437,6 +458,83 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_ledger_user_time ON credits_ledger(user_id, created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_ledger_ref ON credits_ledger(ref_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_ledger_reason ON credits_ledger(reason)")
+
+        # P221(2026-05-09) 视频复刻 V2 三张表(详见 docs/P221-API-SCHEMA.md / docs/P221-MIGRATION.sql)
+        # type=single|ultimate;replacement_mode=partial|full
+        # 全局两档:economy(input 2s, 15 积分) / standard(input 4s, 20 积分)
+        # 双版本下载:final_video_url_watermarked(合规版 30% 不透明度) + final_video_url_raw(无标识版)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS video_clone_v2_jobs (
+            id                       TEXT PRIMARY KEY,
+            user_id                  TEXT NOT NULL,
+            type                     TEXT NOT NULL,
+            replacement_mode         TEXT NOT NULL,
+            tier                     TEXT,
+            segment_tiers            TEXT,
+            input_video_url          TEXT NOT NULL,
+            input_video_local_path   TEXT,
+            input_video_duration_sec REAL NOT NULL,
+            input_video_sha256       TEXT,
+            image_urls               TEXT NOT NULL,
+            prompt                   TEXT NOT NULL,
+            prompt_compiled          TEXT,
+            segments_plan            TEXT NOT NULL,
+            segments_count           INTEGER NOT NULL,
+            segments_results         TEXT NOT NULL DEFAULT '[]',
+            final_video_url          TEXT,
+            final_video_url_watermarked TEXT,
+            final_video_url_raw      TEXT,
+            final_video_local_path   TEXT,
+            total_credits_charged    INTEGER NOT NULL,
+            total_credits_refunded   INTEGER NOT NULL DEFAULT 0,
+            fal_cost_total_usd       REAL NOT NULL DEFAULT 0,
+            status                   TEXT NOT NULL DEFAULT 'pending',
+            error_step               TEXT,
+            error_message            TEXT,
+            created_at               TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at               TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            completed_at             TIMESTAMP,
+            archived_at              TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vc2_user_time ON video_clone_v2_jobs(user_id, created_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vc2_status ON video_clone_v2_jobs(status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vc2_archive ON video_clone_v2_jobs(archived_at, completed_at)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vc2_type ON video_clone_v2_jobs(type)")
+        _patch_video_clone_v2_columns(cursor)
+
+        # 每日 fal 总花销看板(保险 3,持久化跨重启)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS video_clone_v2_daily_budget (
+            date        TEXT PRIMARY KEY,
+            spent_usd   REAL NOT NULL DEFAULT 0,
+            locked      INTEGER NOT NULL DEFAULT 0,
+            updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
+        # 上传弹窗勾选 + 双版本下载选择留痕(法务 §4.4.4 / §4.4.6 事后举证用)
+        # disclaimer_version: v1 = 当前 C1-C7 + A1-A5;改条款时升版本
+        # watermark_choice: 用户在下载页选 raw(无标识) | watermarked(合规),null = 还没下载
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS video_clone_v2_disclaimer_log (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id             TEXT NOT NULL,
+            job_id              TEXT NOT NULL,
+            ip                  TEXT,
+            user_agent          TEXT,
+            video_sha256        TEXT,
+            disclaimer_version  TEXT NOT NULL DEFAULT 'v1',
+            acknowledged_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            watermark_choice    TEXT,
+            watermark_chosen_at TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (job_id) REFERENCES video_clone_v2_jobs(id)
+        )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vc2_disclaimer_user ON video_clone_v2_disclaimer_log(user_id, acknowledged_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vc2_disclaimer_job ON video_clone_v2_disclaimer_log(job_id)")
 
         # 创建索引优化查询性能
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)")

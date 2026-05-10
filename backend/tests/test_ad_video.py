@@ -227,8 +227,15 @@ def test_preview_success_deducts_credits(client_av, register, auth_header, set_c
                 json={
                     "product_image_url": "https://fal.storage/p.jpg",
                     "background_image_url": None,
-                    "model_description": "young female",
-                    "scene_visual_prompt": "selfie shot in bedroom",
+                    "script": {
+                        "overall_setting": "bedroom selfie style",
+                        "model_description": "young female",
+                        "scenes": [{
+                            "id": 1, "time_range": "0-5", "purpose": "intro",
+                            "shot_language": "close-up", "content": "showcase",
+                            "visual_prompt": "selfie shot in bedroom", "speech": "hi",
+                        }],
+                    },
                 },
                 headers=auth_header(token),
             )
@@ -249,8 +256,15 @@ def test_preview_blocks_unsafe_prompt(client_av, register, auth_header, set_cred
         json={
             "product_image_url": "https://fal.storage/p.jpg",
             "background_image_url": None,
-            "model_description": "naked person",  # 命中色情黑名单
-            "scene_visual_prompt": "anything",
+            "script": {
+                "overall_setting": "anything",
+                "model_description": "naked person",  # 命中色情黑名单
+                "scenes": [{
+                    "id": 1, "time_range": "0-5", "purpose": "x",
+                    "shot_language": "x", "content": "x",
+                    "visual_prompt": "anything", "speech": "x",
+                }],
+            },
         },
         headers=auth_header(token),
     )

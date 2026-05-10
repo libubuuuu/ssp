@@ -155,12 +155,12 @@ async def generate(
 ):
     """推 JOBS 队列异步跑 video_clone(Seedance 2.0 r2v Fast)
 
-    P219 默认关闭(走 /video-clone-vidu)。开启需 env ENABLE_SEEDANCE_VIDEO_CLONE=true
+    P219 默认关闭(已被 /video-clone-v2 取代)。开启需 env ENABLE_SEEDANCE_VIDEO_CLONE=true
     """
     if not get_settings().ENABLE_SEEDANCE_VIDEO_CLONE:
         raise HTTPException(
             503,
-            "Seedance 视频复刻链路已下线,请改用 /video-clone-vidu(Vidu Q2 Pro,单段定额 ¥2.2)"
+            "Seedance 旧视频复刻链路已下线,请改用 /video-clone-v2(双版本下载,经济档 ¥14.9 起)"
         )
     # duration 解析(用于扣费)
     if req.duration == "auto":

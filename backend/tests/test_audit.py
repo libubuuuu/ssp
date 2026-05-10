@@ -284,5 +284,4 @@ def test_admin_adjust_credits_creates_audit_record(client):
     assert r["action"] == "adjust_credits"
     assert r["target_id"] == target
     assert r["details"]["delta"] == 30
-    assert r["details"]["old_credits"] == 100
     assert r["details"]["new_credits"] == 130

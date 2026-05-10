@@ -1,0 +1,23 @@
+# P221 V2 视频缓存 GC cron(Path B)— **装到 ssp-app crontab**
+#
+# 安装(以 root 跑这几行 — p221-a2-deploy.sh 第 8 步自动做):
+#   touch /var/log/ssp-v2-cache-gc.log
+#   chown ssp-app:ssp-app /var/log/ssp-v2-cache-gc.log
+#   sudo -u ssp-app crontab -l > /tmp/ssp_app_cron 2>/dev/null || true
+#   echo "*/30 * * * * /usr/bin/bash /opt/ssp/deploy/v2-cache-gc.sh" >> /tmp/ssp_app_cron
+#   sort -u /tmp/ssp_app_cron | sudo -u ssp-app crontab -
+#   sudo -u ssp-app crontab -l                      # 验证
+#   tail -f /var/log/ssp-v2-cache-gc.log            # 看输出
+#
+# 时间:每 30 分钟一次(跟缓存生存期对齐)
+# 默认清 30 分钟前的文件;改 VC2_CACHE_MAX_AGE_SECONDS 调
+#
+# 为什么装到 ssp-app crontab(不是 root):
+# - /tmp/v2_cache/{sha256}.mp4 是 ssp-app 进程写的(backend uvicorn 跑 ssp-app)
+# - 清缓存只读 /tmp,不需要 root 权限
+# - ssp-app 没 sudo,所以 v2-cache-gc.sh 不再有内层 sudo,简洁
+#
+# 注:upload/video 端点本身有 opportunistic clean_old,
+# 没装 cron 也不会爆,只是没流量时垃圾会留更久(到机器重启 /tmp 自清)
+
+*/30 * * * * /usr/bin/bash /opt/ssp/deploy/v2-cache-gc.sh

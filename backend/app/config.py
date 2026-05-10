@@ -75,10 +75,19 @@ class Settings(BaseSettings):
     STORAGE_BUCKET_PREFIX: str = "uploads/"      # 限制 STS 凭证只能写这个前缀,防越权
 
     # P219 (2026-05-09) /video-clone 旧 Seedance 链路开关
-    # 默认关:Vidu Q2 Pro 链路上线后,Seedance 单价高且中段易漏 prompt,新功能走 /video-clone-vidu
-    # /api/video/clone/generate 在关闭时返 503,引导用户走 /video-clone-vidu
+    # 默认关:已被 /video-clone-v2(双版本下载)取代
+    # /api/video/clone/generate 在关闭时返 503,引导用户走 /video-clone-v2
     # 1 个月观察期后(2026-06-09 之后)再决定是否删除全部 Seedance 代码
     ENABLE_SEEDANCE_VIDEO_CLONE: bool = False
+
+    # P221 (2026-05-09) 视频复刻 V2(Seedance 2.0 fast/reference-to-video + 双版本下载)
+    # 默认关:阶段 A 灰度未开,代码骨架就位但所有端点返 503
+    # 详见 docs/P221-API-SCHEMA.md / docs/P221-MIGRATION.sql / docs/legal/*
+    ENABLE_VIDEO_CLONE_V2: bool = False
+    # 三道工程保险阈值(用户最终决议锁定,改要走 PR)
+    VC2_MAX_SEGMENT_COST_USD: float = 1.50    # 单段 fal 实扣超 → 全额退 + 报警
+    VC2_MAX_ORDER_COST_USD: float = 15.0      # 单订单估算超 → 拒收
+    VC2_DAILY_FAL_BUDGET_USD: float = 100.0   # 每日累计超 → 自动 disable v2
 
     # 六十八续:微信支付 V3(默认关,等用户开商户号 + 配 cert 后启用)
     WECHAT_PAY_ENABLED: bool = False

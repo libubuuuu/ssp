@@ -83,3 +83,6 @@ jobs.json
 
 # Timestamped local backups (e.g. PROGRESS.md.bak.20260425-212957)
 *.bak.*
+
+# One-shot dev probes (not production code, may pull FAL_KEY from env at runtime)
+/probes/

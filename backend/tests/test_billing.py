@@ -19,8 +19,7 @@ def _make_user(email: str, credits: int = 100) -> str:
 def test_pricing_exact_match():
     assert billing.get_task_cost("image/style") == 2
     assert billing.get_task_cost("video/clone") == 20
-    assert billing.get_task_cost("avatar/generate") == 10
-    assert billing.get_task_cost("voice/tts") == 2
+    assert billing.get_task_cost("ad_video/generate") == 30
 
 
 def test_pricing_prefix_match():

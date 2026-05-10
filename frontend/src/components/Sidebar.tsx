@@ -90,11 +90,11 @@ export default function Sidebar() {
         ✦
       </button>
 
-      <button onClick={()=>router.push("/video-clone-vidu")} title="视频复刻 Vidu Q2 Pro(任意时长 + 切片拼接,推荐)"
+      <button onClick={()=>router.push("/video-clone-v2")} title="视频复刻 V2(Seedance r2v 双版本下载)"
         style={{width:"48px",height:"48px",borderRadius:"12px",border:"none",background:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.2rem",color:"#666",transition:"all 0.15s"}}
         onMouseEnter={e=>{e.currentTarget.style.background="#f9f7f2";}}
         onMouseLeave={e=>{e.currentTarget.style.background="none";}}>
-        ⟳
+        ⬢
       </button>
 
       <button onClick={()=>router.push("/pricing")} title={t("sidebar.pricing")}
