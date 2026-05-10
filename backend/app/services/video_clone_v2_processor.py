@@ -172,40 +172,21 @@ async def split_input_video(
 
 
 async def prepare_segment_input(seg_file: str, plan_item: Dict[str, Any]) -> str:
-    """ai 段输入直接用 split 出的整段(8s),不再截短到 tier_input。
+    """ai 段输入直接用 split 出的整段。
 
     ⚠ 仅 source_type='ai' 段调用本函数(original 段在 processor 直接 short-circuit)。
 
-    2026-05-10 重写理由:
+    2026-05-10 改:不再做截短 / padding。
     - fal seedance fast/r2v 端点接受 duration ∈ {'auto', '4'-'15'},input < output 时
-      模型 hallucinate 后段 → reference 漂移(用户实测多段视频"前几秒变了后几秒没变")
-    - 改成 input = output = 段实际秒数(8s),全程都有原视频指导,reference 不漂
-    - 不再做 tier-based 截短;TIER_INPUT_SECONDS 现在 economy/standard 都是 8
-
-    保留 padding 逻辑:段 < 4s 时补到 4.1s(fal 最低 duration=4)
+      模型 hallucinate 后段 → reference 漂移
+    - input = output = 段实际秒数,全程都有原视频指导,reference 不漂
+    - plan_segments_v2 已保证所有段 ≥ 4s(末段 < 4s 并到前段),不存在 padding 必要
 
     Returns:
-        本地视频路径(可能跟 seg_file 相同,< 4s 时是新 padding 文件)
+        本地视频路径(等于 seg_file)
     """
     assert plan_item.get("source_type") == "ai", "original 段不应进 prepare_segment_input"
-    out = seg_file  # 直接用 split 出的整段,不截短
-
-    actual_dur = await _ffprobe_duration(out)
-    if actual_dur < 4.0:
-        # fal 下限 4s(2026-05-10 probe 验证),重编码补到 4.1s
-        out2 = f"{out}.padded.mp4"
-        await _ffmpeg([
-            "-i", out,
-            "-ss", "0",
-            "-t", "4.1",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-            "-pix_fmt", "yuv420p",
-            "-c:a", "aac",
-            out2,
-        ])
-        out = out2
-
-    return out
+    return seg_file
 
 
 def _fal_duration_for_input(input_seconds: float) -> str:

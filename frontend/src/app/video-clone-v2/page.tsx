@@ -89,8 +89,8 @@ const ROLE_LABELS: Record<Role, string> = {
 };
 
 const TIER_DISPLAY: Record<Tier, { rmb: string; credits: number; label: string; input: string }> = {
-  economy: { rmb: "14.9", credits: 15, label: "经济档", input: "输入 2s" },
-  standard: { rmb: "19.9", credits: 20, label: "标准档", input: "输入 4s" },
+  economy: { rmb: "14.9", credits: 15, label: "经济档", input: "输入 8s" },
+  standard: { rmb: "19.9", credits: 20, label: "标准档", input: "输入 8s" },
 };
 
 // 每段独立选择
