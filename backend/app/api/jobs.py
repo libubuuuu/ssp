@@ -3260,7 +3260,9 @@ def _build_video_general_lookbook(
         # 色调锚
         f"COLOR PALETTE LOCK: consistent warm-neutral grading across all shots. "
         + (f"Emotional tone: {emotional_arc}. " if emotional_arc else "")
-        + (f"Implicit context (target user pain point being addressed): {pain_point}. " if pain_point else "")
+        # 2026-05-12:不拼 pain_point 到 image-generation prompt
+        # 原因:pain_point 含 body-image 敏感词(如"胖/瘦/紧身"),触发 OpenAI gpt-image-2 content reject(downstream_service_error)
+        # pain_point 给视频脚本/口播用,不污染 character_sheet / storyboard / first_frame prompt
         + f"This is a {category} product advertisement. All shots together form ONE coherent ad — "
         f"same person, same product (exact category and features), same outfit, same scene, "
         f"same lighting, only the camera and product interaction vary."
@@ -3487,27 +3489,27 @@ async def _run_video_general_job(params: dict) -> dict:
                 seg_frame = fr["image_url"]
                 log_info(f"video_general seg {idx} GPT-Image 2 OK url={seg_frame[:60]}")
 
-            # Step B2:Seedance i2v 出动作视频
-            seedance_prompt = visual or f"Showing the {category} product naturally, model demonstrates use"
-            sub = await ad_video_models.submit_seedance_video(
+            # Step B2:Veo 3.1 Fast i2v 出动作视频(2026-05-12:从 Seedance v1.5 切到 Veo,修跨帧主体漂移)
+            # 用户要求每分镜独立 8 秒 audio on 720p,9 段 ≈ $10.80 ≈ ¥78
+            sub = await ad_video_models.submit_veo_fast_video(
                 image_url=seg_frame,
                 script={"overall_setting": "", "model_description": "", "scenes": [scene]},
-                duration=seg_dur,
+                duration=8,
                 aspect_ratio=aspect_ratio,
                 resolution="720p",
                 enable_audio=True,
             )
             if sub.get("error"):
-                raise Exception(f"seg {idx} Seedance: {sub['error']}")
+                raise Exception(f"seg {idx} Veo: {sub['error']}")
             tid = sub.get("task_id")
             for _ in range(180):
                 await _aio.sleep(5)
-                st = await ad_video_models.poll_seedance_status(tid)
+                st = await ad_video_models.poll_veo_fast_status(tid)
                 if st.get("status") == "completed" and st.get("video_url"):
-                    log_info(f"video_general seg {idx} Seedance OK url={st['video_url'][:60]}")
+                    log_info(f"video_general seg {idx} Veo OK url={st['video_url'][:60]}")
                     return st["video_url"]
                 if st.get("status") == "failed":
-                    raise Exception(f"seg {idx} Seedance failed: {st.get('error')}")
+                    raise Exception(f"seg {idx} Veo failed: {st.get('error')}")
             raise Exception(f"seg {idx} 超时")
 
     # 2026-05-12:用户明令"每个分镜要都是独立的"— 去 concat,直接返 N 段独立分镜视频

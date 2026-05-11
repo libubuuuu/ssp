@@ -65,6 +65,10 @@ async def _vlm_image_has_people(image_url: str) -> Optional[bool]:
 # v1.5/pro probe 70s 出 5s 视频(15x 提速)+ NSFW 通过。换 v1.5/pro。
 # 历史:fal-ai/bytedance/seedance/v2/pro/image-to-video
 SEEDANCE_ENDPOINT = "fal-ai/bytedance/seedance/v1.5/pro/image-to-video"
+
+# 2026-05-12:Veo 3.1 Fast i2v(Google,720p audio on $0.15/s,8s = $1.20)
+# fal OpenAPI verify(2026-05-12):image_url + prompt + duration("4s"/"6s"/"8s") + resolution + generate_audio(bool)
+VEO_FAST_I2V_ENDPOINT = "fal-ai/veo3.1/fast/image-to-video"
 # P126 (2026-05-05):用户怒"做图片全部由 gpt2 来做",切 OpenAI gpt-image-2/edit。
 # 实测优势(probe 5 段对比 Flux Kontext):
 #   ✅ 真听 prompt(段 1 真"产品大特写"没硬塞模特脸,段 4 真"卧室场景"还原床/床头柜)
@@ -1283,4 +1287,89 @@ async def poll_seedance_status(task_id: str) -> dict:
         return {"status": "processing"}
     except Exception as e:
         # 短暂错误不算 failed,让外层重试
+        return {"status": "processing", "error": str(e)[:200]}
+
+
+# ============== 2026-05-12:Veo 3.1 Fast i2v(替代 Seedance v1.5 用于 video_general)==============
+# fal 端点:fal-ai/veo3.1/fast/image-to-video
+# 价格:720p audio off $0.10/s / audio on $0.15/s,8s 720p audio on = $1.20
+# schema(fal OpenAPI verify 2026-05-12):
+#   image_url(req) + prompt(req,max 20000) + duration("4s"/"6s"/"8s",default "8s")
+#   + resolution("720p"/"1080p"/"4k",default "720p")
+#   + aspect_ratio("auto"/"16:9"/"9:16",default "auto") + generate_audio(bool,default true)
+async def submit_veo_fast_video(
+    image_url: str,
+    script: dict,
+    duration: int = 8,
+    aspect_ratio: str = "9:16",
+    resolution: str = "720p",
+    enable_audio: bool = True,
+) -> dict:
+    """提交 Veo 3.1 Fast i2v 任务,签名跟 submit_seedance_video 一致便于切换"""
+    circuit_breaker = get_circuit_breaker()
+    cb_key = "fal/veo-fast"
+    if not circuit_breaker.is_available(cb_key):
+        return {"error": "Veo 服务暂时不可用,已熔断"}
+
+    # Veo duration 只支持 4s/6s/8s,round 到最近合法值
+    if duration <= 4:
+        duration_str = "4s"
+    elif duration <= 6:
+        duration_str = "6s"
+    else:
+        duration_str = "8s"
+
+    # aspect_ratio 只支持 auto/16:9/9:16,其他 → auto
+    if aspect_ratio not in ("auto", "16:9", "9:16"):
+        aspect_ratio = "auto"
+
+    prompt = build_seedance_prompt(script)
+
+    try:
+        handler = await fal_client.submit_async(
+            VEO_FAST_I2V_ENDPOINT,
+            arguments={
+                "image_url": image_url,
+                "prompt": prompt,
+                "duration": duration_str,
+                "resolution": resolution,
+                "aspect_ratio": aspect_ratio,
+                "generate_audio": bool(enable_audio),
+            },
+        )
+        await circuit_breaker.record_success(cb_key)
+        return {
+            "task_id": handler.request_id,
+            "endpoint_tag": "veo-fast-i2v",
+            "status": "pending",
+            "model": VEO_FAST_I2V_ENDPOINT,
+        }
+    except Exception as e:
+        await circuit_breaker.record_failure(cb_key)
+        log_error(f"Veo Fast 提交失败: {e}")
+        return {"error": f"视频任务提交失败: {str(e)[:200]}"}
+
+
+async def poll_veo_fast_status(task_id: str) -> dict:
+    """轮询 Veo Fast 任务状态,签名跟 poll_seedance_status 一致"""
+    try:
+        status_obj = await fal_client.status_async(VEO_FAST_I2V_ENDPOINT, task_id, with_logs=False)
+        status_type = type(status_obj).__name__
+        status_str = str(status_obj)
+
+        if "Completed" in status_type or "Completed" in status_str:
+            result = await fal_client.result_async(VEO_FAST_I2V_ENDPOINT, task_id)
+            video_url = None
+            if isinstance(result, dict):
+                video_obj = result.get("video") or {}
+                video_url = video_obj.get("url") if isinstance(video_obj, dict) else None
+            if not video_url:
+                return {"status": "failed", "error": "Veo 视频 URL 为空"}
+            return {"status": "completed", "video_url": video_url}
+
+        if "Failed" in status_type or "Failed" in status_str:
+            return {"status": "failed", "error": "Veo 任务失败"}
+
+        return {"status": "processing"}
+    except Exception as e:
         return {"status": "processing", "error": str(e)[:200]}
