@@ -3488,7 +3488,8 @@ async def _run_video_general_job(params: dict) -> dict:
     # 2026-05-12:如有 storyboard panels → 直接用作首帧;否则 GPT-Image 2 重画
     log_info(f"video_general category={category} 视频路径:{'storyboard panel 直接作首帧' if storyboard_panels else 'GPT-Image 2 重画场景帧'}")
 
-    sem = _aio.Semaphore(3)
+    # 2026-05-12:并发 3→9,9 段全并发省 ~5 分钟(单段 ~2'30",并发 9 ≈ 单段时长)
+    sem = _aio.Semaphore(9)
 
     async def _gen_seg(idx: int, scene: dict):
         async with sem:
