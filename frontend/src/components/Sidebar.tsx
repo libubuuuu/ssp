@@ -105,12 +105,14 @@ export default function Sidebar() {
       </button>
 
       <div style={{marginTop:"auto",display:"flex",flexDirection:"column",alignItems:"center",gap:"0.5rem"}}>
-        <LanguageSwitcher />
         <div style={{fontSize:"0.7rem",color:"#888",textAlign:"center"}}>{user.credits||0}</div>
-        <button onClick={()=>router.push("/profile")} title={user.name||user.email}
-          style={{width:"40px",height:"40px",borderRadius:"50%",background:"#0d0d0d",color:"#fff",border:"none",cursor:"pointer",fontSize:"0.9rem",fontWeight:500}}>
-          {(user.name||user.email||"?").charAt(0).toUpperCase()}
-        </button>
+        <div style={{display:"flex",flexDirection:"row",alignItems:"center",gap:"6px"}}>
+          <LanguageSwitcher />
+          <button onClick={()=>router.push("/profile")} title={user.name||user.email}
+            style={{width:"36px",height:"36px",borderRadius:"50%",background:"#0d0d0d",color:"#fff",border:"none",cursor:"pointer",fontSize:"0.85rem",fontWeight:500,flexShrink:0}}>
+            {(user.name||user.email||"?").charAt(0).toUpperCase()}
+          </button>
+        </div>
       </div>
     </aside>
   );
