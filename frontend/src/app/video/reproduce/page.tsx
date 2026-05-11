@@ -11,20 +11,26 @@ interface SubCard {
 
 const SUBS: SubCard[] = [
   {
-    title: "图生视频",
-    desc: "上传一张图 · 写提示词 · AI 拍 5-10s 短片",
-    route: "/video",
+    title: "分镜复刻",
+    desc: "上传视频 · AI 拆 9 宫格分镜 · 替换元素重出片",
+    route: "/video/frame-extract",
     gradient: "linear-gradient(135deg,#ff0844 0%,#ff5858 30%,#f857a6 65%,#ffe53b 100%)",
   },
   {
-    title: "元素替换",
-    desc: "上传视频 + 替换图 · 自定义指令 · 局部换",
-    route: "/video/replace",
+    title: "图片复刻",
+    desc: "多产品图 + 可选模特 · AI 自动出脚本 + 拍片",
+    route: "/video/general",
     gradient: "linear-gradient(135deg,#0061ff 0%,#4facfe 30%,#00f2fe 65%,#43e97b 100%)",
+  },
+  {
+    title: "视频复刻",
+    desc: "整段参考视频 · 一键产品替换 · Seedance r2v",
+    route: "/video-clone-v2",
+    gradient: "linear-gradient(135deg,#fa709a 0%,#ee9ca7 30%,#fee140 65%,#c471f5 100%)",
   },
 ];
 
-export default function VideoGenerateHub() {
+export default function VideoReproduceHub() {
   const router = useRouter();
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "#edeae4", fontFamily: "-apple-system,BlinkMacSystemFont,sans-serif" }}>
@@ -69,8 +75,8 @@ export default function VideoGenerateHub() {
       <Sidebar />
       <main style={{ flex: 1, padding: "3rem 4rem", overflowY: "auto", maxWidth: "1280px", width: "100%", margin: "0 auto" }}>
         <div style={{ marginBottom: "2.5rem" }}>
-          <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>图生视频 · 元素替换</div>
-          <h1 style={{ fontSize: "2rem", fontWeight: 300, color: "#0d0d0d", margin: 0, fontFamily: "Georgia,serif" }}>视频生成</h1>
+          <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>分镜复刻 · 图片复刻 · 视频复刻</div>
+          <h1 style={{ fontSize: "2rem", fontWeight: 300, color: "#0d0d0d", margin: 0, fontFamily: "Georgia,serif" }}>视频复刻</h1>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "1.4rem" }}>
           {SUBS.map((c) => (

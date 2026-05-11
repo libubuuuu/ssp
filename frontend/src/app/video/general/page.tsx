@@ -388,7 +388,7 @@ export default function VideoGeneralPage() {
       <main style={{ flex: 1, padding: "2rem 2.5rem", overflowY: "auto", maxWidth: 1100, width: "100%", margin: "0 auto" }}>
         <div style={{ marginBottom: "1.5rem" }}>
           <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>AI 创作工具</div>
-          <h1 style={{ fontSize: "1.8rem", fontWeight: 400, margin: 0, fontFamily: "Georgia,serif" }}>通用<span style={{ fontStyle: "italic" }}> 产品视频</span> · 任意品类</h1>
+          <h1 style={{ fontSize: "1.8rem", fontWeight: 400, margin: 0, fontFamily: "Georgia,serif" }}>图片<span style={{ fontStyle: "italic" }}> 复刻</span></h1>
           <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
             食品 / 日用品 / 化妆品 / 3C / 服装 — 多张产品图 + 可选真人模特视频 → AI 自动判品类 + 出脚本 + 模特持/穿/用产品视频
           </div>

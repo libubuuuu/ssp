@@ -22,8 +22,8 @@ const CARDS: Card[] = [
   },
   {
     title: "视频复刻",
-    desc: "上传参考视频 · 一键产品替换",
-    route: "/video-clone-v2",
+    desc: "分镜复刻 · 图片复刻 · 视频复刻",
+    route: "/video/reproduce",
     gradient:
       "linear-gradient(135deg,#0061ff 0%,#4facfe 25%,#00f2fe 50%,#43e97b 75%,#a18cd1 100%)",
     embeddedGlow:
@@ -31,7 +31,7 @@ const CARDS: Card[] = [
   },
   {
     title: "视频生成",
-    desc: "图生视频 · 元素替换 · 翻拍",
+    desc: "图生视频 · 元素替换",
     route: "/video/generate",
     gradient:
       "linear-gradient(135deg,#fa709a 0%,#ee9ca7 25%,#fee140 50%,#c471f5 75%,#fa71cd 100%)",

@@ -9,7 +9,6 @@ import { useLocalStorageItem } from "@/lib/hooks/useLocalStorageItem";
 const ONBOARDING_FLAG = "onboarding_showcase_v1_shown";
 
 const FEATURE_KEYS = [
-  { key:"video/general", i18nKey:"general", icon:"✦", color:"#fce7e7", labelFallback:"通用产品视频", descFallback:"任意品类·多图参考·真人模特" },
   { key:"video/studio", i18nKey:"studio", icon:"▦", color:"#ead8c0" },
   { key:"tasks/history", i18nKey:"history", icon:"☰", color:"#f2ece0" },
   { key:"pricing", i18nKey:"pricing", icon:"✦", color:"#ebe5d5" },

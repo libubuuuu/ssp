@@ -489,7 +489,7 @@ export default function VideoCloneV2Page() {
         <div style={{ marginBottom: "1.5rem" }}>
           <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>AI 创作工具</div>
           <h1 style={{ fontSize: "1.8rem", fontWeight: 400, margin: 0, fontFamily: "Georgia,serif" }}>
-            视频<span style={{ fontStyle: "italic" }}> 复刻 V2</span> · Seedance r2v 双版本下载
+            视频<span style={{ fontStyle: "italic" }}> 复刻</span>
           </h1>
           <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
             支持 4-64 秒视频 · ¥19.9 / 段 · 输出含 xiaoLi ai · AI 生成水印 + 无标识版自选下载
