@@ -395,7 +395,11 @@ export default function VideoFrameExtractPage() {
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
               {gridUrls.map((u, i) => (
                 <div key={i} style={{ flex: gridUrls.length > 1 ? "1 1 320px" : "1 1 100%", minWidth: 280 }}>
-                  {gridUrls.length > 1 && <div style={{ fontSize: "0.78rem", color: "#0d0d0d", marginBottom: 4, fontWeight: 500 }}>图 {i + 1} / {gridUrls.length}</div>}
+                  {gridUrls.length > 1 && (
+                    <div style={{ display: "inline-block", fontSize: "1rem", color: "#fff", background: "#0d0d0d", padding: "0.3rem 0.7rem", borderRadius: 6, marginBottom: 6, fontWeight: 600 }}>
+                      📷 图 {i + 1} / 共 {gridUrls.length}
+                    </div>
+                  )}
                   <img src={u} alt={`storyboard ${i+1}`} style={{ width: "100%", borderRadius: 8, border: "1px solid #eee" }} />
                 </div>
               ))}
@@ -482,8 +486,12 @@ export default function VideoFrameExtractPage() {
             {replacedGridUrls.map((replacedU, idx) => {
               const origU = gridUrls[idx];
               return (
-                <div key={idx} style={{ marginBottom: idx < replacedGridUrls.length - 1 ? "1rem" : 0, paddingBottom: idx < replacedGridUrls.length - 1 ? "1rem" : 0, borderBottom: idx < replacedGridUrls.length - 1 ? "1px solid #eee" : "none" }}>
-                  {replacedGridUrls.length > 1 && <div style={{ fontSize: "0.85rem", color: "#0d0d0d", marginBottom: 6, fontWeight: 500 }}>图 {idx + 1} / {replacedGridUrls.length}</div>}
+                <div key={idx} style={{ marginBottom: idx < replacedGridUrls.length - 1 ? "1.2rem" : 0, paddingBottom: idx < replacedGridUrls.length - 1 ? "1.2rem" : 0, borderBottom: idx < replacedGridUrls.length - 1 ? "1px solid #eee" : "none" }}>
+                  {replacedGridUrls.length > 1 && (
+                    <div style={{ display: "inline-block", fontSize: "1rem", color: "#fff", background: "#0d8a3e", padding: "0.3rem 0.7rem", borderRadius: 6, marginBottom: 8, fontWeight: 600 }}>
+                      📷 图 {idx + 1} / 共 {replacedGridUrls.length}
+                    </div>
+                  )}
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                     <div style={{ flex: 1, minWidth: 280 }}>
                       <div style={{ fontSize: "0.78rem", color: "#999", marginBottom: 4 }}>原九宫格</div>

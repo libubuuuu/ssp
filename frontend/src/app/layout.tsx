@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import JobPanel from "@/components/JobPanel";
 import AuthFetchInterceptor from "@/components/AuthFetchInterceptor";
@@ -7,15 +6,9 @@ import CookieConsent from "@/components/CookieConsent";
 import SiteFooter from "@/components/SiteFooter";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+// 2026-05-12:腾讯云无法访问 fonts.gstatic.com,build 时 next/font/google 卡死。
+// 去掉 Geist 字体下载,fallback 到 globals.css 里的 Arial/Helvetica/sans-serif(已配置)。
+// 视觉差异极小(Geist 跟系统 sans-serif 视觉接近),换来 build 可工作。
 
 export const metadata: Metadata = {
   title: "xiaoLi ai",
@@ -29,7 +22,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="zh-CN">
-      <body className={`${geistSans.variable} ${geistMono.variable}`}>
+      <body>
         <LanguageProvider>
           <AuthFetchInterceptor />
           {children}
