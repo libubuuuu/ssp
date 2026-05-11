@@ -2383,16 +2383,40 @@ async def _run_skill_replace_job(params: dict) -> dict:
     model_identity = params.get("model_identity") or ""
     product_category = params.get("product_category") or "其他"
 
-    if not grid_urls or not product_url or not model_url:
-        raise RuntimeError("grid_urls / product_image_url / model_image_url 必填")
+    if not grid_urls:
+        raise RuntimeError("grid_urls 必填")
+    if not any([product_url, model_url, scene_url]):
+        raise RuntimeError("产品图 / 人物图 / 场景图 至少 1 张")
 
     n_grids = len(grid_urls)
-    refs_desc = [
-        "Reference 1 (the new model): the person whose face, hair, and body type should appear in every panel, replacing whoever was originally there.",
-        "Reference 2 (the new product): the item that should replace any clothing/product/garment visible in every panel — preserve its color, shape, pattern, and proportions.",
-    ]
+    # 动态拼 reference list + 描述:用户可能只传 1/2/3 张
+    refs_desc = []
+    refs_urls_extra = []  # 按 Reference N 顺序排
+    if model_url:
+        refs_desc.append(f"Reference {len(refs_desc)+1} (the NEW model): the person whose face, hair, and body type should appear in every panel, replacing whoever was originally there.")
+        refs_urls_extra.append(model_url)
+    if product_url:
+        refs_desc.append(f"Reference {len(refs_desc)+1} (the NEW product): the item that should replace any clothing/product/garment visible in every panel — preserve its color, shape, pattern, and proportions.")
+        refs_urls_extra.append(product_url)
     if scene_url:
-        refs_desc.append("Reference 3 (the new scene): the environment that should replace each panel's background.")
+        refs_desc.append(f"Reference {len(refs_desc)+1} (the NEW scene): the environment that should replace each panel's background.")
+        refs_urls_extra.append(scene_url)
+
+    # 动态拼 "do this" 行
+    actions = []
+    if model_url:
+        actions.append("Replace any person in each panel with the model from the model Reference, preserving their face, hair, and overall body type.")
+    else:
+        actions.append("Keep the original person in each panel (do NOT change who appears).")
+    if product_url:
+        actions.append(f"Replace the {product_category} (or any visible product/garment) in each panel with the product from the product Reference.")
+    else:
+        actions.append("Keep the original product/garment in each panel (do NOT change the visible product).")
+    if scene_url:
+        actions.append("Replace each panel's background with the scene from the scene Reference.")
+    else:
+        actions.append("Keep each panel's original background and environment.")
+    action_block = "\n".join(f"{i+1}. {a}" for i, a in enumerate(actions))
 
     base_prompt = f"""This image is a 3×3 storyboard grid containing 9 INDEPENDENT video shots, ordered left-to-right then top-to-bottom. Each cell has a number in the top-left corner with a black box background.
 
@@ -2405,9 +2429,7 @@ Original storyboard context:
 
 Re-render the entire storyboard with the following changes applied INDEPENDENTLY to EACH of the 9 cells:
 
-1. Replace any person in each panel with the model from Reference 1, preserving their face, hair, and overall body type.
-2. Replace the {product_category} (or any visible product/garment) in each panel with the product from Reference 2.
-3. {"Replace each panel's background with the scene from Reference 3." if scene_url else "Keep each panel's original background and environment."}
+{action_block}
 4. CRITICALLY preserve each cell's:
    - Composition and framing
    - Camera angle (close-up, medium-shot, wide-shot, etc.)
@@ -2427,9 +2449,8 @@ NO TEXT OVERLAYS other than the original number labels. NO new words, signs, bra
 
     async def _replace_one(idx: int, grid_url: str) -> tuple[int, str]:
         async with sem:
-            image_urls = [grid_url, model_url, product_url]
-            if scene_url:
-                image_urls.append(scene_url)
+            # image_urls 顺序:[base 九宫格, ...动态 references(按 model/product/scene 出现顺序)]
+            image_urls = [grid_url, *refs_urls_extra]
             log_info(f"skill_replace [{idx+1}/{n_grids}] 提交 GPT-2 edit grid={grid_url[:60]}")
             t = _t.time()
             try:
@@ -2512,8 +2533,8 @@ async def _run_skill_generate_job(params: dict) -> dict:
         raise RuntimeError("replaced_grid_urls 必填(先调 /replace)")
     if not scenes:
         raise RuntimeError("scenes 必填")
-    if not product_url or not model_url:
-        raise RuntimeError("product/model image URL 必填")
+    if not any([product_url, model_url, scene_ref_url]):
+        raise RuntimeError("产品图 / 人物图 / 场景图 至少 1 张")
 
     n_grids = len(replaced_grid_urls)
     n_scenes = len(scenes)
@@ -2571,17 +2592,28 @@ async def _run_skill_generate_job(params: dict) -> dict:
                 req_dur = min(req_dur, 12)
                 target_dur = max(0.5, float(scene.get("duration_sec", 4)))
 
-                # image_urls 顺序:[这一格图(首帧锚点), 产品图, 模特图, (可选)场景图]
-                image_urls = [frame_urls[idx], product_url, model_url]
+                # image_urls 动态:[这一格图(首帧锚点必传), 产品图(可选), 模特图(可选), 场景图(可选)]
+                image_urls = [frame_urls[idx]]
+                ref_roles = []  # 跟 image_urls 顺序对齐,告诉 prompt 哪张是干嘛
+                if product_url:
+                    image_urls.append(product_url)
+                    ref_roles.append(("product", "the product"))
+                if model_url:
+                    image_urls.append(model_url)
+                    ref_roles.append(("model", "the model"))
                 if scene_ref_url:
                     image_urls.append(scene_ref_url)
+                    ref_roles.append(("scene", "the scene/background reference"))
 
                 visual = scene.get("visual_prompt", "") or "Cinematic product showcase"
-                # 拼 prompt:@Image1 引用 + user_prompt 强调产品功能
+                # 拼 prompt:@Image1 引用 + 动态 @Image2..N 标注 + user_prompt 强调产品功能
+                ref_anchors = " ".join(
+                    f"@Image{i+2} is {desc}."
+                    for i, (_, desc) in enumerate(ref_roles)
+                )
                 seg_prompt = (
                     f"@Image1 shows the desired storyboard frame composition. "
-                    f"@Image2 is the product. @Image3 is the model. "
-                    f"{'@Image4 is the scene/background reference. ' if scene_ref_url else ''}"
+                    f"{ref_anchors} "
                     f"Generate a {req_dur}-second video that re-creates the scene shown in @Image1: {visual}."
                 )
                 if user_prompt:

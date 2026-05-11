@@ -242,8 +242,9 @@ export default function VideoFrameExtractPage() {
 
   // 第二步:替换九宫格
   const doReplace = async () => {
-    if (gridUrls.length === 0 || !productImageUrl || !modelImageUrl) {
-      setError("请先完成视频提取 + 上传产品图 + 上传人物图");
+    if (gridUrls.length === 0) { setError("请先完成视频提取"); return; }
+    if (!productImageUrl && !modelImageUrl && !sceneImageUrl) {
+      setError("产品图 / 人物图 / 场景图 至少上传 1 张");
       return;
     }
     setError(""); setLoading(true); setLoadingMsg("提交替换任务...");
@@ -294,7 +295,7 @@ export default function VideoFrameExtractPage() {
 
   // 第三步:生成视频
   const doGenerate = async () => {
-    if (replacedGridUrls.length === 0 || !scenes || !productImageUrl || !modelImageUrl) {
+    if (replacedGridUrls.length === 0 || !scenes) {
       setError("请先完成替换九宫格");
       return;
     }
@@ -451,25 +452,25 @@ export default function VideoFrameExtractPage() {
         )}
 
         {scenes && (
-          <Box label="⑤ 上传你的素材(替换原视频里的元素)">
+          <Box label="⑤ 上传你的素材(产品 / 人物 / 场景 — 三选至少 1 张)">
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
               <div style={{ flex: 1, minWidth: 200 }}>
-                <ImagePicker label="产品图" url={productImageUrl} onPick={onPickProduct} required />
+                <ImagePicker label="产品图(可选)" url={productImageUrl} onPick={onPickProduct} />
               </div>
               <div style={{ flex: 1, minWidth: 200 }}>
-                <ImagePicker label="人物图" url={modelImageUrl} onPick={onPickModel} required />
+                <ImagePicker label="人物图(可选)" url={modelImageUrl} onPick={onPickModel} />
               </div>
               <div style={{ flex: 1, minWidth: 200 }}>
                 <ImagePicker label="场景图(可选)" url={sceneImageUrl} onPick={onPickScene} />
               </div>
             </div>
             <div style={{ fontSize: "0.78rem", color: "#888", marginTop: 6 }}>
-              💡 产品图 = 要展示的商品 / 人物图 = 想换上的模特 / 场景图 = 想换上的背景(不填则保留原背景)
+              💡 三种素材**至少传 1 张**。不传的元素 AI 会保留原视频里的(例如只传产品图 → 人物保留原模特,只换产品)
             </div>
           </Box>
         )}
 
-        {scenes && productImageUrl && modelImageUrl && replacedGridUrls.length === 0 && (
+        {scenes && (productImageUrl || modelImageUrl || sceneImageUrl) && replacedGridUrls.length === 0 && (
           <button onClick={doReplace} disabled={loading}
             style={{ background: "#0d0d0d", color: "#fff", border: "none", padding: "0.9rem 1.6rem", borderRadius: 10, fontSize: "0.95rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1, marginBottom: "1rem" }}>
             {loading ? loadingMsg || "替换中..." : `🎨 替换九宫格元素(消耗 ${Math.max(3, 3 * gridUrls.length)} 积分,每张 3-5 分钟)`}

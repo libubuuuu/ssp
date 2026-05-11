@@ -250,10 +250,9 @@ async def replace_submit(
 
     if not grid_urls:
         raise HTTPException(400, "grid_urls 必填")
-    if not product_image_url:
-        raise HTTPException(400, "product_image_url 必填(产品图)")
-    if not model_image_url:
-        raise HTTPException(400, "model_image_url 必填(人物图)")
+    # 产品 / 人物 / 场景 至少传 1 张
+    if not any([product_image_url, model_image_url, scene_image_url]):
+        raise HTTPException(400, "产品图 / 人物图 / 场景图 至少上传 1 张")
 
     user_id = str(current_user["id"])
     # 单张九宫格替换 ~¥1.5-2,按张数计费:3 积分 / 张
@@ -331,8 +330,8 @@ async def generate_submit(
         raise HTTPException(400, "replaced_grid_urls 必填(先调 /replace)")
     if not scenes:
         raise HTTPException(400, "scenes 必填")
-    if not product_image_url or not model_image_url:
-        raise HTTPException(400, "product_image_url + model_image_url 都必填")
+    if not any([product_image_url, model_image_url, scene_image_url]):
+        raise HTTPException(400, "产品图 / 人物图 / 场景图 至少上传 1 张")
 
     user_id = str(current_user["id"])
     cost = max(10, len(scenes) * 5)
