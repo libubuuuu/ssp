@@ -1,9 +1,12 @@
 "use client";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
+import FeatureShowcase from "@/components/FeatureShowcase";
 import { useLang } from "@/lib/i18n/LanguageContext";
 import { useLocalStorageItem } from "@/lib/hooks/useLocalStorageItem";
+
+const ONBOARDING_FLAG = "onboarding_showcase_v1_shown";
 
 const FEATURE_KEYS = [
   { key:"image", i18nKey:"image", icon:"◧", color:"#f0e8d5" },
@@ -40,10 +43,25 @@ export default function Dashboard() {
     return { ...f, label, desc };
   });
 
+  const [showPopup, setShowPopup] = useState(false);
+
   // 未登录 → 跳 /auth(用 effect 因为 router.push 在 render 期不允许)
   useEffect(() => {
     if (!token || !userJson) router.push("/auth");
   }, [token, userJson, router]);
+
+  // 首次进 dashboard 弹一次 onboarding popup,关掉后写 localStorage 不再弹
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!token || !userJson) return;
+    if (localStorage.getItem(ONBOARDING_FLAG) === "1") return;
+    setShowPopup(true);
+  }, [token, userJson]);
+
+  const dismissPopup = () => {
+    setShowPopup(false);
+    if (typeof window !== "undefined") localStorage.setItem(ONBOARDING_FLAG, "1");
+  };
 
   if (!user) return <div style={{minHeight:"100vh",background:"#edeae4"}}/>;
 
@@ -51,11 +69,13 @@ export default function Dashboard() {
     <div style={{display:"flex",minHeight:"100vh",background:"#edeae4",fontFamily:"-apple-system,BlinkMacSystemFont,sans-serif"}}>
       <Sidebar/>
       <main style={{flex:1,padding:"3rem 4rem",overflowY:"auto",maxWidth:"1280px",width:"100%",margin:"0 auto"}}>
-        <div style={{marginBottom:"3rem"}}>
+        <div style={{marginBottom:"2rem"}}>
           <div style={{fontSize:"0.9rem",color:"#888",marginBottom:"0.5rem"}}>{t("dashboard.welcomeBack")}</div>
           <h1 style={{fontSize:"2.4rem",fontWeight:300,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>{user.name||user.email.split("@")[0]},</h1>
           <h1 style={{fontSize:"2.4rem",fontWeight:300,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif",fontStyle:"italic"}}>{t("dashboard.todayCreate")}</h1>
         </div>
+
+        <FeatureShowcase mode="embedded" />
 
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))",gap:"1.5rem"}}>
           {FEATURES.map(f=>(
@@ -72,6 +92,7 @@ export default function Dashboard() {
           ))}
         </div>
       </main>
+      {showPopup && <FeatureShowcase mode="popup" onClose={dismissPopup} />}
     </div>
   );
 }
