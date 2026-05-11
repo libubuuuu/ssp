@@ -343,6 +343,8 @@ class GeneralGenerateRequest(BaseModel):
     # 跳过 compose_first_frame_for_scene(GPT 重画场景帧),省 N×2-3 分钟
     storyboard_image_url: Optional[str] = Field(None, description="storyboard /storyboard 返回的 grid url")
     storyboard_n_panels: int = Field(0, ge=0, le=9, description="storyboard 宫格数 0/2/3/4/6/9")
+    # 2026-05-12:character_sheet 整图 url,worker 裁 4 panels(脸/正/反/侧)作 Seedance r2v 多图 reference
+    character_sheet_image_url: Optional[str] = Field(None, description="character_sheet 2x2 整图 url")
 
 
 class StoryboardRequest(BaseModel):
@@ -473,6 +475,7 @@ async def generate(
             "batch_count": max(1, min(5, req.batch_count or 1)),
             "storyboard_image_url": req.storyboard_image_url or "",
             "storyboard_n_panels": int(req.storyboard_n_panels or 0),
+            "character_sheet_image_url": req.character_sheet_image_url or "",
             "_user_id": user_id,
         },
         "module": "video/general",

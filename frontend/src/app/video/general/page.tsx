@@ -345,6 +345,7 @@ export default function VideoGeneralPage() {
           batch_count: batchCount,
           storyboard_image_url: storyboardUrl || null,
           storyboard_n_panels: storyboardNPanels || 0,
+          character_sheet_image_url: characterSheetUrl || null,
         }),
       });
       if (!r.ok) throw new Error(await r.text());

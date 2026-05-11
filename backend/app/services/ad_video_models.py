@@ -69,6 +69,12 @@ SEEDANCE_ENDPOINT = "fal-ai/bytedance/seedance/v1.5/pro/image-to-video"
 # 2026-05-12:Veo 3.1 Fast i2v(Google,720p audio on $0.15/s,8s = $1.20)
 # fal OpenAPI verify(2026-05-12):image_url + prompt + duration("4s"/"6s"/"8s") + resolution + generate_audio(bool)
 VEO_FAST_I2V_ENDPOINT = "fal-ai/veo3.1/fast/image-to-video"
+
+# 2026-05-12:Seedance 2.0 Fast r2v(参考生成,480p 8s ≈ $1.06,memory P221 V2 已实测)
+# fal OpenAPI + memory reference_fal_seedance_r2v verify:
+#   image_urls(≤9) + video_urls + audio_urls + prompt(@Image1/@Video1) + duration(str,"4"-"15")
+#   + resolution("480p"/"720p") + aspect_ratio + generate_audio(bool)
+SEEDANCE_FAST_R2V_ENDPOINT = "bytedance/seedance-2.0/fast/reference-to-video"
 # P126 (2026-05-05):用户怒"做图片全部由 gpt2 来做",切 OpenAI gpt-image-2/edit。
 # 实测优势(probe 5 段对比 Flux Kontext):
 #   ✅ 真听 prompt(段 1 真"产品大特写"没硬塞模特脸,段 4 真"卧室场景"还原床/床头柜)
@@ -1369,6 +1375,75 @@ async def poll_veo_fast_status(task_id: str) -> dict:
 
         if "Failed" in status_type or "Failed" in status_str:
             return {"status": "failed", "error": "Veo 任务失败"}
+
+        return {"status": "processing"}
+    except Exception as e:
+        return {"status": "processing", "error": str(e)[:200]}
+
+
+# ============== 2026-05-12:Seedance 2.0 Fast r2v(替代 Veo,用户要双图参考)==============
+# 警告:参考生成端点,不是模板复制,memory P221 V2 已踩 ¥39.8
+async def submit_seedance_fast_r2v_video(
+    image_urls: list,
+    prompt: str,
+    duration: int = 8,
+    aspect_ratio: str = "9:16",
+    resolution: str = "480p",
+    enable_audio: bool = True,
+) -> dict:
+    """提交 Seedance 2.0 Fast r2v 任务,多图 reference + prompt @Image1 引用"""
+    circuit_breaker = get_circuit_breaker()
+    cb_key = "fal/seedance-fast-r2v"
+    if not circuit_breaker.is_available(cb_key):
+        return {"error": "Seedance r2v 服务暂时不可用,已熔断"}
+
+    # duration 接受 "4"-"15" str(memory 实测),最低 4
+    safe_duration = max(4, min(15, int(duration)))
+
+    try:
+        handler = await fal_client.submit_async(
+            SEEDANCE_FAST_R2V_ENDPOINT,
+            arguments={
+                "image_urls": image_urls,  # ⚠️ 字段名是 image_urls 不是 reference_image_urls(memory)
+                "prompt": prompt,
+                "duration": str(safe_duration),
+                "aspect_ratio": aspect_ratio,
+                "resolution": resolution,
+                "generate_audio": bool(enable_audio),
+            },
+        )
+        await circuit_breaker.record_success(cb_key)
+        return {
+            "task_id": handler.request_id,
+            "endpoint_tag": "seedance-fast-r2v",
+            "status": "pending",
+            "model": SEEDANCE_FAST_R2V_ENDPOINT,
+        }
+    except Exception as e:
+        await circuit_breaker.record_failure(cb_key)
+        log_error(f"Seedance r2v 提交失败: {e}")
+        return {"error": f"视频任务提交失败: {str(e)[:200]}"}
+
+
+async def poll_seedance_fast_r2v_status(task_id: str) -> dict:
+    """轮询 Seedance Fast r2v 任务状态"""
+    try:
+        status_obj = await fal_client.status_async(SEEDANCE_FAST_R2V_ENDPOINT, task_id, with_logs=False)
+        status_type = type(status_obj).__name__
+        status_str = str(status_obj)
+
+        if "Completed" in status_type or "Completed" in status_str:
+            result = await fal_client.result_async(SEEDANCE_FAST_R2V_ENDPOINT, task_id)
+            video_url = None
+            if isinstance(result, dict):
+                video_obj = result.get("video") or {}
+                video_url = video_obj.get("url") if isinstance(video_obj, dict) else None
+            if not video_url:
+                return {"status": "failed", "error": "Seedance r2v 视频 URL 为空"}
+            return {"status": "completed", "video_url": video_url}
+
+        if "Failed" in status_type or "Failed" in status_str:
+            return {"status": "failed", "error": "Seedance r2v 任务失败"}
 
         return {"status": "processing"}
     except Exception as e:
