@@ -8,12 +8,6 @@ import { useLocalStorageItem } from "@/lib/hooks/useLocalStorageItem";
 
 const ONBOARDING_FLAG = "onboarding_showcase_v1_shown";
 
-const FEATURE_KEYS = [
-  { key:"video/studio", i18nKey:"studio", icon:"▦", color:"#ead8c0" },
-  { key:"tasks/history", i18nKey:"history", icon:"☰", color:"#f2ece0" },
-  { key:"pricing", i18nKey:"pricing", icon:"✦", color:"#ebe5d5" },
-];
-
 interface DashboardUser {
   name?: string;
   email?: string;
@@ -28,16 +22,6 @@ export default function Dashboard() {
     if (!userJson) return null;
     try { return JSON.parse(userJson) as DashboardUser; } catch { return null; }
   }, [userJson]);
-  const FEATURES = FEATURE_KEYS.map(f => {
-    const labelKey = `dashboard.features.${f.i18nKey}.label`;
-    const descKey = `dashboard.features.${f.i18nKey}.desc`;
-    const labelT = t(labelKey);
-    const descT = t(descKey);
-    // 缺 i18n 时 fallback 到 hardcoded 中文
-    const label = labelT === labelKey && (f as { labelFallback?: string }).labelFallback ? (f as { labelFallback?: string }).labelFallback! : labelT;
-    const desc = descT === descKey && (f as { descFallback?: string }).descFallback ? (f as { descFallback?: string }).descFallback! : descT;
-    return { ...f, label, desc };
-  });
 
   const [showPopup, setShowPopup] = useState(false);
 
@@ -72,21 +56,6 @@ export default function Dashboard() {
         </div>
 
         <FeatureShowcase mode="embedded" />
-
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))",gap:"1.5rem"}}>
-          {FEATURES.map(f=>(
-            <div key={f.key} onClick={()=>router.push("/"+f.key)}
-              style={{background:"#fff",borderRadius:"20px",padding:"2.5rem",cursor:"pointer",border:"1px solid rgba(0,0,0,0.04)",transition:"all 0.25s",minHeight:"220px",display:"flex",flexDirection:"column",justifyContent:"space-between"}}
-              onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-4px)";e.currentTarget.style.boxShadow="0 16px 40px rgba(0,0,0,0.08)";}}
-              onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="none";}}>
-              <div style={{width:"64px",height:"64px",borderRadius:"16px",background:f.color,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"2rem",color:"#0d0d0d"}}>{f.icon}</div>
-              <div>
-                <div style={{fontSize:"1.3rem",color:"#0d0d0d",marginBottom:"0.5rem",fontWeight:500}}>{f.label}</div>
-                <div style={{fontSize:"0.95rem",color:"#888",lineHeight:1.5}}>{f.desc}</div>
-              </div>
-            </div>
-          ))}
-        </div>
       </main>
       {showPopup && <FeatureShowcase mode="popup" onClose={dismissPopup} />}
     </div>
