@@ -87,6 +87,8 @@ export function setLocalUserCreditsAbsolute(credits: number): void {
 export function setAuthToken(token: string): void {
   if (typeof window === "undefined") return;
   localStorage.setItem("token", token);
+  // 每次新登录清掉 onboarding 标记 → dashboard 重新弹卡片
+  localStorage.removeItem("onboarding_showcase_v1_shown");
   window.dispatchEvent(new Event(EVENT_NAME));
 }
 
