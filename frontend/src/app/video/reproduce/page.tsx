@@ -2,31 +2,114 @@
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 
-interface SubCard {
+const PlayIcon = ({ size = 14, color = "white", opacity = 0.9 }: { size?: number; color?: string; opacity?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={color} style={{ opacity }} aria-hidden>
+    <path d="M8 5v14l11-7z" />
+  </svg>
+);
+
+const ArrowRight = ({ size = 12, color = "white" }: { size?: number; color?: string }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M5 12h14M13 5l7 7-7 7" />
+  </svg>
+);
+
+const ArrowDown = ({ size = 12, color = "#888" }: { size?: number; color?: string }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M12 5v14M5 13l7 7 7-7" />
+  </svg>
+);
+
+const UserIcon = ({ size = 28, color = "rgba(255,255,255,0.85)" }: { size?: number; color?: string }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={color} aria-hidden>
+    <circle cx="12" cy="8" r="4" />
+    <path d="M4 22c0-4.4 3.6-8 8-8s8 3.6 8 8" />
+  </svg>
+);
+
+const InfoIcon = ({ size = 11, color = "#9A9690" }: { size?: number; color?: string }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: "-1px", marginRight: 4 }} aria-hidden>
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 16v-4M12 8h.01" />
+  </svg>
+);
+
+interface Card {
   title: string;
-  desc: string;
+  desc: React.ReactNode;
   route: string;
-  gradient: string;
+  preview: React.ReactNode;
 }
 
-const SUBS: SubCard[] = [
+const Card1Preview = () => (
+  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 3, aspectRatio: "1.1", marginBottom: 12, background: "#F5F2EC", padding: 4, borderRadius: 8 }}>
+    <div style={{ background: "linear-gradient(135deg,#F0997B,#D4537E)", borderRadius: 3 }} />
+    <div style={{ background: "linear-gradient(135deg,#FAC775,#EF9F27)", borderRadius: 3 }} />
+    <div style={{ background: "linear-gradient(135deg,#AFA9EC,#7F77DD)", borderRadius: 3 }} />
+    <div style={{ background: "linear-gradient(135deg,#5DCAA5,#1D9E75)", borderRadius: 3, position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <PlayIcon size={14} />
+    </div>
+    <div style={{ background: "linear-gradient(135deg,#85B7EB,#378ADD)", borderRadius: 3 }} />
+    <div style={{ background: "linear-gradient(135deg,#ED93B1,#D4537E)", borderRadius: 3 }} />
+    <div style={{ background: "linear-gradient(135deg,#B5D4F4,#85B7EB)", borderRadius: 3 }} />
+    <div style={{ background: "linear-gradient(135deg,#F4C0D1,#ED93B1)", borderRadius: 3 }} />
+    <div style={{ background: "linear-gradient(135deg,#FAEEDA,#FAC775)", borderRadius: 3 }} />
+  </div>
+);
+
+const Card2Preview = () => (
+  <div style={{ aspectRatio: "1.1", marginBottom: 12, background: "#F5F2EC", padding: 8, borderRadius: 8, position: "relative", display: "flex", flexDirection: "column" }}>
+    <div style={{ display: "flex", gap: 4, marginBottom: 6 }}>
+      <div style={{ flex: 1, aspectRatio: 1, background: "linear-gradient(135deg,#FBEAF0,#ED93B1)", borderRadius: 4 }} />
+      <div style={{ flex: 1, aspectRatio: 1, background: "linear-gradient(135deg,#E6F1FB,#85B7EB)", borderRadius: 4 }} />
+      <div style={{ flex: 1, aspectRatio: 1, background: "linear-gradient(135deg,#FAEEDA,#FAC775)", borderRadius: 4 }} />
+    </div>
+    <div style={{ textAlign: "center", margin: "4px 0", lineHeight: 0 }}>
+      <ArrowDown />
+    </div>
+    <div style={{ background: "linear-gradient(135deg,#534AB7,#7F77DD)", flex: 1, minHeight: 60, borderRadius: 4, position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <UserIcon />
+      <div style={{ position: "absolute", bottom: 4, right: 4, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <PlayIcon size={12} />
+      </div>
+    </div>
+  </div>
+);
+
+const Card3Preview = () => (
+  <div style={{ aspectRatio: "1.1", marginBottom: 12, background: "#F5F2EC", padding: 8, borderRadius: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+    <div style={{ flex: 1, background: "linear-gradient(135deg,#888780,#5F5E5A)", borderRadius: 4, position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <PlayIcon size={18} />
+      <div style={{ position: "absolute", top: 3, left: 5, fontSize: 8, color: "white", background: "rgba(0,0,0,0.4)", padding: "1px 5px", borderRadius: 3 }}>参考</div>
+    </div>
+    <div style={{ textAlign: "center", lineHeight: 0 }}>
+      <ArrowDown size={11} />
+    </div>
+    <div style={{ flex: 1, background: "linear-gradient(135deg,#1D9E75,#0F6E56)", borderRadius: 4, position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <PlayIcon size={18} />
+      <div style={{ position: "absolute", top: 3, left: 5, fontSize: 8, color: "white", background: "rgba(0,0,0,0.4)", padding: "1px 5px", borderRadius: 3 }}>替换后</div>
+    </div>
+  </div>
+);
+
+const CARDS: Card[] = [
   {
     title: "分镜复刻",
-    desc: "上传视频 · AI 拆 9 宫格分镜 · 替换元素重出片",
+    desc: <>视频拆成 9 宫格<br />替换元素重新出片</>,
     route: "/video/frame-extract",
-    gradient: "linear-gradient(135deg,#ff0844 0%,#ff5858 30%,#f857a6 65%,#ffe53b 100%)",
+    preview: <Card1Preview />,
   },
   {
     title: "图片复刻",
-    desc: "多产品图 + 可选模特 · AI 自动出脚本 + 拍片",
+    desc: <>产品图 + 模特<br />AI 出脚本 + 拍片</>,
     route: "/video/general",
-    gradient: "linear-gradient(135deg,#0061ff 0%,#4facfe 30%,#00f2fe 65%,#43e97b 100%)",
+    preview: <Card2Preview />,
   },
   {
     title: "视频复刻",
-    desc: "整段参考视频 · 一键产品替换 · Seedance r2v",
+    desc: <>参考视频一键换产品<br />Seedance r2v</>,
     route: "/video-clone-v2",
-    gradient: "linear-gradient(135deg,#fa709a 0%,#ee9ca7 30%,#fee140 65%,#c471f5 100%)",
+    preview: <Card3Preview />,
   },
 ];
 
@@ -35,78 +118,60 @@ export default function VideoReproduceHub() {
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "#edeae4", fontFamily: "-apple-system,BlinkMacSystemFont,sans-serif" }}>
       <style jsx>{`
-        @keyframes gradShift {
-          0% { background-position: 0% 50%; }
-          50% { background-position: 100% 50%; }
-          100% { background-position: 0% 50%; }
+        .reproCard {
+          background: white;
+          border-radius: 16px;
+          padding: 12px;
+          border: 0.5px solid rgba(0,0,0,0.06);
+          cursor: pointer;
+          transition: transform 0.25s cubic-bezier(0.2,0.9,0.3,1.2), box-shadow 0.25s, border-color 0.25s;
         }
-        .hubCard {
-          background-size: 220% 220%;
-          animation: gradShift 8s ease infinite;
-          transition: transform 0.3s cubic-bezier(0.2,0.9,0.3,1.2), box-shadow 0.3s, filter 0.3s;
-          position: relative;
-          overflow: hidden;
+        .reproCard:hover {
+          transform: translateY(-4px);
+          box-shadow: 0 16px 38px rgba(0,0,0,0.1);
+          border-color: rgba(0,0,0,0.12);
         }
-        .hubCard:hover {
-          transform: translateY(-8px) scale(1.02);
-          box-shadow: 0 28px 70px rgba(0,0,0,0.35);
-          filter: saturate(1.2) brightness(1.06);
-          animation-duration: 4s;
+        .reproCard:hover .arrowCircle {
+          transform: rotate(-45deg);
         }
-        .hubCard::before {
-          content: "";
-          position: absolute;
-          top: 0; left: 0;
-          width: 60%; height: 200%;
-          background: linear-gradient(110deg, transparent 30%, rgba(255,255,255,0.3) 50%, transparent 70%);
-          transform: translateX(-120%) skewX(-20deg);
-          pointer-events: none;
-          opacity: 0;
-        }
-        .hubCard:hover::before {
-          opacity: 1;
-          animation: shineHub 1s ease-out;
-        }
-        @keyframes shineHub {
-          0% { transform: translateX(-120%) skewX(-20deg); }
-          100% { transform: translateX(220%) skewX(-20deg); }
+        .arrowCircle {
+          width: 22px;
+          height: 22px;
+          border-radius: 50%;
+          background: #2C2C2A;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: transform 0.25s;
         }
       `}</style>
       <Sidebar />
-      <main style={{ flex: 1, padding: "3rem 4rem", overflowY: "auto", maxWidth: "1280px", width: "100%", margin: "0 auto" }}>
-        <div style={{ marginBottom: "2.5rem" }}>
-          <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>分镜复刻 · 图片复刻 · 视频复刻</div>
-          <h1 style={{ fontSize: "2rem", fontWeight: 300, color: "#0d0d0d", margin: 0, fontFamily: "Georgia,serif" }}>视频复刻</h1>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "1.4rem" }}>
-          {SUBS.map((c) => (
-            <div
-              key={c.title}
-              className="hubCard"
-              onClick={() => router.push(c.route)}
-              style={{
-                background: c.gradient,
-                borderRadius: "22px",
-                aspectRatio: "3/4",
-                padding: "1.6rem",
-                cursor: "pointer",
-                display: "flex",
-                flexDirection: "column",
-                justifyContent: "flex-end",
-                boxShadow: "0 18px 50px rgba(0,0,0,0.22)",
-              }}
-            >
-              <div style={{ fontSize: "1.4rem", fontWeight: 600, color: "#fff", marginBottom: "0.3rem", textShadow: "0 2px 10px rgba(0,0,0,0.25)", position: "relative", zIndex: 2 }}>
-                {c.title}
+      <main style={{ flex: 1, padding: "2.5rem 3rem", overflowY: "auto", maxWidth: "1280px", width: "100%", margin: "0 auto" }}>
+        <div style={{ background: "#EFEBE3", borderRadius: 20, padding: "24px 20px" }}>
+          <div style={{ fontSize: 11, color: "#9A9690", marginBottom: 4, letterSpacing: "0.3px" }}>
+            分镜复刻 · 图片复刻 · 视频复刻
+          </div>
+          <h2 style={{ fontSize: 22, fontWeight: 500, margin: "0 0 20px", color: "#2C2C2A" }}>视频复刻</h2>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+            {CARDS.map((c) => (
+              <div key={c.title} className="reproCard" onClick={() => router.push(c.route)}>
+                {c.preview}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: "#2C2C2A" }}>{c.title}</div>
+                  <div className="arrowCircle">
+                    <ArrowRight size={12} color="white" />
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: "#888", lineHeight: 1.5 }}>{c.desc}</div>
               </div>
-              <div style={{ fontSize: "0.82rem", color: "rgba(255,255,255,0.95)", lineHeight: 1.5, textShadow: "0 1px 5px rgba(0,0,0,0.25)", position: "relative", zIndex: 2 }}>
-                {c.desc}
-              </div>
-              <div style={{ position: "absolute", bottom: "1.4rem", right: "1.4rem", width: "36px", height: "36px", borderRadius: "50%", background: "rgba(255,255,255,0.92)", color: "#0d0d0d", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1rem", fontWeight: 500, zIndex: 2 }}>
-                →
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
+
+          <div style={{ marginTop: 16, fontSize: 11, color: "#9A9690", textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <InfoIcon />
+            <span>每张卡片的预览图未来可换成真实生成案例</span>
+          </div>
         </div>
       </main>
     </div>
