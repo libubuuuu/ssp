@@ -343,6 +343,8 @@ export default function VideoGeneralPage() {
           user_outfit: userOutfit || null,
           user_scene: userScene || null,
           batch_count: batchCount,
+          storyboard_image_url: storyboardUrl || null,
+          storyboard_n_panels: storyboardNPanels || 0,
         }),
       });
       if (!r.ok) throw new Error(await r.text());

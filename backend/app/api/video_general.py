@@ -339,6 +339,10 @@ class GeneralGenerateRequest(BaseModel):
     user_scene: Optional[str] = Field(None, description="场景描述(如'明亮的客厅,落地窗,午后阳光')")
     # 2026-05-12:批量生成 — 1 次提交跑 N 个独立版本(同 prompt 不同种子,挑最佳)
     batch_count: int = Field(1, ge=1, le=5, description="批量生成数量 1-5")
+    # 2026-05-12:storyboard 输出的 N 宫格图(整图)+ 宫格数,worker 裁成 N 子图直接作 i2v 首帧
+    # 跳过 compose_first_frame_for_scene(GPT 重画场景帧),省 N×2-3 分钟
+    storyboard_image_url: Optional[str] = Field(None, description="storyboard /storyboard 返回的 grid url")
+    storyboard_n_panels: int = Field(0, ge=0, le=9, description="storyboard 宫格数 0/2/3/4/6/9")
 
 
 class StoryboardRequest(BaseModel):
@@ -467,6 +471,8 @@ async def generate(
             "user_outfit": (req.user_outfit or "").strip(),
             "user_scene": (req.user_scene or "").strip(),
             "batch_count": max(1, min(5, req.batch_count or 1)),
+            "storyboard_image_url": req.storyboard_image_url or "",
+            "storyboard_n_panels": int(req.storyboard_n_panels or 0),
             "_user_id": user_id,
         },
         "module": "video/general",

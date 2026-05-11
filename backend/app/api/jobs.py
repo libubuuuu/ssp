@@ -3426,6 +3426,9 @@ async def _run_video_general_job(params: dict) -> dict:
     user_outfit = (params.get("user_outfit") or "").strip()
     user_scene = (params.get("user_scene") or "").strip()
     batch_count = max(1, min(5, int(params.get("batch_count") or 1)))
+    # 2026-05-12:storyboard 子图直接作 i2v 首帧(跳过 compose_first_frame_for_scene 重画)
+    storyboard_image_url = (params.get("storyboard_image_url") or "").strip()
+    storyboard_n_panels = int(params.get("storyboard_n_panels") or 0)
 
     log_info(
         f"video_general 启动 category={category} target_user={target_user[:30]!r} "
@@ -3459,10 +3462,20 @@ async def _run_video_general_job(params: dict) -> dict:
         model_image_url = base_res["image_url"]
         log_info(f"video_general GPT 出模特图 OK url={model_image_url[:60]}")
 
-    # Step B:N 段并发 — 每段 GPT-Image 2 出本段首帧(锁 lookbook)+ Seedance i2v
-    # 2026-05-11:去掉 cat-vton 分支,全品类统一走 GPT-Image 2
-    # 原因:cat-vton 跨段不一致(每次合成微调不同),GPT-Image 2 + base_image + lookbook 更稳
-    log_info(f"video_general category={category} 全程 GPT-Image 2(去 cat-vton,跨段一致性优先)")
+    # 2026-05-12:如果用户传了 storyboard_image_url + n_panels,裁出 N 张子图直接作每段 i2v 首帧
+    # 跳过 compose_first_frame_for_scene(GPT 重画场景帧)→ 省 N×2-3 分钟
+    storyboard_panels: list = []
+    if storyboard_image_url and storyboard_n_panels >= 2:
+        try:
+            storyboard_panels = await ad_video_models.crop_storyboard_panels(storyboard_image_url, storyboard_n_panels)
+            log_info(f"video_general 裁 storyboard panels OK n={len(storyboard_panels)},每段直接用 panel 作首帧(省 GPT 重画)")
+        except Exception as e:
+            log_warning(f"video_general 裁 storyboard panels 失败,降级 GPT 重画: {e}")
+            storyboard_panels = []
+
+    # Step B:N 段并发 — 每段 i2v 出动作视频
+    # 2026-05-12:如有 storyboard panels → 直接用作首帧;否则 GPT-Image 2 重画
+    log_info(f"video_general category={category} 视频路径:{'storyboard panel 直接作首帧' if storyboard_panels else 'GPT-Image 2 重画场景帧'}")
 
     sem = _aio.Semaphore(3)
 
@@ -3471,23 +3484,27 @@ async def _run_video_general_job(params: dict) -> dict:
             visual = (scene.get("visual_prompt") or "").strip()
             seg_dur = max(4, min(12, int(scene.get("duration_sec") or 5)))
 
-            # Step B1:本段首帧 — GPT-Image 2 + unified lookbook
-            fr = await ad_video_models.compose_first_frame_for_scene(
-                base_image_url=model_image_url,
-                scene=scene,
-                model_description=lookbook["model_description"],
-                overall_setting=lookbook["overall_setting"],
-                aspect_ratio=aspect_ratio,
-                product_image_url=primary_product,
-                product_back_image_url=product_back,
-                no_model=False,
-            )
-            if "error" in fr or not fr.get("image_url"):
-                log_warning(f"video_general seg {idx} GPT-Image 2 失败,降级 base 模特图: {fr.get('error', '?')[:120]}")
-                seg_frame = model_image_url
+            # Step B1:本段首帧 — 优先用 storyboard panel[idx],降级 GPT-Image 2 重画
+            if storyboard_panels and idx < len(storyboard_panels):
+                seg_frame = storyboard_panels[idx]
+                log_info(f"video_general seg {idx} 用 storyboard panel[{idx}] 作首帧 url={seg_frame[:60]}")
             else:
-                seg_frame = fr["image_url"]
-                log_info(f"video_general seg {idx} GPT-Image 2 OK url={seg_frame[:60]}")
+                fr = await ad_video_models.compose_first_frame_for_scene(
+                    base_image_url=model_image_url,
+                    scene=scene,
+                    model_description=lookbook["model_description"],
+                    overall_setting=lookbook["overall_setting"],
+                    aspect_ratio=aspect_ratio,
+                    product_image_url=primary_product,
+                    product_back_image_url=product_back,
+                    no_model=False,
+                )
+                if "error" in fr or not fr.get("image_url"):
+                    log_warning(f"video_general seg {idx} GPT-Image 2 失败,降级 base 模特图: {fr.get('error', '?')[:120]}")
+                    seg_frame = model_image_url
+                else:
+                    seg_frame = fr["image_url"]
+                    log_info(f"video_general seg {idx} GPT-Image 2 OK url={seg_frame[:60]}")
 
             # Step B2:Veo 3.1 Fast i2v 出动作视频(2026-05-12:从 Seedance v1.5 切到 Veo,修跨帧主体漂移)
             # 用户要求每分镜独立 8 秒 audio on 720p,9 段 ≈ $10.80 ≈ ¥78
