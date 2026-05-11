@@ -1627,6 +1627,12 @@ async def _execute_job(job_id: str):
             elif t == "skill_analyze":
                 # 2026-05-12:视频拆帧 storyboard(走 PySceneDetect skill + qwen-vl image)
                 result = await _run_skill_analyze_job(job["params"])
+            elif t == "skill_replace":
+                # 2026-05-12:九宫格 GPT-2 edit 替换人物/产品/场景
+                result = await _run_skill_replace_job(job["params"])
+            elif t == "skill_generate":
+                # 2026-05-12:替换后九宫格 + scenes → N 段 Seedance r2v + ffmpeg concat
+                result = await _run_skill_generate_job(job["params"])
             elif t == "replicate":
                 job["params"]["_user_id"] = job.get("user_id") or job.get("user_numeric_id") or "anon"
                 result = await _run_replicate_job(job["params"])
@@ -2342,6 +2348,310 @@ async def _run_skill_analyze_job(params: dict) -> dict:
             "model_identity": model_identity,
             "product_category": product_category,
             "grid_url": grid_url,  # 新字段:九宫格 PNG,前端可展示
+        }
+    finally:
+        try:
+            _shutil.rmtree(work_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+async def _run_skill_replace_job(params: dict) -> dict:
+    """阶段 B 第二步:GPT-Image 2 edit 把九宫格里的人/物/景换成用户上传的素材。
+
+    输入:grid_url + product/model/scene reference URLs
+    输出:replaced_grid_url(新九宫格 PNG)
+
+    成本:~¥1.5-2/次,耗时 ~250s(GPT-2 高峰期 4-5 分钟)
+    """
+    import time as _t
+    import fal_client as _fc
+    from app.services.logger import log_info, log_error
+
+    grid_url = params.get("grid_url")
+    product_url = params.get("product_image_url")
+    model_url = params.get("model_image_url")
+    scene_url = params.get("scene_image_url")
+    model_identity = params.get("model_identity") or ""
+    product_category = params.get("product_category") or "其他"
+
+    if not all([grid_url, product_url, model_url]):
+        raise RuntimeError("grid_url / product_image_url / model_image_url 必填")
+
+    # GPT-2 edit:image_urls 接受多张,顺序由 prompt 引用
+    # 顺序:[grid(base), model(ref1), product(ref2), scene(ref3 optional)]
+    image_urls = [grid_url, model_url, product_url]
+    refs_desc = [
+        "Reference 1 (the new model): the person whose face, hair, and body type should appear in every panel, replacing whoever was originally there.",
+        "Reference 2 (the new product): the item that should replace any clothing/product/garment visible in every panel — preserve its color, shape, pattern, and proportions.",
+    ]
+    if scene_url:
+        image_urls.append(scene_url)
+        refs_desc.append("Reference 3 (the new scene): the environment that should replace each panel's background.")
+
+    prompt = f"""This image is a 3×3 storyboard grid containing 9 INDEPENDENT video shots, ordered left-to-right then top-to-bottom. Each cell has a number (1-9) in the top-left corner with a black box background.
+
+Reference images provided (in this exact order after the storyboard):
+{chr(10).join(refs_desc)}
+
+Original storyboard context:
+- Original model: {model_identity or "(person visible in panels)"}
+- Original product category: {product_category}
+
+Re-render the entire storyboard with the following changes applied INDEPENDENTLY to EACH of the 9 cells:
+
+1. Replace any person in each panel with the model from Reference 1, preserving their face, hair, and overall body type.
+2. Replace the {product_category} (or any visible product/garment) in each panel with the product from Reference 2.
+3. {"Replace each panel's background with the scene from Reference 3." if scene_url else "Keep each panel's original background and environment."}
+4. CRITICALLY preserve each cell's:
+   - Composition and framing
+   - Camera angle (close-up, medium-shot, wide-shot, etc.)
+   - Action and pose
+   - Lighting style and color tone
+5. Keep all 9 cells as INDEPENDENT shots — do NOT merge or blend them into a single scene.
+6. Maintain the 3×3 grid layout with white borders between cells.
+7. Keep the numbered labels (1-9) in the top-left corner of each cell — but DO NOT add any other text overlays, words, logos, or written characters anywhere in the image.
+8. Output must be a 1024×1024 PNG with the same 3×3 grid structure as the input.
+
+NO TEXT OVERLAYS other than the original 1-9 panel number labels. NO new words, signs, brands, or written text introduced anywhere."""
+
+    # NSFW sanitize(P226 用过的)
+    prompt = _sanitize_for_gpt2(prompt)
+
+    log_info(f"skill_replace 调用 GPT-2 edit imgs={len(image_urls)} prompt_len={len(prompt)}")
+    t0 = _t.time()
+    try:
+        result = await asyncio.wait_for(
+            _fc.run_async(
+                "openai/gpt-image-2/edit",
+                arguments={
+                    "prompt": prompt,
+                    "image_urls": image_urls,
+                    "image_size": "square_hd",
+                    "num_images": 1,
+                    "output_format": "png",
+                },
+            ),
+            timeout=420,  # GPT-2 高峰期 4-5 分钟
+        )
+    except asyncio.TimeoutError:
+        raise RuntimeError("GPT-Image 2 edit 超时 420s,稍后重试")
+    except Exception as e:
+        log_error(f"skill_replace fal 异常: {e}")
+        raise RuntimeError(f"GPT-Image 2 edit 失败: {str(e)[:200]}")
+
+    elapsed = _t.time() - t0
+    images = result.get("images", []) if isinstance(result, dict) else []
+    if not images or not images[0].get("url"):
+        raise RuntimeError(f"GPT-Image 2 未返回图片: {str(result)[:300]}")
+
+    replaced_url = images[0]["url"]
+    log_info(f"skill_replace OK elapsed={elapsed:.1f}s url={replaced_url[:80]}")
+    return {
+        "replaced_grid_url": replaced_url,
+        "elapsed_seconds": round(elapsed, 1),
+    }
+
+
+async def _run_skill_generate_job(params: dict) -> dict:
+    """阶段 B 第三步:替换后九宫格 + scenes → N 段 Seedance r2v 并发 + ffmpeg concat → 1 段完整视频。
+
+    流程:
+      1. 下载替换后九宫格 → PIL 切 9 张独立帧
+      2. 每张帧上传到 fal 拿 URL(作为该段 r2v 的首帧参考)
+      3. 对每个 scene 并发跑 Seedance r2v(duration = max(4, ceil(scene.duration_sec)))
+      4. 下载每段视频 → ffmpeg crop 到精确 scene.duration_sec
+      5. ffmpeg concat → 1 段完整视频 → 上传 fal
+
+    成本:Seedance r2v 480p ~$1.06/8s × N 段(并发跑,但每段独立计费)
+    耗时:并发跑 + GPT-2 + ffmpeg,典型 18s 视频(9 段)~3-5 分钟
+    """
+    import math
+    import os as _os
+    import shutil as _shutil
+    import subprocess as _sp
+    import tempfile as _tmp
+    import time as _t
+    import httpx as _httpx
+    from PIL import Image
+    from app.services.fal_service import fal_upload_with_retry
+    from app.services.ad_video_models import (
+        submit_seedance_fast_r2v_video, poll_seedance_fast_r2v_status,
+    )
+    from app.services.logger import log_info, log_error
+
+    replaced_grid_url = params.get("replaced_grid_url")
+    scenes = params.get("scenes") or []
+    product_url = params.get("product_image_url")
+    model_url = params.get("model_image_url")
+    scene_ref_url = params.get("scene_image_url")
+    user_prompt = (params.get("user_prompt") or "").strip()
+    aspect_ratio = params.get("aspect_ratio") or "9:16"
+
+    if not replaced_grid_url:
+        raise RuntimeError("replaced_grid_url 必填(先调 /replace)")
+    if not scenes:
+        raise RuntimeError("scenes 必填")
+    if not product_url or not model_url:
+        raise RuntimeError("product/model image URL 必填")
+
+    # 截断到前 9 个 scene(当前单九宫格架构)
+    scenes = scenes[:9]
+    n = len(scenes)
+    work_dir = _tmp.mkdtemp(prefix="skill_generate_")
+    log_info(f"skill_generate 开工 n={n} replaced_grid={replaced_grid_url[:60]} work={work_dir}")
+
+    try:
+        # 1. 下载替换后九宫格
+        t0 = _t.time()
+        grid_path = _os.path.join(work_dir, "replaced_grid.png")
+        async with _httpx.AsyncClient(timeout=60, follow_redirects=True) as cli:
+            r = await cli.get(replaced_grid_url)
+            r.raise_for_status()
+            with open(grid_path, "wb") as f:
+                f.write(r.content)
+        log_info(f"skill_generate 下载九宫格 {_os.path.getsize(grid_path)} bytes ({_t.time()-t0:.1f}s)")
+
+        # PIL 切 3x3(跟 grid_composer 同算法)
+        img = Image.open(grid_path).convert("RGB")
+        canvas_size = max(img.size)
+        border = 4
+        rows, cols = 3, 3
+        cell_w = (canvas_size - (cols + 1) * border) // cols
+        cell_h = (canvas_size - (rows + 1) * border) // rows
+
+        frame_urls: list[str] = []
+        for i in range(n):
+            row = i // cols
+            col = i % cols
+            x = border + col * (cell_w + border)
+            y = border + row * (cell_h + border)
+            cell_img = img.crop((x, y, x + cell_w, y + cell_h))
+            cell_path = _os.path.join(work_dir, f"frame_{i:02d}.png")
+            cell_img.save(cell_path, "PNG")
+            cell_url = await fal_upload_with_retry(cell_path)
+            frame_urls.append(cell_url)
+        log_info(f"skill_generate 切 {n} 张帧 + 上传完成")
+
+        # 2. 并发跑 Seedance r2v
+        sem = asyncio.Semaphore(9)
+
+        async def _gen_seg(idx: int, scene: dict):
+            async with sem:
+                req_dur = max(4, math.ceil(float(scene.get("duration_sec", 4))))
+                req_dur = min(req_dur, 12)
+                target_dur = max(0.5, float(scene.get("duration_sec", 4)))
+
+                # image_urls 顺序:[这一格图(首帧锚点), 产品图, 模特图, (可选)场景图]
+                image_urls = [frame_urls[idx], product_url, model_url]
+                if scene_ref_url:
+                    image_urls.append(scene_ref_url)
+
+                visual = scene.get("visual_prompt", "") or "Cinematic product showcase"
+                # 拼 prompt:@Image1 引用 + user_prompt 强调产品功能
+                seg_prompt = (
+                    f"@Image1 shows the desired storyboard frame composition. "
+                    f"@Image2 is the product. @Image3 is the model. "
+                    f"{'@Image4 is the scene/background reference. ' if scene_ref_url else ''}"
+                    f"Generate a {req_dur}-second video that re-creates the scene shown in @Image1: {visual}."
+                )
+                if user_prompt:
+                    seg_prompt += f" Special emphasis: {user_prompt}."
+
+                # Seedance prompt 也 sanitize 一下(虽然 r2v 比 GPT-2 宽松)
+                seg_prompt = _sanitize_for_gpt2(seg_prompt)
+
+                log_info(f"skill_generate scene {idx+1}/{n}: submit r2v dur={req_dur}s target_crop={target_dur:.2f}s")
+                submit_res = await submit_seedance_fast_r2v_video(
+                    image_urls=image_urls,
+                    prompt=seg_prompt,
+                    duration=req_dur,
+                    aspect_ratio=aspect_ratio,
+                    resolution="480p",
+                    enable_audio=False,  # 我们后期不带音轨;Seedance 出 mute 视频更快
+                )
+                if "error" in submit_res or not submit_res.get("task_id"):
+                    raise RuntimeError(f"scene {idx+1} r2v submit 失败: {submit_res.get('error', '?')}")
+                task_id = submit_res["task_id"]
+
+                # poll
+                tp = _t.time()
+                max_wait = 360
+                video_url = None
+                while _t.time() - tp < max_wait:
+                    st = await poll_seedance_fast_r2v_status(task_id)
+                    s = st.get("status", "")
+                    if s == "completed":
+                        video_url = st.get("video_url")
+                        break
+                    if s == "failed":
+                        raise RuntimeError(f"scene {idx+1} r2v failed: {st.get('error', '?')}")
+                    await asyncio.sleep(5)
+                if not video_url:
+                    raise RuntimeError(f"scene {idx+1} r2v 超时 {max_wait}s")
+
+                # 下载
+                seg_raw = _os.path.join(work_dir, f"seg_{idx:02d}_raw.mp4")
+                async with _httpx.AsyncClient(timeout=120, follow_redirects=True) as cli:
+                    r = await cli.get(video_url)
+                    r.raise_for_status()
+                    with open(seg_raw, "wb") as f:
+                        f.write(r.content)
+
+                # ffmpeg crop 到精确目标 duration(target_dur 可能 < req_dur)
+                # memory feedback_ssp_ffmpeg_no_copy_first_segment:首段截短不能 -c copy,要重编
+                seg_final = _os.path.join(work_dir, f"seg_{idx:02d}.mp4")
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", seg_raw,
+                    "-t", f"{target_dur:.3f}",
+                    "-c:v", "libx264", "-preset", "ultrafast",
+                    "-pix_fmt", "yuv420p",
+                    "-an",
+                    seg_final,
+                ]
+                rr = _sp.run(cmd, capture_output=True, text=True, timeout=60)
+                if rr.returncode != 0 or not _os.path.exists(seg_final) or _os.path.getsize(seg_final) < 1024:
+                    raise RuntimeError(f"scene {idx+1} ffmpeg crop 失败: {rr.stderr[-200:]}")
+
+                log_info(f"skill_generate scene {idx+1}/{n} OK ({_t.time()-tp:.1f}s)")
+                return (idx, seg_final)
+
+        gather_t0 = _t.time()
+        results = await asyncio.gather(*[_gen_seg(i, sc) for i, sc in enumerate(scenes)])
+        results.sort(key=lambda x: x[0])
+        seg_paths = [p for _, p in results]
+        log_info(f"skill_generate 全部 {n} 段并发完成 ({_t.time()-gather_t0:.1f}s)")
+
+        # 3. ffmpeg concat
+        list_path = _os.path.join(work_dir, "concat.txt")
+        with open(list_path, "w") as f:
+            for p in seg_paths:
+                f.write(f"file '{p}'\n")
+        final_video = _os.path.join(work_dir, "final.mp4")
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", list_path,
+            "-c:v", "libx264", "-preset", "fast",
+            "-pix_fmt", "yuv420p",
+            "-an",
+            final_video,
+        ]
+        rr = _sp.run(cmd, capture_output=True, text=True, timeout=180)
+        if rr.returncode != 0 or not _os.path.exists(final_video):
+            raise RuntimeError(f"ffmpeg concat 失败: {rr.stderr[-300:]}")
+        size = _os.path.getsize(final_video)
+        log_info(f"skill_generate concat 完成 {size} bytes ({_t.time()-gather_t0:.1f}s 累计)")
+
+        # 4. 上传 fal 拿成品 URL
+        video_url = await fal_upload_with_retry(final_video)
+        total_dur_sec = sum(float(s.get("duration_sec", 4)) for s in scenes)
+        log_info(f"skill_generate 收工 total={_t.time()-t0:.1f}s segs={n} dur={total_dur_sec:.1f}s url={video_url[:80]}")
+        return {
+            "video_url": video_url,
+            "n_segments": n,
+            "total_duration_sec": round(total_dur_sec, 2),
         }
     finally:
         try:

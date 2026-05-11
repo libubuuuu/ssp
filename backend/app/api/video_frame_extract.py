@@ -20,13 +20,14 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 from app.api.auth import get_current_user
 from app.services.billing import deduct_credits, add_credits
 from app.services.fal_service import fal_upload_with_retry, AliyunQwenVLVideoService
-from app.services.upload_guard import read_bounded
+from app.services.upload_guard import read_bounded, IMAGE_MIMES
 from app.services.logger import log_info
 
 router = APIRouter()
 
 VIDEO_MIMES = ("video/mp4", "video/quicktime", "video/webm", "video/x-msvideo")
 MAX_VIDEO_SIZE = 100 * 1024 * 1024  # 100 MB
+MAX_IMAGE_SIZE = 10 * 1024 * 1024   # 10 MB
 
 
 # ================= 端点 1:上传视频 =================
@@ -159,6 +160,198 @@ async def analyze_status(
     current_user: dict = Depends(get_current_user),
 ):
     """前端轮询:返 pending/running/completed/failed + 完成时附 scenes."""
+    from app.api.jobs import JOBS
+    job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, "job 不存在")
+    uid = str(current_user.get("id"))
+    if job.get("user_id") != uid:
+        raise HTTPException(403, "无权限")
+    out = {"status": job.get("status", "pending")}
+    if job.get("status") == "completed":
+        out.update(job.get("result") or {})
+    if job.get("status") == "failed":
+        out["error"] = job.get("error", "unknown")
+    return out
+
+
+# ================= 端点 4:上传素材图(产品 / 人物 / 场景) =================
+
+@router.post("/upload/image")
+async def upload_image(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """跟 /api/video/replicate/upload/image 同形:上传图 → fal storage URL。"""
+    import io
+    import os
+    import tempfile
+    from PIL import Image
+
+    contents = await read_bounded(file, MAX_IMAGE_SIZE, IMAGE_MIMES, "素材图")
+    try:
+        img = Image.open(io.BytesIO(contents))
+        if img.mode in ("RGBA", "P", "LA"):
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            if img.mode in ("RGBA", "LA"):
+                bg.paste(img, mask=img.split()[-1])
+            else:
+                bg.paste(img.convert("RGBA"), mask=img.convert("RGBA").split()[-1])
+            img = bg
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+            img.save(tmp.name, "JPEG", quality=90, optimize=True)
+            tmp_path = tmp.name
+        try:
+            url = await fal_upload_with_retry(tmp_path)
+        finally:
+            try: os.unlink(tmp_path)
+            except Exception: pass
+    except Exception as e:
+        raise HTTPException(500, f"图片处理失败: {str(e)[:200]}")
+    return {"image_url": url}
+
+
+# ================= 端点 5:九宫格替换(GPT-Image 2 edit) =================
+
+@router.post("/replace")
+async def replace_submit(
+    body: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """异步:推 JOBS type=skill_replace,GPT-Image 2 edit 把九宫格里的人/物/景换成用户上传的。"""
+    grid_url = body.get("grid_url")
+    product_image_url = body.get("product_image_url")
+    model_image_url = body.get("model_image_url")
+    scene_image_url = body.get("scene_image_url")  # 可选
+    model_identity = body.get("model_identity") or ""
+    product_category = body.get("product_category") or "其他"
+
+    if not grid_url:
+        raise HTTPException(400, "grid_url 必填")
+    if not product_image_url:
+        raise HTTPException(400, "product_image_url 必填(产品图)")
+    if not model_image_url:
+        raise HTTPException(400, "model_image_url 必填(人物图)")
+
+    user_id = str(current_user["id"])
+    # 单次九宫格替换 ~¥1.5-2,计费 3 积分(1 积分 = ¥0.5)
+    cost = 3
+    if not deduct_credits(user_id, cost):
+        raise HTTPException(402, f"积分不足,需 {cost}")
+
+    from app.api.jobs import JOBS, _save_jobs, _execute_job
+    job_id = str(uuid.uuid4())[:8]
+    JOBS[job_id] = {
+        "id": job_id,
+        "user_id": user_id,
+        "user_numeric_id": user_id,
+        "type": "skill_replace",
+        "title": "九宫格 storyboard 元素替换",
+        "params": {
+            "grid_url": grid_url,
+            "product_image_url": product_image_url,
+            "model_image_url": model_image_url,
+            "scene_image_url": scene_image_url,
+            "model_identity": model_identity,
+            "product_category": product_category,
+            "_user_id": user_id,
+        },
+        "module": "video/frame-extract/replace",
+        "cost": cost,
+        "status": "pending",
+        "created_at": time.time(),
+    }
+    _save_jobs()
+    asyncio.create_task(_execute_job(job_id))
+    log_info(f"frame-extract/replace submitted job={job_id} user={user_id}")
+    return {"replace_job_id": job_id, "status": "pending", "cost": cost}
+
+
+@router.get("/replace/status/{job_id}")
+async def replace_status(
+    job_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    from app.api.jobs import JOBS
+    job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, "job 不存在")
+    uid = str(current_user.get("id"))
+    if job.get("user_id") != uid:
+        raise HTTPException(403, "无权限")
+    out = {"status": job.get("status", "pending")}
+    if job.get("status") == "completed":
+        out.update(job.get("result") or {})
+    if job.get("status") == "failed":
+        out["error"] = job.get("error", "unknown")
+    return out
+
+
+# ================= 端点 6:视频生成(Seedance r2v 多段并发 + concat) =================
+
+@router.post("/generate")
+async def generate_submit(
+    body: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """异步:推 JOBS type=skill_generate,从替换后九宫格 + scenes 出 N 段视频 → concat 成完整视频。"""
+    replaced_grid_url = body.get("replaced_grid_url")
+    scenes = body.get("scenes") or []
+    product_image_url = body.get("product_image_url")
+    model_image_url = body.get("model_image_url")
+    scene_image_url = body.get("scene_image_url")  # 可选
+    user_prompt = (body.get("user_prompt") or "").strip()  # 用户强调产品功能
+    aspect_ratio = body.get("aspect_ratio") or "9:16"
+
+    if not replaced_grid_url:
+        raise HTTPException(400, "replaced_grid_url 必填(先调 /replace)")
+    if not scenes:
+        raise HTTPException(400, "scenes 必填")
+    if not product_image_url or not model_image_url:
+        raise HTTPException(400, "product_image_url + model_image_url 都必填")
+
+    user_id = str(current_user["id"])
+    # Seedance r2v 480p ~$1.06/8s,按 scene 数 * 5 积分(N 段并发,但都要 r2v 调用)
+    cost = max(10, len(scenes) * 5)
+    if not deduct_credits(user_id, cost):
+        raise HTTPException(402, f"积分不足,需 {cost}")
+
+    from app.api.jobs import JOBS, _save_jobs, _execute_job
+    job_id = str(uuid.uuid4())[:8]
+    JOBS[job_id] = {
+        "id": job_id,
+        "user_id": user_id,
+        "user_numeric_id": user_id,
+        "type": "skill_generate",
+        "title": f"视频生成 ({len(scenes)} 段 r2v 拼合)",
+        "params": {
+            "replaced_grid_url": replaced_grid_url,
+            "scenes": scenes,
+            "product_image_url": product_image_url,
+            "model_image_url": model_image_url,
+            "scene_image_url": scene_image_url,
+            "user_prompt": user_prompt,
+            "aspect_ratio": aspect_ratio,
+            "_user_id": user_id,
+        },
+        "module": "video/frame-extract/generate",
+        "cost": cost,
+        "status": "pending",
+        "created_at": time.time(),
+    }
+    _save_jobs()
+    asyncio.create_task(_execute_job(job_id))
+    log_info(f"frame-extract/generate submitted job={job_id} user={user_id} scenes={len(scenes)} cost={cost}")
+    return {"generate_job_id": job_id, "status": "pending", "cost": cost}
+
+
+@router.get("/generate/status/{job_id}")
+async def generate_status(
+    job_id: str,
+    current_user: dict = Depends(get_current_user),
+):
     from app.api.jobs import JOBS
     job = JOBS.get(job_id)
     if not job:

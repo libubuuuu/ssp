@@ -3,7 +3,7 @@ import { useState } from "react";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
 import { errMsg } from "@/lib/utils/errors";
-import { serializeReplicateScenes, distributeSpeechToScenes } from "@/lib/scriptMarkdown";
+import { distributeSpeechToScenes } from "@/lib/scriptMarkdown";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -23,7 +23,7 @@ function token() {
   return localStorage.getItem("token") ?? "";
 }
 
-// Box 组件 hoist 到模块顶层(内联会触发 React remount → IME 断码)
+// hoist Box 到模块顶层(避免 React remount → IME 断码)
 const Box = ({ children, label }: { children: React.ReactNode; label: string }) => (
   <div style={{ background: "#fff", borderRadius: 14, padding: "1.2rem 1.4rem", marginBottom: "1.2rem", boxShadow: "0 2px 8px rgba(0,0,0,0.04)" }}>
     <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.6rem", fontWeight: 500 }}>{label}</div>
@@ -31,7 +31,27 @@ const Box = ({ children, label }: { children: React.ReactNode; label: string }) 
   </div>
 );
 
+const ImagePicker = ({ label, url, onPick, required = false }: {
+  label: string;
+  url: string;
+  onPick: (f: File | null) => void;
+  required?: boolean;
+}) => (
+  <label style={{ display: "block", border: "2px dashed #ddd", borderRadius: 10, padding: "0.8rem", textAlign: "center", cursor: "pointer", background: url ? "#f9f7f2" : "#fff", marginBottom: 8 }}>
+    <input type="file" accept="image/*" style={{ display: "none" }} onChange={e => onPick(e.target.files?.[0] ?? null)} />
+    <div style={{ fontSize: "0.82rem", color: "#666", marginBottom: 4 }}>
+      {label}{required && <span style={{ color: "#c33" }}> *</span>}
+    </div>
+    {url ? (
+      <img src={url} alt={label} style={{ maxWidth: 140, maxHeight: 140, borderRadius: 6 }} />
+    ) : (
+      <div style={{ color: "#999", fontSize: "0.78rem" }}>点击上传(JPG/PNG,≤10MB)</div>
+    )}
+  </label>
+);
+
 export default function VideoFrameExtractPage() {
+  // 第一步:视频提取
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [scenes, setScenes] = useState<Scene[] | null>(null);
@@ -40,14 +60,25 @@ export default function VideoFrameExtractPage() {
   const [originalSpeech, setOriginalSpeech] = useState<string>("");
   const [speechAudioUrl, setSpeechAudioUrl] = useState<string>("");
   const [hasBackgroundMusic, setHasBackgroundMusic] = useState<boolean>(false);
-  const [overallSetting, setOverallSetting] = useState<string>("");
+  const [modelIdentity, setModelIdentity] = useState<string>("");
+  const [productCategory, setProductCategory] = useState<string>("");
 
+  // 第二步:素材上传 + 替换
+  const [productImageUrl, setProductImageUrl] = useState<string>("");
+  const [modelImageUrl, setModelImageUrl] = useState<string>("");
+  const [sceneImageUrl, setSceneImageUrl] = useState<string>("");
+  const [replacedGridUrl, setReplacedGridUrl] = useState<string>("");
+
+  // 第三步:视频提示词 + 生成
+  const [userPrompt, setUserPrompt] = useState<string>("");
+  const [videoOutputUrl, setVideoOutputUrl] = useState<string>("");
+
+  // UI
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState("");
   const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
 
-  // 上传视频(XHR + 4 次指数退避 retry,跟 /video/extract 同一套)
+  // 上传 helper(XHR + 退避 retry,跟现有同套)
   const uploadWithRetry = (
     url: string, file: File, tk: string, onProgress?: (pct: number) => void,
   ): Promise<{ status: number; ok: boolean; text: string }> => {
@@ -89,13 +120,14 @@ export default function VideoFrameExtractPage() {
 
   const onPickVideo = async (f: File | null) => {
     if (!f) return;
-    setVideoFile(f); setError(""); setScenes(null); setGridUrl(""); setOriginalSpeech(""); setSpeechAudioUrl("");
+    setVideoFile(f); setError("");
+    setScenes(null); setGridUrl(""); setOriginalSpeech(""); setSpeechAudioUrl("");
+    setReplacedGridUrl(""); setVideoOutputUrl("");
     setLoading(true); setLoadingMsg("上传视频...");
     try {
       const r = await uploadWithRetry(
         `${API_BASE}/api/video/frame-extract/upload/video`,
-        f,
-        token(),
+        f, token(),
         (pct) => setLoadingMsg(`上传视频... ${pct}%`),
       );
       if (!r.ok) {
@@ -103,10 +135,7 @@ export default function VideoFrameExtractPage() {
         if (r.status === 413) throw new Error("视频太大(>100MB)");
         if (r.status === 415) throw new Error("视频格式不支持(请用 MP4/MOV/WebM)");
         let msg = `上传失败 HTTP ${r.status}`;
-        try {
-          const d = JSON.parse(r.text);
-          if (d?.detail) msg = String(d.detail);
-        } catch {}
+        try { const d = JSON.parse(r.text); if (d?.detail) msg = String(d.detail); } catch {}
         throw new Error(msg);
       }
       const d = JSON.parse(r.text);
@@ -115,6 +144,43 @@ export default function VideoFrameExtractPage() {
     finally { setLoading(false); setLoadingMsg(""); }
   };
 
+  const uploadImage = async (f: File, label: string): Promise<string> => {
+    const r = await uploadWithRetry(
+      `${API_BASE}/api/video/frame-extract/upload/image`,
+      f, token(),
+    );
+    if (!r.ok) {
+      let msg = `${label}上传失败 HTTP ${r.status}`;
+      try { const d = JSON.parse(r.text); if (d?.detail) msg = String(d.detail); } catch {}
+      throw new Error(msg);
+    }
+    const d = JSON.parse(r.text);
+    return d.image_url;
+  };
+
+  const onPickProduct = async (f: File | null) => {
+    if (!f) return;
+    setError(""); setLoading(true); setLoadingMsg("上传产品图...");
+    try { setProductImageUrl(await uploadImage(f, "产品图")); }
+    catch (e) { setError(errMsg(e, "产品图上传失败")); }
+    finally { setLoading(false); setLoadingMsg(""); }
+  };
+  const onPickModel = async (f: File | null) => {
+    if (!f) return;
+    setError(""); setLoading(true); setLoadingMsg("上传人物图...");
+    try { setModelImageUrl(await uploadImage(f, "人物图")); }
+    catch (e) { setError(errMsg(e, "人物图上传失败")); }
+    finally { setLoading(false); setLoadingMsg(""); }
+  };
+  const onPickScene = async (f: File | null) => {
+    if (!f) return;
+    setError(""); setLoading(true); setLoadingMsg("上传场景图...");
+    try { setSceneImageUrl(await uploadImage(f, "场景图")); }
+    catch (e) { setError(errMsg(e, "场景图上传失败")); }
+    finally { setLoading(false); setLoadingMsg(""); }
+  };
+
+  // 第一步:提取
   const extract = async () => {
     if (!videoUrl) return;
     setError(""); setLoading(true); setLoadingMsg("提交分析任务...");
@@ -129,7 +195,7 @@ export default function VideoFrameExtractPage() {
       const aid = d.analyze_job_id;
       if (!aid) throw new Error("没拿到 analyze_job_id");
       adjustLocalUserCredits(-1);
-      setLoadingMsg("AI 分析中(PySceneDetect 切镜头 + qwen-vl 看九宫格 + wizper 转口播,40-120s)...");
+      setLoadingMsg("AI 分析中(skill 切镜头 + qwen-vl 看九宫格 + wizper 转口播,40-120s)...");
       let elapsed = 0;
       const interval = setInterval(async () => {
         elapsed += 6;
@@ -157,6 +223,8 @@ export default function VideoFrameExtractPage() {
             setOriginalSpeech(fullSpeech);
             setSpeechAudioUrl(sd.speech_audio_url ?? "");
             setHasBackgroundMusic(!!sd.has_background_music);
+            setModelIdentity(sd.model_identity ?? "");
+            setProductCategory(sd.product_category ?? "");
             setLoading(false); setLoadingMsg("");
           } else if (sd.status === "failed") {
             clearInterval(interval);
@@ -170,33 +238,112 @@ export default function VideoFrameExtractPage() {
     } catch (e) { setError(errMsg(e, "提交失败")); setLoading(false); setLoadingMsg(""); }
   };
 
+  // 第二步:替换九宫格
+  const doReplace = async () => {
+    if (!gridUrl || !productImageUrl || !modelImageUrl) {
+      setError("请先完成视频提取 + 上传产品图 + 上传人物图");
+      return;
+    }
+    setError(""); setLoading(true); setLoadingMsg("提交替换任务...");
+    try {
+      const r = await fetch(`${API_BASE}/api/video/frame-extract/replace`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
+        body: JSON.stringify({
+          grid_url: gridUrl,
+          product_image_url: productImageUrl,
+          model_image_url: modelImageUrl,
+          scene_image_url: sceneImageUrl || undefined,
+          model_identity: modelIdentity,
+          product_category: productCategory,
+        }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      const rid = d.replace_job_id;
+      if (!rid) throw new Error("没拿到 replace_job_id");
+      adjustLocalUserCredits(-(d.cost ?? 3));
+      setLoadingMsg("GPT-Image 2 重画九宫格(高峰期 3-5 分钟)...");
+      let elapsed = 0;
+      const interval = setInterval(async () => {
+        elapsed += 8;
+        try {
+          const sr = await fetch(`${API_BASE}/api/video/frame-extract/replace/status/${rid}`, {
+            headers: { Authorization: `Bearer ${token()}` },
+          });
+          if (!sr.ok) return;
+          const sd = await sr.json();
+          if (sd.status === "completed") {
+            clearInterval(interval);
+            setReplacedGridUrl(sd.replaced_grid_url ?? "");
+            setLoading(false); setLoadingMsg("");
+          } else if (sd.status === "failed") {
+            clearInterval(interval);
+            setError(sd.error ?? "替换失败");
+            setLoading(false); setLoadingMsg("");
+          } else {
+            setLoadingMsg(`GPT-2 重画中... 已用 ${elapsed}s`);
+          }
+        } catch {}
+      }, 8000);
+    } catch (e) { setError(errMsg(e, "替换失败")); setLoading(false); setLoadingMsg(""); }
+  };
+
+  // 第三步:生成视频
+  const doGenerate = async () => {
+    if (!replacedGridUrl || !scenes || !productImageUrl || !modelImageUrl) {
+      setError("请先完成替换九宫格");
+      return;
+    }
+    setError(""); setLoading(true); setLoadingMsg("提交视频生成...");
+    try {
+      const r = await fetch(`${API_BASE}/api/video/frame-extract/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
+        body: JSON.stringify({
+          replaced_grid_url: replacedGridUrl,
+          scenes,
+          product_image_url: productImageUrl,
+          model_image_url: modelImageUrl,
+          scene_image_url: sceneImageUrl || undefined,
+          user_prompt: userPrompt,
+          aspect_ratio: detectedRatio,
+        }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      const gid = d.generate_job_id;
+      if (!gid) throw new Error("没拿到 generate_job_id");
+      adjustLocalUserCredits(-(d.cost ?? 30));
+      setLoadingMsg(`Seedance r2v 并发 ${scenes.length} 段(3-5 分钟)...`);
+      let elapsed = 0;
+      const interval = setInterval(async () => {
+        elapsed += 10;
+        try {
+          const sr = await fetch(`${API_BASE}/api/video/frame-extract/generate/status/${gid}`, {
+            headers: { Authorization: `Bearer ${token()}` },
+          });
+          if (!sr.ok) return;
+          const sd = await sr.json();
+          if (sd.status === "completed") {
+            clearInterval(interval);
+            setVideoOutputUrl(sd.video_url ?? "");
+            setLoading(false); setLoadingMsg("");
+          } else if (sd.status === "failed") {
+            clearInterval(interval);
+            setError(sd.error ?? "生成失败");
+            setLoading(false); setLoadingMsg("");
+          } else {
+            setLoadingMsg(`视频生成中... 已用 ${elapsed}s`);
+          }
+        } catch {}
+      }, 10000);
+    } catch (e) { setError(errMsg(e, "生成失败")); setLoading(false); setLoadingMsg(""); }
+  };
+
   const updateScene = (idx: number, key: keyof Scene, val: string) => {
     if (!scenes) return;
     setScenes(scenes.map((s, i) => i === idx ? { ...s, [key]: val } : s));
-  };
-
-  const buildMarkdown = () => {
-    if (!scenes) return "";
-    return serializeReplicateScenes(scenes, {
-      total_duration_sec: scenes.reduce((a, s) => a + (s.duration_sec ?? 5), 0),
-      overall_setting: overallSetting,
-      original_speech: originalSpeech || undefined,
-    });
-  };
-
-  const onCopy = async () => {
-    const md = buildMarkdown();
-    await navigator.clipboard.writeText(md);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-  const onDownload = () => {
-    const md = buildMarkdown();
-    const blob = new Blob([md], { type: "text/markdown" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "video-storyboard.md";
-    a.click();
   };
 
   return (
@@ -207,7 +354,7 @@ export default function VideoFrameExtractPage() {
           <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>AI 创作工具</div>
           <h1 style={{ fontSize: "1.8rem", fontWeight: 400, margin: 0, fontFamily: "Georgia,serif" }}>视频拆帧<span style={{ fontStyle: "italic" }}> storyboard</span></h1>
           <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
-            上传任意视频 → 本地切镜头 + 九宫格预览 → AI 提取分镜 / 景别 / 动作 / 口播文字 → 一键复制成 markdown 粘贴到&ldquo;AI 带货视频&rdquo;快速建脚本
+            上传视频 → AI 拆分镜九宫格 → 上传你的产品/人物 → 替换九宫格元素 → 生成完整新视频
           </div>
         </div>
 
@@ -215,7 +362,7 @@ export default function VideoFrameExtractPage() {
           <div style={{ background: "#fff3f3", border: "1px solid #fcc", color: "#c33", padding: "0.8rem 1rem", borderRadius: 10, marginBottom: "1rem", fontSize: "0.9rem" }}>{error}</div>
         )}
 
-        <Box label="① 上传视频">
+        <Box label="① 上传参考视频">
           <label style={{ display: "block", border: "2px dashed #ddd", borderRadius: 10, padding: "1rem", textAlign: "center", cursor: "pointer", background: videoFile ? "#f9f7f2" : "#fff" }}>
             <input type="file" accept="video/*" style={{ display: "none" }} onChange={e => onPickVideo(e.target.files?.[0] ?? null)} />
             {videoFile ? (
@@ -229,40 +376,40 @@ export default function VideoFrameExtractPage() {
           </label>
         </Box>
 
-        {videoUrl && (
+        {videoUrl && !scenes && (
           <button onClick={extract} disabled={loading}
             style={{ background: "#0d0d0d", color: "#fff", border: "none", padding: "0.9rem 1.6rem", borderRadius: 10, fontSize: "0.95rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1, marginBottom: "1rem" }}>
-            {loading ? loadingMsg || "提取中..." : (scenes ? "🔄 重新提取(消耗 1 积分)" : "🔍 提取 storyboard(消耗 1 积分)")}
+            {loading ? loadingMsg || "提取中..." : "🔍 提取 storyboard(消耗 1 积分)"}
           </button>
         )}
 
         {gridUrl && (
-          <Box label="② 九宫格 storyboard(本地切镜头自动拼合)">
+          <Box label="② 原视频九宫格 storyboard">
             <div style={{ fontSize: "0.78rem", color: "#999", marginBottom: 8 }}>
-              检测视频比例:{detectedRatio} · 每格 1 个镜头,按时间顺序排列,左上角编号对应下面的镜头表
+              检测视频比例:{detectedRatio} · 每格 1 个镜头,按时间顺序排列
             </div>
             <img src={gridUrl} alt="storyboard grid"
               style={{ maxWidth: "100%", borderRadius: 8, border: "1px solid #eee" }} />
             <div style={{ marginTop: 8, fontSize: "0.78rem", color: "#666" }}>
               <a href={gridUrl} target="_blank" rel="noreferrer" style={{ color: "#0d0d0d" }}>在新标签打开原图</a>
+              {modelIdentity && <span style={{ marginLeft: 12 }}>· 检测人物: {modelIdentity.slice(0, 60)}{modelIdentity.length > 60 ? "..." : ""}</span>}
+              {productCategory && <span style={{ marginLeft: 12 }}>· 检测类目: {productCategory}</span>}
             </div>
           </Box>
         )}
 
         {scenes && (originalSpeech || speechAudioUrl || hasBackgroundMusic) && (
-          <Box label={`③ 提取的口播${hasBackgroundMusic ? " · 检测到背景音乐(已分离)" : " · 无背景音乐"}`}>
+          <Box label={`③ 原视频口播${hasBackgroundMusic ? " · 检测到背景音乐(已分离)" : " · 无背景音乐"}`}>
             {originalSpeech ? (
-              <div style={{ marginBottom: speechAudioUrl ? 10 : 0 }}>
-                <div style={{ background: "#f9f7f2", padding: "0.7rem 0.9rem", borderRadius: 8, fontSize: "0.88rem", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
-                  {originalSpeech}
-                </div>
+              <div style={{ background: "#f9f7f2", padding: "0.7rem 0.9rem", borderRadius: 8, fontSize: "0.88rem", lineHeight: 1.6, whiteSpace: "pre-wrap", marginBottom: speechAudioUrl ? 10 : 0 }}>
+                {originalSpeech}
               </div>
             ) : (
               <div style={{ fontSize: "0.85rem", color: "#999" }}>原视频未识别到说话内容</div>
             )}
             {speechAudioUrl && (
               <div style={{ marginTop: 8 }}>
-                <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: 4 }}>纯人声音轨(已剥离背景音乐):</div>
+                <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: 4 }}>纯人声音轨:</div>
                 <audio src={speechAudioUrl} controls style={{ width: "100%", maxWidth: 480 }} />
               </div>
             )}
@@ -270,74 +417,113 @@ export default function VideoFrameExtractPage() {
         )}
 
         {scenes && (
-          <>
-            <Box label={`④ 提取的 ${scenes.length} 个分镜(可手动修改)`}>
-              <div style={{ fontSize: "0.78rem", color: "#999", marginBottom: 10 }}>
-                修改下面任意字段,复制时会带上你的修改
-              </div>
-              {scenes.map((sc, idx) => (
-                <div key={sc.id} style={{ borderTop: idx > 0 ? "1px solid #eee" : "none", paddingTop: idx > 0 ? "1rem" : 0, marginTop: idx > 0 ? "1rem" : 0 }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
-                    <strong style={{ fontSize: "0.9rem" }}>镜 {sc.id}</strong>
-                    <input value={sc.time_range} onChange={e => updateScene(idx, "time_range", e.target.value)}
-                      style={{ width: 100, padding: "0.3rem 0.5rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.78rem" }} />
-                    <input value={sc.shot} onChange={e => updateScene(idx, "shot", e.target.value)} placeholder="景别"
-                      style={{ width: 130, padding: "0.3rem 0.5rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.78rem" }} />
-                    <span style={{ fontSize: "0.78rem", color: "#999" }}>{sc.duration_sec}s</span>
-                  </div>
-                  <div style={{ marginBottom: 6 }}>
-                    <div style={{ fontSize: "0.75rem", color: "#666", marginBottom: 2 }}>动作:</div>
-                    <input value={sc.action} onChange={e => updateScene(idx, "action", e.target.value)}
-                      style={{ width: "100%", padding: "0.4rem 0.6rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.82rem" }} />
-                  </div>
-                  <div style={{ marginBottom: 6 }}>
-                    <div style={{ fontSize: "0.75rem", color: "#666", marginBottom: 2 }}>画面 prompt:</div>
-                    <textarea value={sc.visual_prompt} onChange={e => updateScene(idx, "visual_prompt", e.target.value)} rows={2}
-                      style={{ width: "100%", padding: "0.4rem 0.6rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.82rem", fontFamily: "monospace", resize: "vertical" }} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: "0.75rem", color: "#666", marginBottom: 2 }}>口播文字 <span style={{ color: "#999" }}>(已按时间戳自动分配,可手动调整)</span>:</div>
-                    <textarea value={sc.speech ?? ""} onChange={e => updateScene(idx, "speech" as keyof Scene, e.target.value)} rows={2}
-                      placeholder="这一段模特要说的话…"
-                      style={{ width: "100%", padding: "0.4rem 0.6rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.82rem", lineHeight: 1.5, resize: "vertical" }} />
-                  </div>
+          <Box label={`④ 检测到的 ${scenes.length} 个分镜(可手动修改)`}>
+            <div style={{ fontSize: "0.78rem", color: "#999", marginBottom: 10 }}>
+              修改 visual prompt 会影响最终视频生成
+            </div>
+            {scenes.map((sc, idx) => (
+              <div key={sc.id} style={{ borderTop: idx > 0 ? "1px solid #eee" : "none", paddingTop: idx > 0 ? "1rem" : 0, marginTop: idx > 0 ? "1rem" : 0 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
+                  <strong style={{ fontSize: "0.9rem" }}>镜 {sc.id}</strong>
+                  <span style={{ fontSize: "0.78rem", color: "#666", padding: "0.2rem 0.5rem", background: "#f5f3ed", borderRadius: 4 }}>{sc.time_range}</span>
+                  <span style={{ fontSize: "0.78rem", color: "#666", padding: "0.2rem 0.5rem", background: "#f5f3ed", borderRadius: 4 }}>{sc.shot}</span>
+                  <span style={{ fontSize: "0.78rem", color: "#999" }}>{sc.duration_sec}s</span>
                 </div>
-              ))}
-              {originalSpeech && (
-                <div style={{ marginTop: 12, padding: "0.6rem 0.8rem", background: "#f0f7fb", borderRadius: 8, fontSize: "0.78rem", color: "#456" }}>
-                  💡 整段口播已按时间戳自动切到各段。如果切得不准,直接改上面的「口播文字」就行;<strong>每段必须有口播</strong>(空段会让 AI 带货视频生成失败)。
+                <div style={{ marginBottom: 6 }}>
+                  <div style={{ fontSize: "0.75rem", color: "#666", marginBottom: 2 }}>画面 prompt:</div>
+                  <textarea value={sc.visual_prompt} onChange={e => updateScene(idx, "visual_prompt", e.target.value)} rows={2}
+                    style={{ width: "100%", padding: "0.4rem 0.6rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.82rem", fontFamily: "monospace", resize: "vertical" }} />
                 </div>
-              )}
-            </Box>
-
-            <Box label="⑤ 整体场景描述(可选,会写到 markdown 头部)">
-              <textarea value={overallSetting} onChange={e => setOverallSetting(e.target.value)} rows={2}
-                placeholder="例:室内客厅,白天自然光,简洁台面"
-                style={{ width: "100%", padding: "0.5rem 0.7rem", border: "1px solid #ddd", borderRadius: 8, fontSize: "0.85rem", resize: "vertical" }} />
-            </Box>
-
-            <Box label="⑥ 复制 / 下载 markdown 脚本">
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-                <button onClick={onCopy}
-                  style={{ background: copied ? "#0d8a3e" : "#0d0d0d", color: "#fff", border: "none", padding: "0.7rem 1.4rem", borderRadius: 8, fontSize: "0.9rem", cursor: "pointer", transition: "background 0.2s" }}>
-                  {copied ? "✓ 已复制" : "📋 复制全部 markdown"}
-                </button>
-                <button onClick={onDownload}
-                  style={{ background: "transparent", color: "#0d0d0d", border: "1px solid #ddd", padding: "0.7rem 1.4rem", borderRadius: 8, fontSize: "0.9rem", cursor: "pointer" }}>
-                  ⬇ 下载 .md 文件
-                </button>
+                {sc.speech && (
+                  <div style={{ fontSize: "0.78rem", color: "#888" }}>口播:{sc.speech}</div>
+                )}
               </div>
-              <details style={{ fontSize: "0.82rem" }}>
-                <summary style={{ cursor: "pointer", color: "#666", marginBottom: 6 }}>预览 markdown 内容</summary>
-                <pre style={{ background: "#f9f7f2", padding: "0.8rem", borderRadius: 8, overflow: "auto", maxHeight: 400, fontSize: "0.78rem", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
-                  {buildMarkdown()}
-                </pre>
-              </details>
-              <div style={{ marginTop: 12, padding: "0.7rem 0.9rem", background: "#f0f7fb", borderRadius: 8, fontSize: "0.82rem", color: "#1a4068" }}>
-                💡 复制后可直接粘贴到「AI 带货视频」的&ldquo;粘贴脚本&rdquo;模式,系统会自动解析填到分镜表里。
+            ))}
+          </Box>
+        )}
+
+        {scenes && (
+          <Box label="⑤ 上传你的素材(替换原视频里的元素)">
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <ImagePicker label="产品图" url={productImageUrl} onPick={onPickProduct} required />
               </div>
-            </Box>
-          </>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <ImagePicker label="人物图" url={modelImageUrl} onPick={onPickModel} required />
+              </div>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <ImagePicker label="场景图(可选)" url={sceneImageUrl} onPick={onPickScene} />
+              </div>
+            </div>
+            <div style={{ fontSize: "0.78rem", color: "#888", marginTop: 6 }}>
+              💡 产品图 = 要展示的商品 / 人物图 = 想换上的模特 / 场景图 = 想换上的背景(不填则保留原背景)
+            </div>
+          </Box>
+        )}
+
+        {scenes && productImageUrl && modelImageUrl && !replacedGridUrl && (
+          <button onClick={doReplace} disabled={loading}
+            style={{ background: "#0d0d0d", color: "#fff", border: "none", padding: "0.9rem 1.6rem", borderRadius: 10, fontSize: "0.95rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1, marginBottom: "1rem" }}>
+            {loading ? loadingMsg || "替换中..." : "🎨 替换九宫格元素(消耗 3 积分,3-5 分钟)"}
+          </button>
+        )}
+
+        {replacedGridUrl && (
+          <Box label="⑥ 替换后的新九宫格 storyboard(预览)">
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 280 }}>
+                <div style={{ fontSize: "0.78rem", color: "#999", marginBottom: 4 }}>原九宫格</div>
+                <img src={gridUrl} alt="orig grid" style={{ width: "100%", borderRadius: 6, border: "1px solid #eee" }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 280 }}>
+                <div style={{ fontSize: "0.78rem", color: "#0d8a3e", marginBottom: 4 }}>替换后九宫格</div>
+                <img src={replacedGridUrl} alt="replaced grid" style={{ width: "100%", borderRadius: 6, border: "2px solid #0d8a3e" }} />
+              </div>
+            </div>
+            <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <a href={replacedGridUrl} target="_blank" rel="noreferrer" style={{ fontSize: "0.82rem", color: "#0d0d0d" }}>在新标签打开</a>
+              <button onClick={() => { setReplacedGridUrl(""); setVideoOutputUrl(""); }}
+                style={{ background: "transparent", border: "1px solid #ddd", padding: "0.3rem 0.8rem", borderRadius: 6, fontSize: "0.82rem", cursor: "pointer" }}>
+                🔄 重新替换(再消耗 3 积分)
+              </button>
+            </div>
+          </Box>
+        )}
+
+        {replacedGridUrl && (
+          <Box label="⑦ 视频提示词(可选,强调产品功能 / 卖点)">
+            <textarea value={userPrompt} onChange={e => setUserPrompt(e.target.value)} rows={2}
+              placeholder="例:突出产品的防水特性 / 展示充电指示灯 / 强调瘦腿效果..."
+              style={{ width: "100%", padding: "0.6rem 0.8rem", border: "1px solid #ddd", borderRadius: 8, fontSize: "0.88rem", resize: "vertical", fontFamily: "inherit" }} />
+            <div style={{ fontSize: "0.78rem", color: "#888", marginTop: 6 }}>
+              💡 这段文字会拼到每一段视频生成的 prompt 里,告诉 AI 要重点强调什么
+            </div>
+          </Box>
+        )}
+
+        {replacedGridUrl && !videoOutputUrl && scenes && (
+          <button onClick={doGenerate} disabled={loading}
+            style={{ background: "#0d8a3e", color: "#fff", border: "none", padding: "1rem 1.8rem", borderRadius: 10, fontSize: "1rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1, marginBottom: "1rem", fontWeight: 600 }}>
+            {loading ? loadingMsg || "生成中..." : `🎬 生成完整视频(消耗 ${Math.max(10, scenes.length * 5)} 积分,${scenes.length} 段并发 ~3-5 分钟)`}
+          </button>
+        )}
+
+        {videoOutputUrl && (
+          <Box label="⑧ 生成的视频 ✓">
+            <video src={videoOutputUrl} controls style={{ width: "100%", maxWidth: 720, borderRadius: 8 }} />
+            <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <a href={videoOutputUrl} download style={{ background: "#0d0d0d", color: "#fff", textDecoration: "none", padding: "0.6rem 1.2rem", borderRadius: 8, fontSize: "0.88rem" }}>
+                ⬇ 下载视频
+              </a>
+              <a href={videoOutputUrl} target="_blank" rel="noreferrer" style={{ background: "transparent", color: "#0d0d0d", border: "1px solid #ddd", padding: "0.6rem 1.2rem", borderRadius: 8, fontSize: "0.88rem", textDecoration: "none" }}>
+                在新标签打开
+              </a>
+              <button onClick={() => setVideoOutputUrl("")}
+                style={{ background: "transparent", border: "1px solid #ddd", padding: "0.6rem 1.2rem", borderRadius: 8, fontSize: "0.88rem", cursor: "pointer" }}>
+                🔄 重新生成视频
+              </button>
+            </div>
+          </Box>
         )}
       </main>
     </div>
