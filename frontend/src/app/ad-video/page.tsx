@@ -601,7 +601,7 @@ export default function AdVideoPage() {
                 <label style={{ flex: 1, padding: "0.6rem 0.8rem", border: scriptMode === "paste" ? "2px solid #0d0d0d" : "1px solid #ddd", background: scriptMode === "paste" ? "#fff" : "transparent", borderRadius: 8, cursor: "pointer" }}>
                   <input type="radio" name="scriptMode" checked={scriptMode === "paste"} onChange={() => setScriptMode("paste")} style={{ marginRight: 6 }} />
                   <strong style={{ fontSize: "0.88rem" }}>我自己粘贴脚本</strong>
-                  <div style={{ fontSize: "0.75rem", color: "#777", marginTop: 2 }}>粘贴 markdown 跳过 AI 生成,可从「视频脚本提取」工具拷贝过来</div>
+                  <div style={{ fontSize: "0.75rem", color: "#777", marginTop: 2 }}>粘贴 markdown 跳过 AI 生成</div>
                 </label>
               </div>
             </div>
@@ -699,7 +699,7 @@ export default function AdVideoPage() {
                   </div>
                 )}
                 <div style={{ fontSize: "0.78rem", color: "#888", marginTop: 6 }}>
-                  💡 从「视频脚本提取」(<a href="/video/extract" style={{ color: "#0d0d0d" }}>侧边栏 ⌬ 入口</a>)拷贝粘贴最快;粘贴后系统会解析填到分镜表,你还能手动改。
+                  💡 粘贴脚本后系统会解析填到分镜表,你还能手动改。
                 </div>
               </div>
             )}
@@ -821,28 +821,6 @@ export default function AdVideoPage() {
             <Card title="审核通过" desc="小九已分析图片,以下为生成的分镜脚本(可编辑)">
               <AuditGrid audit={audit} />
             </Card>
-
-            {/* P182(2026-05-08):非服装大类 — 提示用户用「视频脚本提取」工具拿更好的脚本 */}
-            {(() => {
-              const cat = (audit.category || "").trim();
-              const isClothing = ["服装", "鞋", "包", "配饰"].some(p => cat.startsWith(p));
-              if (isClothing || !cat) return null;
-              return (
-                <div style={{ background: "#fff8e6", border: "1px solid #f5d77a", borderRadius: 10, padding: "0.9rem 1.1rem", marginBottom: "1rem", fontSize: "0.88rem", color: "#7a5800" }}>
-                  <div style={{ fontWeight: 500, marginBottom: 4 }}>💡 你的产品视觉不太明显(类目:{cat})</div>
-                  <div style={{ lineHeight: 1.6 }}>
-                    数码 / 小工具 / 日用 类产品 AI 自动写脚本时容易抓不到卖点(模特拿小物件画面单调)。
-                    <strong>建议先用「视频脚本提取」工具</strong>(侧栏 ⌬ 图标)从一个同类爆款视频提取脚本,
-                    粘贴回来覆盖 AI 生成的版本 → 出片效果会好很多。
-                  </div>
-                  <div style={{ marginTop: 8 }}>
-                    <a href="/video/extract" style={{ background: "#0d0d0d", color: "#fff", padding: "0.4rem 0.9rem", borderRadius: 6, textDecoration: "none", fontSize: "0.82rem" }}>
-                      去提取脚本 →
-                    </a>
-                  </div>
-                </div>
-              );
-            })()}
 
             <Card title="分镜脚本" desc={`${script.scenes.length} 个分镜 · 共 ${computeTotalDuration(script.scenes).toFixed(0)} 秒 · 可逐字编辑 / 删段 / 加段(时间轴自动对齐)`}>
               <FieldBlock label="整体设定">

@@ -2,7 +2,7 @@
  * 视频脚本 Markdown 序列化 / 解析(P180,2026-05-08)
  *
  * 设计原则:
- * - **共享 helper**:`/video/extract` 复制 + `/ad-video` 粘贴 + `/video/replicate` 复制 都用这一个 module
+ * - **共享 helper**:`/ad-video` 粘贴 + `/video/replicate` 复制 都用这一个 module
  * - 字段双向兼容:replicate 的 scene 形状 ↔ ad-video 的 scene 形状
  * - 解析器宽松:容错空格 / 中英文标点 / 大小写 / 换行差异
  *
