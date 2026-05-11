@@ -2485,10 +2485,21 @@ NO TEXT OVERLAYS other than the original number labels. NO new words, signs, bra
     replaced_urls = [u for _, u in results]
     elapsed = _t.time() - t0
     log_info(f"skill_replace 完成 N={n_grids} 总耗时 {elapsed:.1f}s")
+
+    # P237 根因修复:替换完成后跑 qwen-vl 重写 visual_prompt,避免文字残留"原视频颜色"压过图像
+    original_scenes = params.get("scenes") or []
+    updated_scenes = original_scenes
+    if original_scenes:
+        try:
+            updated_scenes = await _rewrite_visual_prompts_from_replaced(replaced_urls, original_scenes)
+        except Exception as e:
+            log_error(f"skill_replace 重写 visual_prompt 异常(忽略,保留原 scenes): {e}")
+
     return {
         "replaced_grid_urls": replaced_urls,
         "n_grids": n_grids,
         "elapsed_seconds": round(elapsed, 1),
+        "updated_scenes": updated_scenes,  # 新字段:前端用它覆盖 scenes 状态
     }
 
 
@@ -2605,16 +2616,26 @@ async def _run_skill_generate_job(params: dict) -> dict:
                     image_urls.append(scene_ref_url)
                     ref_roles.append(("scene", "the scene/background reference"))
 
-                visual = scene.get("visual_prompt", "") or "Cinematic product showcase"
-                # 拼 prompt:@Image1 引用 + 动态 @Image2..N 标注 + user_prompt 强调产品功能
+                # P237(2026-05-12)修颜色漏:visual_prompt 是 qwen-vl 看原视频写的,
+                # 里面带"dark blue / navy / 深蓝 / 藏青"等原视频颜色描述。
+                # 不清洗的话,Seedance 文字 prompt 压过图像 reference,生成出来还是原色。
+                # 策略:
+                #   1. regex 删原视频颜色词(让 visual 只剩动作/景别/构图)
+                #   2. prompt 末尾加 explicit override:"忽略文字色彩描述,严格按 @Image1/@Image2 颜色"
+                visual_raw = scene.get("visual_prompt", "") or "Cinematic product showcase"
+                visual = _strip_video_color_words(visual_raw)
+
+                # 拼 prompt:@Image1 引用 + 动态 @Image2..N 标注 + 显式 override
                 ref_anchors = " ".join(
                     f"@Image{i+2} is {desc}."
                     for i, (_, desc) in enumerate(ref_roles)
                 )
                 seg_prompt = (
-                    f"@Image1 shows the desired storyboard frame composition. "
+                    f"@Image1 defines the EXACT visual appearance (colors, outfit, person, products) that MUST be preserved throughout this entire video segment. "
                     f"{ref_anchors} "
-                    f"Generate a {req_dur}-second video that re-creates the scene shown in @Image1: {visual}."
+                    f"Generate a {req_dur}-second video that re-creates the scene shown in @Image1: {visual}. "
+                    f"CRITICAL: Strictly match all colors, patterns, garments, and visual details from @Image1. "
+                    f"Ignore any clothing color or pattern words in the description text — use ONLY what @Image1 visually shows."
                 )
                 if user_prompt:
                     seg_prompt += f" Special emphasis: {user_prompt}."
@@ -2719,6 +2740,130 @@ async def _run_skill_generate_job(params: dict) -> dict:
             _shutil.rmtree(work_dir, ignore_errors=True)
         except Exception:
             pass
+
+
+async def _rewrite_visual_prompts_from_replaced(
+    replaced_grid_urls: list, scenes: list,
+) -> list:
+    """P237(2026-05-12)根因修复:让 qwen-vl 看替换后的九宫格,重新写每段 visual_prompt。
+
+    原问题:第一步 visual_prompt 是 qwen-vl 看原视频写的,带 "dark blue / 藏青" 等原视频颜色。
+    生成视频时文字 prompt 压过图像 reference,Seedance 出原色。
+    根因修复:替换完成后,让 qwen-vl 看替换后的图,重写所有 prompt。
+
+    成本:~¥0.05 / 次(qwen-vl image 一次推理)
+    失败 graceful degrade:返回原 scenes
+    """
+    import json as _json
+    import re as _re
+    import time as _t
+    from app.services.fal_service import AliyunQwenVLVideoService
+    from app.services.logger import log_info, log_error, log_warning
+
+    n = len(scenes)
+    n_grids = len(replaced_grid_urls)
+    if not n or not n_grids:
+        return scenes
+
+    svc = AliyunQwenVLVideoService()
+    if not svc.is_available():
+        log_warning("rewrite_visual_prompts: qwen-vl 不可用,保留原 scenes")
+        return scenes
+
+    # 给 qwen-vl 列出 N 个镜头的时间范围作为锚点,避免编号错位
+    lines = []
+    for i, s in enumerate(scenes):
+        gi = i // 9 + 1
+        ci = i % 9 + 1
+        tr = s.get("time_range") or f"{i*2}-{(i+1)*2}s"
+        lines.append(f"  镜头 {i+1}(图{gi} 第{ci}格,{tr})")
+    range_block = "\n".join(lines)
+
+    instruction = f"""你看到的是 {n_grids} 张替换后的九宫格 storyboard 图(每张 3×3=9 格,按时间顺序排列),共 {n} 个独立镜头。
+
+镜头全局编号映射:
+{range_block}
+
+请你**只看图中真实可见的内容**(不要参考任何之前的视频描述),为每个镜头写一段英文 visual_prompt(150 字内):
+- 主体外观(人物、服装、产品):严格按图中**真实颜色、款式、纹理**描述,不要写图中没有的颜色
+- 镜头语言(景别 close-up / medium-shot / wide-shot / 视角、构图)
+- 灯光、背景、场景细节
+- 动作和姿态
+
+输出严格 JSON,顶层是 {{"visual_prompts": ["...", "...", ...]}},数组严格 {n} 个字符串,跟全局编号 1..{n} 对齐。不要任何 markdown 围栏 / 注释 / 说明。
+"""
+    t0 = _t.time()
+    try:
+        if n_grids == 1:
+            res = await svc.analyze_image(replaced_grid_urls[0], instruction)
+        else:
+            res = await svc.analyze_images(replaced_grid_urls, instruction)
+    except Exception as e:
+        log_error(f"rewrite_visual_prompts qwen-vl 异常: {e}")
+        return scenes
+
+    log_info(f"rewrite_visual_prompts elapsed={_t.time()-t0:.1f}s n_imgs={n_grids} err={'error' in res}")
+    if "error" in res:
+        log_error(f"rewrite_visual_prompts qwen-vl error: {res['error']}")
+        return scenes
+
+    text = (res.get("text") or "").strip()
+    text = _re.sub(r"^```(?:json)?\s*", "", text)
+    text = _re.sub(r"\s*```$", "", text)
+    try:
+        data = _json.loads(text)
+        new_prompts = data.get("visual_prompts") or []
+    except Exception as e:
+        log_error(f"rewrite_visual_prompts JSON parse fail: {e} text={text[:200]}")
+        return scenes
+
+    if len(new_prompts) != n:
+        log_warning(f"rewrite_visual_prompts 数量不对: got {len(new_prompts)} expected {n},保留原 scenes")
+        return scenes
+
+    # 覆盖每段 visual_prompt,其他字段不动
+    updated = []
+    for i, s in enumerate(scenes):
+        new_s = dict(s)
+        np = (new_prompts[i] or "").strip()
+        if np:
+            new_s["visual_prompt"] = np
+        updated.append(new_s)
+    log_info(f"rewrite_visual_prompts OK 覆盖 {n} 段 prompt")
+    return updated
+
+
+def _strip_video_color_words(text: str) -> str:
+    """P237:删 visual_prompt 里 qwen-vl 写的"原视频颜色"描述,避免文字 prompt 压过图像 reference。
+
+    Seedance r2v 同时收到 image_urls (替换后的) + 文字 prompt (qwen-vl 看原视频写的)。
+    diffusion 模型里文字 prompt 经常压过图像 reference → 生成画面变回原视频颜色。
+    清洗后 visual_prompt 只剩动作/景别/构图,颜色由 @Image1/@Image2 决定。
+    """
+    if not text:
+        return text
+    import re as _re
+    patterns = [
+        # 颜色 + 服装/garment
+        (r"\b(dark|navy|deep|light|pale|bright)\s+(blue|red|green|black|white|yellow|pink|purple|gray|grey|brown)\b", "the"),
+        (r"\b(blue|red|green|black|white|yellow|pink|purple|gray|grey|brown|navy|crimson|scarlet|olive|teal|cyan|magenta|beige|khaki|maroon|burgundy)\s+(pants|trousers|shorts|jeans|garment|outfit|top|shirt|dress|skirt|jacket|coat|sweater|hoodie|tee|t-shirt)\b", r"the \2"),
+        # 形容词形式
+        (r"\b(dark|navy|deep|light|pale|bright)-?(blue|red|green|black|white)\b", "the"),
+        # 中文
+        (r"(深蓝色?|藏青色?|蓝色|墨蓝色?|海军蓝)(的)?", ""),
+        (r"(深红色?|大红色?|红色|粉红色?)(的)?", ""),
+        (r"(墨绿色?|草绿色?|绿色)(的)?", ""),
+        (r"(黑色|纯黑)(的)?", ""),
+        (r"(白色|纯白)(的)?", ""),
+        # 单独颜色名带"色"字
+        (r"(深|浅|亮|暗)?(蓝|红|绿|黑|白|黄|粉|紫|灰|棕|金|银)色", ""),
+    ]
+    out = text
+    for pat, repl in patterns:
+        out = _re.sub(pat, repl, out, flags=_re.IGNORECASE)
+    # 把多余空格压平
+    out = _re.sub(r"\s+", " ", out).strip()
+    return out
 
 
 def _sanitize_for_gpt2(text: str) -> str:

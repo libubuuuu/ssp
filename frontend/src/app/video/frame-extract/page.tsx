@@ -259,6 +259,7 @@ export default function VideoFrameExtractPage() {
           scene_image_url: sceneImageUrl || undefined,
           model_identity: modelIdentity,
           product_category: productCategory,
+          scenes,  // P237:后端用 qwen-vl 看替换后的图重写 visual_prompt
         }),
       });
       if (!r.ok) throw new Error(await r.text());
@@ -280,6 +281,10 @@ export default function VideoFrameExtractPage() {
             clearInterval(interval);
             const urls: string[] = Array.isArray(sd.replaced_grid_urls) ? sd.replaced_grid_urls : (sd.replaced_grid_url ? [sd.replaced_grid_url] : []);
             setReplacedGridUrls(urls);
+            // P237:后端用 qwen-vl 看替换后图重写了 visual_prompt,覆盖前端 scenes
+            if (Array.isArray(sd.updated_scenes) && sd.updated_scenes.length > 0) {
+              setScenes(sd.updated_scenes);
+            }
             setLoading(false); setLoadingMsg("");
           } else if (sd.status === "failed") {
             clearInterval(interval);

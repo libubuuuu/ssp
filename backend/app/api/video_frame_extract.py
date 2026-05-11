@@ -247,6 +247,7 @@ async def replace_submit(
     scene_image_url = body.get("scene_image_url")  # 可选
     model_identity = body.get("model_identity") or ""
     product_category = body.get("product_category") or "其他"
+    scenes = body.get("scenes") or []  # P237:前端传当前 scenes,worker 替换后用 qwen-vl 重写其中的 visual_prompt
 
     if not grid_urls:
         raise HTTPException(400, "grid_urls 必填")
@@ -275,6 +276,7 @@ async def replace_submit(
             "scene_image_url": scene_image_url,
             "model_identity": model_identity,
             "product_category": product_category,
+            "scenes": scenes,  # P237 透传给 worker 重写 visual_prompt
             "_user_id": user_id,
         },
         "module": "video/frame-extract/replace",
