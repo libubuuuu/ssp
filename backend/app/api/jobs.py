@@ -2726,6 +2726,37 @@ async def _run_skill_generate_job(params: dict) -> dict:
         size = _os.path.getsize(final_video)
         log_info(f"skill_generate concat 完成 {size} bytes ({_t.time()-gather_t0:.1f}s 累计)")
 
+        # P238(2026-05-12):叠加原视频音轨 → 成片有原模特声音 + BGM
+        original_video_url = params.get("original_video_url")
+        if original_video_url:
+            try:
+                orig_local = _os.path.join(work_dir, "original.mp4")
+                async with _httpx.AsyncClient(timeout=120, follow_redirects=True) as cli:
+                    r = await cli.get(original_video_url)
+                    r.raise_for_status()
+                    with open(orig_local, "wb") as f:
+                        f.write(r.content)
+                merged = _os.path.join(work_dir, "final_with_audio.mp4")
+                cmd_merge = [
+                    "ffmpeg", "-y",
+                    "-i", final_video,
+                    "-i", orig_local,
+                    "-map", "0:v",      # 新视频的画面
+                    "-map", "1:a",      # 原视频的音轨
+                    "-c:v", "copy",     # 画面不重编(已经是 libx264 yuv420p)
+                    "-c:a", "aac", "-b:a", "128k",
+                    "-shortest",        # 取较短时长,避免画面/声音错位
+                    merged,
+                ]
+                rr2 = _sp.run(cmd_merge, capture_output=True, text=True, timeout=120)
+                if rr2.returncode == 0 and _os.path.exists(merged) and _os.path.getsize(merged) > 1024:
+                    final_video = merged
+                    log_info(f"skill_generate 叠加原音轨 OK {_os.path.getsize(merged)} bytes")
+                else:
+                    log_error(f"skill_generate 叠加原音轨失败(保留无声成片): {rr2.stderr[-200:]}")
+            except Exception as _e:
+                log_error(f"skill_generate 叠加原音轨异常(保留无声成片): {_e}")
+
         # 4. 上传 fal 拿成品 URL
         video_url = await fal_upload_with_retry(final_video)
         total_dur_sec = sum(float(s.get("duration_sec", 4)) for s in scenes)

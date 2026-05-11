@@ -317,6 +317,7 @@ export default function VideoFrameExtractPage() {
           scene_image_url: sceneImageUrl || undefined,
           user_prompt: userPrompt,
           aspect_ratio: detectedRatio,
+          video_url: videoUrl,  // P238:后端用此叠加原音轨到新视频
         }),
       });
       if (!r.ok) throw new Error(await r.text());

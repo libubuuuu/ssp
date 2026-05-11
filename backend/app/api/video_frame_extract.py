@@ -327,6 +327,7 @@ async def generate_submit(
     scene_image_url = body.get("scene_image_url")
     user_prompt = (body.get("user_prompt") or "").strip()
     aspect_ratio = body.get("aspect_ratio") or "9:16"
+    original_video_url = body.get("video_url")  # P238:原视频 URL,用于叠加音轨到新视频
 
     if not replaced_grid_urls:
         raise HTTPException(400, "replaced_grid_urls 必填(先调 /replace)")
@@ -356,6 +357,7 @@ async def generate_submit(
             "scene_image_url": scene_image_url,
             "user_prompt": user_prompt,
             "aspect_ratio": aspect_ratio,
+            "original_video_url": original_video_url,  # P238 用于叠加音轨
             "_user_id": user_id,
         },
         "module": "video/frame-extract/generate",
