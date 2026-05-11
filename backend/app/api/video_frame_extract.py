@@ -57,29 +57,43 @@ async def upload_video(
 # ================= 分镜分析 prompt =================
 # 关键点:让 qwen-vl 把九宫格当 N 个独立镜头看,不当成一张拼贴图
 
-def _build_skill_instruction(scenes_info: list[dict]) -> str:
-    """根据 PySceneDetect 切出的 scene 列表生成 qwen-vl prompt。"""
+def _build_skill_instruction(scenes_info: list[dict], n_grids: int = 1) -> str:
+    """根据 PySceneDetect 切出的 scene 列表生成 qwen-vl prompt。
+
+    多九宫格场景(n_grids > 1):告诉 qwen-vl 你看到的是 N 张连续九宫格,
+    所有 scene id 全局编号 1..total,按图序 + 格序展开。
+    """
     n = len(scenes_info)
+    per_grid = 9
     lines = []
     for i, s in enumerate(scenes_info):
+        grid_idx = i // per_grid + 1
+        cell_idx = i % per_grid + 1
         lines.append(
-            f"  第{i+1}格(id={i+1}): {s['start_seconds']:.1f}-{s['end_seconds']:.1f}s "
+            f"  图{grid_idx} 第{cell_idx}格 (id={i+1}): {s['start_seconds']:.1f}-{s['end_seconds']:.1f}s "
             f"(时长{s['duration_seconds']:.1f}秒)"
         )
     range_block = "\n".join(lines)
 
-    return f"""你看到的是一张分镜九宫格 storyboard 图,由 {n} 张关键帧按时间顺序左→右、上→下拼接而成。每格左上角有 1..{n} 编号水印。
+    grid_intro = (
+        f"你看到的是 {n_grids} 张分镜九宫格 storyboard 图(每张 3×3=9 格),按时间顺序排列:"
+        f"图 1 是前 9 个镜头,图 2 是接下来的 9 个,以此类推。"
+        if n_grids > 1
+        else "你看到的是 1 张分镜九宫格 storyboard 图(3×3=9 格)"
+    ) + f",每张图内格子顺序左→右、上→下,每格左上角有黑底白字编号水印(1-9)。原视频共 {n} 个独立镜头。"
 
-每格对应的原视频时间范围:
+    return f"""{grid_intro}
+
+每个镜头对应的原视频时间范围(scene id = 全局序号 1..{n}):
 {range_block}
 
-**请只看每一格独立画面**(不要把它当一张拼贴图整体分析),把每格解读成 1 个独立的镜头(scene),输出严格 JSON,不要任何 markdown 围栏 / 注释 / 说明文字。
+**请只看每一格独立画面**(每格 = 1 个独立镜头),把全部 {n} 个镜头解读成 {n} 个 scene 对象,输出严格 JSON,不要任何 markdown 围栏 / 注释 / 说明文字。
 
 JSON 格式:
 {{
   "scenes": [
     {{
-      "id": <1..{n}>,
+      "id": <全局 1..{n}>,
       "time_range": "<对应格的时间范围,例如 '0.0-3.7s'>",
       "duration_sec": <数字>,
       "shot": "<景别:close-up | medium-shot | wide-shot | medium close-up | extreme close-up>",
@@ -87,7 +101,7 @@ JSON 格式:
       "framing": "<构图:正面/侧面/背面/俯拍/仰拍/特写/...>",
       "visual_prompt": "<150 字内英文 prompt,可直接喂给视频生成模型,描述场景、灯光、镜头语言、主体动作,不写台词、不写画面里的文字>"
     }},
-    ...严格 {n} 个
+    ...严格 {n} 个全局对象,id 跨多张图连续递增
   ],
   "model_identity": "<出现的主要人物的英文描述,150-300 字符,覆盖 race/gender/age/face/skin/hair/build/clothing。没出镜就空字符串>",
   "product_category": "<以下之一: 服装/上衣, 服装/下装, 服装/连衣裙, 服装/外套, 服装/内衣, 服装/塑身衣, 服装/泳装, 服装/睡衣, 鞋子, 包/箱包, 配饰/帽子围巾手套, 配饰/首饰, 数码/电子, 美妆/护肤, 家居, 食品, 日用, 其他>",
@@ -220,24 +234,30 @@ async def replace_submit(
     body: dict,
     current_user: dict = Depends(get_current_user),
 ):
-    """异步:推 JOBS type=skill_replace,GPT-Image 2 edit 把九宫格里的人/物/景换成用户上传的。"""
-    grid_url = body.get("grid_url")
+    """异步:推 JOBS type=skill_replace,GPT-Image 2 edit 把每张九宫格里的人/物/景换成用户上传的。
+
+    接 grid_urls (list):N 张九宫格(长视频自动分页)→ 并发 N 次 GPT-2 edit → 返 replaced_grid_urls (list)。
+    """
+    grid_urls = body.get("grid_urls") or []
+    if not grid_urls and body.get("grid_url"):
+        # 兼容旧客户端单 grid_url
+        grid_urls = [body["grid_url"]]
     product_image_url = body.get("product_image_url")
     model_image_url = body.get("model_image_url")
     scene_image_url = body.get("scene_image_url")  # 可选
     model_identity = body.get("model_identity") or ""
     product_category = body.get("product_category") or "其他"
 
-    if not grid_url:
-        raise HTTPException(400, "grid_url 必填")
+    if not grid_urls:
+        raise HTTPException(400, "grid_urls 必填")
     if not product_image_url:
         raise HTTPException(400, "product_image_url 必填(产品图)")
     if not model_image_url:
         raise HTTPException(400, "model_image_url 必填(人物图)")
 
     user_id = str(current_user["id"])
-    # 单次九宫格替换 ~¥1.5-2,计费 3 积分(1 积分 = ¥0.5)
-    cost = 3
+    # 单张九宫格替换 ~¥1.5-2,按张数计费:3 积分 / 张
+    cost = max(3, 3 * len(grid_urls))
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
 
@@ -248,9 +268,9 @@ async def replace_submit(
         "user_id": user_id,
         "user_numeric_id": user_id,
         "type": "skill_replace",
-        "title": "九宫格 storyboard 元素替换",
+        "title": f"九宫格 storyboard 替换 ({len(grid_urls)} 张)",
         "params": {
-            "grid_url": grid_url,
+            "grid_urls": grid_urls,
             "product_image_url": product_image_url,
             "model_image_url": model_image_url,
             "scene_image_url": scene_image_url,
@@ -265,7 +285,7 @@ async def replace_submit(
     }
     _save_jobs()
     asyncio.create_task(_execute_job(job_id))
-    log_info(f"frame-extract/replace submitted job={job_id} user={user_id}")
+    log_info(f"frame-extract/replace submitted job={job_id} user={user_id} n_grids={len(grid_urls)} cost={cost}")
     return {"replace_job_id": job_id, "status": "pending", "cost": cost}
 
 
@@ -296,24 +316,25 @@ async def generate_submit(
     body: dict,
     current_user: dict = Depends(get_current_user),
 ):
-    """异步:推 JOBS type=skill_generate,从替换后九宫格 + scenes 出 N 段视频 → concat 成完整视频。"""
-    replaced_grid_url = body.get("replaced_grid_url")
+    """异步:推 JOBS type=skill_generate。从 N 张替换后九宫格切回 total_scenes 张帧 → 并发 r2v → ffmpeg concat。"""
+    replaced_grid_urls = body.get("replaced_grid_urls") or []
+    if not replaced_grid_urls and body.get("replaced_grid_url"):
+        replaced_grid_urls = [body["replaced_grid_url"]]  # 兼容旧 client
     scenes = body.get("scenes") or []
     product_image_url = body.get("product_image_url")
     model_image_url = body.get("model_image_url")
-    scene_image_url = body.get("scene_image_url")  # 可选
-    user_prompt = (body.get("user_prompt") or "").strip()  # 用户强调产品功能
+    scene_image_url = body.get("scene_image_url")
+    user_prompt = (body.get("user_prompt") or "").strip()
     aspect_ratio = body.get("aspect_ratio") or "9:16"
 
-    if not replaced_grid_url:
-        raise HTTPException(400, "replaced_grid_url 必填(先调 /replace)")
+    if not replaced_grid_urls:
+        raise HTTPException(400, "replaced_grid_urls 必填(先调 /replace)")
     if not scenes:
         raise HTTPException(400, "scenes 必填")
     if not product_image_url or not model_image_url:
         raise HTTPException(400, "product_image_url + model_image_url 都必填")
 
     user_id = str(current_user["id"])
-    # Seedance r2v 480p ~$1.06/8s,按 scene 数 * 5 积分(N 段并发,但都要 r2v 调用)
     cost = max(10, len(scenes) * 5)
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
@@ -325,9 +346,9 @@ async def generate_submit(
         "user_id": user_id,
         "user_numeric_id": user_id,
         "type": "skill_generate",
-        "title": f"视频生成 ({len(scenes)} 段 r2v 拼合)",
+        "title": f"视频生成 ({len(scenes)} 段 r2v 拼合 / {len(replaced_grid_urls)} 张九宫格源)",
         "params": {
-            "replaced_grid_url": replaced_grid_url,
+            "replaced_grid_urls": replaced_grid_urls,
             "scenes": scenes,
             "product_image_url": product_image_url,
             "model_image_url": model_image_url,
@@ -343,7 +364,7 @@ async def generate_submit(
     }
     _save_jobs()
     asyncio.create_task(_execute_job(job_id))
-    log_info(f"frame-extract/generate submitted job={job_id} user={user_id} scenes={len(scenes)} cost={cost}")
+    log_info(f"frame-extract/generate submitted job={job_id} user={user_id} scenes={len(scenes)} grids={len(replaced_grid_urls)} cost={cost}")
     return {"generate_job_id": job_id, "status": "pending", "cost": cost}
 
 

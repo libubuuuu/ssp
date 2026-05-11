@@ -55,7 +55,7 @@ export default function VideoFrameExtractPage() {
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [scenes, setScenes] = useState<Scene[] | null>(null);
-  const [gridUrl, setGridUrl] = useState<string>("");
+  const [gridUrls, setGridUrls] = useState<string[]>([]);
   const [detectedRatio, setDetectedRatio] = useState<string>("9:16");
   const [originalSpeech, setOriginalSpeech] = useState<string>("");
   const [speechAudioUrl, setSpeechAudioUrl] = useState<string>("");
@@ -67,7 +67,7 @@ export default function VideoFrameExtractPage() {
   const [productImageUrl, setProductImageUrl] = useState<string>("");
   const [modelImageUrl, setModelImageUrl] = useState<string>("");
   const [sceneImageUrl, setSceneImageUrl] = useState<string>("");
-  const [replacedGridUrl, setReplacedGridUrl] = useState<string>("");
+  const [replacedGridUrls, setReplacedGridUrls] = useState<string[]>([]);
 
   // 第三步:视频提示词 + 生成
   const [userPrompt, setUserPrompt] = useState<string>("");
@@ -121,8 +121,8 @@ export default function VideoFrameExtractPage() {
   const onPickVideo = async (f: File | null) => {
     if (!f) return;
     setVideoFile(f); setError("");
-    setScenes(null); setGridUrl(""); setOriginalSpeech(""); setSpeechAudioUrl("");
-    setReplacedGridUrl(""); setVideoOutputUrl("");
+    setScenes(null); setGridUrls([]); setOriginalSpeech(""); setSpeechAudioUrl("");
+    setReplacedGridUrls([]); setVideoOutputUrl("");
     setLoading(true); setLoadingMsg("上传视频...");
     try {
       const r = await uploadWithRetry(
@@ -218,7 +218,9 @@ export default function VideoFrameExtractPage() {
               scenesWithSpeech = rawScenes.map((s: Scene, i: number) => ({ ...s, speech: distributed[i] ?? "" }));
             }
             setScenes(scenesWithSpeech);
-            setGridUrl(sd.grid_url ?? "");
+            // 兼容旧字段 grid_url:若后端只返一个,包成数组
+            const urls: string[] = Array.isArray(sd.grid_urls) ? sd.grid_urls : (sd.grid_url ? [sd.grid_url] : []);
+            setGridUrls(urls);
             setDetectedRatio(sd.detected_aspect_ratio ?? "9:16");
             setOriginalSpeech(fullSpeech);
             setSpeechAudioUrl(sd.speech_audio_url ?? "");
@@ -240,7 +242,7 @@ export default function VideoFrameExtractPage() {
 
   // 第二步:替换九宫格
   const doReplace = async () => {
-    if (!gridUrl || !productImageUrl || !modelImageUrl) {
+    if (gridUrls.length === 0 || !productImageUrl || !modelImageUrl) {
       setError("请先完成视频提取 + 上传产品图 + 上传人物图");
       return;
     }
@@ -250,7 +252,7 @@ export default function VideoFrameExtractPage() {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
         body: JSON.stringify({
-          grid_url: gridUrl,
+          grid_urls: gridUrls,
           product_image_url: productImageUrl,
           model_image_url: modelImageUrl,
           scene_image_url: sceneImageUrl || undefined,
@@ -275,7 +277,8 @@ export default function VideoFrameExtractPage() {
           const sd = await sr.json();
           if (sd.status === "completed") {
             clearInterval(interval);
-            setReplacedGridUrl(sd.replaced_grid_url ?? "");
+            const urls: string[] = Array.isArray(sd.replaced_grid_urls) ? sd.replaced_grid_urls : (sd.replaced_grid_url ? [sd.replaced_grid_url] : []);
+            setReplacedGridUrls(urls);
             setLoading(false); setLoadingMsg("");
           } else if (sd.status === "failed") {
             clearInterval(interval);
@@ -291,7 +294,7 @@ export default function VideoFrameExtractPage() {
 
   // 第三步:生成视频
   const doGenerate = async () => {
-    if (!replacedGridUrl || !scenes || !productImageUrl || !modelImageUrl) {
+    if (replacedGridUrls.length === 0 || !scenes || !productImageUrl || !modelImageUrl) {
       setError("请先完成替换九宫格");
       return;
     }
@@ -301,7 +304,7 @@ export default function VideoFrameExtractPage() {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
         body: JSON.stringify({
-          replaced_grid_url: replacedGridUrl,
+          replaced_grid_urls: replacedGridUrls,
           scenes,
           product_image_url: productImageUrl,
           model_image_url: modelImageUrl,
@@ -383,16 +386,21 @@ export default function VideoFrameExtractPage() {
           </button>
         )}
 
-        {gridUrl && (
-          <Box label="② 原视频九宫格 storyboard">
+        {gridUrls.length > 0 && (
+          <Box label={`② 原视频九宫格 storyboard${gridUrls.length > 1 ? ` · ${gridUrls.length} 张(长视频自动分页)` : ""}`}>
             <div style={{ fontSize: "0.78rem", color: "#999", marginBottom: 8 }}>
-              检测视频比例:{detectedRatio} · 每格 1 个镜头,按时间顺序排列
+              检测视频比例:{detectedRatio} · 每格 1 个镜头,按时间顺序排列{gridUrls.length > 1 ? `(图 1 是前 9 镜,图 2 接下来 9 镜,以此类推)` : ""}
             </div>
-            <img src={gridUrl} alt="storyboard grid"
-              style={{ maxWidth: "100%", borderRadius: 8, border: "1px solid #eee" }} />
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              {gridUrls.map((u, i) => (
+                <div key={i} style={{ flex: gridUrls.length > 1 ? "1 1 320px" : "1 1 100%", minWidth: 280 }}>
+                  {gridUrls.length > 1 && <div style={{ fontSize: "0.78rem", color: "#0d0d0d", marginBottom: 4, fontWeight: 500 }}>图 {i + 1} / {gridUrls.length}</div>}
+                  <img src={u} alt={`storyboard ${i+1}`} style={{ width: "100%", borderRadius: 8, border: "1px solid #eee" }} />
+                </div>
+              ))}
+            </div>
             <div style={{ marginTop: 8, fontSize: "0.78rem", color: "#666" }}>
-              <a href={gridUrl} target="_blank" rel="noreferrer" style={{ color: "#0d0d0d" }}>在新标签打开原图</a>
-              {modelIdentity && <span style={{ marginLeft: 12 }}>· 检测人物: {modelIdentity.slice(0, 60)}{modelIdentity.length > 60 ? "..." : ""}</span>}
+              {modelIdentity && <span>检测人物: {modelIdentity.slice(0, 60)}{modelIdentity.length > 60 ? "..." : ""}</span>}
               {productCategory && <span style={{ marginLeft: 12 }}>· 检测类目: {productCategory}</span>}
             </div>
           </Box>
@@ -461,36 +469,43 @@ export default function VideoFrameExtractPage() {
           </Box>
         )}
 
-        {scenes && productImageUrl && modelImageUrl && !replacedGridUrl && (
+        {scenes && productImageUrl && modelImageUrl && replacedGridUrls.length === 0 && (
           <button onClick={doReplace} disabled={loading}
             style={{ background: "#0d0d0d", color: "#fff", border: "none", padding: "0.9rem 1.6rem", borderRadius: 10, fontSize: "0.95rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1, marginBottom: "1rem" }}>
-            {loading ? loadingMsg || "替换中..." : "🎨 替换九宫格元素(消耗 3 积分,3-5 分钟)"}
+            {loading ? loadingMsg || "替换中..." : `🎨 替换九宫格元素(消耗 ${Math.max(3, 3 * gridUrls.length)} 积分,每张 3-5 分钟)`}
           </button>
         )}
 
-        {replacedGridUrl && (
-          <Box label="⑥ 替换后的新九宫格 storyboard(预览)">
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-              <div style={{ flex: 1, minWidth: 280 }}>
-                <div style={{ fontSize: "0.78rem", color: "#999", marginBottom: 4 }}>原九宫格</div>
-                <img src={gridUrl} alt="orig grid" style={{ width: "100%", borderRadius: 6, border: "1px solid #eee" }} />
-              </div>
-              <div style={{ flex: 1, minWidth: 280 }}>
-                <div style={{ fontSize: "0.78rem", color: "#0d8a3e", marginBottom: 4 }}>替换后九宫格</div>
-                <img src={replacedGridUrl} alt="replaced grid" style={{ width: "100%", borderRadius: 6, border: "2px solid #0d8a3e" }} />
-              </div>
-            </div>
+        {replacedGridUrls.length > 0 && (
+          <Box label={`⑥ 替换后的新九宫格 storyboard(预览${replacedGridUrls.length > 1 ? ` · ${replacedGridUrls.length} 张` : ""})`}>
+            {replacedGridUrls.map((replacedU, idx) => {
+              const origU = gridUrls[idx];
+              return (
+                <div key={idx} style={{ marginBottom: idx < replacedGridUrls.length - 1 ? "1rem" : 0, paddingBottom: idx < replacedGridUrls.length - 1 ? "1rem" : 0, borderBottom: idx < replacedGridUrls.length - 1 ? "1px solid #eee" : "none" }}>
+                  {replacedGridUrls.length > 1 && <div style={{ fontSize: "0.85rem", color: "#0d0d0d", marginBottom: 6, fontWeight: 500 }}>图 {idx + 1} / {replacedGridUrls.length}</div>}
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ flex: 1, minWidth: 280 }}>
+                      <div style={{ fontSize: "0.78rem", color: "#999", marginBottom: 4 }}>原九宫格</div>
+                      {origU && <img src={origU} alt={`orig ${idx+1}`} style={{ width: "100%", borderRadius: 6, border: "1px solid #eee" }} />}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 280 }}>
+                      <div style={{ fontSize: "0.78rem", color: "#0d8a3e", marginBottom: 4 }}>替换后九宫格</div>
+                      <img src={replacedU} alt={`replaced ${idx+1}`} style={{ width: "100%", borderRadius: 6, border: "2px solid #0d8a3e" }} />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
             <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <a href={replacedGridUrl} target="_blank" rel="noreferrer" style={{ fontSize: "0.82rem", color: "#0d0d0d" }}>在新标签打开</a>
-              <button onClick={() => { setReplacedGridUrl(""); setVideoOutputUrl(""); }}
+              <button onClick={() => { setReplacedGridUrls([]); setVideoOutputUrl(""); }}
                 style={{ background: "transparent", border: "1px solid #ddd", padding: "0.3rem 0.8rem", borderRadius: 6, fontSize: "0.82rem", cursor: "pointer" }}>
-                🔄 重新替换(再消耗 3 积分)
+                🔄 重新替换(再消耗积分)
               </button>
             </div>
           </Box>
         )}
 
-        {replacedGridUrl && (
+        {replacedGridUrls.length > 0 && (
           <Box label="⑦ 视频提示词(可选,强调产品功能 / 卖点)">
             <textarea value={userPrompt} onChange={e => setUserPrompt(e.target.value)} rows={2}
               placeholder="例:突出产品的防水特性 / 展示充电指示灯 / 强调瘦腿效果..."
@@ -501,7 +516,7 @@ export default function VideoFrameExtractPage() {
           </Box>
         )}
 
-        {replacedGridUrl && !videoOutputUrl && scenes && (
+        {replacedGridUrls.length > 0 && !videoOutputUrl && scenes && (
           <button onClick={doGenerate} disabled={loading}
             style={{ background: "#0d8a3e", color: "#fff", border: "none", padding: "1rem 1.8rem", borderRadius: 10, fontSize: "1rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1, marginBottom: "1rem", fontWeight: 600 }}>
             {loading ? loadingMsg || "生成中..." : `🎬 生成完整视频(消耗 ${Math.max(10, scenes.length * 5)} 积分,${scenes.length} 段并发 ~3-5 分钟)`}

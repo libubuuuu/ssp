@@ -2203,31 +2203,38 @@ async def _run_skill_analyze_job(params: dict) -> dict:
                 f.write(r.content)
         log_info(f"skill_analyze 下载本地 {_os.path.getsize(local_video)} bytes ({_t.time()-t1:.1f}s)")
 
-        # 3. skill 拆帧 + 拼九宫格
+        # 3. skill 拆帧 + 拼多九宫格(N>9 自动分页)
         from app.skills.video_frame_extraction import VideoFrameSkill
         skill = VideoFrameSkill()
         t2 = _t.time()
-        skill_out = skill.process(local_video, grid_size=9, output_dir=work_dir)
-        log_info(f"skill_analyze 拆帧 n_frames={skill_out['n_frames']} layout={skill_out['layout']} ({_t.time()-t2:.1f}s)")
+        skill_out = skill.process(local_video, output_dir=work_dir)
+        log_info(f"skill_analyze 拆帧 n_frames={skill_out['n_frames']} n_grids={skill_out['n_grids']} ({_t.time()-t2:.1f}s)")
 
         if skill_out["n_frames"] < 1:
             raise RuntimeError("skill 未抽到任何帧")
 
-        # 4. 上传九宫格到 fal(qwen-vl 要公网 URL)
+        # 4. 并发上传 N 张九宫格到 fal
         t3 = _t.time()
-        grid_url = await fal_upload_with_retry(skill_out["grid_path"])
-        log_info(f"skill_analyze 九宫格上传 {grid_url[:60]} ({_t.time()-t3:.1f}s)")
+        grid_urls = []
+        for p in skill_out["grid_paths"]:
+            url = await fal_upload_with_retry(p)
+            grid_urls.append(url)
+        log_info(f"skill_analyze 九宫格上传 N={len(grid_urls)} ({_t.time()-t3:.1f}s)")
 
-        # 5. 并发跑:qwen-vl 看九宫格 + wizper 口播
-        instruction = _build_skill_instruction(skill_out["scenes"])
+        # 5. 并发跑:qwen-vl 看多张九宫格 + wizper 口播
+        instruction = _build_skill_instruction(skill_out["scenes"], n_grids=skill_out["n_grids"])
         svc = AliyunQwenVLVideoService()
         if not svc.is_available():
             raise RuntimeError("qwen-vl 不可用(DASHSCOPE_API_KEY)")
 
         async def _qwen():
             t = _t.time()
-            r = await svc.analyze_image(grid_url, instruction)
-            log_info(f"skill_analyze qwen-vl elapsed={_t.time()-t:.1f}s err={'error' in r}")
+            # 单张时用 analyze_image,多张时用 analyze_images(token 共享上限,实测 max 5 张)
+            if len(grid_urls) == 1:
+                r = await svc.analyze_image(grid_urls[0], instruction)
+            else:
+                r = await svc.analyze_images(grid_urls, instruction)
+            log_info(f"skill_analyze qwen-vl elapsed={_t.time()-t:.1f}s n_imgs={len(grid_urls)} err={'error' in r}")
             return r
 
         async def _speech():
@@ -2347,7 +2354,8 @@ async def _run_skill_analyze_job(params: dict) -> dict:
             "speech_chunks": speech_chunks,
             "model_identity": model_identity,
             "product_category": product_category,
-            "grid_url": grid_url,  # 新字段:九宫格 PNG,前端可展示
+            "grid_urls": grid_urls,  # N 张九宫格 PNG list(长视频 > 9 scenes 时多张)
+            "n_grids": len(grid_urls),
         }
     finally:
         try:
@@ -2357,39 +2365,36 @@ async def _run_skill_analyze_job(params: dict) -> dict:
 
 
 async def _run_skill_replace_job(params: dict) -> dict:
-    """阶段 B 第二步:GPT-Image 2 edit 把九宫格里的人/物/景换成用户上传的素材。
+    """阶段 B 第二步:对 N 张九宫格并发跑 GPT-Image 2 edit,把每张里的人/物/景换成用户素材。
 
-    输入:grid_url + product/model/scene reference URLs
-    输出:replaced_grid_url(新九宫格 PNG)
+    输入:grid_urls (list of N) + product/model/scene reference URLs
+    输出:replaced_grid_urls (list of N,顺序对齐)
 
-    成本:~¥1.5-2/次,耗时 ~250s(GPT-2 高峰期 4-5 分钟)
+    成本:~¥1.5-2/张,耗时 单张 ~250s,N 张并发 + 多张 GPT-2 排队,典型 N=2 时 ~5-7 分钟
     """
     import time as _t
     import fal_client as _fc
     from app.services.logger import log_info, log_error
 
-    grid_url = params.get("grid_url")
+    grid_urls = params.get("grid_urls") or []
     product_url = params.get("product_image_url")
     model_url = params.get("model_image_url")
     scene_url = params.get("scene_image_url")
     model_identity = params.get("model_identity") or ""
     product_category = params.get("product_category") or "其他"
 
-    if not all([grid_url, product_url, model_url]):
-        raise RuntimeError("grid_url / product_image_url / model_image_url 必填")
+    if not grid_urls or not product_url or not model_url:
+        raise RuntimeError("grid_urls / product_image_url / model_image_url 必填")
 
-    # GPT-2 edit:image_urls 接受多张,顺序由 prompt 引用
-    # 顺序:[grid(base), model(ref1), product(ref2), scene(ref3 optional)]
-    image_urls = [grid_url, model_url, product_url]
+    n_grids = len(grid_urls)
     refs_desc = [
         "Reference 1 (the new model): the person whose face, hair, and body type should appear in every panel, replacing whoever was originally there.",
         "Reference 2 (the new product): the item that should replace any clothing/product/garment visible in every panel — preserve its color, shape, pattern, and proportions.",
     ]
     if scene_url:
-        image_urls.append(scene_url)
         refs_desc.append("Reference 3 (the new scene): the environment that should replace each panel's background.")
 
-    prompt = f"""This image is a 3×3 storyboard grid containing 9 INDEPENDENT video shots, ordered left-to-right then top-to-bottom. Each cell has a number (1-9) in the top-left corner with a black box background.
+    base_prompt = f"""This image is a 3×3 storyboard grid containing 9 INDEPENDENT video shots, ordered left-to-right then top-to-bottom. Each cell has a number in the top-left corner with a black box background.
 
 Reference images provided (in this exact order after the storyboard):
 {chr(10).join(refs_desc)}
@@ -2410,45 +2415,58 @@ Re-render the entire storyboard with the following changes applied INDEPENDENTLY
    - Lighting style and color tone
 5. Keep all 9 cells as INDEPENDENT shots — do NOT merge or blend them into a single scene.
 6. Maintain the 3×3 grid layout with white borders between cells.
-7. Keep the numbered labels (1-9) in the top-left corner of each cell — but DO NOT add any other text overlays, words, logos, or written characters anywhere in the image.
+7. Keep the numbered labels in the top-left corner of each cell — but DO NOT add any other text overlays, words, logos, or written characters anywhere in the image.
 8. Output must be a 1024×1024 PNG with the same 3×3 grid structure as the input.
 
-NO TEXT OVERLAYS other than the original 1-9 panel number labels. NO new words, signs, brands, or written text introduced anywhere."""
+NO TEXT OVERLAYS other than the original number labels. NO new words, signs, brands, or written text introduced anywhere."""
 
-    # NSFW sanitize(P226 用过的)
-    prompt = _sanitize_for_gpt2(prompt)
+    base_prompt = _sanitize_for_gpt2(base_prompt)
 
-    log_info(f"skill_replace 调用 GPT-2 edit imgs={len(image_urls)} prompt_len={len(prompt)}")
+    # 并发对 N 张九宫格各跑 GPT-2 edit(每张独立 fal call)
+    sem = asyncio.Semaphore(3)  # GPT-2 高峰期重,限 3 并发避免触发 fal rate limit
+
+    async def _replace_one(idx: int, grid_url: str) -> tuple[int, str]:
+        async with sem:
+            image_urls = [grid_url, model_url, product_url]
+            if scene_url:
+                image_urls.append(scene_url)
+            log_info(f"skill_replace [{idx+1}/{n_grids}] 提交 GPT-2 edit grid={grid_url[:60]}")
+            t = _t.time()
+            try:
+                result = await asyncio.wait_for(
+                    _fc.run_async(
+                        "openai/gpt-image-2/edit",
+                        arguments={
+                            "prompt": base_prompt,
+                            "image_urls": image_urls,
+                            "image_size": "square_hd",
+                            "num_images": 1,
+                            "output_format": "png",
+                        },
+                    ),
+                    timeout=420,
+                )
+            except asyncio.TimeoutError:
+                raise RuntimeError(f"GPT-Image 2 edit 第 {idx+1} 张超时 420s")
+            except Exception as e:
+                log_error(f"skill_replace [{idx+1}] fal 异常: {e}")
+                raise RuntimeError(f"GPT-Image 2 edit 第 {idx+1} 张失败: {str(e)[:200]}")
+            images = result.get("images", []) if isinstance(result, dict) else []
+            if not images or not images[0].get("url"):
+                raise RuntimeError(f"GPT-Image 2 第 {idx+1} 张未返回图片: {str(result)[:200]}")
+            url = images[0]["url"]
+            log_info(f"skill_replace [{idx+1}/{n_grids}] OK ({_t.time()-t:.1f}s) {url[:80]}")
+            return (idx, url)
+
     t0 = _t.time()
-    try:
-        result = await asyncio.wait_for(
-            _fc.run_async(
-                "openai/gpt-image-2/edit",
-                arguments={
-                    "prompt": prompt,
-                    "image_urls": image_urls,
-                    "image_size": "square_hd",
-                    "num_images": 1,
-                    "output_format": "png",
-                },
-            ),
-            timeout=420,  # GPT-2 高峰期 4-5 分钟
-        )
-    except asyncio.TimeoutError:
-        raise RuntimeError("GPT-Image 2 edit 超时 420s,稍后重试")
-    except Exception as e:
-        log_error(f"skill_replace fal 异常: {e}")
-        raise RuntimeError(f"GPT-Image 2 edit 失败: {str(e)[:200]}")
-
+    results = await asyncio.gather(*[_replace_one(i, u) for i, u in enumerate(grid_urls)])
+    results.sort(key=lambda x: x[0])
+    replaced_urls = [u for _, u in results]
     elapsed = _t.time() - t0
-    images = result.get("images", []) if isinstance(result, dict) else []
-    if not images or not images[0].get("url"):
-        raise RuntimeError(f"GPT-Image 2 未返回图片: {str(result)[:300]}")
-
-    replaced_url = images[0]["url"]
-    log_info(f"skill_replace OK elapsed={elapsed:.1f}s url={replaced_url[:80]}")
+    log_info(f"skill_replace 完成 N={n_grids} 总耗时 {elapsed:.1f}s")
     return {
-        "replaced_grid_url": replaced_url,
+        "replaced_grid_urls": replaced_urls,
+        "n_grids": n_grids,
         "elapsed_seconds": round(elapsed, 1),
     }
 
@@ -2480,7 +2498,9 @@ async def _run_skill_generate_job(params: dict) -> dict:
     )
     from app.services.logger import log_info, log_error
 
-    replaced_grid_url = params.get("replaced_grid_url")
+    replaced_grid_urls = params.get("replaced_grid_urls") or []
+    if not replaced_grid_urls and params.get("replaced_grid_url"):
+        replaced_grid_urls = [params["replaced_grid_url"]]
     scenes = params.get("scenes") or []
     product_url = params.get("product_image_url")
     model_url = params.get("model_image_url")
@@ -2488,50 +2508,59 @@ async def _run_skill_generate_job(params: dict) -> dict:
     user_prompt = (params.get("user_prompt") or "").strip()
     aspect_ratio = params.get("aspect_ratio") or "9:16"
 
-    if not replaced_grid_url:
-        raise RuntimeError("replaced_grid_url 必填(先调 /replace)")
+    if not replaced_grid_urls:
+        raise RuntimeError("replaced_grid_urls 必填(先调 /replace)")
     if not scenes:
         raise RuntimeError("scenes 必填")
     if not product_url or not model_url:
         raise RuntimeError("product/model image URL 必填")
 
-    # 截断到前 9 个 scene(当前单九宫格架构)
-    scenes = scenes[:9]
-    n = len(scenes)
+    n_grids = len(replaced_grid_urls)
+    n_scenes = len(scenes)
+    # 不再截断:N 张九宫格 × 每张最多 9 帧 = 最多 N*9 个 scene。但只取前 n_scenes 个(后面是 padding)
     work_dir = _tmp.mkdtemp(prefix="skill_generate_")
-    log_info(f"skill_generate 开工 n={n} replaced_grid={replaced_grid_url[:60]} work={work_dir}")
+    log_info(f"skill_generate 开工 n_grids={n_grids} n_scenes={n_scenes} work={work_dir}")
 
     try:
-        # 1. 下载替换后九宫格
+        # 1. 下载每张替换后九宫格 + PIL 切回独立帧 + 上传到 fal 拿 URL
         t0 = _t.time()
-        grid_path = _os.path.join(work_dir, "replaced_grid.png")
-        async with _httpx.AsyncClient(timeout=60, follow_redirects=True) as cli:
-            r = await cli.get(replaced_grid_url)
-            r.raise_for_status()
-            with open(grid_path, "wb") as f:
-                f.write(r.content)
-        log_info(f"skill_generate 下载九宫格 {_os.path.getsize(grid_path)} bytes ({_t.time()-t0:.1f}s)")
-
-        # PIL 切 3x3(跟 grid_composer 同算法)
-        img = Image.open(grid_path).convert("RGB")
-        canvas_size = max(img.size)
         border = 4
         rows, cols = 3, 3
-        cell_w = (canvas_size - (cols + 1) * border) // cols
-        cell_h = (canvas_size - (rows + 1) * border) // rows
+        per_grid = rows * cols  # 9
 
-        frame_urls: list[str] = []
-        for i in range(n):
-            row = i // cols
-            col = i % cols
-            x = border + col * (cell_w + border)
-            y = border + row * (cell_h + border)
-            cell_img = img.crop((x, y, x + cell_w, y + cell_h))
-            cell_path = _os.path.join(work_dir, f"frame_{i:02d}.png")
-            cell_img.save(cell_path, "PNG")
-            cell_url = await fal_upload_with_retry(cell_path)
-            frame_urls.append(cell_url)
-        log_info(f"skill_generate 切 {n} 张帧 + 上传完成")
+        frame_urls: list[str] = []  # 全局 frame index 0..n_scenes-1
+        for gi, grid_url in enumerate(replaced_grid_urls):
+            grid_path = _os.path.join(work_dir, f"replaced_grid_{gi:02d}.png")
+            async with _httpx.AsyncClient(timeout=60, follow_redirects=True) as cli:
+                r = await cli.get(grid_url)
+                r.raise_for_status()
+                with open(grid_path, "wb") as f:
+                    f.write(r.content)
+
+            img = Image.open(grid_path).convert("RGB")
+            canvas_size = max(img.size)
+            cell_w = (canvas_size - (cols + 1) * border) // cols
+            cell_h = (canvas_size - (rows + 1) * border) // rows
+
+            # 这张九宫格对应的 scene 区间:[gi*9, min((gi+1)*9, n_scenes))
+            start_scene = gi * per_grid
+            end_scene = min((gi + 1) * per_grid, n_scenes)
+            for local_i in range(end_scene - start_scene):
+                row = local_i // cols
+                col = local_i % cols
+                x = border + col * (cell_w + border)
+                y = border + row * (cell_h + border)
+                cell_img = img.crop((x, y, x + cell_w, y + cell_h))
+                global_i = start_scene + local_i
+                cell_path = _os.path.join(work_dir, f"frame_{global_i:03d}.png")
+                cell_img.save(cell_path, "PNG")
+                cell_url = await fal_upload_with_retry(cell_path)
+                frame_urls.append(cell_url)
+        log_info(f"skill_generate 切 {len(frame_urls)} 张帧 + 上传完成 ({_t.time()-t0:.1f}s)")
+
+        if len(frame_urls) != n_scenes:
+            raise RuntimeError(f"frame_urls={len(frame_urls)} != n_scenes={n_scenes},切帧逻辑错")
+        n = n_scenes
 
         # 2. 并发跑 Seedance r2v
         sem = asyncio.Semaphore(9)

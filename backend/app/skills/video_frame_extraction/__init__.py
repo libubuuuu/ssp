@@ -50,22 +50,46 @@ class VideoFrameSkill:
         use_ai_keyframe_selection: bool = False,
         output_dir: str = "/tmp/v3_frames",
     ) -> dict:
-        """端到端流程:scene 检测 → 关键帧抽取 → 九宫格拼合。
+        """端到端流程:scene 检测 → 关键帧抽取 → 多九宫格拼合(每 9 帧一张)。
+
+        长视频自动分页:scenes > 9 时自动出多张九宫格(每张 3x3)。
+        最后一张如果不满 9 格,compose_grid 会自动用最后一帧 padding 填满。
 
         AI 选帧 / 语音转文字 当前 stub,留参数兼容未来扩展。
+        grid_size 参数保留向后兼容,实际固定走 (3, 3) 多张分页。
+
+        Returns:
+          scenes:        全部 N 个 scene dict
+          keyframe_paths: 全部 N 张关键帧路径
+          grid_paths:    M 张九宫格路径,M = ceil(N / 9)
+          n_frames:      N
+          n_grids:       M
+          layout:        (3, 3) 固定
         """
+        import os
         scenes = self.detect_scenes(video_path)
-        # grid_size = 9 → 取前 9 个 scene;不够 9 个就有几个用几个
-        if grid_size and len(scenes) > grid_size:
-            scenes = scenes[:grid_size]
+        if not scenes:
+            return {"scenes": [], "keyframe_paths": [], "grid_paths": [], "n_frames": 0, "n_grids": 0, "layout": (3, 3)}
+
         frame_paths = self.extract_keyframes(video_path, scenes, output_dir=output_dir)
-        layout = _layout_for_grid_size(grid_size)
-        grid_path = self.compose_grid(frame_paths, layout=layout)
+
+        # 多九宫格分页:每 9 帧一张
+        layout = (3, 3)
+        per_grid = layout[0] * layout[1]  # 9
+        grid_paths = []
+        for chunk_idx, start in enumerate(range(0, len(frame_paths), per_grid)):
+            chunk = frame_paths[start:start + per_grid]
+            # 用具名 PNG,而不是 mkstemp 随机名 — 便于调试 + 跟 chunk idx 对齐
+            out_path = os.path.join(output_dir, f"grid_{chunk_idx:02d}.png")
+            self.compose_grid(chunk, layout=layout, output_path=out_path)
+            grid_paths.append(out_path)
+
         return {
             "scenes": [s.to_dict() for s in scenes],
             "keyframe_paths": frame_paths,
-            "grid_path": grid_path,
+            "grid_paths": grid_paths,
             "n_frames": len(frame_paths),
+            "n_grids": len(grid_paths),
             "layout": layout,
         }
 
