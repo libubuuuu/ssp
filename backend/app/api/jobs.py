@@ -3062,9 +3062,7 @@ async def _run_video_general_analyze_job(params: dict) -> dict:
     if not svc or not svc.is_available():
         raise RuntimeError("qwen-vl 服务不可用")
 
-    # qwen-vl 看多图,这里复用 analyze_video 接口(其实它支持多图,只是 video_url 字段)
-    # 实际上 qwen-vl 多图分析需要 analyze_image,先用 analyze_video 兼容(传第 1 张就当 base)
-    # 简化:先归档第 1 张主图给 qwen-vl 看(暂时单图分析,多图后续优化)
+    # qwen-vl 看产品图(多图取第 1 张主图,多图后续优化)
     primary_image = product_image_urls[0]
     log_info(f"video_general_analyze 多图分析(主图 {primary_image[:60]} + {len(product_image_urls)-1} 张辅图)")
 
@@ -3074,13 +3072,13 @@ async def _run_video_general_analyze_job(params: dict) -> dict:
         instruction
     )
 
-    # qwen-vl analyze_image(看单张产品图)+ retry
+    # 2026-05-11:改调 analyze_image(原来错调 analyze_video 把图片 URL 当视频传给 qwen-vl,
+    # 报"Invalid video file"任务静默退款,老板真测踩雷)
     import asyncio as _asyncio
     res = None
     for attempt in range(3):
         try:
-            # 复用现有接口(analyze_video 也接受 image url)
-            res = await svc.analyze_video(primary_image, enhanced_instruction)
+            res = await svc.analyze_image(primary_image, enhanced_instruction)
             if "error" not in res:
                 break
             err_text = str(res.get("error", ""))

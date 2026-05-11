@@ -6,7 +6,6 @@
 """
 from __future__ import annotations
 import hashlib
-import re
 from typing import Final, Mapping, Sequence
 
 
@@ -24,12 +23,19 @@ SEGMENT_INPUT_SECONDS_MAX: Final[int] = 8   # worst-case 估算上限,实际段�
 
 # fal 端固定参数(改要测过)
 FAL_ENDPOINT:        Final[str] = "bytedance/seedance-2.0/fast/reference-to-video"
+# 2026-05-11:480p。老板 playground 实证 (request 019e1331) 也用 480p 跑出大体对的结果。
+# Agent 调研说 fal schema 默认 720p,但 playground 实际跑 480p,实证为准。
 FAL_RESOLUTION:      Final[str] = "480p"
 # fal 端点接受 duration ∈ {'auto', '4', '5', ..., '15'}(2026-05-10 probe 验证)
 # processor 会按段实际秒数对齐到 [4, 15] 区间,不再用此固定值;保留作 fallback
 FAL_OUTPUT_DURATION: Final[int] = 8
-FAL_GENERATE_AUDIO:  Final[bool] = False   # 用原视频音轨拼回
-FAL_SAFETY_CHECKER:  Final[bool] = True    # 必开
+# 2026-05-11:对齐 playground 默认 = generate_audio=True(老板真测确认 playground 开)。
+# fal 模型在 generate_audio=False 时走不同 code path,实测产品图替换效果失效(prod 920b2000 只换 1 帧)。
+# 后端 mux 逻辑会用原视频音轨覆盖 fal 生成的音频(processor L883-918),最终成品仍是原音轨,
+# 仅 fal 浪费一次音频生成时间(微小成本)。
+FAL_GENERATE_AUDIO:  Final[bool] = True
+# 删除 FAL_SAFETY_CHECKER:fal 官方 schema 不存在 enable_safety_checker 字段,
+# 之前 payload 里这个 unknown key 可能干扰 fal 内部 routing。
 
 
 # 全能档限制
@@ -116,61 +122,19 @@ def sha256_url_first8(url: str) -> str:
 
 
 def build_prompt(user_prompt: str, image_urls: Sequence[Mapping]) -> str:
-    """把 image_urls 拼成 fal 标准 @Image{N} 占位符附加到用户 prompt 末尾。
+    """直接透传用户 prompt 给 fal,不做任何转换或追加。
 
-    fal seedance r2v(fast/reference-to-video)占位符约定:@Image1 / @Image2 / ... 引用
-    image_urls 数组中对应位置(1-based)。中文 @ 写法 fal 不识别 → 当作普通文本 → 模型不看图。
-
-    本函数行为:
-    1. user_prompt 里的中文 @ 引用(@产品N / @人物N / @场景N / @图N)按 role 内序号
-       查 image_urls 中对应全局位置 → 替换成 @Image{global_idx}
-    2. 末尾追加(参考素材:@Image1, @Image2, ...)列出所有图
-
-    设计选择(2026-05-10 commit 4):
-    - 前端 / 用户层保持中文 @ 友好,后端透明转 fal 标准 — 前端 prompt 模板不动
-    - 用户引用不存在的图(@产品3 但只上传 2 张 product)→ 保留原文,不擅自重定向
+    2026-05-11 简化决策:
+    - 老板 fal playground 实测成功配方就是裸 prompt(eg "视频中的裤子换成上传的图片")
+      + image_urls 数组。fal Fast 端点自己看 image_urls 就知道用图,prompt 里不需要 @ 引用。
+    - commit 4 引入的"中文 @ → @Image{N} 转换 + 末尾追加(参考素材:...)" 复杂化反而干扰
+      模型(老板 2026-05-10 真测 4 次均失败,playground 同端点同输入跑出完美效果)。
+    - 简化等价 playground 体验。
 
     Args:
-        user_prompt: 用户填的 prompt(可能含中文 @ 引用)
-        image_urls:  [{"url": "...", "role": "product"}, ...](role ∈ IMAGE_ROLES)
+        user_prompt: 用户填的 prompt(原样透传)
+        image_urls:  [{"url": "...", "role": "..."}, ...](保留参数兼容签名,不使用)
     Returns:
-        fal 端能识别的 prompt(中文 @ 已转 @Image{N})
-
-    示例:
-        user_prompt="@产品1 替换视频中的裤子"
-        image_urls=[{role:"product"}, {role:"person"}]
-        → "@Image1 替换视频中的裤子(参考素材:@Image1, @Image2)"
+        user_prompt 原样
     """
-    if not image_urls:
-        return user_prompt
-
-    # 1. 算每张图的 (role, role_inner_seq) → 全局 1-based idx
-    fal_idx_by_role_seq: dict[tuple[str, int], int] = {}
-    role_seen = {role: 0 for role in IMAGE_ROLES}
-    for global_idx, img in enumerate(image_urls, start=1):
-        role = img.get("role", "reference")
-        if role not in IMAGE_ROLES:
-            role = "reference"
-        role_seen[role] += 1
-        fal_idx_by_role_seq[(role, role_seen[role])] = global_idx
-
-    # 2. user_prompt 里的中文 @{label}{N?} → @Image{global_idx}
-    transformed = user_prompt
-    for role, label in ROLE_TO_AT_LABEL.items():
-        pattern = re.compile(re.escape(f"@{label}") + r"(\d*)")
-
-        def _make_replacer(_role: str):
-            def _replace(m: re.Match) -> str:
-                num_str = m.group(1)
-                n = int(num_str) if num_str else 1
-                global_idx = fal_idx_by_role_seq.get((_role, n))
-                if global_idx is None:
-                    return m.group(0)  # 用户引用不存在的图 — 保留原文
-                return f"@Image{global_idx}"
-            return _replace
-
-        transformed = pattern.sub(_make_replacer(role), transformed)
-
-    # 3. 末尾追加(参考素材:@Image1, @Image2, ...)
-    refs = [f"@Image{i}" for i in range(1, len(image_urls) + 1)]
-    return f"{transformed}(参考素材:{', '.join(refs)})"
+    return user_prompt

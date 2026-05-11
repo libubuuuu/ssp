@@ -52,6 +52,7 @@ from app.services.video_clone_v2_split import (
     plan_segments_v2,
     check_duration as _check_duration,
     suggest_trim_candidates,
+    detect_scene_count,
 )
 from app.services.video_clone_v2_processor import process_v2_job
 from app.services.video_clone_v2_cache import (
@@ -197,7 +198,8 @@ class CreateRequest(BaseModel):
     video_url: str
     video_duration_sec: float = Field(..., gt=0)
     video_sha256: str = Field("", description="upload/video 返回的文件 SHA256(红线 3,法务举证)")
-    image_urls: List[ImageRef] = Field(default_factory=list, max_length=3)
+    # 2026-05-11:产品/人物/场景 各 0-3 张,总上限 9 张(对齐 fal seedance r2v image_urls 上限)
+    image_urls: List[ImageRef] = Field(default_factory=list, max_length=9)
     prompt: str = Field(..., min_length=1, max_length=2000)
     disclaimer_acknowledged: bool
     # B 阶段:check-duration 弹窗用户选完丢段位置后传回(可选,默认不裁剪整片用)
@@ -235,6 +237,9 @@ class PreviewSegmentsResponse(BaseModel):
     type: Literal["single", "ultimate"]
     segments: List[SegmentChoice]
     preview_token: str
+    # 2026-05-11 多镜头分支:scene_count = 视频镜头数
+    # ≥4 镜头 → 前端弹窗"建议剪辑成单镜头"(F 路线);<4 镜头 → 后端 brute force(H 路线)
+    scene_count: int = 1
 
 
 class CheckDurationRequest(BaseModel):
@@ -483,8 +488,17 @@ async def preview_segments(
             # 2026-05-10 砍单档:allowed_tiers 跟随 SegmentChoice 模型一起删
         ) for p in plan
     ]
+    # 2026-05-11 多镜头检测(F 弹窗触发用)
+    # 检测失败 fallback 1(单镜头视为安全分支),不阻塞 preview 流程
+    try:
+        scene_count = await detect_scene_count(req.video_url)
+    except Exception:
+        scene_count = 1
     preview_token = uuid.uuid4().hex
-    return PreviewSegmentsResponse(type=type_, segments=segments, preview_token=preview_token)
+    return PreviewSegmentsResponse(
+        type=type_, segments=segments, preview_token=preview_token,
+        scene_count=scene_count,
+    )
 
 
 @router.post("/estimate", response_model=EstimateResponse)
@@ -830,3 +844,200 @@ async def get_prompt_templates(
 ):
     """5 个 prompt 模板(不依赖灰度开关)。"""
     return {"templates": list(PROMPT_TEMPLATES)}
+
+
+# ─── ⭐ AI 优化 prompt(2026-05-11)─────────────────────────────────────
+# 用户大白话 → fal seedance r2v 风格简短中文 prompt。
+# 出处:playground 实证 019e0951 完美换裤的 prompt = "视频中的裤子换成上传的图片"
+# (15-50 字简短中文,无 @ 占位符,直白陈述句)。
+# V1 generate-prompt 输出英文 + @Image1 引用,跟 V2 不对齐,故 V2 自己实现。
+
+_V2_PROMPT_LLM_ENDPOINT = "openrouter/router"
+_V2_PROMPT_LLM_MODEL = "qwen/qwen3-vl-235b-a22b-instruct"
+_V2_PROMPT_LLM_FALLBACK = "google/gemini-2.5-flash"
+
+_V2_PROMPT_LLM_SYSTEM_CN = """你是 fal seedance 2.0 视频替换模型的 prompt 工程师。用户上传一段视频和参考图(产品/人物/场景),用大白话说想换什么。你的任务是输出一段简洁但内容丰富的中文 prompt,涵盖视频内容制作的核心元素。
+
+【输出必含元素】(按优先级排序):
+1. ⭐ 主体替换语义:明确"视频里的 X 换成上传的图片/产品/人物/场景"
+2. ⭐ 替换对象细节:颜色/款式/材质/廓形/品牌特征(从用户描述提取)
+3. 主体动作:主角在做什么(走路/试穿/展示/坐姿等,用户描述或合理推断)
+4. 场景调性:都市街拍/工作室/复古咖啡馆/极简白底 等(用户描述或推断)
+5. 镜头风格:特写/全景/跟拍/中景(可选,有助于模型理解)
+6. 光线氛围:柔光/黄金时段/明亮自然光/电影感冷调(可选)
+7. 节奏感:稳定/慢镜/灵动(可选)
+8. 整体风格:写实/电影感/复古/极简(可选)
+
+【⚠️ 关键技术约束】(fal seedance r2v 端点物理特性):
+- 端点本质 = "替换对象,保留原视频其他",原视频的镜头/动作/光线已固定
+- prompt 描述这些元素时是"告诉模型上下文",**不要写指挥性语句**("镜头要变快"❌)
+- prompt 末尾必须加一句"保持原视频的镜头、动作、光线、节奏不变"(防模型自作主张)
+
+【输出风格规则】:
+1. 纯中文,80-150 字,**绝不超过 200 字**(过长干扰模型)
+2. 自然流畅的描述句,不用 @Image1 / @Video1 等占位符
+3. 不要 markdown,不要前缀"Prompt:",不要引号,不要编号
+4. 一段流畅中文,可有 1-2 个逗号分隔的子句
+
+【输出示例】:
+- "视频中的裤子换成上传的浅蓝色宽松牛仔裤款式,保持腿部线条修长的廓形特征,街拍写实风格,自然光线下的都市街道,保持原视频的镜头、动作、光线、节奏不变。"
+- "把视频里的人换成上传的人物图,亚洲女性,白皙肤色,文艺气质,在咖啡馆温暖柔光的中景镜头中保持端坐姿态,保持原视频的镜头、动作、光线、节奏不变。"
+- "视频中的椅子换成上传的北欧实木风格扶手椅,深木色调,极简工作室白底背景,中景特写,保持原视频的镜头、动作、光线、节奏不变。"
+
+输出:一段流畅中文 prompt(80-150 字),不要解释。"""
+
+_V2_PROMPT_LLM_SYSTEM_EN = """You are a prompt engineer for the fal seedance 2.0 video object replacement model. The user uploads a video and reference images (product / person / scene) and describes in any language what they want. Your task is to output a concise but rich English prompt covering the core elements of video content creation.
+
+[Required Elements] (by priority):
+1. ⭐ Replacement semantics: state clearly "Replace the X in the video with the uploaded image/product/person/scene"
+2. ⭐ Object details: color / style / material / silhouette / brand features (from user description)
+3. Subject action: what the subject is doing (walking / trying on / displaying / sitting, etc.)
+4. Setting: urban street / studio / vintage cafe / minimal white backdrop, etc.
+5. Camera: close-up / wide shot / tracking / medium shot (optional)
+6. Lighting: soft light / golden hour / natural daylight / cinematic cool tone (optional)
+7. Pacing: stable / slow-motion / dynamic (optional)
+8. Overall style: photorealistic / cinematic / vintage / minimal (optional)
+
+[⚠️ Critical Technical Constraint] (fal seedance r2v endpoint physics):
+- Endpoint replaces objects while preserving the rest of the original video (camera/action/lighting are fixed)
+- Describe these elements as CONTEXT, not as commands ("make camera faster" ❌)
+- ALWAYS end with: "Preserve the original video's camera, motion, lighting and pacing."
+
+[Style Rules]:
+1. Pure English, 30-60 words, **never exceed 80 words**
+2. Natural flowing description, NO @ tag references
+3. No markdown, no "Prompt:" prefix, no quotes, no numbering
+4. One flowing paragraph with 1-2 comma-separated clauses
+
+[Examples]:
+- "Replace the pants in the video with the uploaded loose-fit light-blue denim style, preserving the slim leg silhouette, urban street photorealistic look with natural daylight. Preserve the original video's camera, motion, lighting and pacing."
+- "Replace the person in the video with the uploaded reference, an Asian woman with fair skin and artistic vibe, seated in a warm-lit cafe medium shot. Preserve the original video's camera, motion, lighting and pacing."
+- "Replace the chair in the video with the uploaded Nordic solid-wood armchair, deep wood tone, minimal studio white backdrop, medium close-up. Preserve the original video's camera, motion, lighting and pacing."
+
+Output: ONE flowing English paragraph (30-60 words), no explanation."""
+
+
+def _pick_system_prompt(region: str) -> str:
+    """region=CN → 中文 prompt(playground 实证完美);region=Global → 英文 prompt"""
+    return _V2_PROMPT_LLM_SYSTEM_EN if region == "Global" else _V2_PROMPT_LLM_SYSTEM_CN
+
+
+class GenerateV2PromptRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    user_description: str = Field(..., min_length=1, max_length=500,
+                                  description="用户大白话需求,会被 LLM 优化成简短 prompt")
+    # 2026-05-11:目标市场 toggle,影响输出语言(CN 中文 / Global 英文)
+    region: Literal["CN", "Global"] = Field("CN", description="CN 国内中文 / Global 海外英文")
+
+
+class GenerateV2PromptResponse(BaseModel):
+    generated_prompt: str
+    model: str
+    region: str
+
+
+async def _call_deepseek_optimize(user_description: str, region: str = "CN") -> Optional[str]:
+    """DeepSeek API 优化 prompt(中文母语,$0.27/M in + $1.10/M out,直连不过 fal)。
+    region=CN 输出中文,region=Global 输出英文。返 None = 失败,调用方走 fal fallback。"""
+    api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    if not api_key:
+        return None
+    import httpx
+    is_en = region == "Global"
+    user_content = (
+        f"User description: {user_description}\n\nOutput ONE short English sentence prompt (8-25 words)."
+        if is_en
+        else f"用户描述:{user_description}\n\n请输出一句简短的中文 prompt(对齐 playground 实测成功配方风格)。"
+    )
+    body = {
+        "model": "deepseek-chat",
+        "messages": [
+            {"role": "system", "content": _pick_system_prompt(region)},
+            {"role": "user", "content": user_content},
+        ],
+        "temperature": 0.7,
+        "max_tokens": 500,  # 2026-05-11:8 元素丰富 prompt 需要更多 token(中文 80-150 字 / 英文 30-60 词)
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as cli:
+            r = await cli.post("https://api.deepseek.com/chat/completions", headers=headers, json=body)
+        if r.status_code != 200:
+            log_error(f"deepseek {r.status_code}: {r.text[:200]}")
+            return None
+        data = r.json()
+        text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+        return text if text else None
+    except Exception as e:
+        log_error(f"deepseek 异常: {str(e)[:200]}")
+        return None
+
+
+@router.post("/generate-prompt", response_model=GenerateV2PromptResponse)
+async def generate_v2_prompt(
+    req: GenerateV2PromptRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """大白话 → fal seedance 风格简短 prompt(中文 / 英文双语,跟前端 region 选择)。
+    2026-05-11:首选 DeepSeek(便宜直连)+ region toggle,fal qwen/gemini 作 2 层 fallback。"""
+    import re as _re
+
+    region = req.region
+    is_en = region == "Global"
+    text = ""
+    used_model = ""
+
+    # ⭐ Primary:DeepSeek(直连不过 fal,$0.0003/次,跟 region 切语言)
+    ds_text = await _call_deepseek_optimize(req.user_description, region=region)
+    if ds_text:
+        text = ds_text
+        used_model = "deepseek-chat"
+
+    # Fallback 1+2:fal openrouter qwen/gemini(DeepSeek 失败时,跟 region 切语言)
+    if not text:
+        user_msg = (
+            f"User description: {req.user_description}\n\nOutput ONE short English sentence prompt (8-25 words)."
+            if is_en
+            else f"用户描述:{req.user_description}\n\n请输出一句简短的中文 prompt(对齐 playground 实测成功配方风格)。"
+        )
+        for model in (_V2_PROMPT_LLM_MODEL, _V2_PROMPT_LLM_FALLBACK):
+            try:
+                result = await asyncio.wait_for(
+                    fal_client.run_async(
+                        _V2_PROMPT_LLM_ENDPOINT,
+                        arguments={
+                            "prompt": user_msg,
+                            "system_prompt": _pick_system_prompt(region),
+                            "model": model,
+                            "temperature": 0.7,
+                        },
+                    ),
+                    timeout=40,
+                )
+                text = (result.get("output") or "").strip()
+                if text:
+                    used_model = f"fal-{model.split('/')[-1]}"
+                    break
+            except Exception as e:
+                log_error(f"v2 generate-prompt fal LLM={model} 失败: {str(e)[:200]}")
+                continue
+
+    if not text:
+        # 最终 fallback:返用户原话(不优化总比报错强)
+        text = req.user_description.strip()
+        used_model = "fallback-passthrough"
+
+    # 清理 markdown / 引号(LLM 偶尔不听话)
+    text = _re.sub(r"^```(?:[a-z]*)?\s*|\s*```$", "", text, flags=_re.MULTILINE).strip()
+    text = text.strip('"').strip("'").strip()
+    # 2026-05-11:8 元素丰富 prompt 可能跨多行,合并空白(不再 split[0] 截首行)
+    text = _re.sub(r"\s+", " ", text).strip()
+
+    log_info(
+        f"v2 generate-prompt user={current_user.get('id')} region={region} "
+        f"model={used_model} desc_len={len(req.user_description)} out_len={len(text)}"
+    )
+    return GenerateV2PromptResponse(generated_prompt=text, model=used_model, region=region)

@@ -32,6 +32,7 @@ interface PreviewResp {
   type: "single" | "ultimate";
   segments: SegmentChoice[];
   preview_token: string;
+  scene_count: number;
 }
 interface EstimateResp {
   type: string;
@@ -134,6 +135,9 @@ export default function VideoCloneV2Page() {
 
   // prompt + 模板
   const [prompt, setPrompt] = useState("");
+  const [aiOptimizing, setAiOptimizing] = useState(false);
+  // 2026-05-11:目标市场 toggle(CN 国内 / Global 海外),影响 AI prompt 优化的语言风格
+  const [region, setRegion] = useState<"CN" | "Global">("CN");
   const [templates, setTemplates] = useState<Template[]>([]);
 
   // 估价
@@ -331,6 +335,36 @@ export default function VideoCloneV2Page() {
 
   function applyTemplate(t: Template) { setPrompt(t.template); }
 
+  async function handleAiOptimize() {
+    const desc = prompt.trim();
+    if (!desc) {
+      setError("请先写一下你的想法,再点 AI 优化");
+      return;
+    }
+    setError(null);
+    setAiOptimizing(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/video/clone-v2/generate-prompt`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...token() },
+        body: JSON.stringify({ user_description: desc, region }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        throw new Error(`HTTP ${r.status}: ${txt.slice(0, 200)}`);
+      }
+      const data = await r.json();
+      if (data.generated_prompt) {
+        setPrompt(data.generated_prompt);
+      }
+    } catch (e) {
+      setError(`AI 优化失败:${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setAiOptimizing(false);
+    }
+  }
+
   // ─── ultimate 段更新 helper ───
   function updateSeg(idx: number, patch: Partial<SegmentSelection>) {
     setSegSelections((prev) => ({
@@ -464,6 +498,11 @@ export default function VideoCloneV2Page() {
 
         {/* Step 1:上传视频 */}
         <Section title="1. 上传参考视频(MP4/MOV,≤50MB,4-64 秒)">
+          {!video && (
+            <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 8, padding: "0.7rem 1rem", marginBottom: 12, fontSize: "0.85rem", color: "#075985", lineHeight: 1.6 }}>
+              <b>💡 效果小贴士</b>:建议上传<b>单镜头视频</b>(无明显切换),效果最稳定。多镜头视频在切换处个别帧可能效果欠佳。
+            </div>
+          )}
           {!video ? (
             <FileInput
               accept="video/*"
@@ -489,33 +528,35 @@ export default function VideoCloneV2Page() {
           )}
         </Section>
 
-        {/* Step 2:上传参考图 */}
-        <Section title="2. 上传参考图(0-3 张,标注用途)">
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
-            {images.map((img, i) => (
-              <div key={i} style={{ position: "relative" }}>
-                <img src={img.url} alt={img.filename} style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 8, border: "1px solid #ddd" }} />
-                <div style={{ fontSize: "0.7rem", color: "#666", marginTop: 4, textAlign: "center" }}>@{ROLE_LABELS[img.role]}{i + 1}</div>
-                <button onClick={() => setImages((arr) => arr.filter((_, j) => j !== i))} style={{ position: "absolute", top: -6, right: -6, background: "#fff", border: "1px solid #ddd", borderRadius: "50%", width: 20, height: 20, cursor: "pointer", fontSize: "0.7rem" }}>✕</button>
+        {/* Step 2:上传参考图(产品 / 人物 / 场景 各 0-3 张,总上限 9 张对齐 fal) */}
+        <Section title="2. 上传参考图(产品 / 人物 / 场景 各 0-3 张)">
+          {(["product", "person", "scene"] as Role[]).map((role) => {
+            const roleImages = images.map((img, idx) => ({ img, idx })).filter((x) => x.img.role === role);
+            return (
+              <div key={role} style={{ marginBottom: 16, paddingBottom: 12, borderBottom: "1px dashed #e5e7eb" }}>
+                <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "#374151", marginBottom: 8 }}>
+                  {ROLE_LABELS[role]}图 <span style={{ fontWeight: 400, color: "#9ca3af", fontSize: "0.78rem" }}>({roleImages.length}/3)</span>
+                </div>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+                  {roleImages.map((x, i) => (
+                    <div key={x.idx} style={{ position: "relative" }}>
+                      <img src={x.img.url} alt={x.img.filename} style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 8, border: "1px solid #ddd" }} />
+                      <div style={{ fontSize: "0.7rem", color: "#666", marginTop: 4, textAlign: "center" }}>@{ROLE_LABELS[role]}{i + 1}</div>
+                      <button onClick={() => setImages((arr) => arr.filter((_, j) => j !== x.idx))} style={{ position: "absolute", top: -6, right: -6, background: "#fff", border: "1px solid #ddd", borderRadius: "50%", width: 20, height: 20, cursor: "pointer", fontSize: "0.7rem" }}>✕</button>
+                    </div>
+                  ))}
+                  {roleImages.length < 3 && (
+                    <FileInput
+                      accept="image/*"
+                      disabled={uploadingImage}
+                      label={uploadingImage ? "上传中..." : `+ 添加${ROLE_LABELS[role]}图`}
+                      onFile={(f) => handleImageUpload(f, role)}
+                    />
+                  )}
+                </div>
               </div>
-            ))}
-          </div>
-          {images.length < 3 && (
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <select value={pendingRole} onChange={(e) => setPendingRole(e.target.value as Role)} style={selectStyle}>
-                <option value="product">产品</option>
-                <option value="person">人物</option>
-                <option value="scene">场景</option>
-                <option value="reference">参考</option>
-              </select>
-              <FileInput
-                accept="image/*"
-                disabled={uploadingImage}
-                label={uploadingImage ? "上传中..." : "+ 添加图片"}
-                onFile={(f) => handleImageUpload(f, pendingRole)}
-              />
-            </div>
-          )}
+            );
+          })}
         </Section>
 
         {/* 2026-05-10 砍单档:single 模式不再需要档位选择 UI(整段删除)
@@ -617,7 +658,33 @@ export default function VideoCloneV2Page() {
 
         {/* Step 4:Prompt */}
         {video && (
-          <Section title="4. 提示词(可选 5 个模板,可手动调整)">
+          <Section title="4. 提示词(写大白话 → AI 优化 / 选模板 / 手动改)">
+            {/* 2026-05-11 目标市场 toggle:CN 国内→中文 prompt / Global 海外→英文 prompt */}
+            <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
+              <label style={{ fontSize: "0.85rem", color: "#444", fontWeight: 500 }}>目标市场:</label>
+              <div style={{ display: "flex", gap: 0, border: "1px solid #d1d5db", borderRadius: 8, overflow: "hidden" }}>
+                {(["CN", "Global"] as const).map((r) => (
+                  <button
+                    key={r}
+                    onClick={() => setRegion(r)}
+                    style={{
+                      padding: "0.4rem 0.9rem",
+                      border: "none",
+                      background: region === r ? "#2563eb" : "#fff",
+                      color: region === r ? "#fff" : "#374151",
+                      cursor: "pointer",
+                      fontSize: "0.85rem",
+                      fontWeight: region === r ? 500 : 400,
+                    }}
+                  >
+                    {r === "CN" ? "国内抖音(中文)" : "海外 TikTok(英文)"}
+                  </button>
+                ))}
+              </div>
+              <span style={{ fontSize: "0.78rem", color: "#9ca3af" }}>
+                AI 优化时会按此切换 prompt 语言
+              </span>
+            </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
               {templates.map((t) => (
                 <button key={t.id} onClick={() => applyTemplate(t)} style={chipBtn}>{t.label}</button>
@@ -626,11 +693,29 @@ export default function VideoCloneV2Page() {
             <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder="描述你想要的视频效果,例如:婴儿在白色鸭子形状睡袋上练习抬头,柔和卧室光线"
+              placeholder="写大白话:想要视频里什么换成什么。例:想把视频里的裤子换成上传的款式 / 把人物换掉。点 ✨ AI 优化 自动转成专业 prompt"
               style={{ width: "100%", minHeight: 80, padding: 10, border: "1px solid #ddd", borderRadius: 8, fontSize: "0.9rem", fontFamily: "inherit", resize: "vertical" }}
             />
-            <div style={{ fontSize: "0.78rem", color: "#999", marginTop: 6 }}>
-              提交时后端会自动加 @产品N / @人物N / @场景N 引用图片(已标注的 role 用)。
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+              <button
+                onClick={handleAiOptimize}
+                disabled={aiOptimizing || !prompt.trim()}
+                style={{
+                  padding: "0.5rem 1rem",
+                  borderRadius: 8,
+                  border: "none",
+                  background: aiOptimizing || !prompt.trim() ? "#94a3b8" : "#7c3aed",
+                  color: "#fff",
+                  cursor: aiOptimizing || !prompt.trim() ? "not-allowed" : "pointer",
+                  fontSize: "0.85rem",
+                  fontWeight: 500,
+                }}
+              >
+                {aiOptimizing ? "优化中..." : "✨ AI 优化"}
+              </button>
+              <span style={{ fontSize: "0.78rem", color: "#9ca3af" }}>
+                写完想法,点这里让 AI 帮你转成最佳 prompt
+              </span>
             </div>
           </Section>
         )}
@@ -770,6 +855,7 @@ export default function VideoCloneV2Page() {
             onCancel={() => { setTrimPopup(null); setVideo(null); setDropRanges([]); }}
           />
         )}
+
       </main>
     </div>
   );

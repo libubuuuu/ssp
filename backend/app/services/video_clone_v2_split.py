@@ -166,6 +166,61 @@ async def calc_motion_score(video_path_or_url: str, start: float, duration: floa
         except OSError: pass
 
 
+# ─── ⭐ 镜头切换检测(scene cut detection,用于多镜头视频识别)──────────
+
+# 切换检测阈值(0-1,scene_score > 此值视为切换)
+# 实测老板手机视频在 0.3 阈值下检测出 3 个切换(scene_score 0.487-0.646),
+# 实证经验值;过低假阳性多(过场镜头被算成切换),过高漏检温和切换
+SCENE_CUT_THRESHOLD: float = 0.3
+
+
+async def detect_scene_cuts(video_path_or_url: str) -> List[float]:
+    """检测视频内的镜头切换时间戳(秒)。
+
+    用 ffmpeg select='gt(scene,N)' filter + metadata print,返回切换发生的 pts_time。
+    实测老板 8s 4 镜头手机视频检测出 3 个切换:[3.70, 5.90, 7.13]。
+
+    Returns:
+        切换时间戳列表(秒),按时间升序;空 list = 单镜头视频
+    """
+    import os
+    import tempfile
+    fd, meta_path = tempfile.mkstemp(prefix="vc2_scene_", suffix=".txt")
+    os.close(fd)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            "-i", video_path_or_url,
+            "-filter_complex",
+            f"select='gt(scene,{SCENE_CUT_THRESHOLD})',metadata=print:file={meta_path}",
+            "-an", "-f", "null", "/dev/null",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"detect_scene_cuts ffmpeg 失败:{stderr.decode(errors='replace')[-500:]}"
+            )
+        with open(meta_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        # parse pts_time:3.7 / pts_time:5.9 等行
+        cuts = [float(m) for m in re.findall(r"pts_time:([\d.]+)", content)]
+        return sorted(cuts)
+    finally:
+        try: os.unlink(meta_path)
+        except OSError: pass
+
+
+async def detect_scene_count(video_path_or_url: str) -> int:
+    """返回视频镜头数 = 切换数 + 1(用于多镜头判断 / 前端弹窗触发)。
+
+    单镜头视频 = 1(无切换);老板视频 4 镜头 = 3 切换。
+    """
+    cuts = await detect_scene_cuts(video_path_or_url)
+    return len(cuts) + 1
+
+
 async def suggest_trim_candidates(
     video_path_or_url: str,
     duration_sec: float,

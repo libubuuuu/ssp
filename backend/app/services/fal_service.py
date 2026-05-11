@@ -665,13 +665,23 @@ class AliyunQwenVLVideoService:
         return bool(self.api_key)
 
     async def analyze_video(self, video_url: str, instruction: str) -> dict:
+        return await self._analyze(media_field="video", media_url=video_url, instruction=instruction)
+
+    async def analyze_image(self, image_url: str, instruction: str) -> dict:
+        """2026-05-11:看图片(传 {"image": url})。
+        修 video_general_analyze worker 把图片 URL 误传给 analyze_video 的雷
+        (qwen-vl 报"Invalid video file",任务静默退款)。
+        """
+        return await self._analyze(media_field="image", media_url=image_url, instruction=instruction)
+
+    async def _analyze(self, *, media_field: str, media_url: str, instruction: str) -> dict:
         if not self.api_key:
             return {"error": "DASHSCOPE_API_KEY 未配置"}
         body = {
             "model": "qwen-vl-max-latest",
             "input": {
                 "messages": [{"role": "user", "content": [
-                    {"video": video_url}, {"text": instruction},
+                    {media_field: media_url}, {"text": instruction},
                 ]}]
             },
         }

@@ -31,7 +31,6 @@ from .video_clone_v2_pricing import (
     FAL_RESOLUTION,
     FAL_OUTPUT_DURATION,
     FAL_GENERATE_AUDIO,
-    FAL_SAFETY_CHECKER,
     build_prompt,
     sha256_file,
     sha256_url_first8,
@@ -212,7 +211,7 @@ async def call_fal_seedance(
     image_urls: List[str],
     prompt_compiled: str,
     seed: int,
-    aspect_ratio: str = "9:16",
+    aspect_ratio: str = "auto",
     *,
     job_id: str = "",
     seg_idx: int = -1,
@@ -242,6 +241,10 @@ async def call_fal_seedance(
     # 出处:fal 官方文档 + V1 项目内同端点用法 backend/app/api/jobs.py:3337
     # 注:ad_video_models.py 用的是 bytedance/seedance-2.0/reference-to-video(无 fast/),
     # 是不同端点,字段名规则不能直接对照
+    # 2026-05-11:1:1 对齐老板 playground 完美 request 019e0951 payload(实证)。
+    # 必传 audio_urls=[](完美/1秒漂 都传了 [],删除曾导致 prod 920b2000 只换 1 帧)。
+    # 删 enable_safety_checker(playground 不传,fal schema 也无此字段)。
+    # generate_audio=True(playground 默认,后端 mux 仍会用原视频音轨覆盖)。
     arguments = {
         "video_urls": [video_url],
         "image_urls": image_urls,
@@ -251,7 +254,6 @@ async def call_fal_seedance(
         "duration": fal_duration,
         "aspect_ratio": aspect_ratio,
         "generate_audio": FAL_GENERATE_AUDIO,
-        "enable_safety_checker": FAL_SAFETY_CHECKER,
         "seed": seed,
     }
     try:
@@ -566,7 +568,7 @@ async def process_v2_job(job_id: str) -> None:
         archive_source = seg_files[0]
     else:
         # ai 段 — 跑 fal
-        aspect_ratio = "9:16"  # P220 测试都是 9:16,默认值;前端可以传 auto/16:9 等,A2 暂固定
+        aspect_ratio = "auto"  # 2026-05-11 对齐老板 fal playground 成功配方(playground 用 auto;fal 自动检测原视频比例)
         try:
             result = await run_single_ai_segment_with_retry(
                 seg_files[0], seg, image_urls_obj, prompt_compiled, seed, aspect_ratio,
@@ -978,7 +980,7 @@ async def _process_ultimate(
     - 拼接幸存段(至少 1 段)
     """
     job_id = job["id"]
-    aspect_ratio = "9:16"  # A2/B 阶段固定;C 阶段开放配置
+    aspect_ratio = "auto"  # 2026-05-11 对齐老板 fal playground 成功配方(playground 用 auto;fal 自动检测原视频比例)
 
     # 1. 并发跑所有段
     sem = asyncio.Semaphore(3)
