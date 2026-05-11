@@ -130,8 +130,8 @@ export default function ImagePage(){
       <main style={{flex:1,padding:"2rem 2.5rem",overflowY:"auto",maxWidth:"1280px",width:"100%",margin:"0 auto"}}>
         <div style={{marginBottom:"1.5rem",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div>
-            <div style={{fontSize:"0.85rem",color:"#999",marginBottom:"0.3rem"}}>{t("image.title")}</div>
-            <h1 style={{fontSize:"1.6rem",fontWeight:400,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>{t("image.myCanvas")}<span style={{fontStyle:"italic"}}> {t("image.canvas")}</span></h1>
+            <div style={{fontSize:"0.85rem",color:"#999",marginBottom:"0.3rem"}}>文生图 · 图生图 · 多参考图</div>
+            <h1 style={{fontSize:"1.6rem",fontWeight:400,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>图片生成</h1>
           </div>
           {gallery.length>0 && <button onClick={()=>{if(confirm(t("confirms.clearCanvas"))){saveGallery([]);}}} style={{background:"none",border:"1px solid #ddd",padding:"0.5rem 1rem",borderRadius:"999px",color:"#666",fontSize:"0.85rem",cursor:"pointer"}}>清空画布</button>}
         </div>
