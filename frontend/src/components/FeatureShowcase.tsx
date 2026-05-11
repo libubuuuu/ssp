@@ -31,8 +31,8 @@ const CARDS: Card[] = [
   },
   {
     title: "视频生成",
-    desc: "图生视频 · 元素替换",
-    route: "/video/generate",
+    desc: "上传一张图 · 写提示词 · AI 拍 5-10s 短片",
+    route: "/video",
     gradient:
       "linear-gradient(135deg,#fa709a 0%,#ee9ca7 25%,#fee140 50%,#c471f5 75%,#fa71cd 100%)",
     embeddedGlow:
