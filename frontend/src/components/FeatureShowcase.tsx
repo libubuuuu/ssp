@@ -31,8 +31,8 @@ const CARDS: Card[] = [
   },
   {
     title: "视频生成",
-    desc: "拆帧 storyboard · Seedance 出片",
-    route: "/video/frame-extract",
+    desc: "图生视频 · 元素替换 · 翻拍",
+    route: "/video/generate",
     gradient:
       "linear-gradient(135deg,#fa709a 0%,#ee9ca7 25%,#fee140 50%,#c471f5 75%,#fa71cd 100%)",
     embeddedGlow:

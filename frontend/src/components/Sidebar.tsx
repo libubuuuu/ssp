@@ -69,13 +69,6 @@ export default function Sidebar() {
         ▶
       </button>
 
-      <button onClick={()=>router.push("/video/frame-extract")} title="视频拆帧 storyboard(本地切镜头 + 九宫格)"
-        style={{width:"48px",height:"48px",borderRadius:"12px",border:"none",background:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.2rem",color:"#666",transition:"all 0.15s"}}
-        onMouseEnter={e=>{e.currentTarget.style.background="#f9f7f2";}}
-        onMouseLeave={e=>{e.currentTarget.style.background="none";}}>
-        ⊞
-      </button>
-
       <button onClick={()=>router.push("/video/general")} title="通用产品视频(任意品类)"
         style={{width:"48px",height:"48px",borderRadius:"12px",border:"none",background:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.2rem",color:"#666",transition:"all 0.15s"}}
         onMouseEnter={e=>{e.currentTarget.style.background="#f9f7f2";}}

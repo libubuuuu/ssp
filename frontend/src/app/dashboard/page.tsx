@@ -9,9 +9,7 @@ import { useLocalStorageItem } from "@/lib/hooks/useLocalStorageItem";
 const ONBOARDING_FLAG = "onboarding_showcase_v1_shown";
 
 const FEATURE_KEYS = [
-  { key:"video", i18nKey:"video", icon:"▶", color:"#e5e0d0" },
   { key:"video/general", i18nKey:"general", icon:"✦", color:"#fce7e7", labelFallback:"通用产品视频", descFallback:"任意品类·多图参考·真人模特" },
-  { key:"video/replicate", i18nKey:"replicate", icon:"⎘", color:"#e0ecdb", labelFallback:"视频复刻", descFallback:"上传参考视频·AI 拆分镜出片" },
   { key:"video/studio", i18nKey:"studio", icon:"▦", color:"#ead8c0" },
   { key:"tasks/history", i18nKey:"history", icon:"☰", color:"#f2ece0" },
   { key:"pricing", i18nKey:"pricing", icon:"✦", color:"#ebe5d5" },
