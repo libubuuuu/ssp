@@ -256,99 +256,181 @@ export default function FeatureShowcase({ mode, onClose }: Props) {
     );
   }
 
+  const handleMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    const r = el.getBoundingClientRect();
+    el.style.setProperty("--mx", `${((e.clientX - r.left) / r.width) * 100}%`);
+    el.style.setProperty("--my", `${((e.clientY - r.top) / r.height) * 100}%`);
+  };
+
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(3,1fr)",
-        gap: "1.2rem",
-        marginBottom: "2.5rem",
-      }}
-    >
-      {CARDS.map((c) => (
-        <div
-          key={c.title}
-          onClick={() => handlePick(c.route)}
-          style={{
-            background: "linear-gradient(135deg,#1a1a1a 0%,#0d0d0d 50%,#161616 100%)",
-            border: "1px solid rgba(255,255,255,0.08)",
-            borderRadius: "20px",
-            aspectRatio: "16/10",
-            padding: "1.6rem",
-            cursor: "pointer",
-            position: "relative",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "flex-end",
-            overflow: "hidden",
-            transition: "transform 0.25s, border-color 0.25s",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.transform = "translateY(-3px)";
-            e.currentTarget.style.borderColor = "rgba(255,255,255,0.18)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.transform = "translateY(0)";
-            e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)";
-          }}
-        >
+    <>
+      <style jsx>{`
+        @keyframes embedFlow {
+          0% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+        @keyframes embedDrift {
+          0%,100% { transform: translate(0,0) scale(1); }
+          33% { transform: translate(8px,-6px) scale(1.04); }
+          66% { transform: translate(-6px,8px) scale(0.98); }
+        }
+        .embedCard {
+          background-size: 240% 240%;
+          animation: embedFlow 9s ease infinite;
+          --mx: 50%;
+          --my: 50%;
+          transition: transform 0.3s cubic-bezier(0.2,0.9,0.3,1.2), box-shadow 0.3s;
+        }
+        .embedCard:hover {
+          transform: translateY(-6px) scale(1.015);
+          box-shadow: 0 30px 70px rgba(0,0,0,0.28);
+          animation-duration: 5s;
+        }
+        /* 流动的色块,会被鼠标"推开" */
+        .embedBlob {
+          position: absolute;
+          width: 60%;
+          height: 60%;
+          border-radius: 50%;
+          filter: blur(50px);
+          pointer-events: none;
+          animation: embedDrift 11s ease-in-out infinite;
+          transition: transform 0.6s cubic-bezier(0.2,0.9,0.3,1.2);
+        }
+        .embedCard:hover .embedBlob {
+          /* 用 mx/my 把色块往反方向推,做"躲避手指"效果 */
+          transform: translate(calc((50% - var(--mx)) * 1.2), calc((50% - var(--my)) * 1.2));
+        }
+        /* 鼠标位置的高光"压痕" */
+        .embedCard::after {
+          content: "";
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          background: radial-gradient(
+            circle 220px at var(--mx) var(--my),
+            rgba(255,255,255,0.32) 0%,
+            rgba(255,255,255,0.1) 25%,
+            transparent 55%
+          );
+          opacity: 0;
+          transition: opacity 0.35s ease;
+        }
+        .embedCard:hover::after { opacity: 1; }
+        .embedArrow {
+          transition: transform 0.3s, background 0.3s, border-color 0.3s;
+        }
+        .embedCard:hover .embedArrow {
+          background: rgba(255,255,255,0.95);
+          color: #0d0d0d;
+          border-color: transparent;
+          transform: rotate(-45deg);
+        }
+      `}</style>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3,1fr)",
+          gap: "1.6rem",
+          marginBottom: "2.5rem",
+        }}
+      >
+        {CARDS.map((c, i) => (
           <div
+            key={c.title}
+            className="embedCard"
+            onClick={() => handlePick(c.route)}
+            onMouseMove={handleMove}
             style={{
-              position: "absolute",
-              top: "-30%",
-              right: "-20%",
-              width: "70%",
-              height: "120%",
-              background: c.embeddedGlow,
-              opacity: 0.32,
-              filter: "blur(40px)",
-              borderRadius: "50%",
-              pointerEvents: "none",
-            }}
-          />
-          <div
-            style={{
+              background: c.gradient,
+              border: "1px solid rgba(255,255,255,0.1)",
+              borderRadius: "24px",
+              aspectRatio: "5/6",
+              padding: "1.8rem",
+              cursor: "pointer",
               position: "relative",
-              fontSize: "1.35rem",
-              fontWeight: 500,
-              color: "#fff",
-              marginBottom: "0.35rem",
-              fontFamily: "Georgia,serif",
-              letterSpacing: "0.02em",
-            }}
-          >
-            {c.title}
-          </div>
-          <div
-            style={{
-              position: "relative",
-              fontSize: "0.82rem",
-              color: "rgba(255,255,255,0.55)",
-              lineHeight: 1.5,
-            }}
-          >
-            {c.desc}
-          </div>
-          <div
-            style={{
-              position: "absolute",
-              top: "1.4rem",
-              right: "1.4rem",
-              width: "32px",
-              height: "32px",
-              borderRadius: "50%",
-              border: "1px solid rgba(255,255,255,0.2)",
-              color: "rgba(255,255,255,0.85)",
               display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "0.9rem",
+              flexDirection: "column",
+              justifyContent: "flex-end",
+              overflow: "hidden",
+              boxShadow: "0 14px 40px rgba(0,0,0,0.18)",
             }}
           >
-            →
+            <div
+              className="embedBlob"
+              style={{
+                top: i === 0 ? "10%" : i === 1 ? "20%" : "-5%",
+                left: i === 0 ? "10%" : i === 1 ? "50%" : "30%",
+                background: c.embeddedGlow,
+                opacity: 0.6,
+                animationDelay: `${i * 1.5}s`,
+              }}
+            />
+            <div
+              className="embedBlob"
+              style={{
+                bottom: "0%",
+                right: i === 0 ? "10%" : i === 1 ? "0%" : "20%",
+                background: c.gradient,
+                opacity: 0.45,
+                animationDelay: `${i * 1.5 + 4}s`,
+                animationDuration: "13s",
+              }}
+            />
+            <div
+              style={{
+                position: "relative",
+                zIndex: 2,
+                fontSize: "1.7rem",
+                fontWeight: 600,
+                color: "#fff",
+                marginBottom: "0.5rem",
+                textShadow: "0 2px 12px rgba(0,0,0,0.3)",
+                letterSpacing: "0.02em",
+              }}
+            >
+              {c.title}
+            </div>
+            <div
+              style={{
+                position: "relative",
+                zIndex: 2,
+                fontSize: "0.92rem",
+                color: "rgba(255,255,255,0.92)",
+                lineHeight: 1.55,
+                textShadow: "0 1px 6px rgba(0,0,0,0.25)",
+              }}
+            >
+              {c.desc}
+            </div>
+            <div
+              className="embedArrow"
+              style={{
+                position: "absolute",
+                top: "1.6rem",
+                right: "1.6rem",
+                width: "38px",
+                height: "38px",
+                borderRadius: "50%",
+                border: "1px solid rgba(255,255,255,0.4)",
+                background: "rgba(255,255,255,0.18)",
+                backdropFilter: "blur(6px)",
+                WebkitBackdropFilter: "blur(6px)",
+                color: "#fff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "1rem",
+                zIndex: 3,
+              }}
+            >
+              →
+            </div>
           </div>
-        </div>
-      ))}
-    </div>
+        ))}
+      </div>
+    </>
   );
 }
