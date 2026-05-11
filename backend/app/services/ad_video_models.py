@@ -368,8 +368,14 @@ async def compose_storyboard_grid(
     if not cb.is_available(cb_key):
         return {"error": "几宫格图服务暂时不可用,已熔断"}
 
-    if n_panels < 2 or n_panels > 4:
-        return {"error": f"n_panels={n_panels} 不支持(只支持 2/3/4)"}
+    if n_panels < 2 or n_panels > 9:
+        return {"error": f"n_panels={n_panels} 不支持(只支持 2/3/4/6/9)"}
+    if n_panels not in (2, 3, 4, 6, 9):
+        # 把不规则数 round 到最近支持值
+        if n_panels == 5:
+            n_panels = 6
+        elif n_panels in (7, 8):
+            n_panels = 9
     if len(scenes) < n_panels:
         return {"error": f"scenes={len(scenes)} 少于 n_panels={n_panels}"}
 
@@ -405,8 +411,12 @@ async def compose_storyboard_grid(
         layout_desc = "vertical 2-frame layout (upper half + lower half)"
     elif n_panels == 3:
         layout_desc = "vertical 3-frame layout (upper, middle, lower)"
-    else:  # 4
+    elif n_panels == 4:
         layout_desc = "2x2 grid layout (upper-left, upper-right, lower-left, lower-right)"
+    elif n_panels == 6:
+        layout_desc = "2x3 grid layout (2 columns × 3 rows, left-to-right top-to-bottom)"
+    else:  # 9
+        layout_desc = "3x3 grid layout (3 columns × 3 rows, left-to-right top-to-bottom — Frame 1 top-left, Frame 9 bottom-right)"
 
     # P148(2026-05-06):撤回 P147 "NO phone" 教条 — 用户说"不是要无手机,是要产品清楚"
     # 真意:**产品(束腰)是画面焦点,不能被其他元素抢镜**
@@ -509,8 +519,8 @@ async def crop_storyboard_panels(
     from PIL import Image
     from .fal_service import fal_upload_with_retry
 
-    if n_panels not in (2, 3, 4):
-        raise ValueError(f"n_panels={n_panels} 不支持")
+    if n_panels not in (2, 3, 4, 6, 9):
+        raise ValueError(f"n_panels={n_panels} 不支持(只支持 2/3/4/6/9)")
 
     # 下载几宫格图
     async with httpx.AsyncClient(timeout=60) as cli:
@@ -533,7 +543,7 @@ async def crop_storyboard_panels(
         # 上中下切
         h = H // 3
         boxes = [(0, 0, W, h), (0, h, W, 2 * h), (0, 2 * h, W, H)]
-    else:  # 4
+    elif n_panels == 4:
         # 2x2
         w, h = W // 2, H // 2
         boxes = [
@@ -542,6 +552,16 @@ async def crop_storyboard_panels(
             (0, h, w, H),       # 左下
             (w, h, W, H),       # 右下
         ]
+    elif n_panels == 6:
+        # 2 columns × 3 rows
+        w, h = W // 2, H // 3
+        boxes = [(c * w, r * h, (c + 1) * w if c < 1 else W, (r + 1) * h if r < 2 else H)
+                 for r in range(3) for c in range(2)]
+    else:  # 9
+        # 3 columns × 3 rows
+        w, h = W // 3, H // 3
+        boxes = [(c * w, r * h, (c + 1) * w if c < 2 else W, (r + 1) * h if r < 2 else H)
+                 for r in range(3) for c in range(3)]
 
     # P145(2026-05-06):回滚 P141 强制 9:16 裁切 — 把 608x544 砍成 306x544 太窄,
     # Kling Avatar 拒图 "No recognizable elements found"。回到 P140 原比例上传,

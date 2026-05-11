@@ -3255,7 +3255,7 @@ def _build_video_general_lookbook(
            f"The model wears EXACTLY this outfit in addition to the product. Do NOT improvise other clothing items. "
            if user_outfit_clean else "")
         # 风格锚
-        f"STYLE LOCK: photorealistic commercial ad photography, natural-looking beautiful real person, "
+        + f"STYLE LOCK: photorealistic commercial ad photography, natural-looking beautiful real person, "
         f"NOT illustration / anime / 3D-render. "
         # 色调锚
         f"COLOR PALETTE LOCK: consistent warm-neutral grading across all shots. "
@@ -3300,10 +3300,22 @@ async def _run_video_general_storyboard_job(params: dict) -> dict:
     user_outfit = (params.get("user_outfit") or "").strip()
     user_scene = (params.get("user_scene") or "").strip()
 
-    # 限 N≤4(compose_storyboard_grid 只支持 2/3/4)
-    n_panels = min(4, max(2, len(scenes)))
-    if len(scenes) < 2:
+    # 2026-05-12:N≤9(compose_storyboard_grid 支持 2/3/4/6/9 — 多分镜走 9 宫格)
+    n_scenes_actual = len(scenes)
+    if n_scenes_actual < 2:
         n_panels = 0
+    elif n_scenes_actual >= 9:
+        n_panels = 9
+    elif n_scenes_actual >= 6:
+        n_panels = 6  # 6/7/8 → 6
+    elif n_scenes_actual == 5:
+        n_panels = 6  # 5 → round 到 6
+    elif n_scenes_actual == 4:
+        n_panels = 4
+    elif n_scenes_actual == 3:
+        n_panels = 3
+    else:
+        n_panels = 2
     scenes_used = scenes[:n_panels] if n_panels else scenes[:1]
 
     log_info(
@@ -3498,53 +3510,53 @@ async def _run_video_general_job(params: dict) -> dict:
                     raise Exception(f"seg {idx} Seedance failed: {st.get('error')}")
             raise Exception(f"seg {idx} 超时")
 
-    # 2026-05-12:批量 batch_count(1-5)— N 个独立 batch 并发,各跑 Step B 段生成 + Step C concat
-    async def _run_one_batch(batch_idx: int) -> str:
+    # 2026-05-12:用户明令"每个分镜要都是独立的"— 去 concat,直接返 N 段独立分镜视频
+    # 矩阵 = batch_count × n_scenes 个独立 5s 视频(每段独立 fal storage URL)
+    async def _run_one_batch(batch_idx: int) -> list:
         seg_urls = await _aio.gather(*[_gen_seg(i, s) for i, s in enumerate(scenes)])
-        log_info(f"video_general batch {batch_idx} Step C:ffmpeg concat {len(seg_urls)} 段")
-        seg_root = _Path(_tmp.mkdtemp(prefix=f"video_general_b{batch_idx}_"))
-        try:
-            local_paths = []
-            async with _httpx.AsyncClient(timeout=180) as cli:
-                for i, vu in enumerate(seg_urls):
-                    p = seg_root / f"seg_{i:02d}.mp4"
-                    r = await cli.get(vu); r.raise_for_status()
-                    p.write_bytes(r.content)
-                    local_paths.append(str(p))
+        log_info(f"video_general batch {batch_idx} 完成 {len(seg_urls)} 段独立分镜(不 concat)")
+        return list(seg_urls)
 
-            list_path = seg_root / "concat.txt"
-            list_path.write_text("\n".join(f"file '{p}'" for p in local_paths) + "\n")
-            merged = seg_root / "final.mp4"
-            cp = _sp.run(
-                ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(list_path),
-                 "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-                 "-c:a", "aac", "-b:a", "192k",
-                 "-movflags", "+faststart", str(merged)],
-                capture_output=True, text=True, timeout=300,
-            )
-            if cp.returncode != 0:
-                raise Exception(f"batch {batch_idx} ffmpeg concat 失败: {cp.stderr[-500:]}")
-
-            final_url = await fal_upload_with_retry(str(merged))
-            log_info(f"video_general batch {batch_idx} 完成 final_url={final_url[:80]}")
-            return final_url
-        finally:
-            try:
-                import shutil as _sh
-                _sh.rmtree(seg_root, ignore_errors=True)
-            except Exception:
-                pass
+    def _scene_meta(scene_idx: int) -> dict:
+        s = scenes[scene_idx] if scene_idx < len(scenes) else {}
+        return {
+            "narrative_role": s.get("narrative_role", ""),
+            "shot": s.get("shot", ""),
+            "visual_prompt": (s.get("visual_prompt") or "")[:200],
+            "speech": s.get("speech", ""),
+            "duration_sec": s.get("duration_sec", 5),
+        }
 
     if batch_count <= 1:
-        final_url = await _run_one_batch(0)
-        return {"video_url": final_url, "video_urls": [final_url], "batch_count": 1, "type": "video", "category": category}
+        seg_urls = await _run_one_batch(0)
+        scene_videos = [
+            {"batch_idx": 0, "scene_idx": i, "url": u, "scene": _scene_meta(i)}
+            for i, u in enumerate(seg_urls)
+        ]
+        return {
+            "scene_videos": scene_videos,
+            "video_urls": list(seg_urls),
+            "video_url": seg_urls[0] if seg_urls else "",
+            "batch_count": 1,
+            "n_scenes": len(seg_urls),
+            "type": "video",
+            "category": category,
+        }
 
-    log_info(f"video_general 批量生成 batch_count={batch_count} 并发跑")
-    final_urls = await _aio.gather(*[_run_one_batch(b) for b in range(batch_count)])
+    log_info(f"video_general 批量 batch_count={batch_count} × n_scenes={len(scenes)} = {batch_count * len(scenes)} 独立分镜")
+    all_batches = await _aio.gather(*[_run_one_batch(b) for b in range(batch_count)])
+    scene_videos = [
+        {"batch_idx": b_idx, "scene_idx": s_idx, "url": url, "scene": _scene_meta(s_idx)}
+        for b_idx, batch in enumerate(all_batches)
+        for s_idx, url in enumerate(batch)
+    ]
+    flat_urls = [sv["url"] for sv in scene_videos]
     return {
-        "video_url": final_urls[0],
-        "video_urls": list(final_urls),
+        "scene_videos": scene_videos,
+        "video_urls": flat_urls,
+        "video_url": flat_urls[0] if flat_urls else "",
         "batch_count": batch_count,
+        "n_scenes": len(scenes),
         "type": "video",
         "category": category,
     }

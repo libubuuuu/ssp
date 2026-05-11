@@ -75,6 +75,17 @@ const PRODUCT_SLOT_LABELS: Record<ProductSlot, string> = {
 };
 const PRODUCT_SLOT_ORDER: ProductSlot[] = ["front", "back", "rear"];
 
+// 2026-05-12:Box 必须定义在 component 外,否则每次 render 都生成新 function 引用,
+// React 看作新组件 → unmount + remount textarea → 输入法 composition 中断 + 失焦 + 页面滚顶
+function Box({ children, label }: { children: React.ReactNode; label: string }) {
+  return (
+    <div style={{ background: "#fff", borderRadius: 14, padding: "1.2rem 1.4rem", marginBottom: "1.2rem", boxShadow: "0 2px 8px rgba(0,0,0,0.04)" }}>
+      <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.6rem", fontWeight: 500 }}>{label}</div>
+      {children}
+    </div>
+  );
+}
+
 export default function VideoGeneralPage() {
   // 2026-05-11 P226:产品图分 3 槽(正面/反面/背面),按 PRODUCT_SLOT_ORDER 顺序拼成 product_image_urls 给 backend
   const [productImagesBySlot, setProductImagesBySlot] = useState<Record<ProductSlot, string>>({ front: "", back: "", rear: "" });
@@ -106,6 +117,8 @@ export default function VideoGeneralPage() {
   const [analyzeResult, setAnalyzeResult] = useState<AnalyzeResult | null>(null);
   const [resultVideoUrl, setResultVideoUrl] = useState<string>("");
   const [resultVideoUrls, setResultVideoUrls] = useState<string[]>([]);
+  // 2026-05-12:N 段独立分镜视频(每条带 batch_idx / scene_idx / scene meta)
+  const [sceneVideos, setSceneVideos] = useState<Array<{batch_idx: number; scene_idx: number; url: string; scene: {narrative_role?: string; shot?: string; visual_prompt?: string; speech?: string; duration_sec?: number}}>>([]);
   // 2026-05-11 P226:分镜板预览 + 角色表
   const [storyboardLoading, setStoryboardLoading] = useState(false);
   const [storyboardMsg, setStoryboardMsg] = useState("");
@@ -349,8 +362,10 @@ export default function VideoGeneralPage() {
           if (sd.status === "completed") {
             clearInterval(interval);
             const urls: string[] = sd.result?.video_urls || (sd.result?.video_url ? [sd.result.video_url] : []);
+            const svideos = sd.result?.scene_videos || urls.map((u: string, i: number) => ({batch_idx: 0, scene_idx: i, url: u, scene: {}}));
             setResultVideoUrls(urls);
             setResultVideoUrl(urls[0] || "");
+            setSceneVideos(svideos);
             setGenerating(false); setGenerateMsg("");
           } else if (sd.status === "failed") {
             clearInterval(interval);
@@ -363,13 +378,6 @@ export default function VideoGeneralPage() {
       }, 10000);
     } catch (e) { setError(errMsg(e, "生成失败")); setGenerating(false); setGenerateMsg(""); }
   };
-
-  const Box = ({ children, label }: { children: React.ReactNode; label: string }) => (
-    <div style={{ background: "#fff", borderRadius: 14, padding: "1.2rem 1.4rem", marginBottom: "1.2rem", boxShadow: "0 2px 8px rgba(0,0,0,0.04)" }}>
-      <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.6rem", fontWeight: 500 }}>{label}</div>
-      {children}
-    </div>
-  );
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "#edeae4", fontFamily: "-apple-system,BlinkMacSystemFont,sans-serif" }}>
@@ -669,19 +677,31 @@ export default function VideoGeneralPage() {
         )}
 
         {resultVideoUrl && (
-          <Box label={resultVideoUrls.length > 1 ? `⑤ 批量生成结果(${resultVideoUrls.length} 个版本)` : "⑤ 生成结果"}>
-            {resultVideoUrls.length > 1 ? (
-              <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
-                {resultVideoUrls.map((url, i) => (
-                  <div key={i}>
-                    <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: 4, fontWeight: 500 }}>版本 {i + 1}</div>
-                    <video src={url} controls style={{ width: "100%", borderRadius: 10 }} />
-                    <div style={{ marginTop: 4 }}>
-                      <a href={url} download style={{ color: "#0d8a3e", fontSize: "0.82rem" }}>⬇ 下载版本 {i + 1}</a>
+          <Box label={sceneVideos.length > 0 ? `⑤ 独立分镜视频(${sceneVideos.length} 段)` : "⑤ 生成结果"}>
+            {sceneVideos.length > 0 ? (
+              <>
+                <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: 10, lineHeight: 1.5 }}>
+                  每段独立成片(不拼接),可单独下载使用。后期需要可自己 ffmpeg / 剪辑软件拼接。
+                </div>
+                <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
+                  {sceneVideos.map((sv, i) => (
+                    <div key={i}>
+                      <div style={{ fontSize: "0.78rem", color: "#374151", marginBottom: 4, fontWeight: 500 }}>
+                        分镜 {sv.scene_idx + 1}
+                        {sv.scene?.narrative_role ? ` · ${sv.scene.narrative_role}` : ""}
+                        {batchCount > 1 ? ` · 批次 ${sv.batch_idx + 1}` : ""}
+                      </div>
+                      <video src={sv.url} controls style={{ width: "100%", borderRadius: 10 }} />
+                      {sv.scene?.shot && (
+                        <div style={{ fontSize: "0.7rem", color: "#999", marginTop: 4 }}>{sv.scene.shot}{sv.scene.duration_sec ? ` · ${sv.scene.duration_sec}s` : ""}</div>
+                      )}
+                      <div style={{ marginTop: 4 }}>
+                        <a href={sv.url} download style={{ color: "#0d8a3e", fontSize: "0.82rem" }}>⬇ 下载分镜 {sv.scene_idx + 1}</a>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              </>
             ) : (
               <>
                 <video src={resultVideoUrl} controls style={{ width: "100%", maxWidth: 480, borderRadius: 10 }} />
