@@ -96,7 +96,7 @@ init_task_queue()
 from app.services.vlm_service import init_vlm_service
 init_vlm_service()
 
-from app.api import image, video, tasks, content, products, admin, auth, payment, video_studio, jobs, ad_video, wechat_pay, storage, replicate, video_general, video_clone, video_clone_v2
+from app.api import image, video, tasks, content, products, admin, auth, payment, video_studio, jobs, ad_video, wechat_pay, storage, replicate, video_general, video_clone, video_clone_v2, video_frame_extract
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(payment.router, prefix="/api/payment", tags=["支付"])
 app.include_router(wechat_pay.router, prefix="/api/wechat-pay", tags=["微信支付"])
@@ -113,6 +113,7 @@ app.include_router(replicate.router, prefix="/api/video/replicate", tags=["视�
 app.include_router(video_general.router, prefix="/api/video/general", tags=["通用产品视频"])
 app.include_router(video_clone.router, prefix="/api/video/clone", tags=["视频复刻 Seedance r2v"])
 app.include_router(video_clone_v2.router, prefix="/api/video/clone-v2", tags=["视频复刻 V2(Seedance r2v 双版本)"])
+app.include_router(video_frame_extract.router, prefix="/api/video/frame-extract", tags=["视频拆帧 storyboard"])
 app.include_router(admin.router, prefix="/api/admin", tags=["管理员"])
 
 @app.get("/")

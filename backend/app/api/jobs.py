@@ -1624,6 +1624,9 @@ async def _execute_job(job_id: str):
                 result = await _run_ad_video_job(job["params"])
             elif t == "replicate_analyze":
                 result = await _run_replicate_analyze_job(job["params"])
+            elif t == "skill_analyze":
+                # 2026-05-12:视频拆帧 storyboard(走 PySceneDetect skill + qwen-vl image)
+                result = await _run_skill_analyze_job(job["params"])
             elif t == "replicate":
                 job["params"]["_user_id"] = job.get("user_id") or job.get("user_numeric_id") or "anon"
                 result = await _run_replicate_job(job["params"])
@@ -2145,6 +2148,206 @@ async def _run_replicate_analyze_job(params: dict) -> dict:
         "product_category": product_category,
     }
 
+
+
+async def _run_skill_analyze_job(params: dict) -> dict:
+    """异步:本地 PySceneDetect 拆帧 + 九宫格 + qwen-vl image 看图 → 出 N 段分镜 + wizper 口播。
+
+    跟 _run_replicate_analyze_job 输出 schema **byte-identical**(前端 /video/extract 解析复用)。
+    区别:不用 qwen-vl-video,而是 skill 切镜头 + 拼九宫格,然后单次 qwen-vl image 推理。
+
+    成本:qwen-vl image ~¥0.05 + wizper $0.0005/min + audio-isolation $0.10/min ≈ < ¥0.5/次
+    """
+    import json as _json
+    import os as _os
+    import re as _re
+    import shutil as _shutil
+    import tempfile as _tmp
+    import time as _t
+    import httpx as _httpx
+    from app.services.fal_service import (
+        AliyunQwenVLVideoService, fal_upload_with_retry,
+    )
+    from app.services.media_archiver import archive_url
+    from app.services.logger import log_info, log_error
+    from app.services.content_filter import assert_safe_prompt
+    from fastapi import HTTPException as _HTTPEx
+    from app.api.video_frame_extract import _build_skill_instruction
+
+    video_url = params.get("video_url")
+    if not video_url:
+        raise RuntimeError("video_url 缺")
+
+    uid = params.get("_user_id") or "anon"
+
+    # 1. 归档原 fal URL 到 ailixiao.com(防 wizper / ffprobe 跨境慢)
+    t0 = _t.time()
+    archived_url = await archive_url(video_url, uid, "video")
+    log_info(f"skill_analyze 归档: {video_url[:50]} → {archived_url[:60]} ({_t.time()-t0:.1f}s)")
+
+    # 2. 下载视频到本地(skill 需要本地 path)
+    work_dir = _tmp.mkdtemp(prefix="skill_analyze_")
+    local_video = _os.path.join(work_dir, "input.mp4")
+    try:
+        t1 = _t.time()
+        async with _httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+            r = await client.get(archived_url)
+            r.raise_for_status()
+            with open(local_video, "wb") as f:
+                f.write(r.content)
+        log_info(f"skill_analyze 下载本地 {_os.path.getsize(local_video)} bytes ({_t.time()-t1:.1f}s)")
+
+        # 3. skill 拆帧 + 拼九宫格
+        from app.skills.video_frame_extraction import VideoFrameSkill
+        skill = VideoFrameSkill()
+        t2 = _t.time()
+        skill_out = skill.process(local_video, grid_size=9, output_dir=work_dir)
+        log_info(f"skill_analyze 拆帧 n_frames={skill_out['n_frames']} layout={skill_out['layout']} ({_t.time()-t2:.1f}s)")
+
+        if skill_out["n_frames"] < 1:
+            raise RuntimeError("skill 未抽到任何帧")
+
+        # 4. 上传九宫格到 fal(qwen-vl 要公网 URL)
+        t3 = _t.time()
+        grid_url = await fal_upload_with_retry(skill_out["grid_path"])
+        log_info(f"skill_analyze 九宫格上传 {grid_url[:60]} ({_t.time()-t3:.1f}s)")
+
+        # 5. 并发跑:qwen-vl 看九宫格 + wizper 口播
+        instruction = _build_skill_instruction(skill_out["scenes"])
+        svc = AliyunQwenVLVideoService()
+        if not svc.is_available():
+            raise RuntimeError("qwen-vl 不可用(DASHSCOPE_API_KEY)")
+
+        async def _qwen():
+            t = _t.time()
+            r = await svc.analyze_image(grid_url, instruction)
+            log_info(f"skill_analyze qwen-vl elapsed={_t.time()-t:.1f}s err={'error' in r}")
+            return r
+
+        async def _speech():
+            try:
+                return await _extract_speech_from_video(archived_url)
+            except Exception as _e:
+                log_error(f"skill_analyze speech 异常(忽略): {_e}")
+                return {"original_speech": "", "speech_audio_url": "", "has_background_music": False, "speech_chunks": []}
+
+        qwen_res, speech_info = await asyncio.gather(_qwen(), _speech())
+
+        # 6. 解析 qwen-vl JSON
+        if "error" in qwen_res:
+            raise RuntimeError(f"qwen-vl 失败: {qwen_res['error'][:200]}")
+        text = (qwen_res.get("text") or "").strip()
+        text = _re.sub(r"^```(?:json)?\s*", "", text)
+        text = _re.sub(r"\s*```$", "", text)
+        try:
+            data = _json.loads(text)
+        except Exception as e:
+            log_error(f"skill_analyze JSON parse fail: {e} text[:300]={text[:300]}")
+            raise RuntimeError("qwen-vl 输出非合法 JSON")
+
+        scenes_raw = data.get("scenes") or []
+        if not scenes_raw:
+            raise RuntimeError("qwen-vl 未返回 scenes")
+
+        clean_scenes = []
+        for sc in scenes_raw:
+            try:
+                assert_safe_prompt(sc.get("visual_prompt", ""))
+            except _HTTPEx:
+                sc["visual_prompt"] = "Cinematic product showcase, soft natural lighting, professional commercial style"
+            clean_scenes.append(sc)
+
+        # 7. ffprobe 探宽高比(走归档 URL)
+        aspect = "9:16"
+        try:
+            import subprocess as _sp
+            rr = _sp.run(
+                ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                 "-show_entries", "stream=width,height", "-of", "json", archived_url],
+                capture_output=True, text=True, timeout=15,
+            )
+            if rr.returncode == 0:
+                sd = _json.loads(rr.stdout).get("streams", [{}])[0]
+                w, h = sd.get("width"), sd.get("height")
+                if w and h:
+                    ratio = w / h
+                    if abs(ratio - 9/16) < 0.1: aspect = "9:16"
+                    elif abs(ratio - 16/9) < 0.1: aspect = "16:9"
+                    elif abs(ratio - 1.0) < 0.1: aspect = "1:1"
+                    elif abs(ratio - 4/3) < 0.1: aspect = "4:3"
+                    elif abs(ratio - 3/4) < 0.1: aspect = "3:4"
+        except Exception as _e:
+            log_error(f"skill_analyze ffprobe 失败(默认 9:16): {_e}")
+
+        # 8. 复用 P199 逻辑:wizper chunks 按 scene.time_range overlap 反贴每段 speech
+        speech_chunks = speech_info.get("speech_chunks") or []
+        if speech_chunks and clean_scenes:
+            def _parse_tr(tr_str: str):
+                if not tr_str:
+                    return None
+                s = str(tr_str).strip().replace("s", "").replace("S", "").strip()
+                if "-" not in s:
+                    return None
+                a, b = s.split("-", 1)
+                def _to_sec(x):
+                    x = x.strip()
+                    if ":" in x:
+                        parts = x.split(":")
+                        if len(parts) == 2: return float(parts[0]) * 60 + float(parts[1])
+                        if len(parts) == 3: return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+                    return float(x)
+                try:
+                    return (_to_sec(a), _to_sec(b))
+                except Exception:
+                    return None
+
+            matched = 0
+            for sc in clean_scenes:
+                tr = _parse_tr(sc.get("time_range") or "")
+                if not tr:
+                    continue
+                s_start, s_end = tr
+                seg_text = []
+                for c in speech_chunks:
+                    cs, ce = c.get("start", 0), c.get("end", 0)
+                    if cs < s_end and ce > s_start:
+                        seg_text.append(c.get("text") or "")
+                if seg_text:
+                    full = "".join(seg_text)
+                    has_cn = bool(_re.search(r"[一-鿿]", full))
+                    if has_cn:
+                        sc["speech"] = "".join(t for t in seg_text if t.strip()).strip()
+                    else:
+                        sc["speech"] = " ".join(t.strip() for t in seg_text if t.strip())
+                    matched += 1
+            log_info(f"skill_analyze 时间戳分配 matched={matched}/{len(clean_scenes)} chunks={len(speech_chunks)}")
+
+        model_identity = (data.get("model_identity") or "").strip()
+        product_category = (data.get("product_category") or "其他").strip()
+
+        log_info(
+            f"skill_analyze OK scenes={len(clean_scenes)} ratio={aspect} "
+            f"speech_len={len(speech_info.get('original_speech',''))} "
+            f"category={product_category} model_id_len={len(model_identity)} "
+            f"total={_t.time()-t0:.1f}s"
+        )
+        return {
+            "scenes": clean_scenes,
+            "total_duration": data.get("total_duration_seconds", sum(s.get("duration_sec", 5) for s in clean_scenes)),
+            "detected_aspect_ratio": aspect,
+            "original_speech": speech_info.get("original_speech", ""),
+            "speech_audio_url": speech_info.get("speech_audio_url", ""),
+            "has_background_music": speech_info.get("has_background_music", False),
+            "speech_chunks": speech_chunks,
+            "model_identity": model_identity,
+            "product_category": product_category,
+            "grid_url": grid_url,  # 新字段:九宫格 PNG,前端可展示
+        }
+    finally:
+        try:
+            _shutil.rmtree(work_dir, ignore_errors=True)
+        except Exception:
+            pass
 
 
 def _sanitize_for_gpt2(text: str) -> str:
