@@ -248,6 +248,104 @@ def _img_size_for_aspect(ar: str) -> str:
     }.get((ar or "").strip().lower(), "portrait_16_9")
 
 
+async def compose_character_sheet(
+    model_description: str,
+    overall_setting: str,
+    aspect_ratio: str = "9:16",
+    product_image_url: Optional[str] = None,
+    product_back_image_url: Optional[str] = None,
+    scene_image_url: Optional[str] = None,
+) -> dict:
+    """2026-05-11 P226:生成模特角色表(4 宫格:脸部特写 + 全身正面/背面/侧面)。
+
+    用于 storyboard 和 video gen 的 super-anchor — 同一模特身份从多角度真实呈现。
+    GPT-Image 2 出 1 张图,内含 2x2 grid:
+      - 左上:脸部特写(头肩特写)
+      - 右上:全身正面(穿戴产品)
+      - 左下:全身背面(穿戴产品)
+      - 右下:全身 3/4 侧面(穿戴产品)
+    """
+    cb = get_circuit_breaker()
+    cb_key = "fal/nano-banana-edit"
+    if not cb.is_available(cb_key):
+        return {"error": "角色表服务暂时不可用,已熔断"}
+
+    prompt = (
+        f"Create a model CHARACTER REFERENCE SHEET in a 2x2 grid layout for commercial advertisement production. "
+        f"All 4 panels show the IDENTICAL SAME PERSON — same face, same hair, same makeup, same body shape. "
+        f"Model: {model_description}\n\n"
+        f"Panel layout:\n"
+        f"  UPPER-LEFT panel: close-up portrait of the model's face and shoulders, looking forward toward camera, "
+        f"    natural beautiful expression with a gentle smile, professional headshot lighting, soft natural makeup. "
+        f"    Show face features clearly (eyes, brows, nose, lips). No product visible in this panel — face focus.\n"
+        f"  UPPER-RIGHT panel: FULL-BODY FRONT view of the same model wearing the product, standing naturally and "
+        f"    facing camera squarely. Both feet visible. Neutral confident pose with arms relaxed at sides. "
+        f"    Product fully visible from the front.\n"
+        f"  LOWER-LEFT panel: FULL-BODY BACK view of the same model from behind, showing the back of the product/garment "
+        f"    and the model's back/hair. Standing naturally.\n"
+        f"  LOWER-RIGHT panel: FULL-BODY 3/4 SIDE view (profile-ish angle) of the same model wearing the product, "
+        f"    showing the silhouette and side details. Standing naturally.\n\n"
+        f"Setting: {overall_setting}\n\n"
+        f"Thin neutral borders separate panels. "
+        f"All 4 panels share IDENTICAL: face features, hair style/color, makeup, body shape, skin tone, "
+        f"product appearance (color/material/details), lighting (soft natural daylight), background style, color grading. "
+        f"Only the camera angle and body view differ across panels — everything else is locked identical. "
+        f"Photorealistic commercial fashion photography, NOT illustration / anime / 3D-render. "
+        f"NO text, NO captions, NO labels anywhere in the image."
+    )
+
+    # 产品参考图(锁产品)
+    if product_image_url and product_back_image_url:
+        prompt += (
+            "\n\n⚠️⚠️⚠️ PRODUCT REFERENCE LOCK: image 1 is product FRONT view, image 2 is BACK/SIDE view. "
+            "The product worn by the model in panels 2/3/4 MUST be PIXEL-IDENTICAL to these references "
+            "(same color, fabric texture, logo, design details). Do NOT improvise the product."
+        )
+    elif product_image_url:
+        prompt += (
+            "\n\n⚠️⚠️⚠️ PRODUCT REFERENCE LOCK: image 1 is the user's exact product. "
+            "The product worn by the model in panels 2/3/4 MUST be PIXEL-IDENTICAL to this reference."
+        )
+    # 场景图(若有)
+    if scene_image_url:
+        prompt += (
+            "\n\n📍 SCENE REFERENCE: the last reference image is the user's desired scene/background. "
+            "All 4 panels' background should reflect this scene's environment, lighting, and color tone."
+        )
+
+    image_urls: List[str] = []
+    if product_image_url:
+        image_urls.append(product_image_url)
+    if product_back_image_url:
+        image_urls.append(product_back_image_url)
+    if scene_image_url:
+        image_urls.append(scene_image_url)
+
+    try:
+        result = await fal_client.run_async(
+            NANO_BANANA_EDIT_ENDPOINT,  # openai/gpt-image-2/edit
+            arguments={
+                "prompt": prompt,
+                "image_urls": image_urls,
+                "image_size": _img_size_for_aspect(aspect_ratio),
+                "num_images": 1,
+                "output_format": "png",
+            },
+        )
+        images = result.get("images", []) if isinstance(result, dict) else []
+        if not images or not images[0].get("url"):
+            await cb.record_failure(cb_key)
+            return {"error": "角色表未生成"}
+        await cb.record_success(cb_key)
+        url = images[0]["url"]
+        log_info(f"compose_character_sheet OK url={url[:80]}")
+        return {"image_url": url}
+    except Exception as e:
+        await cb.record_failure(cb_key)
+        log_error(f"compose_character_sheet 失败: {e}")
+        return {"error": f"角色表合成失败: {str(e)[:200]}"}
+
+
 async def compose_storyboard_grid(
     base_image_url: str,
     scenes: list,
@@ -328,6 +426,11 @@ async def compose_storyboard_grid(
         f"Photorealistic studio fashion photography, professional commercial advertisement.\n\n"
         + "\n".join(panel_lines)
         + "\n\nThin neutral borders separate frames."
+        + "\n\n🚫 STRICT — NO TEXT IN IMAGE: absolutely NO text overlays, NO promotional text, "
+          "NO captions, NO numbers (like '50 LEFT', '-2 inches', '24H'), NO countdown, "
+          "NO call-to-action text, NO labels, NO Before/After tags, NO subtitles, NO logos that "
+          "look like overlay text. The composite must be COMPLETELY TEXT-FREE — clean photograph only. "
+          "If any text would naturally appear (signs, products with text), keep it but do not invent overlay text."
         + "\n\n🎯 CRITICAL — Each frame's PRODUCT POSITION and HAND-PRODUCT CONTACT (when "
           "specified per-frame above) MUST be matched EXACTLY. These spatial annotations come from "
           "the original driving video and are required for downstream motion-driven video synthesis "
@@ -586,6 +689,16 @@ async def compose_first_frame(
         "green. NEVER substitute color. NEVER hue-shift. NEVER recolor. "
         "Color deviation is FORBIDDEN."
     )
+    # 2026-05-11(P226 用户:"产品的质感要和上传的产品图片一致"):加 MATERIAL/TEXTURE LOCK
+    prompt_parts.append(
+        "⚠️⚠️⚠️ ABSOLUTE PRODUCT MATERIAL & TEXTURE LOCK: replicate the product's material, "
+        "fabric weave, surface texture, sheen/matte finish, stitching, seams, logo placement, "
+        "prints, buttons/zippers, hardware, labels, and ALL visible micro-details PIXEL-PERFECTLY "
+        "from the reference image(s). The reference IS the product — do NOT generic-ize the texture, "
+        "do NOT swap material type (eg cotton ↔ silk ↔ leather ↔ plastic), do NOT redraw logos, "
+        "do NOT smooth or stylize the texture, do NOT improvise pattern/details from imagination. "
+        "Only camera angle and model pose may vary across frames — the product itself is unchanged."
+    )
     # P191(2026-05-08):删 style grid — 用户怒"还是不一样"。grid 把 GPT 搞乱(4 张图太多
     # 还总想抄人物)。改成 background_image_url(参考视频中间帧)单独承担"复刻这一帧场景"。
     # P158(2026-05-07):AI 带货视频要求图里完全无文字/字幕(用户明确铁律)
@@ -841,6 +954,19 @@ async def compose_first_frame_for_scene(
             f"IMPORTANT — PRODUCT REFERENCE: image {idx} is the user's exact product. "
             f"The product worn by the model in the output MUST match this reference image "
             f"EXACTLY (same fabric, logo, color, design). Do NOT change the product appearance. "
+        )
+    # 2026-05-11(P226 用户:"产品的质感要和上传的产品图片一致"):加最强 MATERIAL/TEXTURE LOCK
+    # 跨段每张图都喂这条锚,锁产品质感不被 GPT-Image 2 generic-化
+    if product_image_url:
+        prompt += (
+            f"\n\n⚠️⚠️⚠️ ABSOLUTE PRODUCT MATERIAL & TEXTURE LOCK ⚠️⚠️⚠️\n"
+            f"Replicate the product's material, fabric weave, surface texture, sheen/matte finish, "
+            f"stitching, seams, logo placement, prints, buttons/zippers, hardware, labels, and ALL "
+            f"visible micro-details PIXEL-PERFECTLY from the product reference image(s). "
+            f"The reference IS the product — do NOT generic-ize the texture, "
+            f"do NOT swap material type (eg cotton ↔ silk ↔ leather ↔ plastic), do NOT redraw logos, "
+            f"do NOT smooth or stylize the texture, do NOT improvise pattern/details from imagination. "
+            f"Only camera angle and model pose vary across frames — the product itself is UNCHANGED.\n"
         )
 
     # P157(2026-05-07):空间锁定 — 产品必须放在驱动视频原片同样的屏幕位置 + 手部交互

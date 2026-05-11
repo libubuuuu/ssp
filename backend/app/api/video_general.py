@@ -109,6 +109,27 @@ async def upload_model_video(
     }
 
 
+@router.post("/upload/scene-image")
+async def upload_scene_image(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """2026-05-11 P226:上传场景图(可选,用作 GPT-Image 2 出图的背景锚)"""
+    contents = await read_bounded(file, MAX_IMAGE_SIZE, IMAGE_MIMES, "场景图")
+    suffix = ".jpg"
+    if file.filename and "." in file.filename:
+        suffix = "." + file.filename.rsplit(".", 1)[-1]
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(contents)
+        tmp_path = tmp.name
+    try:
+        url = await fal_upload_with_retry(tmp_path)
+    finally:
+        try: os.unlink(tmp_path)
+        except Exception: pass
+    return {"scene_image_url": url}
+
+
 @router.post("/upload/model-image")
 async def upload_model_image(
     file: UploadFile = File(...),
@@ -130,31 +151,87 @@ async def upload_model_image(
     return {"model_image_url": url}
 
 
-_ANALYZE_INSTRUCTION = """你是通用电商视频脚本专家。看完用户提供的所有图片,完成两件事:
+_ANALYZE_INSTRUCTION = """你是顶级短视频广告脚本专家。看完用户提供的所有产品图,完成 3 件事。
 
 【任务一:产品分析】
 - 自动判断品类(食品/日用品/化妆品/3C 数码/服装/配饰/家居/其他)
-- 提取产品核心卖点(品牌/规格/功能/材质/颜色/差异化卖点 3 条)
-- 判断展示重点(按品类自适应):
-  - 食品 → 包装设计 + 产品形态 + 食用场景
-  - 日用品 → 使用场景 + 演示动作 + 效果对比
-  - 化妆品 → 质地涂抹 + 上脸效果 + 包装外观
-  - 3C → 外观 + 功能演示 + 操作场景
-  - 服装 → 上身效果 + 材质细节 + 搭配场景
+- ⭐ **product_specifics(关键!锁产品不变形)**:
+  - subcategory:具体子类英文 + 中文,eg "wide-leg pants (阔腿裤)" / "T-shirt (短袖T恤)" / "dress (连衣裙)" / "lipstick (口红)" / "smartphone case (手机壳)" / "moisturizer cream (面霜)" — 必须精确到子类,不能只写"服装/化妆品"
+  - form_constraint:产品形态硬约束英文,eg "pants with two separate leg openings, NOT a single-piece skirt/dress" / "tube with twist-up applicator, NOT a stick foundation" — 说明跟什么类似品形态不同
+  - key_visual_features:从产品图能看见的关键视觉特征 3-5 条英文,eg ["pastel pink color", "high-waisted design", "wide-leg silhouette", "soft drape fabric texture", "subtle white logo on left thigh"]
+- 锁定目标用户画像:1 句话,eg "20-30 岁都市上班族女性/30+ 精致妈妈/学生党/数码玩家"
+- 提取产品核心卖点 3 条(品牌/规格/功能/材质/颜色/差异化)
 
-【任务二:生成 N 段视频脚本】
-按 5 秒一段,共 N 段(总时长 user_total_duration 秒)。每段:
-- shot:景别(close-up / medium / wide)
-- action:模特动作(必须按品类合理 — 食品就拿/吃/展示包装,化妆品就涂/抹/对比,等等)
-- visual_prompt:英文 GPT-Image 2 prompt(必含产品+动作+背景描述)
-- speech:中文带货话术(中文场景,根据 region)
+【任务二:广告创意脑图(creative_brief 7 元素)】
+基于品类 + 目标用户,生成完整广告创意结构。短视频"可复刻 5 大核心" + 3 个补充元素:
+1. 🎣 hook(钩子):前 0-3 秒抓眼球的视觉冲突/反差/悬念,1 句话
+2. 💔 pain_point(痛点):目标用户的真实问题(显瘦?省钱?省时?品质焦虑?),1 句话
+3. 🎢 emotional_arc(情绪主线):X 情绪 → Y 情绪 的转化轨迹,eg "焦虑→放心"、"自卑→自信"
+4. 🪞 scene_setting(场景代入):目标用户真实生活场景,eg "下班通勤地铁"、"周末厨房"
+5. ✨ resonance_signal(共鸣信号):让目标用户秒懂"这就是说我"的具体视觉符号或动作
+6. 💎 memorable_moment(记忆点):反转/金句/反差/视觉强符号,让用户截图保存的瞬间
+7. 📢 cta(结尾召唤):"立即下单"/"点击购买同款"/"关注获取链接" 之类
 
-【输出 JSON】严格按以下格式,不要任何 markdown 标记:
+【任务三:N 段脚本 — 按 total_duration 自适应分段】
+总时长 user_total_duration 秒。**所有段 duration_sec 之和必须 = total_duration**(严格)。
+按时长档位选择分段模板:
+
+档位 A — total_duration ≤ 8 秒 → 输出 1 段
+  [{"id":1,"duration_sec":total,"narrative_role":"cta"}]
+  (1 段需综合钩子+展示+召唤,role 标 cta 即可)
+
+档位 B — total_duration 9-12 秒 → 输出 2 段
+  [hook(3s) + cta(余下)]
+  示例 10s: [hook 3s, cta 7s]
+
+档位 C — total_duration 13-20 秒 → 输出 3 段
+  [hook(3s) + showcase(中) + cta(3s)]
+  示例 15s: [hook 3s, showcase 8s, cta 4s] sum=15 ✓
+
+档位 D — total_duration 21-35 秒 → 输出 5 段
+  [hook(3s) + setup_pain + showcase + memorable(3s) + cta(3s)]
+  示例 30s: [hook 3, setup_pain 6, showcase 12, memorable 3, cta 6] sum=30 ✓
+
+档位 E — total_duration 36-60 秒 → 输出 6-8 段
+  完整模板 [hook + setup_pain + showcase + solve + memorable + cta(+ 可加 1-2 个 showcase)]
+  示例 60s: [hook 3, setup_pain 8, showcase 12, solve 12, showcase 12, memorable 5, cta 8] sum=60 ✓
+
+⚠️ 段数必须严格按上面档位,不能多也不能少。各段 duration_sec 加起来必须等于 user_total_duration。
+
+每段字段:
+- id, time_range(如 "0-3s"), duration_sec(整数秒)
+- narrative_role: hook / setup_pain / showcase / solve / memorable / cta
+- shot: close-up / medium / wide
+- action: 模特动作(按品类合理 — 食品拿/吃/展示包装,化妆品涂/抹/对比,服装试穿/转身/搭配,3C 操作/演示,日用品使用/对比)
+- visual_prompt: 英文 GPT-Image 2 prompt(必含 产品 + 动作 + 背景 + 镜头 + 光线 + 风格)
+- speech: 带货话术,**语言由 region 决定**(CN → 中文,Global → 英文),**配合 narrative_role**(hook 段冲击感,pain 段痛戳,cta 段召唤)
+
+⚠️【关于 user_brief 用户输入】
+如果用户在 user_brief 里写了想法(目标人群/卖点重点/风格偏好/CTA 方向),**必须**纳入 creative_brief 和 scenes 的具体设计中。
+如果 user_brief 为空,则完全由你基于产品图自动生成。
+
+【输出 JSON】严格按以下格式,不要任何 markdown 标记,不要 ```json 包裹:
 {
-  "category": "食品/日用品/化妆品/...",
+  "category": "服装",
+  "product_specifics": {
+    "subcategory": "wide-leg pants (阔腿裤)",
+    "form_constraint": "pants with two separate leg openings, NOT a single-piece skirt or dress",
+    "key_visual_features": ["pastel pink color", "high-waisted design", "wide-leg drape silhouette", "soft fabric with natural fold lines"]
+  },
+  "target_user": "20-30 岁都市上班族女性",
   "selling_points": ["卖点1", "卖点2", "卖点3"],
+  "creative_brief": {
+    "hook": "...",
+    "pain_point": "...",
+    "emotional_arc": "X 情绪 → Y 情绪",
+    "scene_setting": "...",
+    "resonance_signal": "...",
+    "memorable_moment": "...",
+    "cta": "..."
+  },
   "scenes": [
-    {"id": 1, "time_range": "0-5s", "duration_sec": 5, "shot": "...", "action": "...", "visual_prompt": "...", "speech": "..."},
+    {"id":1,"time_range":"0-3s","duration_sec":3,"narrative_role":"hook","shot":"close-up","action":"...","visual_prompt":"...","speech":"..."},
+    {"id":2,"time_range":"3-8s","duration_sec":5,"narrative_role":"setup_pain","shot":"medium","action":"...","visual_prompt":"...","speech":"..."},
     ...
   ]
 }
@@ -166,7 +243,7 @@ async def analyze_submit(
     body: dict,
     current_user: dict = Depends(get_current_user),
 ):
-    """异步分析多张产品图 → 品类 + 卖点 + N 段脚本(推 JOBS 队列)"""
+    """异步分析多张产品图 → 品类 + 卖点 + 广告创意脑图 + N 段叙事脚本(推 JOBS 队列)"""
     product_image_urls = body.get("product_image_urls") or []
     if not product_image_urls or not isinstance(product_image_urls, list):
         raise HTTPException(400, "product_image_urls 必填(list)")
@@ -174,6 +251,8 @@ async def analyze_submit(
     total_duration = max(5, min(60, total_duration))
     region = body.get("region") or "CN"
     safe_region = "Global" if str(region).lower() in ("global", "en", "international", "海外") else "CN"
+    # 2026-05-11:user_brief 可选,用户可写大概想法(目标人群/卖点重点/风格/CTA 方向),AI 纳入脚本
+    user_brief = (body.get("user_brief") or "").strip()[:500]
 
     user_id = str(current_user["id"])
     cost = 1
@@ -200,7 +279,12 @@ async def analyze_submit(
             "product_image_urls": product_image_urls,
             "total_duration": total_duration,
             "region": safe_region,
-            "instruction": _ANALYZE_INSTRUCTION.replace("user_total_duration", str(total_duration)),
+            "user_brief": user_brief,
+            "instruction": (
+                _ANALYZE_INSTRUCTION.replace("user_total_duration", str(total_duration))
+                + (f"\n\n【用户输入 user_brief】\n{user_brief}\n" if user_brief else "\n\n【用户输入 user_brief】\n(空,由你自动生成)\n")
+                + f"\n【region】{safe_region} — 所有 scenes[*].speech 字段语言:{'中文' if safe_region == 'CN' else '英文'}(强制)\n"
+            ),
             "_user_id": user_id,
         },
         "module": "video/general/analyze",
@@ -236,14 +320,110 @@ async def analyze_status(
 
 
 class GeneralGenerateRequest(BaseModel):
-    product_image_urls: List[str] = Field(..., description="产品图列表(主图 + 详情页 + 包装)")
+    product_image_urls: List[str] = Field(..., description="产品图列表(正面/反面/背面 多角度,主图必填)")
+    scene_image_url: Optional[str] = Field(None, description="场景图(可选,用作 GPT-Image 2 背景锚)")
     model_image_url: Optional[str] = Field(None, description="模特图(可选,跟 model_video_url 二选一)")
     model_video_url: Optional[str] = Field(None, description="模特视频(可选,会抽中间帧作模特图)")
     category: str = Field(..., description="产品品类(qwen-vl 判出来的)")
+    # 2026-05-11:从 analyze 阶段透传,worker 用来构建 unified lookbook 锁住人物/场景/风格一致性
+    target_user: Optional[str] = Field(None, description="目标用户画像(analyze 输出)")
+    creative_brief: Optional[dict] = Field(None, description="创意脑图 7 元素(analyze 输出)")
+    # 2026-05-11 P226:产品具体子类 + 形态硬约束 + 关键视觉特征(qwen-vl 看图判,锁产品形态不变形)
+    product_specifics: Optional[dict] = Field(None, description="{subcategory, form_constraint, key_visual_features}")
     scenes: List[dict] = Field(..., description="N 段脚本")
     total_duration: int = Field(15, ge=5, le=60)
     region: str = Field("CN")
     aspect_ratio: str = Field("9:16")
+    # 2026-05-12:用户指定的搭配/场景描述,优先级压过 AI 自动生成
+    user_outfit: Optional[str] = Field(None, description="人物搭配(除产品外,如'白色T恤+牛仔裤+小白鞋')")
+    user_scene: Optional[str] = Field(None, description="场景描述(如'明亮的客厅,落地窗,午后阳光')")
+    # 2026-05-12:批量生成 — 1 次提交跑 N 个独立版本(同 prompt 不同种子,挑最佳)
+    batch_count: int = Field(1, ge=1, le=5, description="批量生成数量 1-5")
+
+
+class StoryboardRequest(BaseModel):
+    """2026-05-11 P226:分镜板预览 — GPT-Image 2 出 character sheet + N 宫格 storyboard,用户看着满意再触发完整视频。"""
+    product_image_urls: List[str] = Field(..., min_length=1)
+    scene_image_url: Optional[str] = None  # 用户提供的场景图(可选,用作 GPT 背景锚)
+    model_image_url: Optional[str] = None
+    model_video_url: Optional[str] = None
+    category: str = ""
+    target_user: Optional[str] = None
+    creative_brief: Optional[dict] = None
+    product_specifics: Optional[dict] = None
+    scenes: List[dict] = Field(..., min_length=1)
+    region: str = "CN"
+    aspect_ratio: str = "9:16"
+    # 2026-05-12:用户指定的搭配/场景描述,优先级压过 AI 自动生成
+    user_outfit: Optional[str] = None
+    user_scene: Optional[str] = None
+
+
+@router.post("/storyboard")
+async def storyboard_submit(
+    req: StoryboardRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """生成分镜板预览(1 张 N 宫格图,N=min(4, len(scenes)))"""
+    user_id = str(current_user["id"])
+    cost = 2  # 模特图(如果没传)+ storyboard grid 一张
+    if not deduct_credits(user_id, cost):
+        raise HTTPException(402, f"积分不足,需 {cost}")
+
+    from app.api.jobs import JOBS, _save_jobs, _execute_job
+    job_id = str(uuid.uuid4())[:8]
+    JOBS[job_id] = {
+        "id": job_id,
+        "user_id": user_id,
+        "user_numeric_id": user_id,
+        "type": "video_general_storyboard",
+        "title": f"通用产品视频 · 分镜板预览",
+        "params": {
+            "product_image_urls": req.product_image_urls,
+            "scene_image_url": req.scene_image_url,
+            "model_image_url": req.model_image_url,
+            "model_video_url": req.model_video_url,
+            "category": req.category or "其他",
+            "target_user": req.target_user or "",
+            "creative_brief": req.creative_brief or {},
+            "product_specifics": req.product_specifics or {},
+            "scenes": [s if isinstance(s, dict) else dict(s) for s in req.scenes],
+            "region": req.region,
+            "aspect_ratio": req.aspect_ratio,
+            "user_outfit": (req.user_outfit or "").strip(),
+            "user_scene": (req.user_scene or "").strip(),
+            "_user_id": user_id,
+        },
+        "module": "video/general/storyboard",
+        "cost": cost,
+        "status": "pending",
+        "created_at": time.time(),
+    }
+    _save_jobs()
+    asyncio.create_task(_execute_job(job_id))
+    log_info(f"video_general/storyboard submitted job={job_id} user={user_id} n_scenes={len(req.scenes)}")
+    return {"job_id": job_id, "status": "pending", "cost": cost}
+
+
+@router.get("/storyboard/status/{job_id}")
+async def storyboard_status(
+    job_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """前端轮询 storyboard 状态"""
+    from app.api.jobs import JOBS
+    job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, "job 不存在")
+    uid = str(current_user.get("id"))
+    if job.get("user_id") != uid:
+        raise HTTPException(403, "无权限")
+    out = {"status": job.get("status", "pending")}
+    if job.get("status") == "completed":
+        out.update(job.get("result") or {})
+    if job.get("status") == "failed":
+        out["error"] = job.get("error", "unknown")
+    return out
 
 
 @router.post("/generate")
@@ -258,8 +438,8 @@ async def generate(
         raise HTTPException(400, "至少 1 段脚本")
 
     user_id = str(current_user["id"])
-    # 简化定价:每段 5 积分
-    cost = max(5, len(req.scenes) * 5)
+    # 简化定价:每段 5 积分,batch_count 倍数(批量生成 N 个独立版本)
+    cost = max(5, len(req.scenes) * 5) * max(1, min(5, req.batch_count or 1))
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
 
@@ -273,13 +453,20 @@ async def generate(
         "title": f"通用产品视频 · {req.category}",
         "params": {
             "product_image_urls": req.product_image_urls,
+            "scene_image_url": req.scene_image_url,
             "model_image_url": req.model_image_url,
             "model_video_url": req.model_video_url,
             "category": req.category,
+            "target_user": req.target_user or "",
+            "creative_brief": req.creative_brief or {},
+            "product_specifics": req.product_specifics or {},
             "scenes": [s if isinstance(s, dict) else dict(s) for s in req.scenes],
             "total_duration": req.total_duration,
             "region": req.region,
             "aspect_ratio": req.aspect_ratio,
+            "user_outfit": (req.user_outfit or "").strip(),
+            "user_scene": (req.user_scene or "").strip(),
+            "batch_count": max(1, min(5, req.batch_count or 1)),
             "_user_id": user_id,
         },
         "module": "video/general",

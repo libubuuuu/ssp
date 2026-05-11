@@ -1605,6 +1605,10 @@ async def _execute_job(job_id: str):
             # P215(2026-05-08):video_general* 必须在 startswith("video_") 之前匹配
             elif t == "video_general_analyze":
                 result = await _run_video_general_analyze_job(job["params"])
+            elif t == "video_general_storyboard":
+                # 2026-05-11 P226:分镜板预览(N 宫格 GPT-Image 2 图)
+                job["params"]["_user_id"] = job.get("user_id") or job.get("user_numeric_id") or "anon"
+                result = await _run_video_general_storyboard_job(job["params"])
             elif t == "video_general":
                 job["params"]["_user_id"] = job.get("user_id") or job.get("user_numeric_id") or "anon"
                 result = await _run_video_general_job(job["params"])
@@ -3062,23 +3066,23 @@ async def _run_video_general_analyze_job(params: dict) -> dict:
     if not svc or not svc.is_available():
         raise RuntimeError("qwen-vl 服务不可用")
 
-    # qwen-vl 看产品图(多图取第 1 张主图,多图后续优化)
-    primary_image = product_image_urls[0]
-    log_info(f"video_general_analyze 多图分析(主图 {primary_image[:60]} + {len(product_image_urls)-1} 张辅图)")
+    # 2026-05-11:qwen-vl 多图真分析(`analyze_images` 一次性送 N 张产品图,
+    # dashscope content list 多 {image:url} 并列 + 末尾 text instruction,
+    # verify 来源:https://help.aliyun.com/zh/model-studio/user-guide/vision/)
+    n_images = len(product_image_urls)
+    log_info(f"video_general_analyze 多图分析 N={n_images} 张产品图(主图+详情页+包装,全部送 qwen-vl)")
 
-    # 拼一个 instruction 让 qwen-vl 知道有多图(虽然只看到主图)
     enhanced_instruction = (
-        f"用户上传了 {len(product_image_urls)} 张产品图。" +
+        f"用户上传了 {n_images} 张产品图(第 1 张为主图,后续为详情页/包装/多角度)。"
+        f"请综合所有图片信息判品类、提卖点、定 target_user,不要只看主图。\n\n" +
         instruction
     )
 
-    # 2026-05-11:改调 analyze_image(原来错调 analyze_video 把图片 URL 当视频传给 qwen-vl,
-    # 报"Invalid video file"任务静默退款,老板真测踩雷)
     import asyncio as _asyncio
     res = None
     for attempt in range(3):
         try:
-            res = await svc.analyze_image(primary_image, enhanced_instruction)
+            res = await svc.analyze_images(product_image_urls, enhanced_instruction)
             if "error" not in res:
                 break
             err_text = str(res.get("error", ""))
@@ -3111,24 +3115,273 @@ async def _run_video_general_analyze_job(params: dict) -> dict:
     if not scenes:
         raise RuntimeError("qwen-vl 未返分镜")
 
-    log_info(f"video_general_analyze OK category={category} scenes={len(scenes)} selling_points={len(selling_points)}")
+    # 2026-05-11:新增 target_user + creative_brief(16 元素叙事脑图)
+    # 旧 prompt 版 qwen-vl 输出可能没这两个字段,兜底空对象,前端能识别"老版本结果"
+    target_user = (data.get("target_user") or "").strip()
+    creative_brief = data.get("creative_brief") or {}
+    if not isinstance(creative_brief, dict):
+        creative_brief = {}
+    # 2026-05-11 P226:product_specifics(锁产品形态不变形,qwen-vl 看图判)
+    product_specifics = data.get("product_specifics") or {}
+    if not isinstance(product_specifics, dict):
+        product_specifics = {}
+
+    # 2026-05-11:校验 sum(duration_sec) == total_duration(自适应分段,不严格 fail,只 warn)
+    total_duration = int(params.get("total_duration") or 15)
+    try:
+        sum_dur = sum(int(s.get("duration_sec") or 0) for s in scenes)
+    except Exception:
+        sum_dur = 0
+    if sum_dur and abs(sum_dur - total_duration) > 1:
+        from app.services.logger import log_warning as _logw
+        _logw(
+            f"video_general_analyze sum_duration_mismatch sum={sum_dur} expected={total_duration} "
+            f"scenes={len(scenes)} — qwen-vl 没严格遵守自适应分段,前端会显示不一致总时长"
+        )
+
+    log_info(
+        f"video_general_analyze OK category={category} target_user={target_user[:30]!r} "
+        f"scenes={len(scenes)} sum_duration={sum_dur}/{total_duration} "
+        f"selling_points={len(selling_points)} "
+        f"creative_brief_keys={list(creative_brief.keys())[:7]}"
+    )
     return {
         "category": category,
+        "target_user": target_user,
         "selling_points": selling_points,
+        "creative_brief": creative_brief,
+        "product_specifics": product_specifics,
         "scenes": scenes,
         "total_duration": params.get("total_duration", 15),
     }
 
 
-async def _run_video_general_job(params: dict) -> dict:
-    """通用产品视频生成:多产品图 + 可选模特 → cat-vton + pixverse 出片
-    
-    流程:
-      Step A: 用产品主图 + 模特图(用户传或 GPT 出)调 cat-vton 出"模特持/穿/用产品"图
-      Step B: 用 cat-vton 输出图作 first frame,Seedance i2v 出每段视频
-      Step C: ffmpeg concat
+def _build_video_general_lookbook(
+    category: str,
+    region: str,
+    target_user: str,
+    creative_brief: dict,
+    product_specifics: dict = None,
+    user_outfit: str = "",
+    user_scene: str = "",
+) -> dict:
+    """2026-05-11 P226 重写:
+    - model_description 去反美感锚("yellow skin"/"visible pores"),加商业广告美感锚
+    - overall_setting 加 GARMENT/PRODUCT FORM LOCK(qwen-vl 看图判子类后锁形态不变形)
+    用于 compose_first_frame(Step A 出模特图)和 compose_first_frame_for_scene(Step B 每段)。
     """
-    from app.services.fal_service import get_vton_service, fal_upload_with_retry
+    cb = creative_brief or {}
+    ps = product_specifics or {}
+    is_cn = (region or "CN") == "CN"
+    tu = (target_user or "").strip()
+
+    # 商业广告级美感锚(P226 重写,去 "yellow skin" / "visible pores" 反美感措辞)
+    beauty_anchor = (
+        "Naturally beautiful, photogenic, magazine-quality commercial ad face. "
+        "Balanced facial proportions, healthy glowing fair skin (NOT sallow, NOT yellow-tinged, "
+        "NOT pale), soft natural makeup (subtle blush, neutral lipstick, defined but not heavy brows), "
+        "friendly approachable expression, gentle natural smile. "
+        "Smooth healthy skin texture — natural finish without exaggerated pores or skin defects. "
+        "Real human appearance, ABSOLUTELY NO AI artifacts, NO plastic skin, NO uncanny-valley features, "
+        "NO over-sharpened edges, NO cartoon / anime / illustration / 3D-render look."
+    )
+
+    if is_cn:
+        model_desc = (
+            f"East Asian female model with natural East Asian facial features "
+            f"(fair healthy skin tone, dark brown or natural black hair, brown eyes, "
+            f"East Asian eye shape and bone structure). "
+            f"Target profile: {tu or 'young Asian woman, 22-30 years old'}. "
+            f"{beauty_anchor}"
+        )
+    else:
+        model_desc = (
+            f"Western female model with naturally beautiful appearance "
+            f"(fair healthy skin tone, natural hair color, age fitting target). "
+            f"Target profile: {tu or 'young woman, 22-30 years old'}. "
+            f"{beauty_anchor}"
+        )
+
+    scene_setting = (cb.get("scene_setting") or "").strip()
+    pain_point = (cb.get("pain_point") or "").strip()
+    emotional_arc = (cb.get("emotional_arc") or "").strip()
+
+    # P226:产品形态锚 — qwen-vl 看图判子类后,GPT-Image 2 必须严守"产品是 X 不是 Y"
+    subcategory = (ps.get("subcategory") or "").strip()
+    form_constraint = (ps.get("form_constraint") or "").strip()
+    visual_features = ps.get("key_visual_features") or []
+    if isinstance(visual_features, list):
+        features_str = "; ".join(str(f).strip() for f in visual_features if str(f).strip())[:300]
+    else:
+        features_str = str(visual_features)[:300]
+
+    product_form_lock = ""
+    if subcategory:
+        product_form_lock = (
+            f"⚠️⚠️⚠️ ABSOLUTE PRODUCT FORM LOCK ⚠️⚠️⚠️ "
+            f"The user's product is: {subcategory}. "
+        )
+        if form_constraint:
+            product_form_lock += f"Form constraint (MUST RESPECT): {form_constraint}. "
+        if features_str:
+            product_form_lock += f"Key visible features to preserve PIXEL-PERFECT from reference image: {features_str}. "
+        product_form_lock += (
+            f"NEVER substitute the product with a similar-but-different item "
+            f"(eg pants ≠ skirt/dress, T-shirt ≠ tank top, lipstick ≠ lip gloss, cream ≠ serum). "
+            f"The output product must be EXACTLY this category, EXACTLY these features, "
+            f"matching the uploaded reference image. "
+        )
+
+    # 2026-05-12:user_outfit / user_scene 用户输入,优先级压过 AI 自动 scene_setting
+    user_scene_clean = (user_scene or "").strip()[:500]
+    user_outfit_clean = (user_outfit or "").strip()[:500]
+
+    overall_setting = (
+        # ⭐ 产品形态锚(最高优先级)
+        product_form_lock +
+        # 场景锚(跨段必须一致)
+        f"SCENE LOCK (must be IDENTICAL across all shots in this ad): "
+        + (f"⚠️ USER-SPECIFIED SCENE (verbatim user instruction, MUST be respected): {user_scene_clean}. "
+           if user_scene_clean
+           else f"{scene_setting or f'natural everyday setting matching target audience lifestyle, suitable for {category} product'}. ")
+        # 光线锚
+        + f"LIGHTING LOCK: soft natural daylight, consistent warm tone across all shots, "
+        f"no harsh studio lighting, no fluorescent. "
+        # 外观锚(增强:同一服装/同一外观状态)
+        + f"OUTFIT LOCK: the model wears the EXACT SAME outfit including the product "
+        f"(same garment, same accessories, same hair style, same makeup) in all shots — "
+        f"only the camera angle and her interaction with the product changes. "
+        + (f"⚠️ USER-SPECIFIED OUTFIT (除产品外的搭配,用户明确指定,MUST follow): {user_outfit_clean}. "
+           f"The model wears EXACTLY this outfit in addition to the product. Do NOT improvise other clothing items. "
+           if user_outfit_clean else "")
+        # 风格锚
+        f"STYLE LOCK: photorealistic commercial ad photography, natural-looking beautiful real person, "
+        f"NOT illustration / anime / 3D-render. "
+        # 色调锚
+        f"COLOR PALETTE LOCK: consistent warm-neutral grading across all shots. "
+        + (f"Emotional tone: {emotional_arc}. " if emotional_arc else "")
+        + (f"Implicit context (target user pain point being addressed): {pain_point}. " if pain_point else "")
+        + f"This is a {category} product advertisement. All shots together form ONE coherent ad — "
+        f"same person, same product (exact category and features), same outfit, same scene, "
+        f"same lighting, only the camera and product interaction vary."
+    )
+
+    return {
+        "model_description": model_desc,
+        "overall_setting": overall_setting,
+    }
+
+
+async def _run_video_general_storyboard_job(params: dict) -> dict:
+    """2026-05-11 P226:分镜板预览 — GPT-Image 2 出 N 宫格 storyboard(N≤4)。
+
+    复用 _build_video_general_lookbook(锁模特/场景/产品形态),
+    若用户没传模特图先 compose_first_frame 生成,然后 compose_storyboard_grid 出 1 张多格图。
+    用户看着满意再触发完整 /generate(走 Seedance i2v + concat)。
+    """
+    from app.services.logger import log_info, log_warning
+    from app.services import ad_video_models
+
+    product_image_urls = params.get("product_image_urls") or []
+    if not product_image_urls:
+        raise RuntimeError("product_image_urls 缺")
+    primary_product = product_image_urls[0]
+    product_back = product_image_urls[1] if len(product_image_urls) > 1 else None
+
+    scene_image_url = params.get("scene_image_url") or None
+    model_image_url = params.get("model_image_url")
+    category = params.get("category") or "其他"
+    target_user = params.get("target_user") or ""
+    creative_brief = params.get("creative_brief") or {}
+    product_specifics = params.get("product_specifics") or {}
+    region = params.get("region") or "CN"
+    scenes = params.get("scenes") or []
+    aspect_ratio = params.get("aspect_ratio") or "9:16"
+    user_outfit = (params.get("user_outfit") or "").strip()
+    user_scene = (params.get("user_scene") or "").strip()
+
+    # 限 N≤4(compose_storyboard_grid 只支持 2/3/4)
+    n_panels = min(4, max(2, len(scenes)))
+    if len(scenes) < 2:
+        n_panels = 0
+    scenes_used = scenes[:n_panels] if n_panels else scenes[:1]
+
+    log_info(
+        f"video_general_storyboard 启动 category={category} "
+        f"n_scenes={len(scenes)} n_panels={n_panels} "
+        f"product_subcat={(product_specifics.get('subcategory') or '?')[:30]!r} "
+        f"has_scene_img={bool(scene_image_url)}"
+    )
+
+    lookbook = _build_video_general_lookbook(category, region, target_user, creative_brief, product_specifics, user_outfit=user_outfit, user_scene=user_scene)
+
+    # 2026-05-11 P226 Step 1:模特角色表(脸部特写 + 全身正/背/侧 4 视图)
+    # 没有用户传的 model_image_url 时,character sheet 自己充当 super-anchor(不再需要单独 compose_first_frame)
+    log_info("video_general_storyboard Step 1: compose_character_sheet(4 视图)")
+    sheet_res = await ad_video_models.compose_character_sheet(
+        model_description=lookbook["model_description"],
+        overall_setting=lookbook["overall_setting"],
+        aspect_ratio=aspect_ratio,
+        product_image_url=primary_product,
+        product_back_image_url=product_back,
+        scene_image_url=scene_image_url,
+    )
+    if "error" in sheet_res or not sheet_res.get("image_url"):
+        raise Exception(f"角色表合成失败: {sheet_res.get('error', '?')}")
+    character_sheet_url = sheet_res["image_url"]
+    log_info(f"video_general_storyboard character_sheet OK url={character_sheet_url[:60]}")
+
+    # 2026-05-12:character sheet 是 2x2 grid 4 视图,直接作 model_image_url 传给
+    # compose_first_frame_for_scene 会让 GPT-Image 2 困惑(不知道锁哪个角度)→ 正面漂掉。
+    # 裁 panel[1](右上 = 全身正面)作干净的单视图模特图。
+    if not model_image_url:
+        panels = await ad_video_models.crop_storyboard_panels(character_sheet_url, 4)
+        model_image_url = panels[1]
+        log_info(f"video_general_storyboard 裁 panel[1](正面)OK 作干净 model_image_url url={model_image_url[:60]}")
+
+    # Step 2:1 段不出 storyboard,只返 character sheet 单图
+    if n_panels == 0:
+        return {
+            "storyboard_image_url": character_sheet_url,
+            "character_sheet_url": character_sheet_url,
+            "n_panels": 1,
+            "single_image_mode": True,
+            "model_image_url": model_image_url,
+        }
+
+    # Step 3:N 宫格 storyboard(以 character_sheet 作 base anchor → 强化人物一致性)
+    log_info(f"video_general_storyboard Step 3: compose_storyboard_grid n_panels={n_panels}")
+    grid_res = await ad_video_models.compose_storyboard_grid(
+        base_image_url=character_sheet_url,
+        scenes=scenes_used,
+        n_panels=n_panels,
+        model_description=lookbook["model_description"],
+        overall_setting=lookbook["overall_setting"],
+        aspect_ratio=aspect_ratio,
+        product_image_url=primary_product,
+        product_back_image_url=product_back,
+    )
+    if "error" in grid_res or not grid_res.get("image_url"):
+        raise Exception(f"分镜板合成失败: {grid_res.get('error', '?')}")
+    log_info(f"video_general_storyboard OK n={n_panels} url={grid_res['image_url'][:60]}")
+    return {
+        "storyboard_image_url": grid_res["image_url"],
+        "character_sheet_url": character_sheet_url,
+        "n_panels": n_panels,
+        "single_image_mode": False,
+        "model_image_url": model_image_url,
+    }
+
+
+async def _run_video_general_job(params: dict) -> dict:
+    """通用产品视频生成:多产品图 + 可选模特 → GPT-Image 2 全程出图 + Seedance i2v 出片
+
+    2026-05-11 改:去 cat-vton,统一走 GPT-Image 2(更真实自然 + 人物/场景/风格跨段一致)。
+    流程:
+      Step A: 用户没传模特 → GPT-Image 2 出"模特+产品"基准首帧(用 unified lookbook)
+      Step B: 每段 GPT-Image 2 出本段首帧(以 Step A 模特图作 base + lookbook 锁一致性)
+      Step C: 每段 Seedance i2v 出 5s 视频 → ffmpeg concat
+    """
     from app.services.logger import log_info, log_error, log_warning
     from app.services import ad_video_models
     import asyncio as _aio
@@ -3144,27 +3397,43 @@ async def _run_video_general_job(params: dict) -> dict:
     primary_product = product_image_urls[0]
     product_back = product_image_urls[1] if len(product_image_urls) > 1 else None
 
+    scene_image_url = params.get("scene_image_url") or None  # P226 用户场景图(可选,作 GPT 背景锚)
     model_image_url = params.get("model_image_url")
     model_video_url = params.get("model_video_url")
     category = params.get("category") or "其他"
+    target_user = params.get("target_user") or ""
+    creative_brief = params.get("creative_brief") or {}
+    product_specifics = params.get("product_specifics") or {}
+    region = params.get("region") or "CN"
     scenes = params.get("scenes") or []
     aspect_ratio = params.get("aspect_ratio") or "9:16"
     total_duration = params.get("total_duration", 15)
     user_id = params.get("_user_id", "anon")
+    user_outfit = (params.get("user_outfit") or "").strip()
+    user_scene = (params.get("user_scene") or "").strip()
+    batch_count = max(1, min(5, int(params.get("batch_count") or 1)))
 
-    log_info(f"video_general 启动 category={category} n_scenes={len(scenes)} n_products={len(product_image_urls)} model_video={'yes' if model_video_url else 'no'} model_image={'yes' if model_image_url else 'no'}")
+    log_info(
+        f"video_general 启动 category={category} target_user={target_user[:30]!r} "
+        f"product_subcat={(product_specifics.get('subcategory') or '?')[:30]!r} "
+        f"n_scenes={len(scenes)} n_products={len(product_image_urls)} "
+        f"model_video={'yes' if model_video_url else 'no'} model_image={'yes' if model_image_url else 'no'} "
+        f"region={region}"
+    )
 
-    # Step A:base 模特图来源
-    # 1) 用户上传模特视频 → 已在 upload 阶段抽中间帧 → model_image_url 已填
-    # 2) 用户上传模特图 → 直接用
-    # 3) 都没传 → GPT-Image 2 出一张模特图
+    # 2026-05-11 P226:统一 lookbook(人物/场景/风格/产品形态跨段锁定)
+    # 2026-05-12:用户输入 user_outfit / user_scene 优先压过 AI 自动生成
+    lookbook = _build_video_general_lookbook(category, region, target_user, creative_brief, product_specifics, user_outfit=user_outfit, user_scene=user_scene)
+    log_info(f"video_general lookbook model_desc_len={len(lookbook['model_description'])} setting_len={len(lookbook['overall_setting'])}")
+
+    # Step A:base 模特图(如果用户没传)— 用 scene_image_url(若有)作背景锚
     if not model_image_url:
-        log_info(f"video_general 用户没传模特,GPT-Image 2 出模特")
+        log_info(f"video_general 用户没传模特,GPT-Image 2 出 base 模特图(用 unified lookbook + scene={'yes' if scene_image_url else 'no'})")
         first_visual = (scenes[0].get("visual_prompt") if scenes else "") or "Photorealistic e-commerce model showcasing product"
         base_res = await ad_video_models.compose_first_frame(
             product_image_url=primary_product,
-            background_image_url=None,
-            model_description="Asian woman, East Asian features, natural yellow skin, black hair, 22-30 yrs",
+            background_image_url=scene_image_url,
+            model_description=lookbook["model_description"],
             scene_visual_prompt=first_visual,
             product_back_image_url=product_back,
             aspect_ratio=aspect_ratio,
@@ -3176,28 +3445,10 @@ async def _run_video_general_job(params: dict) -> dict:
         model_image_url = base_res["image_url"]
         log_info(f"video_general GPT 出模特图 OK url={model_image_url[:60]}")
 
-    # Step B:N 段并发 — 每段 cat-vton(模特+产品)+ Seedance i2v
-    vton = get_vton_service()
-    if not vton:
-        raise RuntimeError("cat-vton 服务未初始化")
-
-    # 品类 → cat-vton cloth_type 映射
-    cloth_type_map = {
-        "服装": "upper",
-        "上衣": "upper",
-        "T恤": "upper",
-        "裤子": "lower",
-        "下装": "lower",
-        "连衣裙": "overall",
-    }
-    cloth_type = "upper"
-    for k, v in cloth_type_map.items():
-        if k in category:
-            cloth_type = v
-            break
-    # 食品/日用品/化妆品/3C 等品类:cat-vton 不适用 → 走 GPT-Image 2 直接合成 + Seedance
-    use_catvton = any(k in category for k in ["服装", "上衣", "下装", "连衣裙", "T恤", "裤子", "裙"])
-    log_info(f"video_general category={category} use_catvton={use_catvton} cloth_type={cloth_type}")
+    # Step B:N 段并发 — 每段 GPT-Image 2 出本段首帧(锁 lookbook)+ Seedance i2v
+    # 2026-05-11:去掉 cat-vton 分支,全品类统一走 GPT-Image 2
+    # 原因:cat-vton 跨段不一致(每次合成微调不同),GPT-Image 2 + base_image + lookbook 更稳
+    log_info(f"video_general category={category} 全程 GPT-Image 2(去 cat-vton,跨段一致性优先)")
 
     sem = _aio.Semaphore(3)
 
@@ -3206,38 +3457,23 @@ async def _run_video_general_job(params: dict) -> dict:
             visual = (scene.get("visual_prompt") or "").strip()
             seg_dur = max(4, min(12, int(scene.get("duration_sec") or 5)))
 
-            # Step B1:本段首帧
-            if use_catvton:
-                # 服装类:cat-vton 真试穿
-                vton_res = await vton.try_on(
-                    human_image_url=model_image_url,
-                    garment_image_url=primary_product,
-                    cloth_type=cloth_type,
-                )
-                if "error" in vton_res:
-                    log_warning(f"video_general seg {idx} cat-vton 失败,降级用模特图: {str(vton_res['error'])[:120]}")
-                    seg_frame = model_image_url
-                else:
-                    seg_frame = vton_res.get("image_url") or model_image_url
-                    log_info(f"video_general seg {idx} cat-vton OK url={seg_frame[:60]}")
+            # Step B1:本段首帧 — GPT-Image 2 + unified lookbook
+            fr = await ad_video_models.compose_first_frame_for_scene(
+                base_image_url=model_image_url,
+                scene=scene,
+                model_description=lookbook["model_description"],
+                overall_setting=lookbook["overall_setting"],
+                aspect_ratio=aspect_ratio,
+                product_image_url=primary_product,
+                product_back_image_url=product_back,
+                no_model=False,
+            )
+            if "error" in fr or not fr.get("image_url"):
+                log_warning(f"video_general seg {idx} GPT-Image 2 失败,降级 base 模特图: {fr.get('error', '?')[:120]}")
+                seg_frame = model_image_url
             else:
-                # 非服装类:GPT-Image 2 出"模特+产品"合成图
-                fr = await ad_video_models.compose_first_frame_for_scene(
-                    base_image_url=model_image_url,
-                    scene=scene,
-                    model_description="Asian woman as product user/model",
-                    overall_setting=f"Real-world scene showing {category} product use",
-                    aspect_ratio=aspect_ratio,
-                    product_image_url=primary_product,
-                    product_back_image_url=product_back,
-                    no_model=False,
-                )
-                if "error" in fr or not fr.get("image_url"):
-                    log_warning(f"video_general seg {idx} GPT-Image 2 失败,降级模特图: {fr.get('error', '?')[:120]}")
-                    seg_frame = model_image_url
-                else:
-                    seg_frame = fr["image_url"]
-                    log_info(f"video_general seg {idx} GPT-Image 2 OK url={seg_frame[:60]}")
+                seg_frame = fr["image_url"]
+                log_info(f"video_general seg {idx} GPT-Image 2 OK url={seg_frame[:60]}")
 
             # Step B2:Seedance i2v 出动作视频
             seedance_prompt = visual or f"Showing the {category} product naturally, model demonstrates use"
@@ -3247,7 +3483,7 @@ async def _run_video_general_job(params: dict) -> dict:
                 duration=seg_dur,
                 aspect_ratio=aspect_ratio,
                 resolution="720p",
-                enable_audio=False,
+                enable_audio=True,
             )
             if sub.get("error"):
                 raise Exception(f"seg {idx} Seedance: {sub['error']}")
@@ -3262,41 +3498,56 @@ async def _run_video_general_job(params: dict) -> dict:
                     raise Exception(f"seg {idx} Seedance failed: {st.get('error')}")
             raise Exception(f"seg {idx} 超时")
 
-    seg_urls = await _aio.gather(*[_gen_seg(i, s) for i, s in enumerate(scenes)])
-
-    # Step C:ffmpeg concat
-    log_info(f"video_general Step C:ffmpeg concat {len(seg_urls)} 段")
-    seg_root = _Path(_tmp.mkdtemp(prefix="video_general_"))
-    try:
-        local_paths = []
-        async with _httpx.AsyncClient(timeout=180) as cli:
-            for i, vu in enumerate(seg_urls):
-                p = seg_root / f"seg_{i:02d}.mp4"
-                r = await cli.get(vu); r.raise_for_status()
-                p.write_bytes(r.content)
-                local_paths.append(str(p))
-
-        list_path = seg_root / "concat.txt"
-        list_path.write_text("\n".join(f"file '{p}'" for p in local_paths) + "\n")
-        merged = seg_root / "final.mp4"
-        cp = _sp.run(
-            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(list_path),
-             "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-             "-an", "-movflags", "+faststart", str(merged)],
-            capture_output=True, text=True, timeout=300,
-        )
-        if cp.returncode != 0:
-            raise Exception(f"ffmpeg concat 失败: {cp.stderr[-500:]}")
-
-        final_url = await fal_upload_with_retry(str(merged))
-        log_info(f"video_general 完成 final_url={final_url[:80]}")
-        return {"video_url": final_url, "type": "video", "category": category}
-    finally:
+    # 2026-05-12:批量 batch_count(1-5)— N 个独立 batch 并发,各跑 Step B 段生成 + Step C concat
+    async def _run_one_batch(batch_idx: int) -> str:
+        seg_urls = await _aio.gather(*[_gen_seg(i, s) for i, s in enumerate(scenes)])
+        log_info(f"video_general batch {batch_idx} Step C:ffmpeg concat {len(seg_urls)} 段")
+        seg_root = _Path(_tmp.mkdtemp(prefix=f"video_general_b{batch_idx}_"))
         try:
-            import shutil as _sh
-            _sh.rmtree(seg_root, ignore_errors=True)
-        except Exception:
-            pass
+            local_paths = []
+            async with _httpx.AsyncClient(timeout=180) as cli:
+                for i, vu in enumerate(seg_urls):
+                    p = seg_root / f"seg_{i:02d}.mp4"
+                    r = await cli.get(vu); r.raise_for_status()
+                    p.write_bytes(r.content)
+                    local_paths.append(str(p))
+
+            list_path = seg_root / "concat.txt"
+            list_path.write_text("\n".join(f"file '{p}'" for p in local_paths) + "\n")
+            merged = seg_root / "final.mp4"
+            cp = _sp.run(
+                ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(list_path),
+                 "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                 "-c:a", "aac", "-b:a", "192k",
+                 "-movflags", "+faststart", str(merged)],
+                capture_output=True, text=True, timeout=300,
+            )
+            if cp.returncode != 0:
+                raise Exception(f"batch {batch_idx} ffmpeg concat 失败: {cp.stderr[-500:]}")
+
+            final_url = await fal_upload_with_retry(str(merged))
+            log_info(f"video_general batch {batch_idx} 完成 final_url={final_url[:80]}")
+            return final_url
+        finally:
+            try:
+                import shutil as _sh
+                _sh.rmtree(seg_root, ignore_errors=True)
+            except Exception:
+                pass
+
+    if batch_count <= 1:
+        final_url = await _run_one_batch(0)
+        return {"video_url": final_url, "video_urls": [final_url], "batch_count": 1, "type": "video", "category": category}
+
+    log_info(f"video_general 批量生成 batch_count={batch_count} 并发跑")
+    final_urls = await _aio.gather(*[_run_one_batch(b) for b in range(batch_count)])
+    return {
+        "video_url": final_urls[0],
+        "video_urls": list(final_urls),
+        "batch_count": batch_count,
+        "type": "video",
+        "category": category,
+    }
 
 
 # ==================== P216 视频复刻 Seedance 2.0 r2v Fast worker(2026-05-08)====================

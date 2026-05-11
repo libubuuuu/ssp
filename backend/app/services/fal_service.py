@@ -665,24 +665,31 @@ class AliyunQwenVLVideoService:
         return bool(self.api_key)
 
     async def analyze_video(self, video_url: str, instruction: str) -> dict:
-        return await self._analyze(media_field="video", media_url=video_url, instruction=instruction)
+        return await self._analyze_raw([{"video": video_url}, {"text": instruction}])
 
     async def analyze_image(self, image_url: str, instruction: str) -> dict:
-        """2026-05-11:看图片(传 {"image": url})。
-        修 video_general_analyze worker 把图片 URL 误传给 analyze_video 的雷
-        (qwen-vl 报"Invalid video file",任务静默退款)。
-        """
-        return await self._analyze(media_field="image", media_url=image_url, instruction=instruction)
+        """看单张图(传 {"image": url})。"""
+        return await self._analyze_raw([{"image": image_url}, {"text": instruction}])
 
-    async def _analyze(self, *, media_field: str, media_url: str, instruction: str) -> dict:
+    async def analyze_images(self, image_urls: List[str], instruction: str) -> dict:
+        """2026-05-11:看多张图(传 [{"image":u1},{"image":u2},...]+ {"text":instruction})。
+        verify 来源:https://help.aliyun.com/zh/model-studio/user-guide/vision/(2026-05-11 WebFetch 实证)。
+        约束:N 张图 + 文本 token 总和 < 模型上限(qwen-vl-max 共享 token 预算)。
+        通用产品视频 max 5 张产品图,远低于上限。
+        """
+        if not image_urls:
+            return {"error": "image_urls 为空"}
+        content = [{"image": u} for u in image_urls] + [{"text": instruction}]
+        return await self._analyze_raw(content)
+
+    async def _analyze_raw(self, content: list) -> dict:
+        """底层:接受完整 content list(可任意混合 image/video/text)。"""
         if not self.api_key:
             return {"error": "DASHSCOPE_API_KEY 未配置"}
         body = {
             "model": "qwen-vl-max-latest",
             "input": {
-                "messages": [{"role": "user", "content": [
-                    {media_field: media_url}, {"text": instruction},
-                ]}]
+                "messages": [{"role": "user", "content": content}]
             },
         }
         headers = {
@@ -697,11 +704,11 @@ class AliyunQwenVLVideoService:
                 return {"error": f"qwen-vl {r.status_code}: {r.text[:300]}"}
             data = r.json()
             choices = data.get("output", {}).get("choices") or []
-            content = choices[0].get("message", {}).get("content") if choices else ""
-            if isinstance(content, list):
-                text = "\n".join(c.get("text", "") for c in content if isinstance(c, dict))
+            msg_content = choices[0].get("message", {}).get("content") if choices else ""
+            if isinstance(msg_content, list):
+                text = "\n".join(c.get("text", "") for c in msg_content if isinstance(c, dict))
             else:
-                text = str(content or "")
+                text = str(msg_content or "")
             return {"text": text.strip()}
         except Exception as e:
             return {"error": str(e)[:300]}
