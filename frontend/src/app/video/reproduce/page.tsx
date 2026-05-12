@@ -114,6 +114,10 @@ export default function VideoReproduceHub() {
           padding: 0;
           box-sizing: border-box;
         }
+        .preview.framed {
+          background: #F5F2EC;
+          padding: 6px;
+        }
         .preview img {
           width: 100%;
           height: 100%;
@@ -279,7 +283,7 @@ export default function VideoReproduceHub() {
                   if (e.key === "Enter" || e.key === " ") router.push(c.route);
                 }}
               >
-                <div className="preview" style={{ aspectRatio: c.aspect }}>
+                <div className={`preview${c.preview.kind === "nine-grid" ? " framed" : ""}`} style={{ aspectRatio: c.aspect }}>
                   {c.preview.kind === "nine-grid" && (
                     <div className="nine-grid">
                       {c.preview.cells.map((src, i) => (
