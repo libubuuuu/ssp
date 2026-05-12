@@ -334,12 +334,12 @@ export default function VideoReproduceHub() {
                 </div>
                 <div className="preview" style={{ aspectRatio: c.aspect }}>
                   {c.preview.kind === "composite" && (
-                    <img className="composite-fill" src={c.preview.src} alt="" draggable={false} />
+                    <img className="composite-fill" src={c.preview.src} alt="" width={600} height={600} loading="eager" decoding="async" draggable={false} />
                   )}
                   {c.preview.kind === "nine-grid" && (
                     <div className="nine-grid">
                       {c.preview.cells.map((src, i) => (
-                        <img key={i} src={src} alt="" draggable={false} />
+                        <img key={i} src={src} alt="" width={140} height={160} loading="eager" decoding="async" draggable={false} />
                       ))}
                     </div>
                   )}
@@ -348,13 +348,13 @@ export default function VideoReproduceHub() {
                       <div className="row3">
                         {c.preview.smalls.map((src, i) => (
                           <div key={i} className="cell">
-                            <img src={src} alt="" draggable={false} />
+                            <img src={src} alt="" width={240} height={219} loading="eager" decoding="async" draggable={false} />
                           </div>
                         ))}
                       </div>
                       <div className="arrowRow"><ArrowDown /></div>
                       <div className="large">
-                        <img src={c.preview.large} alt="" draggable={false} />
+                        <img src={c.preview.large} alt="" width={720} height={318} loading="eager" decoding="async" draggable={false} />
                       </div>
                     </div>
                   )}
@@ -364,7 +364,7 @@ export default function VideoReproduceHub() {
                         <>
                           {i === 1 && <div key={`arr-${i}`} className="arrowRow"><ArrowDown /></div>}
                           <div key={i} className="videoCell">
-                            <img src={cell.img} alt="" draggable={false} />
+                            <img src={cell.img} alt="" width={720} height={410} loading="eager" decoding="async" draggable={false} />
                           </div>
                         </>
                       ))}
