@@ -2,14 +2,25 @@
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 
+const NINE_CELLS = Array.from({ length: 9 }, (_, i) => `/reproduce-preview/nine/cell${i + 1}.png`);
+
+const ArrowDown = () => (
+  <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#9A9690" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M12 5v14M5 13l7 7 7-7" />
+  </svg>
+);
+
+type Preview =
+  | { kind: "nine-grid"; cells: string[] }
+  | { kind: "stack-3-1"; smalls: string[]; large: string }
+  | { kind: "stack-2"; cells: { img: string; tag: string }[] };
+
 interface CardDef {
   title: string;
   desc: string[];
   route: string;
-  preview: { kind: "nine-grid"; cells: string[] } | { kind: "single"; img: string; alt: string };
+  preview: Preview;
 }
-
-const NINE_CELLS = Array.from({ length: 9 }, (_, i) => `/reproduce-preview/nine/cell${i + 1}.png`);
 
 const CARDS: CardDef[] = [
   {
@@ -22,15 +33,36 @@ const CARDS: CardDef[] = [
     title: "图片复刻",
     desc: ["产品图 + 模特", "AI 出脚本 + 拍片"],
     route: "/video/general",
-    preview: { kind: "single", img: "/reproduce-preview/card2.png", alt: "图片复刻预览" },
+    preview: {
+      kind: "stack-3-1",
+      smalls: [
+        "/reproduce-preview/card2/small1.png",
+        "/reproduce-preview/card2/small2.png",
+        "/reproduce-preview/card2/small3.png",
+      ],
+      large: "/reproduce-preview/card2/large.png",
+    },
   },
   {
     title: "视频复刻",
     desc: ["参考视频一键换产品", "Seedance r2v"],
     route: "/video-clone-v2",
-    preview: { kind: "single", img: "/reproduce-preview/card3.png", alt: "视频复刻预览" },
+    preview: {
+      kind: "stack-2",
+      cells: [
+        { img: "/reproduce-preview/card3/top.png", tag: "参考" },
+        { img: "/reproduce-preview/card3/bottom.png", tag: "替换后" },
+      ],
+    },
   },
 ];
+
+const PlayIcon = () => (
+  <svg width={26} height={26} viewBox="0 0 24 24" aria-hidden>
+    <circle cx="12" cy="12" r="11" fill="rgba(255,255,255,0.85)" />
+    <path d="M10 8.5v7l5.5-3.5z" fill="#2C2C2A" />
+  </svg>
+);
 
 export default function VideoReproduceHub() {
   const router = useRouter();
@@ -75,6 +107,8 @@ export default function VideoReproduceHub() {
           border-radius: 10px;
           margin-bottom: 14px;
           background: #F5F2EC;
+          padding: 6px;
+          box-sizing: border-box;
         }
         .preview img {
           width: 100%;
@@ -83,6 +117,7 @@ export default function VideoReproduceHub() {
           display: block;
         }
 
+        /* 9 宫格(规范 6) */
         .nine-grid {
           display: grid;
           grid-template-columns: repeat(3, 1fr);
@@ -91,12 +126,81 @@ export default function VideoReproduceHub() {
           width: 100%;
           height: 100%;
         }
-        .nine-grid img {
+        .nine-grid img { border-radius: 3px; }
+
+        /* 卡 2:3 小 + 大(规范 7 flex column,每 row flex:1 + min-height:0) */
+        .stack-3-1 {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
           width: 100%;
           height: 100%;
-          object-fit: cover;
-          display: block;
+        }
+        .stack-3-1 .row3 {
+          display: flex;
+          gap: 4px;
+          flex: 1;
+          min-height: 0;
+        }
+        .stack-3-1 .row3 .cell {
+          flex: 1;
+          min-width: 0;
+          overflow: hidden;
+          border-radius: 4px;
+        }
+        .stack-3-1 .arrowRow {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          flex: 0 0 auto;
+          height: 12px;
+        }
+        .stack-3-1 .large {
+          flex: 2;
+          min-height: 0;
+          overflow: hidden;
+          border-radius: 4px;
+        }
+
+        /* 卡 3:2 视频堆叠(规范 7 flex column + 每 cell flex:1 + min-height:0) */
+        .stack-2 {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          width: 100%;
+          height: 100%;
+        }
+        .stack-2 .videoCell {
+          flex: 1;
+          min-height: 0;
+          position: relative;
+          overflow: hidden;
+          border-radius: 4px;
+        }
+        .stack-2 .videoCell .tag {
+          position: absolute;
+          top: 4px;
+          left: 6px;
+          font-size: 9px;
+          color: #fff;
+          background: rgba(0, 0, 0, 0.45);
+          padding: 1px 6px;
           border-radius: 3px;
+          z-index: 2;
+        }
+        .stack-2 .videoCell .play {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          z-index: 2;
+        }
+        .stack-2 .arrowRow {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          flex: 0 0 auto;
+          height: 12px;
         }
 
         .titleRow {
@@ -122,11 +226,6 @@ export default function VideoReproduceHub() {
           transition: transform 0.28s, background 0.28s;
           flex-shrink: 0;
         }
-        .arrowCircle svg {
-          width: 12px;
-          height: 12px;
-        }
-
         .desc {
           font-size: 12px;
           color: #888888;
@@ -144,28 +243,14 @@ export default function VideoReproduceHub() {
           maxWidth: 1280,
           width: "100%",
           margin: "0 auto",
+          minWidth: 0,
         }}
       >
         <div style={{ background: "#EFEBE3", borderRadius: 22, padding: "26px 22px" }}>
-          <div
-            style={{
-              fontSize: 11,
-              color: "#9A9690",
-              marginBottom: 6,
-              letterSpacing: "0.4px",
-            }}
-          >
+          <div style={{ fontSize: 11, color: "#9A9690", marginBottom: 6, letterSpacing: "0.4px" }}>
             分镜复刻 · 图片复刻 · 视频复刻
           </div>
-          <h2
-            style={{
-              fontSize: 24,
-              fontWeight: 500,
-              margin: "0 0 22px",
-              color: "#2C2C2A",
-              letterSpacing: "0.5px",
-            }}
-          >
+          <h2 style={{ fontSize: 24, fontWeight: 500, margin: "0 0 22px", color: "#2C2C2A", letterSpacing: "0.5px" }}>
             视频复刻
           </h2>
 
@@ -182,20 +267,47 @@ export default function VideoReproduceHub() {
                 }}
               >
                 <div className="preview">
-                  {c.preview.kind === "nine-grid" ? (
+                  {c.preview.kind === "nine-grid" && (
                     <div className="nine-grid">
                       {c.preview.cells.map((src, i) => (
                         <img key={i} src={src} alt="" draggable={false} />
                       ))}
                     </div>
-                  ) : (
-                    <img src={c.preview.img} alt={c.preview.alt} draggable={false} />
+                  )}
+                  {c.preview.kind === "stack-3-1" && (
+                    <div className="stack-3-1">
+                      <div className="row3">
+                        {c.preview.smalls.map((src, i) => (
+                          <div key={i} className="cell">
+                            <img src={src} alt="" draggable={false} />
+                          </div>
+                        ))}
+                      </div>
+                      <div className="arrowRow"><ArrowDown /></div>
+                      <div className="large">
+                        <img src={c.preview.large} alt="" draggable={false} />
+                      </div>
+                    </div>
+                  )}
+                  {c.preview.kind === "stack-2" && (
+                    <div className="stack-2">
+                      {c.preview.cells.map((cell, i) => (
+                        <>
+                          {i === 1 && <div key={`arr-${i}`} className="arrowRow"><ArrowDown /></div>}
+                          <div key={i} className="videoCell">
+                            <span className="tag">{cell.tag}</span>
+                            <img src={cell.img} alt="" draggable={false} />
+                            <span className="play"><PlayIcon /></span>
+                          </div>
+                        </>
+                      ))}
+                    </div>
                   )}
                 </div>
                 <div className="titleRow">
                   <span className="title">{c.title}</span>
                   <div className="arrowCircle" aria-hidden>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                    <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
                       <path d="M5 12h14M13 5l7 7-7 7" />
                     </svg>
                   </div>
@@ -209,18 +321,7 @@ export default function VideoReproduceHub() {
             ))}
           </div>
 
-          <div
-            style={{
-              marginTop: 18,
-              fontSize: 11,
-              color: "#9A9690",
-              textAlign: "center",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 4,
-            }}
-          >
+          <div style={{ marginTop: 18, fontSize: 11, color: "#9A9690", textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
             <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="#9A9690" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <circle cx="12" cy="12" r="10" />
               <path d="M12 16v-4M12 8h.01" />
