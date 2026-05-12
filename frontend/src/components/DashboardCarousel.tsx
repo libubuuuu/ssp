@@ -115,36 +115,27 @@ export default function DashboardCarousel() {
         .nav:hover { background: rgba(255, 255, 255, 0.95); }
         .nav.prev { left: 14px; }
         .nav.next { right: 14px; }
-        .thumbs {
-          display: grid;
-          grid-template-columns: repeat(6, minmax(0, 1fr));
-          gap: 10px;
-          margin-top: 12px;
+        .dots {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          gap: 8px;
+          margin-top: 14px;
         }
-        .thumb {
-          position: relative;
-          aspect-ratio: 16 / 9;
-          border-radius: 8px;
-          overflow: hidden;
+        .dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: rgba(44, 44, 42, 0.22);
+          border: none;
+          padding: 0;
           cursor: pointer;
-          border: 2px solid transparent;
-          transition: border-color 0.2s, transform 0.2s;
+          transition: background 0.2s, width 0.2s;
         }
-        .thumb.active { border-color: #2C2C2A; }
-        .thumb img {
-          width: 100%;
-          height: 100%;
-          object-fit: cover;
-          display: block;
-        }
-        .thumbLabel {
-          position: absolute;
-          left: 6px;
-          bottom: 4px;
-          color: #fff;
-          font-size: 10px;
-          text-shadow: 0 1px 4px rgba(0,0,0,0.55);
-          letter-spacing: 0.3px;
+        .dot.active {
+          background: #2C2C2A;
+          width: 22px;
+          border-radius: 999px;
         }
       `}</style>
       <div className="banner">
@@ -179,18 +170,15 @@ export default function DashboardCarousel() {
           </svg>
         </button>
       </div>
-      <div className="thumbs">
+      <div className="dots">
         {SLIDES.map((s, i) => (
           <button
             key={s.img}
             type="button"
-            className={`thumb${i === idx ? " active" : ""}`}
+            className={`dot${i === idx ? " active" : ""}`}
             onClick={() => setIdx(i)}
-            aria-label={s.title}
-          >
-            <img src={s.img} alt={s.title} width={200} height={112} loading="lazy" decoding="async" draggable={false} />
-            <span className="thumbLabel">{s.title}</span>
-          </button>
+            aria-label={`第 ${i + 1} 张 ${s.title}`}
+          />
         ))}
       </div>
     </div>
