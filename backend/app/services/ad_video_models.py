@@ -338,6 +338,7 @@ async def compose_character_sheet(
                 "prompt": prompt,
                 "image_urls": image_urls,
                 "image_size": _img_size_for_aspect(aspect_ratio),
+                "quality": "medium",  # 2026-05-13: high 单张 4-5 分钟峰,medium ~60s 商用级
                 "num_images": 1,
                 "output_format": "png",
             },
@@ -493,6 +494,7 @@ async def compose_storyboard_grid(
                     + ([product_back_image_url] if product_back_image_url else [])
                 ),
                 "image_size": _img_size_for_aspect(aspect_ratio),
+                "quality": "medium",  # 2026-05-13: 加速
                 "num_images": 1,
                 "output_format": "png",
             },
@@ -759,6 +761,7 @@ async def compose_first_frame(
                         "image_urls": image_urls,
                         # P126: openai/gpt-image-2/edit schema(image_size 替代 aspect_ratio,无 guidance_scale)
                         "image_size": _img_size_for_aspect(aspect_ratio),
+                        "quality": "medium",  # 2026-05-13: 加速
                         "num_images": 1,
                         "output_format": "png",
                     },
@@ -1039,6 +1042,7 @@ async def compose_first_frame_for_scene(
                     "prompt": cur_prompt,
                     "image_urls": image_urls_list,
                     "image_size": _img_size_for_aspect(aspect_ratio),
+                    "quality": "medium",  # 2026-05-13: 加速
                     "num_images": 1,
                     "output_format": "png",
                 },

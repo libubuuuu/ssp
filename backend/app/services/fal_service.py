@@ -13,37 +13,46 @@ from .logger import log_warning
 
 class FalImageService:
     MODELS = {
-        "nano-banana-2": {"endpoint": "fal-ai/nano-banana-2", "label": "经济模式", "desc": "最低成本"},
-        "flux/schnell": {"endpoint": "fal-ai/flux/schnell", "label": "快速模式", "desc": "速度快"},
-        "flux/dev": {"endpoint": "fal-ai/flux/dev", "label": "专业模式", "desc": "更高质量"},
+        "gpt-image-2": {"endpoint": "openai/gpt-image-2", "label": "专业模式", "desc": "更高质量"},
     }
 
     def __init__(self, fal_key: str):
         self.fal_key = fal_key
 
-    async def generate(self, prompt: str, image_size: str = "1024x1024", model_key: str = "nano-banana-2") -> dict:
+    async def generate(self, prompt: str, image_size: str = "1024x1024", model_key: str = "gpt-image-2") -> dict:
         return await self._generate_fal(prompt, image_size, model_key, None)
 
-    async def generate_with_image(self, image_url: str, prompt: str, image_size: str = "1024x1024", model_key: str = "nano-banana-2") -> dict:
+    async def generate_with_image(self, image_url: str, prompt: str, image_size: str = "1024x1024", model_key: str = "gpt-image-2") -> dict:
         return await self._generate_fal(prompt, image_size, model_key, image_url)
 
     async def _generate_fal(self, prompt: str, image_size: str, model_key: str, image_url: Optional[str] = None) -> dict:
+        # 全站只剩 gpt-image-2 一个模型,被熔断就直接报错(无 fallback)
+        if model_key != "gpt-image-2":
+            model_key = "gpt-image-2"
         circuit_breaker = get_circuit_breaker()
         if not circuit_breaker.is_available(model_key):
-            backup_model = "flux/schnell" if model_key == "nano-banana-2" else "nano-banana-2"
-            if circuit_breaker.is_available(backup_model):
-                model_key = backup_model
-            else:
-                return {"error": f"模型 {model_key} 已熔断"}
+            return {"error": f"模型 {model_key} 已熔断"}
         try:
             model_info = self.MODELS.get(model_key)
             if not model_info:
                 return {"error": f"未知模型：{model_key}"}
             endpoint = model_info["endpoint"]
-            arguments = {"prompt": prompt, "image_size": image_size}
+            arguments: Dict[str, Any] = {"prompt": prompt, "image_size": image_size}
+            # openai/gpt-image-2 不接受 "WxH" 字符串,只接受 preset 名或 {width,height} 对象
+            # quality 默认 high 单张 ¥1.5+ / 1-4min,medium ¥0.4 已商用级
+            if endpoint == "openai/gpt-image-2":
+                if isinstance(image_size, str) and "x" in image_size:
+                    w, h = image_size.split("x")
+                    arguments["image_size"] = {"width": int(w), "height": int(h)}
+                arguments["quality"] = "medium"
+                arguments["num_images"] = 1
+                arguments["output_format"] = "png"
             if image_url:
                 arguments["image_url"] = image_url
-            result = await fal_client.run_async(endpoint, arguments=arguments)
+            result = await asyncio.wait_for(
+                fal_client.run_async(endpoint, arguments=arguments),
+                timeout=360,
+            )
             images = result.get("images", [])
             if not images:
                 data = result.get("data", {})

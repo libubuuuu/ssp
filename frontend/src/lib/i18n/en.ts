@@ -199,6 +199,16 @@ export const en = {
     firstFrameAlt: "First frame",
     downloadBtn: "⬇ Download",
   },
+  videoReproduce: {
+    crumb: "Frame · Image · Video — Reproduction",
+    title: "Video Reproduction",
+    footer: "Click any card to enter. Previews are from real example cases.",
+    cards: {
+      frame: { title: "Frame Reproduction", desc1: "Split video into 9 panels", desc2: "Swap elements and re-shoot" },
+      image: { title: "Image Reproduction", desc1: "Product photo + model", desc2: "AI writes script + films" },
+      video: { title: "Video Reproduction", desc1: "Swap product in reference video", desc2: "Seedance r2v" },
+    },
+  },
   frameExtract: {
     titleMain: "Frame",
     titleAccent: "Reproduction",

@@ -1,9 +1,8 @@
 """
 图片生成 API
-- 经济模式：nano-banana-2
-- 快速模式：flux/schnell
-- 多参考图生图：权重排序机制
-- 额度扣费：使用 @require_credits 装饰器自动处理
+- 唯一模型: gpt-image-2 (openai/gpt-image-2 / openai/gpt-image-2/edit, quality=medium)
+- 多参考图生图: 权重排序机制
+- 额度扣费: 使用 @require_credits 装饰器自动处理
 """
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field, field_validator
@@ -22,13 +21,13 @@ class ImageStyleRequest(BaseModel):
     style: Optional[str] = Field("advertising", max_length=50)
     size: Optional[str] = Field("1024x1024", max_length=20)
     color_tone: Optional[str] = Field(None, max_length=50)
-    model: Optional[str] = Field("nano-banana-2", max_length=50)
+    model: Optional[str] = Field("gpt-image-2", max_length=50)
 
 
 class ImageRealisticRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=1000)
     refine_prompt: Optional[str] = Field(None, max_length=500)
-    model: Optional[str] = Field("nano-banana-2", max_length=50)
+    model: Optional[str] = Field("gpt-image-2", max_length=50)
 
 
 class ImageInpaintRequest(BaseModel):
@@ -43,7 +42,7 @@ class ImageMultiReferenceRequest(BaseModel):
     reference_images: List[str] = Field(..., min_length=1, max_length=5)
     style: Optional[str] = Field("custom", max_length=50)
     size: Optional[str] = Field("1024x1024", max_length=20)
-    model: Optional[str] = Field("nano-banana-2", max_length=50)
+    model: Optional[str] = Field("gpt-image-2", max_length=50)
 
     @field_validator("size")
     @classmethod

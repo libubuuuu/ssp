@@ -12,16 +12,11 @@ const STYLES = [
   { key:"minimalist", labelKey:"minimalist" },
   { key:"custom", labelKey:"custom" },
 ];
-const MODELS = [
-  { key:"nano-banana-2", labelKey:"economy", descKey:"economyDesc" },
-  { key:"flux/schnell", labelKey:"fast", descKey:"fastDesc" },
-  { key:"flux/dev", labelKey:"pro", descKey:"proDesc" },
-];
 export default function ImagePage(){
   const { t } = useLang();
   const [prompt,setPrompt]=useState("");
   const [style,setStyle]=useState("advertising");
-  const [model,setModel]=useState("nano-banana-2");
+  const model = "gpt-image-2";
   const [size,setSize]=useState("1024x1024");
   const [refImages,setRefImages]=useState<string[]>([]);
   const [refPreviews,setRefPreviews]=useState<string[]>([]);
@@ -175,18 +170,6 @@ export default function ImagePage(){
         </div>
       </main>
       <aside style={{width:"340px",background:"#fff",borderLeft:"1px solid rgba(0,0,0,0.06)",padding:"2rem 1.75rem",display:"flex",flexDirection:"column",gap:"1.25rem",height:"100vh",position:"sticky",top:0,overflowY:"auto"}}>
-        <div>
-          <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>{t("image.section.model")}</div>
-          <div style={{display:"flex",flexDirection:"column",gap:"0.4rem"}}>
-            {MODELS.map(m=>(
-              <button key={m.key} onClick={()=>setModel(m.key)}
-                style={{textAlign:"left",padding:"0.7rem 0.9rem",border:model===m.key?"2px solid #0d0d0d":"1px solid #e5e5e5",background:model===m.key?"#f9f7f2":"#fff",borderRadius:"10px",cursor:"pointer"}}>
-                <div style={{fontSize:"0.88rem",fontWeight:500,color:"#0d0d0d"}}>{t(`image.models.${m.labelKey}`)}</div>
-                <div style={{fontSize:"0.72rem",color:"#888",marginTop:"0.15rem"}}>{t(`image.models.${m.descKey}`)}</div>
-              </button>
-            ))}
-          </div>
-        </div>
         <div>
           <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>{t("image.section.reference")}</div>
           <div style={{display:"flex",gap:"0.4rem",flexWrap:"wrap"}}>

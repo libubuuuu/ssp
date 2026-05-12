@@ -1,6 +1,7 @@
 "use client";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
+import { useLang } from "@/lib/i18n/LanguageContext";
 
 const NINE_CELLS = Array.from({ length: 9 }, (_, i) => `/reproduce-preview/nine/cell${i + 1}.png`);
 
@@ -24,17 +25,21 @@ interface CardDef {
   aspect: string; // CSS aspect-ratio,各卡不同
 }
 
-const CARDS: CardDef[] = [
+interface RawCardDef {
+  i18nKey: "frame" | "image" | "video";
+  route: string;
+  preview: Preview;
+  aspect: string;
+}
+const RAW_CARDS: RawCardDef[] = [
   {
-    title: "分镜复刻",
-    desc: ["视频拆成 9 宫格", "替换元素重新出片"],
+    i18nKey: "frame",
     route: "/video/frame-extract",
     preview: { kind: "composite", src: "/reproduce-preview/card1.webp" },
     aspect: "1 / 1",
   },
   {
-    title: "图片复刻",
-    desc: ["产品图 + 模特", "AI 出脚本 + 拍片"],
+    i18nKey: "image",
     route: "/video/general",
     preview: {
       kind: "stack-2",
@@ -46,8 +51,7 @@ const CARDS: CardDef[] = [
     aspect: "1 / 1",
   },
   {
-    title: "视频复刻",
-    desc: ["参考视频一键换产品", "Seedance r2v"],
+    i18nKey: "video",
     route: "/video-clone-v2",
     preview: {
       kind: "stack-2",
@@ -69,6 +73,17 @@ const PlayIcon = () => (
 
 export default function VideoReproduceHub() {
   const router = useRouter();
+  const { t } = useLang();
+  const CARDS: CardDef[] = RAW_CARDS.map((c) => ({
+    title: t(`videoReproduce.cards.${c.i18nKey}.title`),
+    desc: [
+      t(`videoReproduce.cards.${c.i18nKey}.desc1`),
+      t(`videoReproduce.cards.${c.i18nKey}.desc2`),
+    ],
+    route: c.route,
+    preview: c.preview,
+    aspect: c.aspect,
+  }));
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "#edeae4", fontFamily: "-apple-system,BlinkMacSystemFont,sans-serif" }}>
       <style jsx>{`
@@ -292,10 +307,10 @@ export default function VideoReproduceHub() {
       >
         <div style={{ background: "#EFEBE3", borderRadius: 22, padding: "26px 22px" }}>
           <div style={{ fontSize: 11, color: "#9A9690", marginBottom: 6, letterSpacing: "0.4px" }}>
-            分镜复刻 · 图片复刻 · 视频复刻
+            {t("videoReproduce.crumb")}
           </div>
           <h2 style={{ fontSize: 24, fontWeight: 500, margin: "0 0 22px", color: "#2C2C2A", letterSpacing: "0.5px" }}>
-            视频复刻
+            {t("videoReproduce.title")}
           </h2>
 
           <div
@@ -382,7 +397,7 @@ export default function VideoReproduceHub() {
               <circle cx="12" cy="12" r="10" />
               <path d="M12 16v-4M12 8h.01" />
             </svg>
-            <span>每张卡片均可点击,真实预览图来自示例案例</span>
+            <span>{t("videoReproduce.footer")}</span>
           </div>
         </div>
       </main>

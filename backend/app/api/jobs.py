@@ -104,33 +104,48 @@ class SubmitJobRequest(BaseModel):
     title: Optional[str] = None
 
 
+_GPT_IMAGE_SIZE_MAP = {
+    "1024x1024": "square_hd",
+    "1024x768":  "landscape_4_3",
+    "768x1024":  "portrait_4_3",
+    "1024x1536": "portrait_4_3",
+    "1536x1024": "landscape_4_3",
+}
+
+
 async def _run_image_job(params: dict):
+    import asyncio, fal_client
     service = get_image_service()
-    if params.get("reference_images"):
-        # 八十四续 P6:nano-banana-2/edit 是 Google 系列对内衣/塑身/紧身衣等
-        # NSFW 拦截极严(实测豹纹比基尼直接拒,和 prompt 无关)。
-        # 切字节 Seedream 4 edit:国产对带货类宽容,实测同图能成,且支持多图合成。
-        import fal_client
-        result = await fal_client.run_async(
-            "fal-ai/bytedance/seedream/v4/edit",
-            arguments={
-                "prompt": params["prompt"],
-                "image_urls": params["reference_images"],
-                "image_size": "square_hd",
-            }
+    refs = params.get("reference_images") or []
+    size = params.get("size", "1024x1024")
+    image_size = _GPT_IMAGE_SIZE_MAP.get(size, "square_hd")
+
+    if refs:
+        result = await asyncio.wait_for(
+            fal_client.run_async(
+                "openai/gpt-image-2/edit",
+                arguments={
+                    "prompt": params["prompt"],
+                    "image_urls": refs,
+                    "image_size": image_size,
+                    "quality": "medium",
+                    "num_images": 1,
+                    "output_format": "png",
+                },
+            ),
+            timeout=360,
         )
         images = result.get("images", [])
         if not images:
             raise Exception("no image generated")
-        return {"image_url": images[0].get("url"), "type": "image"}
-    else:
-        result = await service.generate(
-            params["prompt"], params.get("size", "1024x1024"), params.get("model", "nano-banana-2")
-        )
-        if "error" in result:
-            raise Exception(result["error"])
-        result["type"] = "image"
-        return result
+        return {"image_url": images[0].get("url"), "type": "image",
+                "model": "openai/gpt-image-2/edit"}
+
+    result = await service.generate(params["prompt"], size, "gpt-image-2")
+    if "error" in result:
+        raise Exception(result["error"])
+    result["type"] = "image"
+    return result
 
 
 async def _run_video_job(params: dict, job_type: str):

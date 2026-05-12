@@ -199,6 +199,16 @@ export const zh = {
     firstFrameAlt: "视频首帧",
     downloadBtn: "⬇ 下载视频",
   },
+  videoReproduce: {
+    crumb: "分镜复刻 · 图片复刻 · 视频复刻",
+    title: "视频复刻",
+    footer: "每张卡片均可点击,真实预览图来自示例案例",
+    cards: {
+      frame: { title: "分镜复刻", desc1: "视频拆成 9 宫格", desc2: "替换元素重新出片" },
+      image: { title: "图片复刻", desc1: "产品图 + 模特", desc2: "AI 出脚本 + 拍片" },
+      video: { title: "视频复刻", desc1: "参考视频一键换产品", desc2: "Seedance r2v" },
+    },
+  },
   frameExtract: {
     titleMain: "分镜",
     titleAccent: "复刻",
