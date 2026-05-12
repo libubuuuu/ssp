@@ -43,6 +43,8 @@ const CARDS: Card[] = [
       "linear-gradient(135deg,#fa709a 0%,#ee9ca7 25%,#fee140 50%,#c471f5 75%,#fa71cd 100%)",
     embeddedGlow:
       "linear-gradient(135deg,#fa709a 0%,#fee140 50%,#c471f5 100%)",
+    image: "/dashboard/cards/video-gen.webp",
+    lightBg: "#FAEFE4",
   },
 ];
 
