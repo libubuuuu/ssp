@@ -39,13 +39,13 @@ const CARDS: CardDef[] = [
     preview: {
       kind: "stack-3-1",
       smalls: [
-        "/reproduce-preview/card2/small1.png",
-        "/reproduce-preview/card2/small2.png",
-        "/reproduce-preview/card2/small3.png",
+        "/reproduce-preview/card2/small1.webp",
+        "/reproduce-preview/card2/small2.webp",
+        "/reproduce-preview/card2/small3.webp",
       ],
-      large: "/reproduce-preview/card2/large.png",
+      large: "/reproduce-preview/card2/large.webp",
     },
-    aspect: "3 / 4",
+    aspect: "1448 / 1086",
   },
   {
     title: "视频复刻",
@@ -194,7 +194,7 @@ export default function VideoReproduceHub() {
           height: 12px;
         }
         .stack-3-1 .large {
-          flex: 2;
+          flex: 1.46;
           min-height: 0;
           overflow: hidden;
           border-radius: 4px;
