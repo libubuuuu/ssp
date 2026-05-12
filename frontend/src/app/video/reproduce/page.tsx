@@ -72,9 +72,9 @@ export default function VideoReproduceHub() {
 
         .preview {
           width: 100%;
-          aspect-ratio: 420 / 480;
-          border-radius: 10px;
+          aspect-ratio: 1 / 1;
           overflow: hidden;
+          border-radius: 10px;
           margin-bottom: 14px;
           background: #F5F2EC;
         }
@@ -83,8 +83,6 @@ export default function VideoReproduceHub() {
           height: 100%;
           object-fit: cover;
           display: block;
-          user-select: none;
-          -webkit-user-drag: none;
         }
 
         .titleRow {
