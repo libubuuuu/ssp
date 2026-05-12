@@ -58,6 +58,27 @@ export const en = {
       history: { label: "History", desc: "All generation records" },
       pricing: { label: "Top Up", desc: "Credit packages" },
     },
+    cards: {
+      imageGen: { title: "Image Generation", desc: "Product · Model · Multi-Reference" },
+      videoClone: { title: "Video Reproduction", desc: "Frame Split · Image-to-Video · Video-to-Video" },
+      videoGen: { title: "Video Generation", desc: "Upload an image · Write a prompt · AI films a 5-10s clip" },
+    },
+    popupStudio: "One-Click Studio",
+    popupLater: "Maybe later",
+    carousel: {
+      tag: "Featured Scene Templates",
+      prev: "Previous",
+      next: "Next",
+      slideAria: "Slide {n}",
+      slides: {
+        s1: { title: "Oil Painting Dream Garden", subtitle: "Step through the painted arch into a garden where dream and reality meet" },
+        s2: { title: "Vine Arch Garden", subtitle: "A vine-wrapped arch leading to a distant sea of flowers, dappled with light" },
+        s3: { title: "Seaside Town", subtitle: "Lighthouse keeps watch over the coast, gulls and flower paths walk together" },
+        s4: { title: "Forest Maiden", subtitle: "Fallen leaves as a backdrop, a portrait in shifting dappled light" },
+        s5: { title: "Dusk by the Lake", subtitle: "The setting sun gilds the water, with sails scattered in a warm-toned sketch" },
+        s6: { title: "Cottage in the Countryside", subtitle: "A watercolor of a rural garden in the morning light" },
+      },
+    },
   },
   auth: {
     loginTitle: "Log In",

@@ -58,6 +58,27 @@ export const zh = {
       history: { label: "任务历史", desc: "查看所有生成记录" },
       pricing: { label: "充值中心", desc: "积分套餐与充值" },
     },
+    cards: {
+      imageGen: { title: "图片生成", desc: "电商主图 · 模特图 · 多图参考" },
+      videoClone: { title: "视频复刻", desc: "分镜复刻 · 图片复刻 · 视频复刻" },
+      videoGen: { title: "视频生成", desc: "上传一张图 · 写提示词 · AI 拍 5-10s 短片" },
+    },
+    popupStudio: "一键生图工作室",
+    popupLater: "稍后再看",
+    carousel: {
+      tag: "精选场景模板",
+      prev: "上一张",
+      next: "下一张",
+      slideAria: "第 {n} 张",
+      slides: {
+        s1: { title: "油画梦境花园", subtitle: "穿过油画拱门,梦门通向与现境的花园,无声起步" },
+        s2: { title: "藤蔓拱门花园", subtitle: "藤蔓缠绕的拱门通往远方花海,光影斑驳" },
+        s3: { title: "海边小镇", subtitle: "灯塔守望海岸,海鸟与花径同行" },
+        s4: { title: "森林少女", subtitle: "落叶为幕,光斑流转的肖像油画" },
+        s5: { title: "湖畔黄昏", subtitle: "落日染金水面,帆影点点的暖调写生" },
+        s6: { title: "田园小屋", subtitle: "水彩笔触下的乡村花园与清晨" },
+      },
+    },
   },
   auth: {
     loginTitle: "登录",

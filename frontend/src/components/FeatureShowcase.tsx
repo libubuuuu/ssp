@@ -1,9 +1,9 @@
 "use client";
 import { useRouter } from "next/navigation";
+import { useLang } from "@/lib/i18n/LanguageContext";
 
 interface Card {
-  title: string;
-  desc: string;
+  i18nKey: string;
   route: string;
   // 多角度 conic-gradient,用 background-position 跑动画
   gradient: string;
@@ -14,8 +14,7 @@ interface Card {
 
 const CARDS: Card[] = [
   {
-    title: "图片生成",
-    desc: "电商主图 · 模特图 · 多图参考",
+    i18nKey: "imageGen",
     route: "/image",
     gradient:
       "linear-gradient(135deg,#ff0844 0%,#ff5858 20%,#f857a6 45%,#ff9966 70%,#ffe53b 100%)",
@@ -25,8 +24,7 @@ const CARDS: Card[] = [
     lightBg: "#FBEFE6",
   },
   {
-    title: "视频复刻",
-    desc: "分镜复刻 · 图片复刻 · 视频复刻",
+    i18nKey: "videoClone",
     route: "/video/reproduce",
     gradient:
       "linear-gradient(135deg,#0061ff 0%,#4facfe 25%,#00f2fe 50%,#43e97b 75%,#a18cd1 100%)",
@@ -36,8 +34,7 @@ const CARDS: Card[] = [
     lightBg: "#E6EEF5",
   },
   {
-    title: "视频生成",
-    desc: "上传一张图 · 写提示词 · AI 拍 5-10s 短片",
+    i18nKey: "videoGen",
     route: "/video",
     gradient:
       "linear-gradient(135deg,#fa709a 0%,#ee9ca7 25%,#fee140 50%,#c471f5 75%,#fa71cd 100%)",
@@ -55,6 +52,9 @@ interface Props {
 
 export default function FeatureShowcase({ mode, onClose }: Props) {
   const router = useRouter();
+  const { t } = useLang();
+  const getTitle = (key: string) => t(`dashboard.cards.${key}.title`);
+  const getDesc = (key: string) => t(`dashboard.cards.${key}.desc`);
   const handlePick = (route: string) => {
     if (mode === "popup" && onClose) onClose();
     router.push(route);
@@ -166,7 +166,7 @@ export default function FeatureShowcase({ mode, onClose }: Props) {
                 letterSpacing: "0.05em",
               }}
             >
-              一键生图工作室
+              {t("dashboard.popupStudio")}
             </div>
             <div
               style={{
@@ -178,7 +178,7 @@ export default function FeatureShowcase({ mode, onClose }: Props) {
             >
               {CARDS.map((c) => (
                 <div
-                  key={c.title}
+                  key={c.i18nKey}
                   className="popupCard"
                   onClick={() => handlePick(c.route)}
                   style={{
@@ -204,7 +204,7 @@ export default function FeatureShowcase({ mode, onClose }: Props) {
                       zIndex: 2,
                     }}
                   >
-                    {c.title}
+                    {getTitle(c.i18nKey)}
                   </div>
                   <div
                     style={{
@@ -216,7 +216,7 @@ export default function FeatureShowcase({ mode, onClose }: Props) {
                       zIndex: 2,
                     }}
                   >
-                    {c.desc}
+                    {getDesc(c.i18nKey)}
                   </div>
                   <div
                     className="popupArrow"
@@ -256,7 +256,7 @@ export default function FeatureShowcase({ mode, onClose }: Props) {
                 letterSpacing: "0.05em",
               }}
             >
-              稍后再看
+              {t("dashboard.popupLater")}
             </button>
           </div>
         </div>
@@ -347,7 +347,7 @@ export default function FeatureShowcase({ mode, onClose }: Props) {
       >
         {CARDS.map((c, i) => (
           <div
-            key={c.title}
+            key={c.i18nKey}
             className={`embedCard${c.image ? " hasImage" : ""}`}
             onClick={() => handlePick(c.route)}
             onMouseMove={handleMove}
@@ -382,7 +382,7 @@ export default function FeatureShowcase({ mode, onClose }: Props) {
               >
                 <img
                   src={c.image}
-                  alt={c.title}
+                  alt={getTitle(c.i18nKey)}
                   width={720}
                   height={540}
                   loading="eager"
@@ -433,7 +433,7 @@ export default function FeatureShowcase({ mode, onClose }: Props) {
                 letterSpacing: "0.02em",
               }}
             >
-              {c.title}
+              {getTitle(c.i18nKey)}
             </div>
             <div
               style={{
@@ -445,7 +445,7 @@ export default function FeatureShowcase({ mode, onClose }: Props) {
                 textShadow: c.image ? "none" : "0 1px 6px rgba(0,0,0,0.25)",
               }}
             >
-              {c.desc}
+              {getDesc(c.i18nKey)}
             </div>
             <div
               className="embedArrow"

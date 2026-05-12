@@ -1,22 +1,23 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
+import { useLang } from "@/lib/i18n/LanguageContext";
 
-interface Slide {
-  img: string;
-  title: string;
-  subtitle: string;
-}
-
-const SLIDES: Slide[] = [
-  { img: "/dashboard/carousel/44.webp",  title: "油画梦境花园", subtitle: "穿过油画拱门,梦门通向与现境的花园,无声起步" },
-  { img: "/dashboard/carousel/105.webp", title: "藤蔓拱门花园", subtitle: "藤蔓缠绕的拱门通往远方花海,光影斑驳" },
-  { img: "/dashboard/carousel/002.webp", title: "海边小镇", subtitle: "灯塔守望海岸,海鸟与花径同行" },
-  { img: "/dashboard/carousel/06.webp",  title: "森林少女", subtitle: "落叶为幕,光斑流转的肖像油画" },
-  { img: "/dashboard/carousel/04.webp",  title: "湖畔黄昏", subtitle: "落日染金水面,帆影点点的暖调写生" },
-  { img: "/dashboard/carousel/100.webp", title: "田园小屋", subtitle: "水彩笔触下的乡村花园与清晨" },
+const SLIDE_IMAGES = [
+  "/dashboard/carousel/44.webp",
+  "/dashboard/carousel/105.webp",
+  "/dashboard/carousel/002.webp",
+  "/dashboard/carousel/06.webp",
+  "/dashboard/carousel/04.webp",
+  "/dashboard/carousel/100.webp",
 ];
 
 export default function DashboardCarousel() {
+  const { t } = useLang();
+  const SLIDES = SLIDE_IMAGES.map((img, i) => ({
+    img,
+    title: t(`dashboard.carousel.slides.s${i + 1}.title`),
+    subtitle: t(`dashboard.carousel.slides.s${i + 1}.subtitle`),
+  }));
   const [idx, setIdx] = useState(0);
   const n = SLIDES.length;
 
@@ -155,16 +156,16 @@ export default function DashboardCarousel() {
           />
         ))}
         <div className="overlay">
-          <div className="overlayTag">{`#${String(idx + 1).padStart(2, "0")} 精选场景模板`}</div>
+          <div className="overlayTag">{`#${String(idx + 1).padStart(2, "0")} ${t("dashboard.carousel.tag")}`}</div>
           <h3 className="overlayTitle">{cur.title}</h3>
           <p className="overlaySub">{cur.subtitle}</p>
         </div>
-        <button className="nav prev" type="button" onClick={() => go(-1)} aria-label="上一张">
+        <button className="nav prev" type="button" onClick={() => go(-1)} aria-label={t("dashboard.carousel.prev")}>
           <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#2C2C2A" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
             <path d="M15 18l-6-6 6-6" />
           </svg>
         </button>
-        <button className="nav next" type="button" onClick={() => go(1)} aria-label="下一张">
+        <button className="nav next" type="button" onClick={() => go(1)} aria-label={t("dashboard.carousel.next")}>
           <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#2C2C2A" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
             <path d="M9 6l6 6-6 6" />
           </svg>
@@ -177,7 +178,7 @@ export default function DashboardCarousel() {
             type="button"
             className={`dot${i === idx ? " active" : ""}`}
             onClick={() => setIdx(i)}
-            aria-label={`第 ${i + 1} 张 ${s.title}`}
+            aria-label={`${t("dashboard.carousel.slideAria").replace("{n}", String(i + 1))} ${s.title}`}
           />
         ))}
       </div>
