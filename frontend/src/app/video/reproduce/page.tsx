@@ -20,6 +20,7 @@ interface CardDef {
   desc: string[];
   route: string;
   preview: Preview;
+  aspect: string; // CSS aspect-ratio,各卡不同
 }
 
 const CARDS: CardDef[] = [
@@ -28,6 +29,7 @@ const CARDS: CardDef[] = [
     desc: ["视频拆成 9 宫格", "替换元素重新出片"],
     route: "/video/frame-extract",
     preview: { kind: "nine-grid", cells: NINE_CELLS },
+    aspect: "1 / 1",
   },
   {
     title: "图片复刻",
@@ -42,6 +44,7 @@ const CARDS: CardDef[] = [
       ],
       large: "/reproduce-preview/card2/large.png",
     },
+    aspect: "3 / 4",
   },
   {
     title: "视频复刻",
@@ -54,6 +57,7 @@ const CARDS: CardDef[] = [
         { img: "/reproduce-preview/card3/bottom.png", tag: "替换后" },
       ],
     },
+    aspect: "4 / 5",
   },
 ];
 
@@ -102,7 +106,7 @@ export default function VideoReproduceHub() {
 
         .preview {
           width: 100%;
-          aspect-ratio: 1 / 1;
+          /* aspect-ratio 由每张卡自行 inline 覆盖:1/1 / 3/4 / 4/5 */
           overflow: hidden;
           border-radius: 10px;
           margin-bottom: 14px;
@@ -254,7 +258,14 @@ export default function VideoReproduceHub() {
             视频复刻
           </h2>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 18 }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1.05fr) minmax(0, 0.85fr) minmax(0, 1.1fr)",
+              alignItems: "start",
+              gap: 18,
+            }}
+          >
             {CARDS.map((c) => (
               <div
                 key={c.route}
@@ -266,7 +277,7 @@ export default function VideoReproduceHub() {
                   if (e.key === "Enter" || e.key === " ") router.push(c.route);
                 }}
               >
-                <div className="preview">
+                <div className="preview" style={{ aspectRatio: c.aspect }}>
                   {c.preview.kind === "nine-grid" && (
                     <div className="nine-grid">
                       {c.preview.cells.map((src, i) => (
