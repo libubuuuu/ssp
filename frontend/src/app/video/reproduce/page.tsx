@@ -74,6 +74,26 @@ export default function VideoReproduceHub() {
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "#edeae4", fontFamily: "-apple-system,BlinkMacSystemFont,sans-serif" }}>
       <style jsx>{`
+        .fullcardWrap {
+          cursor: pointer;
+          display: block;
+          width: 100%;
+          border-radius: 18px;
+          overflow: hidden;
+          transition: transform 0.32s cubic-bezier(0.2, 0.9, 0.3, 1.2),
+                      box-shadow 0.32s ease;
+          will-change: transform;
+        }
+        .fullcardWrap img {
+          width: 100%;
+          height: auto;
+          display: block;
+        }
+        .fullcardWrap:hover {
+          transform: translateY(-10px);
+          box-shadow: 0 24px 50px rgba(0, 0, 0, 0.14),
+                      0 6px 14px rgba(0, 0, 0, 0.06);
+        }
         .reproCard {
           background: #ffffff;
           border-radius: 18px;
@@ -280,7 +300,24 @@ export default function VideoReproduceHub() {
               gap: 22,
             }}
           >
-            {CARDS.map((c) => (
+            {CARDS.map((c, idx) => {
+              if (idx === 0) {
+                return (
+                  <div
+                    key={c.route}
+                    className="fullcardWrap"
+                    onClick={() => router.push(c.route)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") router.push(c.route);
+                    }}
+                  >
+                    <img src="/reproduce-preview/fullcard1.png" alt={c.title} draggable={false} />
+                  </div>
+                );
+              }
+              return (
               <div
                 key={c.route}
                 className="reproCard"
@@ -346,7 +383,8 @@ export default function VideoReproduceHub() {
                   ))}
                 </p>
               </div>
-            ))}
+              );
+            })}
           </div>
 
           <div style={{ marginTop: 18, fontSize: 11, color: "#9A9690", textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
