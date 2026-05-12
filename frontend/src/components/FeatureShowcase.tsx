@@ -8,6 +8,7 @@ interface Card {
   // 多角度 conic-gradient,用 background-position 跑动画
   gradient: string;
   embeddedGlow: string;
+  image?: string;
 }
 
 const CARDS: Card[] = [
@@ -19,6 +20,7 @@ const CARDS: Card[] = [
       "linear-gradient(135deg,#ff0844 0%,#ff5858 20%,#f857a6 45%,#ff9966 70%,#ffe53b 100%)",
     embeddedGlow:
       "linear-gradient(135deg,#ff0844 0%,#f857a6 50%,#ffe53b 100%)",
+    image: "/dashboard/cards/image-gen.webp",
   },
   {
     title: "视频复刻",
@@ -28,6 +30,7 @@ const CARDS: Card[] = [
       "linear-gradient(135deg,#0061ff 0%,#4facfe 25%,#00f2fe 50%,#43e97b 75%,#a18cd1 100%)",
     embeddedGlow:
       "linear-gradient(135deg,#0061ff 0%,#00f2fe 50%,#a18cd1 100%)",
+    image: "/dashboard/cards/video-clone.webp",
   },
   {
     title: "视频生成",
@@ -340,11 +343,11 @@ export default function FeatureShowcase({ mode, onClose }: Props) {
         {CARDS.map((c, i) => (
           <div
             key={c.title}
-            className="embedCard"
+            className={`embedCard${c.image ? " hasImage" : ""}`}
             onClick={() => handlePick(c.route)}
             onMouseMove={handleMove}
             style={{
-              background: c.gradient,
+              background: c.image ? "#1a1a18" : c.gradient,
               border: "1px solid rgba(255,255,255,0.1)",
               borderRadius: "24px",
               aspectRatio: "5/6",
@@ -358,27 +361,60 @@ export default function FeatureShowcase({ mode, onClose }: Props) {
               boxShadow: "0 14px 40px rgba(0,0,0,0.18)",
             }}
           >
-            <div
-              className="embedBlob"
-              style={{
-                top: i === 0 ? "10%" : i === 1 ? "20%" : "-5%",
-                left: i === 0 ? "10%" : i === 1 ? "50%" : "30%",
-                background: c.embeddedGlow,
-                opacity: 0.6,
-                animationDelay: `${i * 1.5}s`,
-              }}
-            />
-            <div
-              className="embedBlob"
-              style={{
-                bottom: "0%",
-                right: i === 0 ? "10%" : i === 1 ? "0%" : "20%",
-                background: c.gradient,
-                opacity: 0.45,
-                animationDelay: `${i * 1.5 + 4}s`,
-                animationDuration: "13s",
-              }}
-            />
+            {c.image ? (
+              <>
+                <img
+                  src={c.image}
+                  alt={c.title}
+                  width={720}
+                  height={540}
+                  loading="eager"
+                  decoding="async"
+                  draggable={false}
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
+                    zIndex: 0,
+                  }}
+                />
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    background: "linear-gradient(to top, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.35) 35%, transparent 65%)",
+                    zIndex: 1,
+                    pointerEvents: "none",
+                  }}
+                />
+              </>
+            ) : (
+              <>
+                <div
+                  className="embedBlob"
+                  style={{
+                    top: i === 0 ? "10%" : i === 1 ? "20%" : "-5%",
+                    left: i === 0 ? "10%" : i === 1 ? "50%" : "30%",
+                    background: c.embeddedGlow,
+                    opacity: 0.6,
+                    animationDelay: `${i * 1.5}s`,
+                  }}
+                />
+                <div
+                  className="embedBlob"
+                  style={{
+                    bottom: "0%",
+                    right: i === 0 ? "10%" : i === 1 ? "0%" : "20%",
+                    background: c.gradient,
+                    opacity: 0.45,
+                    animationDelay: `${i * 1.5 + 4}s`,
+                    animationDuration: "13s",
+                  }}
+                />
+              </>
+            )}
             <div
               style={{
                 position: "relative",
