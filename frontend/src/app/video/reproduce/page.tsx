@@ -155,7 +155,7 @@ export default function VideoReproduceHub() {
             视频复刻
           </h2>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 18 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 18 }}>
             {CARDS.map((c) => (
               <div
                 key={c.route}
