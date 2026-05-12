@@ -8,10 +8,12 @@
  *   "为订立、履行个人作为一方当事人的合同所必需"法定要件
  */
 import { useState, useEffect } from "react";
+import { useLang } from "@/lib/i18n/LanguageContext";
 
 const STORAGE_KEY = "cookie_consent";
 
 export default function CookieConsent() {
+  const { t } = useLang();
   const [show, setShow] = useState(false);
 
   useEffect(() => {
@@ -41,11 +43,11 @@ export default function CookieConsent() {
     }}>
       <div style={{ maxWidth: "1200px", margin: "0 auto", display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ flex: "1 1 400px", minWidth: 0 }}>
-          <strong style={{ color: "#f59e0b" }}>🍪 Cookie 偏好</strong>
+          <strong style={{ color: "#f59e0b" }}>🍪 {t("cookie.title")}</strong>
           <span style={{ marginLeft: "0.5rem", color: "#bbb" }}>
-            我们使用 Cookie 维持您的登录态和偏好。详见
+            {t("cookie.body")}
             <a href="/cookie" target="_blank" rel="noopener noreferrer" style={{ color: "#f59e0b", marginLeft: "0.3rem", textDecoration: "underline" }}>
-              《Cookie 政策》
+              {t("cookie.policy")}
             </a>。
           </span>
         </div>
@@ -58,7 +60,7 @@ export default function CookieConsent() {
               border: "1px solid #555", borderRadius: "6px",
               cursor: "pointer", fontSize: "0.85rem",
             }}>
-            仅必要
+            {t("cookie.necessary")}
           </button>
           <button
             onClick={() => accept("all")}
@@ -69,7 +71,7 @@ export default function CookieConsent() {
               cursor: "pointer", fontSize: "0.85rem",
               fontWeight: 600,
             }}>
-            接受全部
+            {t("cookie.acceptAll")}
           </button>
         </div>
       </div>

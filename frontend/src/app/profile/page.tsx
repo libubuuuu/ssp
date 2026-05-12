@@ -57,14 +57,14 @@ export default function ProfilePage(){
       setUser(newUser);
       // dispatch user-updated → sidebar/admin layout 立刻刷新昵称
       updateLocalUser({name});
-      setNameMsg("✓ 昵称已更新");
+      setNameMsg(t("profile.nameUpdated"));
       setTimeout(()=>setNameMsg(""),2000);
     }catch(e){setNameErr(errMsg(e));}
   };
 
   const changePwd=async()=>{
     setPwdMsg("");setPwdErr("");
-    if(newPwd.length<6){setPwdErr("新密码至少6位");return;}
+    if(newPwd.length<6){setPwdErr(t("profile.pwdTooShort"));return;}
     try{
       const token=localStorage.getItem("token")||"";
       const res=await fetch(`${API_BASE}/api/auth/change-password`,{
@@ -74,7 +74,7 @@ export default function ProfilePage(){
       });
       const data=await res.json();
       if(!res.ok)throw new Error(data.detail||t("errors.modifyFailed"));
-      setPwdMsg("✓ 密码已修改");
+      setPwdMsg(t("profile.pwdUpdated"));
       setCurPwd("");setNewPwd("");
       setTimeout(()=>setPwdMsg(""),2000);
     }catch(e){setPwdErr(errMsg(e));}

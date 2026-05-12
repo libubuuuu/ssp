@@ -51,7 +51,7 @@ export default function ImagePage(){
     setError("");setUploading(true);
     try{
       // 七十三续:前端压缩,5MB → 500KB,上传 30s → 3s
-      setMsg("正在压缩图片...");
+      setMsg(t("image.compressing"));
       const compressed = await compressImage(file);
       setMsg("");
       const token=localStorage.getItem("token")||"";
@@ -130,10 +130,10 @@ export default function ImagePage(){
       <main style={{flex:1,padding:"2rem 2.5rem",overflowY:"auto",maxWidth:"1280px",width:"100%",margin:"0 auto"}}>
         <div style={{marginBottom:"1.5rem",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div>
-            <div style={{fontSize:"0.85rem",color:"#999",marginBottom:"0.3rem"}}>文生图 · 图生图 · 多参考图</div>
-            <h1 style={{fontSize:"1.6rem",fontWeight:400,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>图片生成</h1>
+            <div style={{fontSize:"0.85rem",color:"#999",marginBottom:"0.3rem"}}>{t("dashboard.features.image.desc")}</div>
+            <h1 style={{fontSize:"1.6rem",fontWeight:400,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>{t("dashboard.features.image.label")}</h1>
           </div>
-          {gallery.length>0 && <button onClick={()=>{if(confirm(t("confirms.clearCanvas"))){saveGallery([]);}}} style={{background:"none",border:"1px solid #ddd",padding:"0.5rem 1rem",borderRadius:"999px",color:"#666",fontSize:"0.85rem",cursor:"pointer"}}>清空画布</button>}
+          {gallery.length>0 && <button onClick={()=>{if(confirm(t("confirms.clearCanvas"))){saveGallery([]);}}} style={{background:"none",border:"1px solid #ddd",padding:"0.5rem 1rem",borderRadius:"999px",color:"#666",fontSize:"0.85rem",cursor:"pointer"}}>{t("image.clearBtn")}</button>}
         </div>
         <div style={{background:"#fafaf7",backgroundImage:"linear-gradient(rgba(0,0,0,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.05) 1px, transparent 1px)",backgroundSize:"40px 40px",borderRadius:"24px",minHeight:"calc(100vh - 180px)",padding:"2rem",border:"2px dashed rgba(0,0,0,0.2)"}}>
           {gallery.length===0 && !loading && (
@@ -192,7 +192,7 @@ export default function ImagePage(){
           <div style={{display:"flex",gap:"0.4rem",flexWrap:"wrap"}}>
             {refPreviews.map((p,i)=>(
               <div key={i} style={{position:"relative",width:60,height:60}}>
-                <img src={p} alt="参考图" style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:8}}/>
+                <img src={p} alt={t("image.refAlt")} style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:8}}/>
                 <button onClick={()=>removeRef(i)} style={{position:"absolute",top:-6,right:-6,width:18,height:18,borderRadius:"50%",background:"#c00",color:"#fff",border:"none",cursor:"pointer",fontSize:"0.7rem",lineHeight:1}}>×</button>
               </div>
             ))}

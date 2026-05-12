@@ -65,34 +65,34 @@ export default function VideoPage() {
       body: fd,
     });
     const d = await r.json();
-    if (!r.ok) throw new Error(d.detail || "图片上传失败");
+    if (!r.ok) throw new Error(d.detail || t("video.uploadFailed"));
     return d.url;
   };
 
   const startGenerate = async (card: Card) => {
     if (!card.imageFile) {
-      updateCard(card.id, { error: "请上传图片" });
+      updateCard(card.id, { error: t("video.pleaseUpload") });
       return;
     }
-    updateCard(card.id, { error: "", status: "uploading", progress: "正在压缩图片..." });
+    updateCard(card.id, { error: "", status: "uploading", progress: t("image.compressing") });
     try {
       const imgUrl = await uploadImage(card.imageFile);
-      updateCard(card.id, { progress: "上传完成..." });
-      updateCard(card.id, { progress: "提交任务中..." });
+      updateCard(card.id, { progress: t("video.uploaded") });
+      updateCard(card.id, { progress: t("video.submitting") });
       const token = localStorage.getItem("token") || "";
       const res = await fetch(`${API_BASE}/api/jobs/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           type: "video_i2v",
-          title: card.prompt.slice(0, 30) || "图生视频",
+          title: card.prompt.slice(0, 30) || t("tasks.mod_i2v"),
           params: { image_url: imgUrl, prompt: card.prompt, duration_sec: card.duration },
         }),
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.detail || t("errors.submitFailed"));
       if (typeof d.cost === "number" && d.cost > 0) adjustLocalUserCredits(-d.cost);
-      updateCard(card.id, { jobId: d.job_id, status: "pending", progress: "排队中..." });
+      updateCard(card.id, { jobId: d.job_id, status: "pending", progress: t("video.queued") });
       startPolling(card.id, d.job_id);
     } catch (e) {
       updateCard(card.id, { status: "failed", error: errMsg(e), progress: "" });
@@ -115,12 +115,12 @@ export default function VideoPage() {
           clearInterval(pollRefs.current[cardId]);
           delete pollRefs.current[cardId];
         } else if (j.status === "failed") {
-          updateCard(cardId, { status: "failed", error: j.error || "失败", progress: "" });
+          updateCard(cardId, { status: "failed", error: j.error || t("video.failed"), progress: "" });
           clearInterval(pollRefs.current[cardId]);
           delete pollRefs.current[cardId];
         } else {
           const mins = Math.floor(sec / 60), s = sec % 60;
-          updateCard(cardId, { status: j.status === "running" ? "running" : "pending", progress: `生成中 ${mins}分${s}秒...` });
+          updateCard(cardId, { status: j.status === "running" ? "running" : "pending", progress: t("video.generatingTime").replace("{m}", String(mins)).replace("{s}", String(s)) });
         }
       } catch {}
     }, 5000);
@@ -147,7 +147,7 @@ export default function VideoPage() {
             <div key={c.id} style={{ background: "#fff", borderRadius: 16, padding: "1.2rem", border: "1px solid #eee", position: "relative" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
                 <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "#333" }}>{t("video.window")} #{idx + 1}</div>
-                <button onClick={() => removeCard(c.id)} style={{ background: "none", border: "none", color: "#999", cursor: "pointer", fontSize: "0.85rem" }}>✕ 关闭</button>
+                <button onClick={() => removeCard(c.id)} style={{ background: "none", border: "none", color: "#999", cursor: "pointer", fontSize: "0.85rem" }}>{t("video.closeBtn")}</button>
               </div>
 
               {/* 图片 */}
@@ -159,7 +159,7 @@ export default function VideoPage() {
                       updateCard(c.id, { imageFile: f, imagePreview: URL.createObjectURL(f) });
                     }} />
                   {c.imagePreview
-                    ? <img src={c.imagePreview} alt="视频首帧" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    ? <img src={c.imagePreview} alt={t("video.firstFrameAlt")} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#999", fontSize: "0.85rem" }}>{t("video.clickUpload")}</div>}
                 </label>
               </div>
@@ -189,7 +189,7 @@ export default function VideoPage() {
                 <div style={{ marginBottom: "0.5rem" }}>
                   <div style={{ fontSize: "0.8rem", color: "#0a0", marginBottom: 4 }}>✅ {t("jobs.completed")}</div>
                   <video src={c.resultUrl} controls style={{ width: "100%", borderRadius: 8 }} />
-                  <a href={c.resultUrl} download target="_blank" style={{ display: "inline-block", marginTop: 6, fontSize: "0.75rem", color: "#0d0d0d" }}>⬇ 下载视频</a>
+                  <a href={c.resultUrl} download target="_blank" style={{ display: "inline-block", marginTop: 6, fontSize: "0.75rem", color: "#0d0d0d" }}>{t("video.downloadBtn")}</a>
                 </div>
               )}
 

@@ -186,8 +186,8 @@ export default function PricingPage() {
             </div>
             <div style={{ background: "#f5f5f0", padding: "0.75rem", borderRadius: 8, marginBottom: "1rem", fontFamily: "monospace", fontSize: "0.82rem" }}>
               {t("pricing.orderNoLabel")}: <span style={{ fontWeight: 600, userSelect: "all" }}>{processingOrder}</span>
-              <button onClick={() => { navigator.clipboard.writeText(processingOrder); setSuccess("订单号已复制"); setTimeout(() => setSuccess(null), 2000); }}
-                style={{ marginLeft: 8, background: "#0d0d0d", color: "#fff", border: "none", borderRadius: 6, padding: "0.2rem 0.6rem", fontSize: "0.75rem", cursor: "pointer" }}>复制</button>
+              <button onClick={() => { navigator.clipboard.writeText(processingOrder); setSuccess(t("pricing.orderNoCopied")); setTimeout(() => setSuccess(null), 2000); }}
+                style={{ marginLeft: 8, background: "#0d0d0d", color: "#fff", border: "none", borderRadius: 6, padding: "0.2rem 0.6rem", fontSize: "0.75rem", cursor: "pointer" }}>{t("pricing.copyBtn")}</button>
             </div>
             <div style={{ fontSize: "0.8rem", color: "#999", marginBottom: "1rem" }}>{t("pricing.waitConfirm")}</div>
             <button onClick={() => { setProcessingOrder(null); setLoading(false); }}

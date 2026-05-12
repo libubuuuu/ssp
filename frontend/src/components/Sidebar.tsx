@@ -63,14 +63,14 @@ export default function Sidebar() {
         ⌂
       </Link>
 
-      <Link href="/tasks/history" prefetch title="任务中心"
+      <Link href="/tasks/history" prefetch title={t("sidebar.history")}
         style={{width:"48px",height:"48px",borderRadius:"12px",background:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.2rem",color:"#666",textDecoration:"none",transition:"all 0.15s"}}
         onMouseEnter={e=>{(e.currentTarget as HTMLAnchorElement).style.background="#f9f7f2";}}
         onMouseLeave={e=>{(e.currentTarget as HTMLAnchorElement).style.background="none";}}>
         ☰
       </Link>
 
-      <Link href="/pricing" prefetch title="充值中心"
+      <Link href="/pricing" prefetch title={t("sidebar.pricing")}
         style={{width:"48px",height:"48px",borderRadius:"12px",background:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.1rem",color:"#666",textDecoration:"none",transition:"all 0.15s"}}
         onMouseEnter={e=>{(e.currentTarget as HTMLAnchorElement).style.background="#f9f7f2";}}
         onMouseLeave={e=>{(e.currentTarget as HTMLAnchorElement).style.background="none";}}>
