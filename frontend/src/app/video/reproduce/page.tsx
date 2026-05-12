@@ -45,7 +45,7 @@ const CARDS: CardDef[] = [
       ],
       large: "/reproduce-preview/card2/large.webp",
     },
-    aspect: "1448 / 1086",
+    aspect: "1 / 1",
   },
   {
     title: "视频复刻",
@@ -202,6 +202,7 @@ export default function VideoReproduceHub() {
           min-height: 0;
           overflow: hidden;
           border-radius: 4px;
+          margin-top: 18px;
         }
 
         /* 卡 3:2 视频堆叠(规范 7 flex column + 每 cell flex:1 + min-height:0) */
