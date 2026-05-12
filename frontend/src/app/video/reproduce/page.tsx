@@ -6,31 +6,29 @@ interface CardDef {
   title: string;
   desc: string[];
   route: string;
-  img: string;
-  alt: string;
+  preview: { kind: "nine-grid"; cells: string[] } | { kind: "single"; img: string; alt: string };
 }
+
+const NINE_CELLS = Array.from({ length: 9 }, (_, i) => `/reproduce-preview/nine/cell${i + 1}.png`);
 
 const CARDS: CardDef[] = [
   {
     title: "分镜复刻",
     desc: ["视频拆成 9 宫格", "替换元素重新出片"],
     route: "/video/frame-extract",
-    img: "/reproduce-preview/card1.png",
-    alt: "分镜复刻预览",
+    preview: { kind: "nine-grid", cells: NINE_CELLS },
   },
   {
     title: "图片复刻",
     desc: ["产品图 + 模特", "AI 出脚本 + 拍片"],
     route: "/video/general",
-    img: "/reproduce-preview/card2.png",
-    alt: "图片复刻预览",
+    preview: { kind: "single", img: "/reproduce-preview/card2.png", alt: "图片复刻预览" },
   },
   {
     title: "视频复刻",
     desc: ["参考视频一键换产品", "Seedance r2v"],
     route: "/video-clone-v2",
-    img: "/reproduce-preview/card3.png",
-    alt: "视频复刻预览",
+    preview: { kind: "single", img: "/reproduce-preview/card3.png", alt: "视频复刻预览" },
   },
 ];
 
@@ -83,6 +81,22 @@ export default function VideoReproduceHub() {
           height: 100%;
           object-fit: cover;
           display: block;
+        }
+
+        .nine-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          grid-template-rows: repeat(3, 1fr);
+          gap: 3px;
+          width: 100%;
+          height: 100%;
+        }
+        .nine-grid img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          display: block;
+          border-radius: 3px;
         }
 
         .titleRow {
@@ -168,7 +182,15 @@ export default function VideoReproduceHub() {
                 }}
               >
                 <div className="preview">
-                  <img src={c.img} alt={c.alt} draggable={false} />
+                  {c.preview.kind === "nine-grid" ? (
+                    <div className="nine-grid">
+                      {c.preview.cells.map((src, i) => (
+                        <img key={i} src={src} alt="" draggable={false} />
+                      ))}
+                    </div>
+                  ) : (
+                    <img src={c.preview.img} alt={c.preview.alt} draggable={false} />
+                  )}
                 </div>
                 <div className="titleRow">
                   <span className="title">{c.title}</span>
