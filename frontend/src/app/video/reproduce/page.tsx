@@ -37,13 +37,11 @@ const CARDS: CardDef[] = [
     desc: ["产品图 + 模特", "AI 出脚本 + 拍片"],
     route: "/video/general",
     preview: {
-      kind: "stack-3-1",
-      smalls: [
-        "/reproduce-preview/card2/small1.webp",
-        "/reproduce-preview/card2/small2.webp",
-        "/reproduce-preview/card2/small3.webp",
+      kind: "stack-2",
+      cells: [
+        { img: "/reproduce-preview/card2/top.webp", tag: "" },
+        { img: "/reproduce-preview/card2/bot.webp", tag: "" },
       ],
-      large: "/reproduce-preview/card2/large.webp",
     },
     aspect: "1 / 1",
   },
@@ -212,6 +210,9 @@ export default function VideoReproduceHub() {
           gap: 6px;
           width: 100%;
           height: 100%;
+        }
+        .stack-2 .arrowRow + .videoCell {
+          margin-top: 10px;
         }
         .stack-2 .videoCell {
           flex: 1;
