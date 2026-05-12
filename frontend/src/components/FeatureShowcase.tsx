@@ -362,7 +362,19 @@ export default function FeatureShowcase({ mode, onClose }: Props) {
             }}
           >
             {c.image ? (
-              <>
+              <div
+                style={{
+                  position: "absolute",
+                  top: "1rem",
+                  left: "1rem",
+                  right: "1rem",
+                  aspectRatio: "1448 / 1086",
+                  borderRadius: "14px",
+                  overflow: "hidden",
+                  zIndex: 0,
+                  background: "#1a1a18",
+                }}
+              >
                 <img
                   src={c.image}
                   alt={c.title}
@@ -372,24 +384,13 @@ export default function FeatureShowcase({ mode, onClose }: Props) {
                   decoding="async"
                   draggable={false}
                   style={{
-                    position: "absolute",
-                    inset: 0,
                     width: "100%",
                     height: "100%",
                     objectFit: "cover",
-                    zIndex: 0,
+                    display: "block",
                   }}
                 />
-                <div
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    background: "linear-gradient(to top, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.35) 35%, transparent 65%)",
-                    zIndex: 1,
-                    pointerEvents: "none",
-                  }}
-                />
-              </>
+              </div>
             ) : (
               <>
                 <div
