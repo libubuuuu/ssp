@@ -9,6 +9,7 @@ interface Card {
   gradient: string;
   embeddedGlow: string;
   image?: string;
+  lightBg?: string;
 }
 
 const CARDS: Card[] = [
@@ -21,6 +22,7 @@ const CARDS: Card[] = [
     embeddedGlow:
       "linear-gradient(135deg,#ff0844 0%,#f857a6 50%,#ffe53b 100%)",
     image: "/dashboard/cards/image-gen.webp",
+    lightBg: "#FBEFE6",
   },
   {
     title: "视频复刻",
@@ -31,6 +33,7 @@ const CARDS: Card[] = [
     embeddedGlow:
       "linear-gradient(135deg,#0061ff 0%,#00f2fe 50%,#a18cd1 100%)",
     image: "/dashboard/cards/video-clone.webp",
+    lightBg: "#E6EEF5",
   },
   {
     title: "视频生成",
@@ -347,8 +350,8 @@ export default function FeatureShowcase({ mode, onClose }: Props) {
             onClick={() => handlePick(c.route)}
             onMouseMove={handleMove}
             style={{
-              background: c.image ? "#1a1a18" : c.gradient,
-              border: "1px solid rgba(255,255,255,0.1)",
+              background: c.image ? (c.lightBg || "#FFFFFF") : c.gradient,
+              border: "1px solid rgba(0,0,0,0.04)",
               borderRadius: "24px",
               aspectRatio: "5/6",
               padding: "1.8rem",
@@ -358,7 +361,7 @@ export default function FeatureShowcase({ mode, onClose }: Props) {
               flexDirection: "column",
               justifyContent: "flex-end",
               overflow: "hidden",
-              boxShadow: "0 14px 40px rgba(0,0,0,0.18)",
+              boxShadow: c.image ? "0 8px 24px rgba(0,0,0,0.06)" : "0 14px 40px rgba(0,0,0,0.18)",
             }}
           >
             {c.image ? (
@@ -422,9 +425,9 @@ export default function FeatureShowcase({ mode, onClose }: Props) {
                 zIndex: 2,
                 fontSize: "1.7rem",
                 fontWeight: 600,
-                color: "#fff",
+                color: c.image ? "#2C2C2A" : "#fff",
                 marginBottom: "0.5rem",
-                textShadow: "0 2px 12px rgba(0,0,0,0.3)",
+                textShadow: c.image ? "none" : "0 2px 12px rgba(0,0,0,0.3)",
                 letterSpacing: "0.02em",
               }}
             >
@@ -435,9 +438,9 @@ export default function FeatureShowcase({ mode, onClose }: Props) {
                 position: "relative",
                 zIndex: 2,
                 fontSize: "0.92rem",
-                color: "rgba(255,255,255,0.92)",
+                color: c.image ? "#6E6A63" : "rgba(255,255,255,0.92)",
                 lineHeight: 1.55,
-                textShadow: "0 1px 6px rgba(0,0,0,0.25)",
+                textShadow: c.image ? "none" : "0 1px 6px rgba(0,0,0,0.25)",
               }}
             >
               {c.desc}
@@ -451,11 +454,11 @@ export default function FeatureShowcase({ mode, onClose }: Props) {
                 width: "38px",
                 height: "38px",
                 borderRadius: "50%",
-                border: "1px solid rgba(255,255,255,0.4)",
-                background: "rgba(255,255,255,0.18)",
+                border: c.image ? "1px solid rgba(0,0,0,0.08)" : "1px solid rgba(255,255,255,0.4)",
+                background: c.image ? "rgba(255,255,255,0.92)" : "rgba(255,255,255,0.18)",
                 backdropFilter: "blur(6px)",
                 WebkitBackdropFilter: "blur(6px)",
-                color: "#fff",
+                color: c.image ? "#2C2C2A" : "#fff",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
