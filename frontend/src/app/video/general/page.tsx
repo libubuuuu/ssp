@@ -3,6 +3,7 @@ import { useState } from "react";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
 import { errMsg } from "@/lib/utils/errors";
+import { useLang } from "@/lib/i18n/LanguageContext";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -68,11 +69,6 @@ function token() {
 }
 
 type ProductSlot = "front" | "back" | "rear";
-const PRODUCT_SLOT_LABELS: Record<ProductSlot, string> = {
-  front: "正面图(主图,必传)",
-  back: "反面图(选)",
-  rear: "背面图(选)",
-};
 const PRODUCT_SLOT_ORDER: ProductSlot[] = ["front", "back", "rear"];
 
 // 2026-05-12:Box 必须定义在 component 外,否则每次 render 都生成新 function 引用,
@@ -87,6 +83,12 @@ function Box({ children, label }: { children: React.ReactNode; label: string }) 
 }
 
 export default function VideoGeneralPage() {
+  const { t } = useLang();
+  const PRODUCT_SLOT_LABELS: Record<ProductSlot, string> = {
+    front: t("videoGeneral.productFront"),
+    back: t("videoGeneral.productBack"),
+    rear: t("videoGeneral.productRear"),
+  };
   // 2026-05-11 P226:产品图分 3 槽(正面/反面/背面),按 PRODUCT_SLOT_ORDER 顺序拼成 product_image_urls 给 backend
   const [productImagesBySlot, setProductImagesBySlot] = useState<Record<ProductSlot, string>>({ front: "", back: "", rear: "" });
   const [productFilesBySlot, setProductFilesBySlot] = useState<Record<ProductSlot, File | null>>({ front: null, back: null, rear: null });
@@ -142,7 +144,7 @@ export default function VideoGeneralPage() {
       const d = await r.json();
       setProductImagesBySlot((prev) => ({ ...prev, [slot]: d.image_url }));
     } catch (e) {
-      setError(errMsg(e, `${PRODUCT_SLOT_LABELS[slot]} 上传失败`));
+      setError(errMsg(e, `${PRODUCT_SLOT_LABELS[slot]} - upload failed`));
       setProductFilesBySlot((prev) => ({ ...prev, [slot]: null }));
     }
   };
@@ -165,7 +167,7 @@ export default function VideoGeneralPage() {
       if (!r.ok) throw new Error(await r.text());
       const d = await r.json();
       setSceneImageUrl(d.scene_image_url);
-    } catch (e) { setError(errMsg(e, "场景图上传失败")); setSceneImageFile(null); }
+    } catch (e) { setError(errMsg(e, t("videoGeneral.sceneUploadFailed"))); setSceneImageFile(null); }
   };
 
   const uploadModelImage = async (f: File) => {
@@ -181,7 +183,7 @@ export default function VideoGeneralPage() {
       if (!r.ok) throw new Error(await r.text());
       const d = await r.json();
       setModelImageUrl(d.model_image_url);
-    } catch (e) { setError(errMsg(e, "模特图上传失败")); setModelImageFile(null); }
+    } catch (e) { setError(errMsg(e, t("videoGeneral.modelUploadFailed"))); setModelImageFile(null); }
   };
 
   const uploadModelVideo = async (f: File) => {
@@ -198,12 +200,12 @@ export default function VideoGeneralPage() {
       const d = await r.json();
       setModelVideoUrl(d.video_url);
       setModelImageUrl(d.model_image_url);  // 视频中间帧自动作为模特图
-    } catch (e) { setError(errMsg(e, "模特视频上传失败")); setModelVideoFile(null); }
+    } catch (e) { setError(errMsg(e, t("videoGeneral.modelVideoUploadFailed"))); setModelVideoFile(null); }
   };
 
   const analyze = async () => {
-    if (!productImageUrls.length) { setError("请至少上传 1 张产品图"); return; }
-    setError(""); setAnalyzing(true); setAnalyzeMsg("提交分析...");
+    if (!productImageUrls.length) { setError(t("videoGeneral.pleaseUploadProduct")); return; }
+    setError(""); setAnalyzing(true); setAnalyzeMsg(t("videoGeneral.submitAnalyze"));
     try {
       const r = await fetch(`${API_BASE}/api/video/general/analyze`, {
         method: "POST",
@@ -219,7 +221,7 @@ export default function VideoGeneralPage() {
       const d = await r.json();
       const aid = d.analyze_job_id;
       adjustLocalUserCredits(-1);
-      setAnalyzeMsg("AI 分析中(品类识别 + 卖点提取 + 脚本生成,30-90s)...");
+      setAnalyzeMsg(t("videoGeneral.analyzing"));
       let elapsed = 0;
       const interval = setInterval(async () => {
         elapsed += 5;
@@ -243,19 +245,19 @@ export default function VideoGeneralPage() {
             setAnalyzing(false); setAnalyzeMsg("");
           } else if (sd.status === "failed") {
             clearInterval(interval);
-            setError(sd.error || "分析失败");
+            setError(sd.error || t("videoGeneral.analyzeFailed"));
             setAnalyzing(false); setAnalyzeMsg("");
           } else {
             setAnalyzeMsg(`AI 分析中... 已 ${elapsed}s`);
           }
         } catch {}
       }, 5000);
-    } catch (e) { setError(errMsg(e, "分析失败")); setAnalyzing(false); setAnalyzeMsg(""); }
+    } catch (e) { setError(errMsg(e, t("videoGeneral.analyzeFailed"))); setAnalyzing(false); setAnalyzeMsg(""); }
   };
 
   const generateStoryboard = async () => {
     if (!analyzeResult) return;
-    setError(""); setStoryboardLoading(true); setStoryboardMsg("提交分镜预览...");
+    setError(""); setStoryboardLoading(true); setStoryboardMsg(t("videoGeneral.submitStoryboard"));
     setStoryboardUrl(""); setCharacterSheetUrl(""); setStoryboardModelUrl(""); setStoryboardNPanels(0);
     try {
       const r = await fetch(`${API_BASE}/api/video/general/storyboard`, {
@@ -304,14 +306,14 @@ export default function VideoGeneralPage() {
             }
           } else if (sd.status === "failed") {
             clearInterval(interval);
-            setError(sd.error || "分镜板生成失败");
+            setError(sd.error || t("videoGeneral.storyboardFailed"));
             setStoryboardLoading(false); setStoryboardMsg("");
           } else {
             setStoryboardMsg(`AI 分镜板生成中... 已 ${elapsed}s`);
           }
         } catch {}
       }, 5000);
-    } catch (e) { setError(errMsg(e, "分镜板生成失败")); setStoryboardLoading(false); setStoryboardMsg(""); }
+    } catch (e) { setError(errMsg(e, t("videoGeneral.storyboardFailed"))); setStoryboardLoading(false); setStoryboardMsg(""); }
   };
 
   const updateScene = (idx: number, key: keyof Scene, val: string) => {
@@ -322,7 +324,7 @@ export default function VideoGeneralPage() {
 
   const generate = async () => {
     if (!analyzeResult) return;
-    setError(""); setGenerating(true); setGenerateMsg("提交生成...");
+    setError(""); setGenerating(true); setGenerateMsg(t("videoGeneral.submitGenerate"));
     try {
       const r = await fetch(`${API_BASE}/api/video/general/generate`, {
         method: "POST",
@@ -372,14 +374,14 @@ export default function VideoGeneralPage() {
             setGenerating(false); setGenerateMsg("");
           } else if (sd.status === "failed") {
             clearInterval(interval);
-            setError(sd.error || "生成失败");
+            setError(sd.error || t("videoGeneral.generateFailed"));
             setGenerating(false); setGenerateMsg("");
           } else {
             setGenerateMsg(`生成中... 已 ${Math.floor(elapsed/60)}:${(elapsed%60).toString().padStart(2,"0")}`);
           }
         } catch {}
       }, 10000);
-    } catch (e) { setError(errMsg(e, "生成失败")); setGenerating(false); setGenerateMsg(""); }
+    } catch (e) { setError(errMsg(e, t("videoGeneral.generateFailed"))); setGenerating(false); setGenerateMsg(""); }
   };
 
   return (
@@ -388,7 +390,7 @@ export default function VideoGeneralPage() {
       <main style={{ flex: 1, padding: "2rem 2.5rem", overflowY: "auto", maxWidth: 1100, width: "100%", margin: "0 auto" }}>
         <div style={{ marginBottom: "1.5rem" }}>
           <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>AI 创作工具</div>
-          <h1 style={{ fontSize: "1.8rem", fontWeight: 400, margin: 0, fontFamily: "Georgia,serif" }}>图片<span style={{ fontStyle: "italic" }}> 复刻</span></h1>
+          <h1 style={{ fontSize: "1.8rem", fontWeight: 400, margin: 0, fontFamily: "Georgia,serif" }}>{t("videoGeneral.titleMain")}<span style={{ fontStyle: "italic" }}> {t("videoGeneral.titleAccent")}</span></h1>
           <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
             食品 / 日用品 / 化妆品 / 3C / 服装 — 多张产品图 + 可选真人模特视频 → AI 自动判品类 + 出脚本 + 模特持/穿/用产品视频
           </div>
@@ -398,7 +400,7 @@ export default function VideoGeneralPage() {
           <div style={{ background: "#fff3f3", border: "1px solid #fcc", color: "#c33", padding: "0.8rem 1rem", borderRadius: 10, marginBottom: "1rem", fontSize: "0.9rem", whiteSpace: "pre-wrap" }}>{error}</div>
         )}
 
-        <Box label="① 上传产品图(3 角度 — 正面必传 / 反面 / 背面)+ 场景图(可选)">
+        <Box label={t("videoGeneral.box1")}>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
             {PRODUCT_SLOT_ORDER.map((slot) => {
               const url = productImagesBySlot[slot];
@@ -438,12 +440,12 @@ export default function VideoGeneralPage() {
           <div style={{ fontSize: "0.78rem", color: "#999" }}>正面图必传,反面/背面/场景图可选。每张 ≤ 10MB。</div>
         </Box>
 
-        <Box label="② 模特来源(可选,三选一)">
+        <Box label={t("videoGeneral.box2")}>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
             {[
-              { value: "auto", label: "AI 自动出模特", desc: "GPT-Image 2 出亚洲/西方面孔(按市场)" },
-              { value: "image", label: "上传模特图", desc: "用你提供的人作模特" },
-              { value: "video", label: "上传模特视频", desc: "用视频里那个人作模特(抽中间帧)" },
+              { value: "auto", label: t("videoGeneral.modelAuto"), desc: t("videoGeneral.modelAutoDesc") },
+              { value: "image", label: t("videoGeneral.modelImage"), desc: t("videoGeneral.modelImageDesc") },
+              { value: "video", label: t("videoGeneral.modelVideo"), desc: t("videoGeneral.modelVideoDesc") },
             ].map((o) => (
               <label key={o.value} style={{ flex: 1, minWidth: 180, border: modelSource === o.value ? "2px solid #0d8a3e" : "1px solid #ddd", borderRadius: 10, padding: "0.7rem", cursor: "pointer", background: modelSource === o.value ? "#f0fdf4" : "#fff" }}>
                 <input type="radio" name="model" value={o.value} checked={modelSource === o.value} onChange={() => setModelSource(o.value as "auto" | "image" | "video")} style={{ marginRight: 6 }} />
@@ -455,18 +457,18 @@ export default function VideoGeneralPage() {
           {modelSource === "image" && (
             <label style={{ display: "block", border: "2px dashed #ddd", borderRadius: 10, padding: "0.8rem", textAlign: "center", cursor: "pointer", background: modelImageFile ? "#f9f7f2" : "#fff" }}>
               <input type="file" accept="image/*" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) uploadModelImage(f); }} />
-              {modelImageFile ? `✓ ${modelImageFile.name}` : "点击上传模特图(JPG/PNG, ≤10MB)"}
+              {modelImageFile ? `✓ ${modelImageFile.name}` : t("videoGeneral.uploadModelImage")}
             </label>
           )}
           {modelSource === "video" && (
             <label style={{ display: "block", border: "2px dashed #ddd", borderRadius: 10, padding: "0.8rem", textAlign: "center", cursor: "pointer", background: modelVideoFile ? "#f9f7f2" : "#fff" }}>
               <input type="file" accept="video/*" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) uploadModelVideo(f); }} />
-              {modelVideoFile ? `✓ ${modelVideoFile.name}` : "点击上传模特视频(MP4/MOV, ≤100MB)"}
+              {modelVideoFile ? `✓ ${modelVideoFile.name}` : t("videoGeneral.uploadModelVideo")}
             </label>
           )}
         </Box>
 
-        <Box label="③ 视频参数 + 你的想法(想法可留空,AI 全自动)">
+        <Box label={t("videoGeneral.box3")}>
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 14 }}>
             <div>
               <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: 4 }}>总时长</div>

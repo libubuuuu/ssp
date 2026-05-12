@@ -4,6 +4,7 @@ import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
 import { errMsg } from "@/lib/utils/errors";
 import { distributeSpeechToScenes } from "@/lib/scriptMarkdown";
+import { useLang } from "@/lib/i18n/LanguageContext";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -51,6 +52,7 @@ const ImagePicker = ({ label, url, onPick, required = false }: {
 );
 
 export default function VideoFrameExtractPage() {
+  const { t } = useLang();
   // 第一步:视频提取
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -362,7 +364,7 @@ export default function VideoFrameExtractPage() {
       <main style={{ flex: 1, padding: "2rem 2.5rem", overflowY: "auto", maxWidth: 1100, width: "100%", margin: "0 auto" }}>
         <div style={{ marginBottom: "1.5rem" }}>
           <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>AI 创作工具</div>
-          <h1 style={{ fontSize: "1.8rem", fontWeight: 400, margin: 0, fontFamily: "Georgia,serif" }}>分镜<span style={{ fontStyle: "italic" }}> 复刻</span></h1>
+          <h1 style={{ fontSize: "1.8rem", fontWeight: 400, margin: 0, fontFamily: "Georgia,serif" }}>{t("frameExtract.titleMain")}<span style={{ fontStyle: "italic" }}> {t("frameExtract.titleAccent")}</span></h1>
           <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
             上传视频 → AI 拆分镜九宫格 → 上传你的产品/人物 → 替换九宫格元素 → 生成完整新视频
           </div>

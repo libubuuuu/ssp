@@ -1,6 +1,7 @@
 "use client";
 import { Fragment, useEffect, useRef, useState } from "react";
 import Sidebar from "@/components/Sidebar";
+import { useLang } from "@/lib/i18n/LanguageContext";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -104,6 +105,7 @@ interface SegmentSelection {
 }
 
 export default function VideoCloneV2Page() {
+  const { t } = useLang();
   // 上传状态
   const [video, setVideo] = useState<{ url: string; duration: number; sha256: string } | null>(null);
   const [uploadingVideo, setUploadingVideo] = useState(false);
@@ -489,7 +491,7 @@ export default function VideoCloneV2Page() {
         <div style={{ marginBottom: "1.5rem" }}>
           <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>AI 创作工具</div>
           <h1 style={{ fontSize: "1.8rem", fontWeight: 400, margin: 0, fontFamily: "Georgia,serif" }}>
-            视频<span style={{ fontStyle: "italic" }}> 复刻</span>
+            {t("videoCloneV2.titleMain")}<span style={{ fontStyle: "italic" }}> {t("videoCloneV2.titleAccent")}</span>
           </h1>
           <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
             支持 4-64 秒视频 · ¥19.9 / 段 · 输出含 xiaoLi ai · AI 生成水印 + 无标识版自选下载
