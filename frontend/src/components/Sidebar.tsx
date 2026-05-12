@@ -3,6 +3,7 @@ import LanguageSwitcher from "@/lib/i18n/LanguageSwitcher";
 import { useLang } from "@/lib/i18n/LanguageContext";
 import { useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useLocalStorageItem } from "@/lib/hooks/useLocalStorageItem";
 import { updateLocalUser } from "@/lib/userState";
 
@@ -55,26 +56,26 @@ export default function Sidebar() {
         xL
       </div>
 
-      <button onClick={()=>router.push("/dashboard")} title={t("sidebar.dashboard")}
-        style={{width:"48px",height:"48px",borderRadius:"12px",border:"none",background:"#f5f3ed",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.2rem",color:"#333",transition:"all 0.15s"}}
-        onMouseEnter={e=>{e.currentTarget.style.background="#e8e4d9";}}
-        onMouseLeave={e=>{e.currentTarget.style.background="#f5f3ed";}}>
+      <Link href="/dashboard" prefetch title={t("sidebar.dashboard")}
+        style={{width:"48px",height:"48px",borderRadius:"12px",background:"#f5f3ed",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.2rem",color:"#333",textDecoration:"none",transition:"all 0.15s"}}
+        onMouseEnter={e=>{(e.currentTarget as HTMLAnchorElement).style.background="#e8e4d9";}}
+        onMouseLeave={e=>{(e.currentTarget as HTMLAnchorElement).style.background="#f5f3ed";}}>
         ⌂
-      </button>
+      </Link>
 
-      <button onClick={()=>router.push("/tasks/history")} title="任务中心"
-        style={{width:"48px",height:"48px",borderRadius:"12px",border:"none",background:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.2rem",color:"#666",transition:"all 0.15s"}}
-        onMouseEnter={e=>{e.currentTarget.style.background="#f9f7f2";}}
-        onMouseLeave={e=>{e.currentTarget.style.background="none";}}>
+      <Link href="/tasks/history" prefetch title="任务中心"
+        style={{width:"48px",height:"48px",borderRadius:"12px",background:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.2rem",color:"#666",textDecoration:"none",transition:"all 0.15s"}}
+        onMouseEnter={e=>{(e.currentTarget as HTMLAnchorElement).style.background="#f9f7f2";}}
+        onMouseLeave={e=>{(e.currentTarget as HTMLAnchorElement).style.background="none";}}>
         ☰
-      </button>
+      </Link>
 
-      <button onClick={()=>router.push("/pricing")} title="充值中心"
-        style={{width:"48px",height:"48px",borderRadius:"12px",border:"none",background:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.1rem",color:"#666",transition:"all 0.15s"}}
-        onMouseEnter={e=>{e.currentTarget.style.background="#f9f7f2";}}
-        onMouseLeave={e=>{e.currentTarget.style.background="none";}}>
+      <Link href="/pricing" prefetch title="充值中心"
+        style={{width:"48px",height:"48px",borderRadius:"12px",background:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.1rem",color:"#666",textDecoration:"none",transition:"all 0.15s"}}
+        onMouseEnter={e=>{(e.currentTarget as HTMLAnchorElement).style.background="#f9f7f2";}}
+        onMouseLeave={e=>{(e.currentTarget as HTMLAnchorElement).style.background="none";}}>
         ✦
-      </button>
+      </Link>
 
       <div style={{marginTop:"auto",display:"flex",flexDirection:"column",alignItems:"center",gap:"0.5rem"}}>
         <div style={{fontSize:"0.7rem",color:"#888",textAlign:"center"}}>{user.credits||0}</div>
