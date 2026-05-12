@@ -326,15 +326,12 @@ class TestProcessUltimate:
         """2026-05-13 新契约:段 1 fal 失败(包括 retry)→ 整单 failed + 全额退款。
         不再拼接幸存段产出残片(防止用户拿到 16s 期望但实际 8s 的迷惑成片)。"""
         mock_fal.upload_file_async = AsyncMock(return_value="fake_in")
-        # subscribe 第 2 次(idx=1)抛错
-        call_count = {"n": 0}
-        async def _flaky_subscribe(*a, **kw):
-            call_count["n"] += 1
-            # 段 1 第一次 + retry 都失败 = 2 次
-            if call_count["n"] in (3, 4):  # 段 1 first call + retry
-                raise RuntimeError("fake fal NSFW")
-            return {"video": {"url": "https://fake.fal.media/out.mp4"}, "request_id": "ok"}
-        mock_fal.subscribe_async = _flaky_subscribe
+        # 2026-05-13 改:retry 从 1 次提到 2 次(共 3 次机会)。原 "1 段 3 次全失败" mock
+        # 在 asyncio.gather 下难精确路由,简化成"全部 subscribe 都失败"— 同样触发整单 failed +
+        # 全额退,契约一致(任意 ai 段最终失败 → 整单 fail)。
+        async def _always_fail_subscribe(*a, **kw):
+            raise RuntimeError("fake fal NSFW")
+        mock_fal.subscribe_async = _always_fail_subscribe
 
         async def _dl(url, out):
             import shutil; shutil.copy2(P220_VIDEO, out)

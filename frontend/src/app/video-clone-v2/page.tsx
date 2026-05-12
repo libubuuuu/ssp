@@ -20,6 +20,7 @@ type Status =
   | "submitting"
   | "processing"
   | "completed"
+  | "partial_completed"
   | "failed";
 
 interface SegmentChoice {
@@ -74,7 +75,7 @@ interface JobView {
   replacement_mode: string;
   status: string;
   progress: { completed: number; total_ai: number; total_original: number };
-  segments: Array<{ idx: number; source_type: string; status: string; output_url: string | null }>;
+  segments: Array<{ idx: number; source_type: string; status: string; output_url: string | null; watermarked_url?: string | null; raw_url?: string | null; error?: string | null }>;
   final_video_url: string | null;
   final_video_url_watermarked: string | null;
   final_video_url_raw: string | null;
@@ -454,11 +455,15 @@ export default function VideoCloneV2Page() {
           return;
         }
         setJob(d);
-        if (["completed", "failed", "refunded", "cancelled"].includes(d.status)) {
+        if (["completed", "partial_completed", "failed", "refunded", "cancelled"].includes(d.status)) {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
-          setSubmitStatus(d.status === "completed" ? "completed" : "failed");
-          if (d.status !== "completed") {
+          if (d.status === "completed") setSubmitStatus("completed");
+          else if (d.status === "partial_completed") setSubmitStatus("partial_completed");
+          else setSubmitStatus("failed");
+          if (d.status === "partial_completed") {
+            setError(d.error || "部分段失败,失败段已退款");
+          } else if (d.status !== "completed") {
             setError(d.error || `任务 ${d.status}`);
           }
         }
@@ -837,6 +842,49 @@ export default function VideoCloneV2Page() {
                 </a>
               </div>
             )}
+          </Section>
+        )}
+
+        {job && submitStatus === "partial_completed" && (
+          <Section title="⚠️ 部分段生成失败,成功段已分别归档">
+            <div style={{ background: "#fef3c7", border: "1px solid #fbbf24", color: "#92400e", padding: "0.8rem 1rem", borderRadius: 8, fontSize: "0.85rem", marginBottom: 16 }}>
+              {error || "部分段生成失败,失败段已退款,其余段独立下载"}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {job.segments.map((s) => (
+                <div key={s.idx} style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: "0.9rem 1rem", background: s.status === "completed" ? "#fff" : "#fef2f2" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                    <span style={{ fontWeight: 600, fontSize: "0.95rem" }}>段 {s.idx + 1}</span>
+                    {s.status === "completed" ? (
+                      <span style={{ background: "#dcfce7", color: "#166534", padding: "2px 8px", borderRadius: 4, fontSize: "0.75rem" }}>✓ 已生成</span>
+                    ) : (
+                      <span style={{ background: "#fee2e2", color: "#991b1b", padding: "2px 8px", borderRadius: 4, fontSize: "0.75rem" }}>✗ 失败(已退款)</span>
+                    )}
+                  </div>
+                  {s.status === "completed" && s.watermarked_url ? (
+                    <>
+                      <video src={s.watermarked_url} controls style={{ width: "100%", maxWidth: 360, borderRadius: 8, background: "#000", marginBottom: 10 }} />
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <a href={s.watermarked_url} download style={{ ...primaryBtn, padding: "0.5rem 0.9rem", fontSize: "0.85rem" }}>
+                          ⬇ 下载本段(带水印)
+                        </a>
+                        {s.raw_url && (
+                          <button
+                            onClick={() => alert("无水印版需先在主下载区勾选 3 项声明")}
+                            style={{ background: "none", border: "none", color: "#9ca3af", fontSize: "0.75rem", cursor: "pointer", textDecoration: "underline" }}
+                          >
+                            下载无水印版需声明 →
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ fontSize: "0.8rem", color: "#991b1b" }}>{s.error || "AI 生成失败"}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <button onClick={reset} style={{ ...primaryBtn, marginTop: 16, background: "#666" }}>重新生成</button>
           </Section>
         )}
 

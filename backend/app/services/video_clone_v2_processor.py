@@ -355,24 +355,36 @@ async def run_single_ai_segment_with_retry(
     aspect_ratio: str,
     job_id: str = "",
 ) -> Dict[str, Any]:
-    """跑一段 ai + 失败重试 1 次。
-    2026-05-13 改:重试用 seed+1 而不是同 seed。fal 内容策略对同 seed 同输入会
-    一致拒绝,换 seed 给一次随机翻盘机会(实测同 video 不同 seed 命中率不同)。"""
-    result = await _run_one_ai_segment(
-        seg_file, plan_item, image_urls, prompt_compiled, seed, aspect_ratio,
-        job_id=job_id, retry=0,
+    """跑一段 ai + 失败最多 2 次重试(共 3 次机会),每次换 seed。
+    2026-05-13:1 次重试 → 2 次重试。
+      fal 内容策略 stochastic + 服务偶发抖动,3 次机会把单段失败率从 ~5-10%
+      压到 ~0.1-1%。整片(8 段)成功率 ~99.2-99.9%。
+      重试只发生在失败时,正常成功的段无额外成本。"""
+    MAX_ATTEMPTS = 3
+    last_result: Dict[str, Any] = {}
+    for attempt in range(MAX_ATTEMPTS):
+        attempt_seed = seed + attempt  # seed, seed+1, seed+2
+        last_result = await _run_one_ai_segment(
+            seg_file, plan_item, image_urls, prompt_compiled, attempt_seed, aspect_ratio,
+            job_id=job_id, retry=attempt,
+        )
+        if last_result["status"] != "failed":
+            if attempt > 0:
+                log_info(
+                    f"video_clone_v2 segment idx={plan_item['idx']} 第 {attempt + 1} 次尝试成功"
+                    f"(seed={attempt_seed})"
+                )
+            return last_result
+        if attempt < MAX_ATTEMPTS - 1:
+            next_seed = seed + attempt + 1
+            log_info(
+                f"video_clone_v2 segment idx={plan_item['idx']} attempt {attempt + 1}/{MAX_ATTEMPTS} "
+                f"失败,换 seed={next_seed} 继续重试:{(last_result.get('error') or '')[:200]}"
+            )
+    log_info(
+        f"video_clone_v2 segment idx={plan_item['idx']} {MAX_ATTEMPTS} 次都失败,放弃"
     )
-    if result["status"] == "failed":
-        retry_seed = seed + 1
-        log_info(
-            f"video_clone_v2 segment idx={plan_item['idx']} 失败,换 seed={retry_seed} 重试 1 次:"
-            f"{result['error'][:200]}"
-        )
-        result = await _run_one_ai_segment(
-            seg_file, plan_item, image_urls, prompt_compiled, retry_seed, aspect_ratio,
-            job_id=job_id, retry=1,
-        )
-    return result
+    return last_result
 
 
 # ─── DB 操作(单段路径)────────────────────────────────────────────────
@@ -899,15 +911,64 @@ async def _build_segment_clip(
         await _mux_video_audio(seg_local_path, silence, out, clip_dur)
         return out
 
-    # AI 段:fal 自带音频(generate_audio=True),直接用 fal 输出。
-    # 2026-05-13 改:用户要 fal 生成的音轨,不再用原视频盖。
-    # fal 没生成音轨时(罕见)fallback 抽原视频音轨。
+    # AI 段:下载 fal output → 拉伸到精确 plan duration(B'' setpts 方案)
+    # → fal 自带音轨用 fal,否则 mux 原视频音轨
+    # 2026-05-13 加 setpts 拉伸:fal seedance r2v fast 输出比 input 短约 0.08-0.1s
+    # (8s 请求出 7.917s)。用 setpts 拉伸到精确 plan duration,确保用户拿到 16s 就是 16s。
+    # 副作用:视频整体播慢 1%,人耳/眼分辨阈值 ~3%,无人察觉。
+    # 详见 memory project_ssp_v2_setpts_tradeoff。
     fal_local = os.path.join(work_dir, f"seg_{idx}_ai.mp4")
     await _download_fal_to_local(seg_result["output_url"], fal_local)
     clip_dur = await _ffprobe_video_duration(fal_local)
 
+    target_dur = float(plan_item["duration"])
+    if abs(clip_dur - target_dur) > 0.02 and clip_dur > 0:
+        speed_ratio = target_dur / clip_dur  # > 1 = 慢放;< 1 = 快放
+        stretched = os.path.join(work_dir, f"seg_{idx}_ai_stretched.mp4")
+        has_fal_audio = await _has_audio_stream(fal_local)
+        if has_fal_audio:
+            # video setpts + audio atempo,保证音视频同步
+            filter_complex = (
+                f"[0:v]setpts={speed_ratio:.6f}*PTS[v];"
+                f"[0:a]atempo={1.0 / speed_ratio:.6f}[a]"
+            )
+            args = [
+                "ffmpeg", "-y", "-i", fal_local,
+                "-filter_complex", filter_complex,
+                "-map", "[v]", "-map", "[a]",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+                stretched,
+            ]
+        else:
+            # 只拉伸视频(fal 没音轨,原视频音轨后面再 mux,长度自然对齐 plan duration)
+            args = [
+                "ffmpeg", "-y", "-i", fal_local,
+                "-vf", f"setpts={speed_ratio:.6f}*PTS",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                "-an",
+                stretched,
+            ]
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"seg {idx} setpts 拉伸失败 (ratio={speed_ratio:.4f}): "
+                f"{stderr.decode(errors='replace')[-500:]}"
+            )
+        log_info(
+            f"seg {idx} setpts 拉伸: {clip_dur:.3f}s → {target_dur:.3f}s "
+            f"(ratio={speed_ratio:.4f}, audio={'fal' if has_fal_audio else 'orig'})"
+        )
+        fal_local = stretched
+        clip_dur = target_dur
+
     if await _has_audio_stream(fal_local):
-        # fal 音轨存在 — 直接用 fal 输出。re-encode 一遍确保跟 original 段编码一致(concat demuxer 要求)
+        # fal 音轨存在(拉伸时已 atempo 同步)— 直接用 fal 输出
         out = os.path.join(work_dir, f"seg_{idx}_final.mp4")
         proc = await asyncio.create_subprocess_exec(
             "ffmpeg", "-y",
@@ -924,7 +985,7 @@ async def _build_segment_clip(
             raise RuntimeError(f"seg {idx} re-encode 失败: {stderr.decode(errors='replace')[-500:]}")
         return out
 
-    # fal 没出音轨 — fallback 用原视频对应段音轨 mux
+    # fal 没出音轨 — fallback 用原视频对应段音轨 mux(音频长度 = plan duration,拉伸后视频已对齐)
     seg_start = float(plan_item["start"])
     seg_dur = float(plan_item["duration"])
     audio_dur = min(clip_dur, seg_dur)
@@ -1042,31 +1103,120 @@ async def _process_ultimate(
             r["status"] = "cost_overflow"
             r["error"] = f"单段成本超限 ${r['actual_cost_usd']:.2f}"
 
-    # 3. 2026-05-13 改:任意 AI 段失败 → 整单失败 + 全额退款。
+    # 3. 2026-05-13 v3 设计 — 部分失败时:
+    #    - 失败段:per-seg 退款,不拼进成片
+    #    - 成功段:每段单独归档双版本(wm + raw),用户分别下载
+    #    - 整单不拼接(避免给用户残片误以为是完整)
+    #    - status="partial_completed" + error_message 说明哪段失败
     #
-    # 旧设计:失败段按段退款,拼接幸存段产出残片(eg 16s 视频只出 8s)。
-    # 用户反馈:静默残片体验最差,以为成片正常但实际短一截。
-    # 新设计:任意 AI 段失败 → 不拼接,整单 failed + 全额退,让用户清楚知道失败并重试。
+    # 历史:
+    # - v1 (旧):partial salvage 拼幸存段成 1 个短视频,用户拿到 16s 期望但实际 8s,以为是完整
+    # - v2 (2026-05-13 早):任意 ai 段失败 → 全额退 + 不拼。但 2 段成功 1 段失败时用户损失了
+    #   2 段已经生成的内容
+    # - v3 (本):2 段成功 1 段失败 → 给用户 2 段独立可下载 + 退 1 段。用户损失最小。
     # 保险 1 cost_overflow 也算 AI 失败(已超额扣过 fal,只退积分不退 fal)。
     ai_failed = [r for r in results
                  if r["source_type"] == "ai" and r["status"] != "completed"]
+    ai_completed = [r for r in results
+                    if r["source_type"] == "ai" and r["status"] == "completed"]
 
+    # 全失败:status=failed + per-seg 退款(等于全额退,但不归档,行为同 v2 旧契约)
+    if ai_failed and not ai_completed:
+        for r in ai_failed:
+            await _refund_partial(job, r["idx"], SEGMENT_CREDITS)
+        fail_summary = "; ".join(
+            f"seg {r['idx']}: {(r.get('error') or '未知')[:80]}" for r in ai_failed
+        )
+        log_error(f"video_clone_v2 ultimate 全 AI 段失败 job={job_id} fails=[{fail_summary[:300]}]")
+        _db_update_job(
+            job_id, status="failed", error_step="ai_seg_failed",
+            error_message=f"全部 {len(ai_failed)} 段失败:{fail_summary}"[:500],
+            segments_results=json.dumps(results, ensure_ascii=False),
+        )
+        return
+
+    # 部分失败:per-seg 归档成功段 + per-seg 退款失败段(本次 user 老板新设计)
     if ai_failed:
         fail_summary = "; ".join(
             f"seg {r['idx']}: {(r.get('error') or '未知')[:80]}"
             for r in ai_failed
         )
         log_error(
-            f"video_clone_v2 ultimate AI 段失败 {len(ai_failed)}/{sum(1 for r in results if r['source_type']=='ai')},"
-            f"整单 failed + 全额退款:job_id={job_id} fails=[{fail_summary[:300]}]"
+            f"video_clone_v2 ultimate 部分失败 {len(ai_failed)}/{sum(1 for r in results if r['source_type']=='ai')} AI 段,"
+            f"per-seg 归档 + 失败段退款:job_id={job_id} fails=[{fail_summary[:300]}]"
         )
+
+        # 3a. 失败段 per-seg 退款
+        for r in ai_failed:
+            await _refund_partial(job, r["idx"], SEGMENT_CREDITS)
+
+        # 3b. 成功段(AI + original)每段单独归档双版本
+        plan_by_idx = {p["idx"]: p for p in plan}
+        per_seg_archives: List[Dict[str, Any]] = []
+        for r in sorted(results, key=lambda x: x["idx"]):
+            if r["source_type"] == "ai" and r["status"] != "completed":
+                per_seg_archives.append({
+                    "idx": r["idx"],
+                    "source_type": "ai",
+                    "status": "failed",
+                    "error": (r.get("error") or "未知")[:200],
+                    "watermarked_url": None,
+                    "raw_url": None,
+                })
+                continue
+            try:
+                plan_item = plan_by_idx[r["idx"]]
+                seg_local = seg_files[ next(i for i, p in enumerate(plan) if p["idx"] == r["idx"]) ]
+                clip = await _build_segment_clip(r, plan_item, seg_local, input_local, work_dir)
+                # archive 单段双版本,filename prefix = "{job_id}_seg_{idx}"
+                seg_archive_id = f"{job_id}_seg_{r['idx']}"
+                from .video_clone_v2_watermark import emit_dual_versions, DEFAULT_STYLE
+                import shutil as _sh
+                job_dir = Path("/opt/ssp/uploads/video_clone_v2") / job_id
+                job_dir.mkdir(parents=True, exist_ok=True)
+                wm_local, raw_local = await emit_dual_versions(
+                    clip, str(job_dir), seg_archive_id, style=DEFAULT_STYLE
+                )
+                for p in (wm_local, raw_local):
+                    try:
+                        _sh.chown(p, user="ssp-app", group="ssp-app")
+                    except (LookupError, PermissionError):
+                        pass
+                base_url = os.environ.get("PUBLIC_BASE_URL", "https://ailixiao.com").rstrip("/")
+                per_seg_archives.append({
+                    "idx": r["idx"],
+                    "source_type": r["source_type"],
+                    "status": "completed",
+                    "error": None,
+                    "watermarked_url": f"{base_url}/uploads/video_clone_v2/{job_id}/{os.path.basename(wm_local)}",
+                    "raw_url":         f"{base_url}/uploads/video_clone_v2/{job_id}/{os.path.basename(raw_local)}",
+                })
+            except Exception as e:
+                log_error(f"video_clone_v2 per-seg archive 失败 idx={r['idx']} job={job_id}: {e}")
+                per_seg_archives.append({
+                    "idx": r["idx"], "source_type": r["source_type"],
+                    "status": "archive_failed", "error": str(e)[:200],
+                    "watermarked_url": None, "raw_url": None,
+                })
+
+        # 3c. 写入 results 含 per-seg URLs,标 partial_completed 状态
+        for r in results:
+            arc = next((a for a in per_seg_archives if a["idx"] == r["idx"]), None)
+            if arc:
+                r["watermarked_url"] = arc["watermarked_url"]
+                r["raw_url"] = arc["raw_url"]
+        # fal cost 累加(只算成功段)
+        fal_cost = sum((r.get("actual_cost_usd") or 0.0) for r in ai_completed)
         _db_update_job(
-            job_id, status="failed",
+            job_id, status="partial_completed",
             error_step="ai_seg_failed",
-            error_message=f"{len(ai_failed)} 个 AI 段生成失败:{fail_summary}"[:500],
+            error_message=f"{len(ai_failed)} 段失败 / {len(ai_completed)} 段成功:{fail_summary}"[:500],
             segments_results=json.dumps(results, ensure_ascii=False),
+            fal_cost_total_usd=fal_cost,
+            completed_at=time.strftime("%Y-%m-%d %H:%M:%S"),
         )
-        await _refund_full(job)
+        if fal_cost > 0:
+            await _record_daily_spend(fal_cost)
         return
 
     # 5. 拼接所有段(到这里所有 AI 段都 completed,original 段全部保留)

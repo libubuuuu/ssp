@@ -770,6 +770,10 @@ async def get_job(
             # 2026-05-10 砍单档:tier 字段不再返(前端 JobView.segments 也已删)
             "status": r.get("status", "pending"),
             "output_url": r.get("output_url"),
+            # 2026-05-13 partial_completed:每段独立归档下载 URL
+            "watermarked_url": r.get("watermarked_url"),
+            "raw_url": r.get("raw_url"),
+            "error": r.get("error"),
         })
 
     completed = sum(1 for s in seg_view if s["status"] in ("completed", "ready"))
