@@ -157,7 +157,6 @@ export default function DashboardCarousel() {
           <div className="overlayTag">{`#${String(idx + 1).padStart(2, "0")} 精选场景模板`}</div>
           <h3 className="overlayTitle">{cur.title}</h3>
           <p className="overlaySub">{cur.subtitle}</p>
-          <button className="overlayBtn" type="button">使用此模板 →</button>
         </div>
         <button className="nav prev" type="button" onClick={() => go(-1)} aria-label="上一张">
           <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#2C2C2A" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
