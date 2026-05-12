@@ -110,13 +110,9 @@ export default function VideoReproduceHub() {
           overflow: hidden;
           border-radius: 10px;
           margin-bottom: 14px;
-          background: #F5F2EC;
-          padding: 6px;
-          box-sizing: border-box;
-        }
-        .preview.pair {
-          padding: 0;
           background: transparent;
+          padding: 0;
+          box-sizing: border-box;
         }
         .preview img {
           width: 100%;
@@ -130,7 +126,7 @@ export default function VideoReproduceHub() {
           display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
           grid-template-rows: repeat(3, minmax(0, 1fr));
-          gap: 3px;
+          gap: 4px;
           width: 100%;
           height: 100%;
           min-height: 0;
@@ -142,13 +138,13 @@ export default function VideoReproduceHub() {
         .stack-3-1 {
           display: flex;
           flex-direction: column;
-          gap: 4px;
+          gap: 6px;
           width: 100%;
           height: 100%;
         }
         .stack-3-1 .row3 {
           display: flex;
-          gap: 4px;
+          gap: 6px;
           flex: 1;
           min-height: 0;
         }
@@ -176,7 +172,7 @@ export default function VideoReproduceHub() {
         .stack-2 {
           display: flex;
           flex-direction: column;
-          gap: 4px;
+          gap: 6px;
           width: 100%;
           height: 100%;
         }
@@ -283,7 +279,7 @@ export default function VideoReproduceHub() {
                   if (e.key === "Enter" || e.key === " ") router.push(c.route);
                 }}
               >
-                <div className={`preview${c.preview.kind === "stack-2" ? " pair" : ""}`} style={{ aspectRatio: c.aspect }}>
+                <div className="preview" style={{ aspectRatio: c.aspect }}>
                   {c.preview.kind === "nine-grid" && (
                     <div className="nine-grid">
                       {c.preview.cells.map((src, i) => (
