@@ -58,20 +58,32 @@ export default function VideoReproduceHub() {
           padding: 12px;
           border: 0.5px solid rgba(0,0,0,0.06);
           cursor: pointer;
-          transition: transform 0.28s cubic-bezier(0.2,0.9,0.3,1.2), box-shadow 0.28s ease, border-color 0.28s ease;
+          transition: transform 0.32s cubic-bezier(0.2,0.9,0.3,1.2), box-shadow 0.32s ease, border-color 0.32s ease;
           will-change: transform;
         }
         .reproCard:hover {
-          transform: translateY(-8px);
-          box-shadow: 0 20px 44px rgba(0,0,0,0.12), 0 4px 12px rgba(0,0,0,0.06);
+          transform: translateY(-10px);
+          box-shadow: 0 24px 50px rgba(0,0,0,0.14), 0 6px 14px rgba(0,0,0,0.06);
           border-color: rgba(0,0,0,0.08);
         }
         .reproCard:active {
           transform: translateY(-4px);
-          box-shadow: 0 10px 24px rgba(0,0,0,0.10);
+          box-shadow: 0 12px 26px rgba(0,0,0,0.10);
         }
         .reproCard:hover .arrowCircle {
           transform: rotate(-45deg);
+        }
+        .previewBox {
+          margin-bottom: 12px;
+          border-radius: 10px;
+          overflow: hidden;
+          aspect-ratio: 44 / 50;
+        }
+        .previewBox img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          display: block;
         }
         .arrowCircle {
           width: 22px;
@@ -82,18 +94,7 @@ export default function VideoReproduceHub() {
           align-items: center;
           justify-content: center;
           transition: transform 0.28s;
-        }
-        .previewBox {
-          margin-bottom: 12px;
-          border-radius: 10px;
-          overflow: hidden;
-          aspect-ratio: 440 / 500;
-        }
-        .previewBox img {
-          width: 100%;
-          height: 100%;
-          object-fit: cover;
-          display: block;
+          flex-shrink: 0;
         }
       `}</style>
       <Sidebar />
