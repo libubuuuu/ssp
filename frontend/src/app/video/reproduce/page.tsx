@@ -148,7 +148,7 @@ export default function VideoReproduceHub() {
         .preview .composite-fill {
           width: 100%;
           height: 100%;
-          object-fit: contain;
+          object-fit: cover;
           object-position: center;
           display: block;
         }
@@ -300,23 +300,7 @@ export default function VideoReproduceHub() {
               gap: 22,
             }}
           >
-            {CARDS.map((c, idx) => {
-              if (idx === 0) {
-                return (
-                  <div
-                    key={c.route}
-                    className="fullcardWrap"
-                    onClick={() => router.push(c.route)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") router.push(c.route);
-                    }}
-                  >
-                    <img src="/reproduce-preview/fullcard1.png" alt={c.title} draggable={false} />
-                  </div>
-                );
-              }
+            {CARDS.map((c) => {
               return (
               <div
                 key={c.route}
