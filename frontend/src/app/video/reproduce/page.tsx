@@ -296,7 +296,7 @@ export default function VideoReproduceHub() {
             style={{
               display: "grid",
               gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-              alignItems: "center",
+              alignItems: "stretch",
               gap: 22,
             }}
           >
