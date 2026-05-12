@@ -145,9 +145,10 @@ export default function DashboardCarousel() {
             className="bannerImg"
             src={s.img}
             alt={s.title}
-            width={1200}
-            height={460}
-            loading="eager"
+            width={900}
+            height={345}
+            loading={i === 0 ? "eager" : "lazy"}
+            fetchPriority={i === 0 ? "high" : "low"}
             decoding="async"
             draggable={false}
             style={{ opacity: i === idx ? 1 : 0 }}
