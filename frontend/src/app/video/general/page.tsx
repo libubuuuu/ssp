@@ -388,12 +388,21 @@ export default function VideoGeneralPage() {
     <div style={{ display: "flex", minHeight: "100vh", background: "#edeae4", fontFamily: "-apple-system,BlinkMacSystemFont,sans-serif" }}>
       <Sidebar />
       <main style={{ flex: 1, padding: "2rem 2.5rem", overflowY: "auto", maxWidth: 1100, width: "100%", margin: "0 auto" }}>
-        <div style={{ marginBottom: "1.5rem" }}>
-          <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>AI 创作工具</div>
-          <h1 style={{ fontSize: "1.8rem", fontWeight: 400, margin: 0, fontFamily: "Georgia,serif" }}>{t("videoGeneral.titleMain")}<span style={{ fontStyle: "italic" }}> {t("videoGeneral.titleAccent")}</span></h1>
-          <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
-            食品 / 日用品 / 化妆品 / 3C / 服装 — 多张产品图 + 可选真人模特视频 → AI 自动判品类 + 出脚本 + 模特持/穿/用产品视频
+        <div style={{ marginBottom: "1.5rem", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+          <div>
+            <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>AI 创作工具</div>
+            <h1 style={{ fontSize: "1.8rem", fontWeight: 400, margin: 0, fontFamily: "Georgia,serif" }}>{t("videoGeneral.titleMain")}<span style={{ fontStyle: "italic" }}> {t("videoGeneral.titleAccent")}</span></h1>
+            <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
+              食品 / 日用品 / 化妆品 / 3C / 服装 — 多张产品图 + 可选真人模特视频 → AI 自动判品类 + 出脚本 + 模特持/穿/用产品视频
+            </div>
           </div>
+          <button
+            onClick={() => window.open("/video/general", "_blank", "noopener")}
+            title="开新窗口并行批量生成"
+            style={{ background: "#fff", border: "1px solid #d1d5db", borderRadius: 8, padding: "0.55rem 0.95rem", fontSize: "0.85rem", fontWeight: 500, color: "#374151", cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0 }}
+          >
+            🆕 新建窗口(批量生成)
+          </button>
         </div>
 
         {error && (

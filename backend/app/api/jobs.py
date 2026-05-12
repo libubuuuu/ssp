@@ -5,6 +5,7 @@ import uuid
 import time
 import asyncio
 import fcntl
+from datetime import datetime as _datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends
@@ -1831,13 +1832,83 @@ def _studio_sessions_as_virtual_jobs(user_id: str) -> list[dict]:
 
 @router.get("/list")
 async def list_jobs(current_user: dict = Depends(get_current_user)):
-    """七十五续:My Tasks 列表合并 long-video sessions(虚拟 job 视图)"""
+    """My Tasks 列表合并多个来源(虚拟 job 视图):
+    - JOBS.json (image / video_i2v / video_general / ad_video / replicate / skill_*)
+    - long-video studio sessions (七十五续)
+    - video_clone_v2_jobs (2026-05-13:V2 视频复刻原本只在自己页面显示,合并到通用列表)
+    """
     user_id = str(current_user.get("id") or current_user.get("email", "unknown"))
     mine = [j for j in JOBS.values() if j.get("user_id") == user_id]
-    # 追加 long-video 虚拟 jobs
     mine.extend(_studio_sessions_as_virtual_jobs(user_id))
+    mine.extend(_v2_jobs_as_virtual_jobs(user_id))
     mine.sort(key=lambda x: x.get("created_at", 0), reverse=True)
     return {"jobs": mine[:50]}
+
+
+def _v2_jobs_as_virtual_jobs(user_id: str) -> list:
+    """2026-05-13:把 video_clone_v2_jobs 表里的当前用户任务转成虚拟 job 给 My Tasks 显示。
+    跟 _studio_sessions_as_virtual_jobs 同模式。status 映射:
+      pending / processing → "running"
+      completed → "completed"
+      partial_completed → "completed"(JobPanel 没 partial 状态,合并到 completed)
+      failed / cancelled → "failed"
+    """
+    try:
+        from app.database import get_db
+    except Exception:
+        return []
+    out = []
+    try:
+        with get_db() as conn:
+            rows = conn.execute(
+                "SELECT id, status, input_video_duration_sec, segments_count, "
+                "       created_at, completed_at, error_message, final_video_url, "
+                "       final_video_url_watermarked "
+                "FROM video_clone_v2_jobs WHERE user_id = ? "
+                "ORDER BY created_at DESC LIMIT 30",
+                (user_id,),
+            ).fetchall()
+    except Exception:
+        return []
+    for r in rows:
+        status_db = r["status"] or "pending"
+        if status_db in ("pending", "processing", "queued", "running"):
+            v_status = "running"
+        elif status_db in ("completed", "partial_completed"):
+            v_status = "completed"
+        else:
+            v_status = "failed"
+        try:
+            created_ts = _datetime.fromisoformat(r["created_at"]).timestamp() if r["created_at"] else 0
+        except Exception:
+            created_ts = 0
+        try:
+            finished_ts = _datetime.fromisoformat(r["completed_at"]).timestamp() if r["completed_at"] else None
+        except Exception:
+            finished_ts = None
+        dur = float(r["input_video_duration_sec"] or 0)
+        title = f"视频复刻 {dur:.0f}s · {r['segments_count'] or 1} 段"
+        if status_db == "partial_completed":
+            title += " ⚠️"
+        out.append({
+            "id": r["id"],
+            "user_id": user_id,
+            "user_numeric_id": user_id,
+            "type": "video_clone_v2",
+            "title": title,
+            "status": v_status,
+            "created_at": created_ts,
+            "finished_at": finished_ts,
+            "module": "video/clone-v2",
+            "result": {
+                "video_url": r["final_video_url_watermarked"] or r["final_video_url"],
+            } if r["final_video_url_watermarked"] or r["final_video_url"] else None,
+            "error": r["error_message"],
+            "_session_id": f"v2_{r['id']}",
+            "_v2_partial": status_db == "partial_completed",
+            "_route": f"/video-clone-v2#{r['id']}",
+        })
+    return out
 
 
 @router.get("/{job_id}")

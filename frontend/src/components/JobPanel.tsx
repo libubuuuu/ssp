@@ -101,6 +101,8 @@ export default function JobPanel() {
     video_i2v: t("jobs.typeI2V"),
     video_edit: t("jobs.typeEdit"),
     video_clone: t("jobs.typeClone"),
+    video_clone_v2: "视频复刻",  // 2026-05-13:V2 虚拟 job
+    video_general: "图片复刻",
     long_video: "长视频翻拍",
     oral_broadcast: "口播带货",  // 七十五续:long-video 虚拟 job(暂中文硬编码,i18n 留下次)
   } as Record<string, string>)[typ] || typ;
@@ -173,9 +175,9 @@ export default function JobPanel() {
               <div key={j.id} style={{
                 padding: "0.7rem 0.8rem", borderRadius: 10, marginBottom: 6,
                 background: "#fafaf7", position: "relative",
-                cursor: j._long_video ? "pointer" : "default",
+                cursor: (j._long_video || j._route) ? "pointer" : "default",
               }}
-                onClick={j._long_video && j._route ? () => { setOpen(false); router.push(j._route!); } : undefined}
+                onClick={j._route ? () => { setOpen(false); router.push(j._route!); } : undefined}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div style={{ fontSize: "0.82rem", fontWeight: 500, color: "#333" }}>
