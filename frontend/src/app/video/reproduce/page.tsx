@@ -160,7 +160,7 @@ export default function VideoReproduceHub() {
           height: 12px;
         }
         .stack-3-1 .large {
-          flex: 2;
+          flex: 3;
           min-height: 0;
           overflow: hidden;
           border-radius: 4px;
