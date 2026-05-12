@@ -107,9 +107,12 @@ export default function VideoReproduceHub() {
           will-change: transform;
           display: flex;
           flex-direction: column;
-          justify-content: space-between;
           min-width: 0;
           overflow: hidden;
+        }
+        .reproCard .preview {
+          margin-top: auto;
+          margin-bottom: auto;
         }
         .reproCard:hover {
           transform: translateY(-10px);
