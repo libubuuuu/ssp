@@ -114,6 +114,10 @@ export default function VideoReproduceHub() {
           padding: 6px;
           box-sizing: border-box;
         }
+        .preview.pair {
+          padding: 0;
+          background: transparent;
+        }
         .preview img {
           width: 100%;
           height: 100%;
@@ -264,7 +268,7 @@ export default function VideoReproduceHub() {
             style={{
               display: "grid",
               gridTemplateColumns: "minmax(0, 1.05fr) minmax(0, 0.85fr) minmax(0, 1.1fr)",
-              alignItems: "stretch",
+              alignItems: "start",
               gap: 22,
             }}
           >
@@ -279,7 +283,7 @@ export default function VideoReproduceHub() {
                   if (e.key === "Enter" || e.key === " ") router.push(c.route);
                 }}
               >
-                <div className="preview" style={{ aspectRatio: c.aspect }}>
+                <div className={`preview${c.preview.kind === "stack-2" ? " pair" : ""}`} style={{ aspectRatio: c.aspect }}>
                   {c.preview.kind === "nine-grid" && (
                     <div className="nine-grid">
                       {c.preview.cells.map((src, i) => (
