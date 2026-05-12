@@ -33,10 +33,8 @@ export default function VideoReproduceHub() {
                 width: h.width,
                 height: h.height,
                 cursor: "pointer",
-                borderRadius: 16,
+                background: "transparent",
               }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(0,0,0,0.04)")}
-              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
             />
           ))}
         </div>
