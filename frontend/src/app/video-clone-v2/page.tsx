@@ -380,7 +380,6 @@ export default function VideoCloneV2Page() {
     if (!video || !preview || preview.segments.length === 0) {
       setError("请先上传视频"); return;
     }
-    if (!prompt.trim()) { setError("请填写或选择 prompt"); return; }
     if (!disclaimerChecked) { setError("请勾选《视频复刻 V2 上传声明书》"); return; }
 
     // 构造 segments(single / ultimate 不同)
@@ -494,7 +493,7 @@ export default function VideoCloneV2Page() {
             {t("videoCloneV2.titleMain")}<span style={{ fontStyle: "italic" }}> {t("videoCloneV2.titleAccent")}</span>
           </h1>
           <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
-            支持 4-64 秒视频 · ¥19.9 / 段 · 输出含 xiaoLi ai · AI 生成水印 + 无标识版自选下载
+            支持 4-64 秒视频 · ¥19.9 / 段 · 输出默认含 xiaoLi ai · AI 生成水印,无水印版需勾选声明
           </div>
         </div>
 
@@ -503,6 +502,8 @@ export default function VideoCloneV2Page() {
           {!video && (
             <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 8, padding: "0.7rem 1rem", marginBottom: 12, fontSize: "0.85rem", color: "#075985", lineHeight: 1.6 }}>
               <b>💡 效果小贴士</b>:建议上传<b>单镜头视频</b>(无明显切换),效果最稳定。多镜头视频在切换处个别帧可能效果欠佳。
+              <br />
+              <b>📏 时长建议</b>:本工具最长支持 64 秒,<b>超过 60 秒建议自行分割后再分别复刻</b>,拼接稳定性 & 画质表现更好。
             </div>
           )}
           {!video ? (
@@ -660,7 +661,7 @@ export default function VideoCloneV2Page() {
 
         {/* Step 4:Prompt */}
         {video && (
-          <Section title="4. 提示词(写大白话 → AI 优化 / 选模板 / 手动改)">
+          <Section title="4. 提示词(可选 · 按需要写,不写也能生成)">
             {/* 2026-05-11 目标市场 toggle:CN 国内→中文 prompt / Global 海外→英文 prompt */}
             <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
               <label style={{ fontSize: "0.85rem", color: "#444", fontWeight: 500 }}>目标市场:</label>
@@ -754,11 +755,11 @@ export default function VideoCloneV2Page() {
 
             <button
               onClick={handleSubmit}
-              disabled={submitStatus !== "idle" || !disclaimerChecked || !estimate || !prompt.trim()}
+              disabled={submitStatus !== "idle" || !disclaimerChecked || !estimate}
               style={{
                 ...primaryBtn,
-                opacity: submitStatus === "idle" && disclaimerChecked && prompt.trim() ? 1 : 0.4,
-                cursor: submitStatus === "idle" && disclaimerChecked && prompt.trim() ? "pointer" : "not-allowed",
+                opacity: submitStatus === "idle" && disclaimerChecked ? 1 : 0.4,
+                cursor: submitStatus === "idle" && disclaimerChecked ? "pointer" : "not-allowed",
               }}
             >
               {submitStatus === "submitting" ? "提交中..." :
@@ -789,19 +790,26 @@ export default function VideoCloneV2Page() {
           <Section title="✅ 生成完成">
             <video src={job.final_video_url_watermarked || job.final_video_url || ""} controls style={{ width: "100%", maxWidth: 480, borderRadius: 10, background: "#000", marginBottom: 16 }} />
 
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 8, alignItems: "center" }}>
               <a href={job.final_video_url_watermarked || ""} download style={primaryBtn}>
-                ⬇ 下载合规版(带 AI 水印)
+                ⬇ 下载视频(带 AI 水印)
               </a>
-              <button onClick={() => setShowRawConfirm(true)} style={{ ...primaryBtn, background: "#666" }}>
-                下载无标识版(需声明)
-              </button>
               <button onClick={reset} style={btnLink}>重新生成</button>
             </div>
+            {!showRawConfirm && (
+              <div style={{ marginBottom: 16 }}>
+                <button
+                  onClick={() => setShowRawConfirm(true)}
+                  style={{ background: "none", border: "none", color: "#9ca3af", fontSize: "0.78rem", cursor: "pointer", padding: 0, textDecoration: "underline" }}
+                >
+                  下载无水印版需声明 →
+                </button>
+              </div>
+            )}
 
             {showRawConfirm && (
-              <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", padding: "1rem 1.2rem", borderRadius: 10, fontSize: "0.85rem", lineHeight: 1.7 }}>
-                <div style={{ fontWeight: 500, marginBottom: 8, color: "#991b1b" }}>⚠️ 下载无标识版前请逐项勾选</div>
+              <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", padding: "1rem 1.2rem", borderRadius: 10, fontSize: "0.85rem", lineHeight: 1.7, marginTop: 8 }}>
+                <div style={{ fontWeight: 500, marginBottom: 8, color: "#991b1b" }}>⚠️ 下载无水印版前请逐项勾选声明</div>
                 <label style={{ display: "flex", gap: 6, marginBottom: 6, cursor: "pointer" }}>
                   <input type="checkbox" checked={rawAck1} onChange={(e) => setRawAck1(e.target.checked)} />
                   <span>我理解此视频不含 AI 标识水印</span>
@@ -825,7 +833,7 @@ export default function VideoCloneV2Page() {
                     opacity: rawAck1 && rawAck2 && rawAck3 ? 1 : 0.5,
                   }}
                 >
-                  确认下载无标识版
+                  确认下载无水印版
                 </a>
               </div>
             )}

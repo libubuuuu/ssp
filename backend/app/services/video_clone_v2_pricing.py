@@ -33,7 +33,9 @@ FAL_OUTPUT_DURATION: Final[int] = 8
 # fal 模型在 generate_audio=False 时走不同 code path,实测产品图替换效果失效(prod 920b2000 只换 1 帧)。
 # 后端 mux 逻辑会用原视频音轨覆盖 fal 生成的音频(processor L883-918),最终成品仍是原音轨,
 # 仅 fal 浪费一次音频生成时间(微小成本)。
-FAL_GENERATE_AUDIO:  Final[bool] = True
+FAL_GENERATE_AUDIO:  Final[bool] = False  # 2026-05-13 改 False:fal 自生成音频会被 fal 内容策略检查,
+                                          # 偶发 "Output audio has sensitive content" 整段失败。改用原视频音轨。
+                                          # _build_segment_clip 检测 fal 无音轨自动 fallback mux 原视频音轨。
 # 删除 FAL_SAFETY_CHECKER:fal 官方 schema 不存在 enable_safety_checker 字段,
 # 之前 payload 里这个 unknown key 可能干扰 fal 内部 routing。
 
@@ -131,10 +133,14 @@ def build_prompt(user_prompt: str, image_urls: Sequence[Mapping]) -> str:
       模型(老板 2026-05-10 真测 4 次均失败,playground 同端点同输入跑出完美效果)。
     - 简化等价 playground 体验。
 
+    2026-05-13 prompt 可选:用户不填时给个中性默认,seedance 端点空 prompt 行为未定,给个兜底。
+
     Args:
-        user_prompt: 用户填的 prompt(原样透传)
+        user_prompt: 用户填的 prompt(原样透传;空时用默认)
         image_urls:  [{"url": "...", "role": "..."}, ...](保留参数兼容签名,不使用)
     Returns:
-        user_prompt 原样
+        user_prompt 原样,空时返默认参考生成提示
     """
+    if not (user_prompt or "").strip():
+        return "Recreate the scene from the reference video using the reference images as visual guidance for style, composition, and motion."
     return user_prompt

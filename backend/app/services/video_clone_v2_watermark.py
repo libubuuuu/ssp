@@ -223,15 +223,16 @@ async def add_watermark(
 
     vf, font_file = _build_filter(style, font_size, pad)
 
-    # 水印仅处理视频流,音频由后续拼接环节统一加原视频音轨
-    # 用 -an,fal 输出无音频流时 -c:a copy 会失败
+    # 2026-05-13 修:原 `-an` 会把音频砍掉。但此函数运行时输入已是 concat 完的成片
+    # (含音轨,_build_segment_clip 提前 mux 过),用 `-c:a copy` 透传音频。
+    # 注:`-c:a copy` 在无音频流的输入上不会失败(ffmpeg 没找到 a 流就跳过)。
     t0 = time.time()
     proc = await asyncio.create_subprocess_exec(
         "ffmpeg", "-y",
         "-i", input_path,
         "-vf", vf,
         "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-        "-an",
+        "-c:a", "copy",
         "-movflags", "+faststart",
         output_path,
         stdout=asyncio.subprocess.PIPE,

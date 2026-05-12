@@ -131,24 +131,23 @@ async def split_input_video(
     for seg in plan:
         idx = seg["idx"]
         out = os.path.join(work_dir, f"seg_{idx}.mp4")
-        try:
-            await _ffmpeg([
-                "-i", input_local_path,
-                "-ss", str(seg["start"]),
-                "-t", str(seg["duration"]),
-                "-c", "copy",
-                out,
-            ])
-        except RuntimeError:
-            # 关键帧切割失败 / 段时长含小数 / 编码不兼容 → 重编码
-            await _ffmpeg([
-                "-i", input_local_path,
-                "-ss", str(seg["start"]),
-                "-t", str(seg["duration"]),
-                "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-                "-c:a", "aac",
-                out,
-            ])
+        # 2026-05-13 修:不再用 -c copy 第一遍试。`-c copy` 不能从非关键帧切,
+        # ffmpeg 会对齐到关键帧,但 PTS 保留原值,fal 收到 video 从 3.7s 开始的怪
+        # 文件(audio 在 0s)。memory feedback_ssp_ffmpeg_no_copy_first_segment.md
+        # 同类雷已踩。直接重编码,精确到帧。
+        # `-ss` 放在 `-i` 后 = 输出端 seek,decoder 解码到位再裁,逐帧精确。
+        # 加 `-avoid_negative_ts make_zero` + `-reset_timestamps` 强制 PTS 从 0 开始。
+        await _ffmpeg([
+            "-i", input_local_path,
+            "-ss", str(seg["start"]),
+            "-t", str(seg["duration"]),
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+            "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+            "-avoid_negative_ts", "make_zero",
+            "-reset_timestamps", "1",
+            "-movflags", "+faststart",
+            out,
+        ])
         seg_files.append(out)
 
     # ⭐ 红线 1:hash 校验(单段也跑,记日志便于审计)
@@ -244,7 +243,8 @@ async def call_fal_seedance(
     # 2026-05-11:1:1 对齐老板 playground 完美 request 019e0951 payload(实证)。
     # 必传 audio_urls=[](完美/1秒漂 都传了 [],删除曾导致 prod 920b2000 只换 1 帧)。
     # 删 enable_safety_checker(playground 不传,fal schema 也无此字段)。
-    # generate_audio=True(playground 默认,后端 mux 仍会用原视频音轨覆盖)。
+    # generate_audio=True:让 fal 给视频生成音轨。2026-05-13 起后端 _build_segment_clip
+    # 优先用 fal 自带音轨,只有 fal 没出音轨才 fallback 抽原视频音轨。
     arguments = {
         "video_urls": [video_url],
         "image_urls": image_urls,
@@ -355,17 +355,21 @@ async def run_single_ai_segment_with_retry(
     aspect_ratio: str,
     job_id: str = "",
 ) -> Dict[str, Any]:
-    """跑一段 ai + 失败重试 1 次(同 seed,用户最终决议)。"""
+    """跑一段 ai + 失败重试 1 次。
+    2026-05-13 改:重试用 seed+1 而不是同 seed。fal 内容策略对同 seed 同输入会
+    一致拒绝,换 seed 给一次随机翻盘机会(实测同 video 不同 seed 命中率不同)。"""
     result = await _run_one_ai_segment(
         seg_file, plan_item, image_urls, prompt_compiled, seed, aspect_ratio,
         job_id=job_id, retry=0,
     )
     if result["status"] == "failed":
+        retry_seed = seed + 1
         log_info(
-            f"video_clone_v2 segment idx={plan_item['idx']} 失败,重试 1 次:{result['error'][:200]}"
+            f"video_clone_v2 segment idx={plan_item['idx']} 失败,换 seed={retry_seed} 重试 1 次:"
+            f"{result['error'][:200]}"
         )
         result = await _run_one_ai_segment(
-            seg_file, plan_item, image_urls, prompt_compiled, seed, aspect_ratio,
+            seg_file, plan_item, image_urls, prompt_compiled, retry_seed, aspect_ratio,
             job_id=job_id, retry=1,
         )
     return result
@@ -725,7 +729,9 @@ async def _refund_full(job: Dict[str, Any]) -> None:
 
 
 async def _record_daily_spend(usd: float) -> None:
-    """保险 3 — 累加当日 fal 花销,超阈值置 locked=1 + 改 settings.ENABLE_VIDEO_CLONE_V2=False。"""
+    """累加当日 fal 花销日志。原保险 3(超日预算自动关 V2)已废,用户要求 V2 永久启用。
+    超阈值仍写 ERROR 日志报警,但不再 mutate ENABLE_VIDEO_CLONE_V2。
+    保险 1(单段超限)+ 保险 2(单 job 总额)仍在,防止单次跑飞。"""
     if usd <= 0:
         return
     today = time.strftime("%Y-%m-%d")
@@ -744,17 +750,9 @@ async def _record_daily_spend(usd: float) -> None:
         ).fetchone()
     if row and row[0] >= settings.VC2_DAILY_FAL_BUDGET_USD:
         log_error(
-            f"video_clone_v2 保险 3 触发:date={today} "
+            f"video_clone_v2 日预算超限(仅报警,不再自动关):date={today} "
             f"spent_usd={row[0]} >= {settings.VC2_DAILY_FAL_BUDGET_USD}"
         )
-        with get_db() as conn:
-            conn.execute(
-                "UPDATE video_clone_v2_daily_budget SET locked = 1 WHERE date = ?",
-                (today,),
-            )
-            conn.commit()
-        # 进程内强制 disable(重启从 daily_budget.locked 读回)
-        settings.ENABLE_VIDEO_CLONE_V2 = False
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -901,15 +899,34 @@ async def _build_segment_clip(
         await _mux_video_audio(seg_local_path, silence, out, clip_dur)
         return out
 
-    # AI 段:下载 fal output → 抽对应原视频音轨 → mux
+    # AI 段:fal 自带音频(generate_audio=True),直接用 fal 输出。
+    # 2026-05-13 改:用户要 fal 生成的音轨,不再用原视频盖。
+    # fal 没生成音轨时(罕见)fallback 抽原视频音轨。
     fal_local = os.path.join(work_dir, f"seg_{idx}_ai.mp4")
     await _download_fal_to_local(seg_result["output_url"], fal_local)
     clip_dur = await _ffprobe_video_duration(fal_local)
 
-    # 音轨方案 B:从原视频抽对应段的音频
+    if await _has_audio_stream(fal_local):
+        # fal 音轨存在 — 直接用 fal 输出。re-encode 一遍确保跟 original 段编码一致(concat demuxer 要求)
+        out = os.path.join(work_dir, f"seg_{idx}_final.mp4")
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-y",
+            "-i", fal_local,
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+            "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+            "-movflags", "+faststart",
+            out,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(f"seg {idx} re-encode 失败: {stderr.decode(errors='replace')[-500:]}")
+        return out
+
+    # fal 没出音轨 — fallback 用原视频对应段音轨 mux
     seg_start = float(plan_item["start"])
     seg_dur = float(plan_item["duration"])
-    # AI 输出固定 8s;原视频该段可能 4-12s。取 min 防越界
     audio_dur = min(clip_dur, seg_dur)
     audio_path = os.path.join(work_dir, f"seg_{idx}_audio.aac")
     has_real_audio = await _extract_audio_clip(input_local, seg_start, audio_dur, audio_path)
@@ -1025,40 +1042,35 @@ async def _process_ultimate(
             r["status"] = "cost_overflow"
             r["error"] = f"单段成本超限 ${r['actual_cost_usd']:.2f}"
 
-    # 3. 失败段按段退款
-    for r in results:
-        if r["source_type"] != "ai":
-            continue
-        if r["status"] in ("completed",):
-            continue
-        # 失败 / cost_overflow / 任何非完成态 → 按段退
-        # 留这行 future-safe:future 改退款逻辑可能要从 plan_item 读字段
-        # 注意 next() 找不到匹配会 StopIteration,plan/results 数据一致性保证不发生
-        plan_item = next(p for p in plan if p["idx"] == r["idx"])
-        # 单档:每段失败统一退 SEGMENT_CREDITS(=20 积分)
-        # 老 job(commit 3 之前)有 tier 字段,但 prod 已 verify 无 in-flight 老 job,deploy 不会处理它们
-        seg_credits = SEGMENT_CREDITS
-        await _refund_partial(job, r["idx"], seg_credits)
+    # 3. 2026-05-13 改:任意 AI 段失败 → 整单失败 + 全额退款。
+    #
+    # 旧设计:失败段按段退款,拼接幸存段产出残片(eg 16s 视频只出 8s)。
+    # 用户反馈:静默残片体验最差,以为成片正常但实际短一截。
+    # 新设计:任意 AI 段失败 → 不拼接,整单 failed + 全额退,让用户清楚知道失败并重试。
+    # 保险 1 cost_overflow 也算 AI 失败(已超额扣过 fal,只退积分不退 fal)。
+    ai_failed = [r for r in results
+                 if r["source_type"] == "ai" and r["status"] != "completed"]
 
-    # 4. 决定是否还有段能拼
-    surviving = [r for r in results
-                 if (r["source_type"] == "original")
-                 or (r["source_type"] == "ai" and r["status"] == "completed")]
-
-    if not surviving:
-        # 全失败 → 整单退(_refund_partial 已退过的段不重复退,_refund_full 用整单 task_id)
-        log_error(f"video_clone_v2 ultimate 全部段失败:job_id={job_id}")
+    if ai_failed:
+        fail_summary = "; ".join(
+            f"seg {r['idx']}: {(r.get('error') or '未知')[:80]}"
+            for r in ai_failed
+        )
+        log_error(
+            f"video_clone_v2 ultimate AI 段失败 {len(ai_failed)}/{sum(1 for r in results if r['source_type']=='ai')},"
+            f"整单 failed + 全额退款:job_id={job_id} fails=[{fail_summary[:300]}]"
+        )
         _db_update_job(
-            job_id, status="failed", error_step="all_segs_failed",
-            error_message="所有段生成失败,已按段退款",
+            job_id, status="failed",
+            error_step="ai_seg_failed",
+            error_message=f"{len(ai_failed)} 个 AI 段生成失败:{fail_summary}"[:500],
             segments_results=json.dumps(results, ensure_ascii=False),
         )
-        # 已通过 _refund_partial 退过 ai 失败段;没退过的 original 段本来就 0 credits
-        # 不再调 _refund_full(避免重复退)
+        await _refund_full(job)
         return
 
-    # 5. 拼接幸存段(按 idx 升序)
-    surviving.sort(key=lambda r: r["idx"])
+    # 5. 拼接所有段(到这里所有 AI 段都 completed,original 段全部保留)
+    surviving = sorted(results, key=lambda r: r["idx"])
     plan_by_idx = {p["idx"]: p for p in plan}
 
     try:

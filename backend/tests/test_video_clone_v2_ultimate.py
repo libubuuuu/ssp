@@ -320,10 +320,11 @@ class TestProcessUltimate:
 
     @patch("app.services.video_clone_v2_processor.fal_client")
     @patch("app.services.video_clone_v2_processor._download_fal_to_local")
-    def test_one_seg_fails_others_complete_partial_refund(
+    def test_one_seg_fails_others_complete_full_refund(
         self, mock_download_fal, mock_fal, tmp_path, monkeypatch,
     ):
-        """段 1 fal 失败 → 段 0/2 成功 → 拼 2 段 + 退段 1 credits。"""
+        """2026-05-13 新契约:段 1 fal 失败(包括 retry)→ 整单 failed + 全额退款。
+        不再拼接幸存段产出残片(防止用户拿到 16s 期望但实际 8s 的迷惑成片)。"""
         mock_fal.upload_file_async = AsyncMock(return_value="fake_in")
         # subscribe 第 2 次(idx=1)抛错
         call_count = {"n": 0}
@@ -392,9 +393,10 @@ class TestProcessUltimate:
             user_credits = conn.execute(
                 "SELECT credits FROM users WHERE id = ?", (user_id,)
             ).fetchone()[0]
-        assert row[0] == "completed", f"期望 completed(部分成功也算),实际:{row[0]}"
-        assert row[1] == SEGMENT_CREDITS   # 退段 1 = 20 积分(单档)
-        assert user_credits == balance_before + SEGMENT_CREDITS
+        assert row[0] == "failed", f"期望 failed(整单失败),实际:{row[0]}"
+        # 全额退款 = 段数 × SEGMENT_CREDITS(3 段 × 20 = 60)
+        assert row[1] == charged, f"期望全额退 {charged},实际退 {row[1]}"
+        assert user_credits == balance_before + charged
 
     @patch("app.services.video_clone_v2_processor.fal_client")
     def test_all_segs_fail_marks_failed_and_partial_refunds(

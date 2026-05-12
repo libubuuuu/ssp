@@ -200,7 +200,7 @@ class CreateRequest(BaseModel):
     video_sha256: str = Field("", description="upload/video 返回的文件 SHA256(红线 3,法务举证)")
     # 2026-05-11:产品/人物/场景 各 0-3 张,总上限 9 张(对齐 fal seedance r2v image_urls 上限)
     image_urls: List[ImageRef] = Field(default_factory=list, max_length=9)
-    prompt: str = Field(..., min_length=1, max_length=2000)
+    prompt: str = Field("", max_length=2000, description="可选;空时 build_prompt 用默认参考生成提示")
     disclaimer_acknowledged: bool
     # B 阶段:check-duration 弹窗用户选完丢段位置后传回(可选,默认不裁剪整片用)
     # B+ 阶段:trim_drop_ranges 多段丢弃 [[s,e],[s,e],...],总和 = drop_seconds

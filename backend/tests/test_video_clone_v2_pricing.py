@@ -87,8 +87,15 @@ class TestBuildPrompt:
         assert "(参考素材:" not in result
         assert result == "展示"
 
-    def test_empty_prompt_passthrough(self):
-        assert build_prompt("", [{"url": "x", "role": "product"}]) == ""
+    def test_empty_prompt_default(self):
+        """2026-05-13 prompt 可选:空 prompt 时 fallback 中性默认,避免 fal 空 prompt 行为未定。"""
+        result = build_prompt("", [{"url": "x", "role": "product"}])
+        assert result != ""
+        assert "reference" in result.lower()
+
+    def test_whitespace_only_prompt_default(self):
+        """纯空白 = 空,走默认。"""
+        assert build_prompt("   \n\t  ", []) == build_prompt("", [])
 
     def test_playground_winning_prompt(self):
         """老板 fal playground 成功配方 verbatim — 直接透传,fal 跑出完美对象替换。"""
