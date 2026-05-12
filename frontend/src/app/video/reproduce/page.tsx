@@ -13,7 +13,8 @@ const ArrowDown = () => (
 type Preview =
   | { kind: "nine-grid"; cells: string[] }
   | { kind: "stack-3-1"; smalls: string[]; large: string }
-  | { kind: "stack-2"; cells: { img: string; tag: string }[] };
+  | { kind: "stack-2"; cells: { img: string; tag: string }[] }
+  | { kind: "composite"; src: string };
 
 interface CardDef {
   title: string;
@@ -28,8 +29,8 @@ const CARDS: CardDef[] = [
     title: "分镜复刻",
     desc: ["视频拆成 9 宫格", "替换元素重新出片"],
     route: "/video/frame-extract",
-    preview: { kind: "nine-grid", cells: NINE_CELLS },
-    aspect: "1 / 1",
+    preview: { kind: "composite", src: "/reproduce-preview/card1.png" },
+    aspect: "420 / 480",
   },
   {
     title: "图片复刻",
@@ -119,6 +120,12 @@ export default function VideoReproduceHub() {
           padding: 6px;
         }
         .preview img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          display: block;
+        }
+        .preview .composite-fill {
           width: 100%;
           height: 100%;
           object-fit: cover;
@@ -283,7 +290,10 @@ export default function VideoReproduceHub() {
                   if (e.key === "Enter" || e.key === " ") router.push(c.route);
                 }}
               >
-                <div className={`preview${c.preview.kind === "nine-grid" ? " framed" : ""}`} style={{ aspectRatio: c.aspect }}>
+                <div className="preview" style={{ aspectRatio: c.aspect }}>
+                  {c.preview.kind === "composite" && (
+                    <img className="composite-fill" src={c.preview.src} alt="" draggable={false} />
+                  )}
                   {c.preview.kind === "nine-grid" && (
                     <div className="nine-grid">
                       {c.preview.cells.map((src, i) => (
