@@ -54,11 +54,11 @@ const CARDS: CardDef[] = [
     preview: {
       kind: "stack-2",
       cells: [
-        { img: "/reproduce-preview/card3/top.png", tag: "参考" },
-        { img: "/reproduce-preview/card3/bottom.png", tag: "替换后" },
+        { img: "/reproduce-preview/card3/top.webp", tag: "" },
+        { img: "/reproduce-preview/card3/bottom.webp", tag: "" },
       ],
     },
-    aspect: "4 / 5",
+    aspect: "1122 / 1402",
   },
 ];
 
@@ -364,9 +364,7 @@ export default function VideoReproduceHub() {
                         <>
                           {i === 1 && <div key={`arr-${i}`} className="arrowRow"><ArrowDown /></div>}
                           <div key={i} className="videoCell">
-                            <span className="tag">{cell.tag}</span>
                             <img src={cell.img} alt="" draggable={false} />
-                            <span className="play"><PlayIcon /></span>
                           </div>
                         </>
                       ))}
