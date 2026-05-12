@@ -124,11 +124,13 @@ export default function VideoReproduceHub() {
         /* 9 宫格(规范 6) */
         .nine-grid {
           display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          grid-template-rows: repeat(3, 1fr);
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          grid-template-rows: repeat(3, minmax(0, 1fr));
           gap: 3px;
           width: 100%;
           height: 100%;
+          min-height: 0;
+          min-width: 0;
         }
         .nine-grid img { border-radius: 3px; }
 
@@ -262,8 +264,8 @@ export default function VideoReproduceHub() {
             style={{
               display: "grid",
               gridTemplateColumns: "minmax(0, 1.05fr) minmax(0, 0.85fr) minmax(0, 1.1fr)",
-              alignItems: "start",
-              gap: 18,
+              alignItems: "stretch",
+              gap: 22,
             }}
           >
             {CARDS.map((c) => (
