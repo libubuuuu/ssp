@@ -107,6 +107,7 @@ export default function VideoReproduceHub() {
           will-change: transform;
           display: flex;
           flex-direction: column;
+          justify-content: space-between;
           min-width: 0;
           overflow: hidden;
         }
@@ -130,7 +131,7 @@ export default function VideoReproduceHub() {
           /* aspect-ratio 由每张卡自行 inline 覆盖:1/1 / 3/4 / 4/5 */
           overflow: hidden;
           border-radius: 10px;
-          margin-bottom: 14px;
+          margin-bottom: 0;
           background: transparent;
           padding: 0;
           box-sizing: border-box;
@@ -312,6 +313,21 @@ export default function VideoReproduceHub() {
                   if (e.key === "Enter" || e.key === " ") router.push(c.route);
                 }}
               >
+                <div className="topBlock">
+                  <div className="titleRow">
+                    <span className="title">{c.title}</span>
+                    <div className="arrowCircle" aria-hidden>
+                      <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M5 12h14M13 5l7 7-7 7" />
+                      </svg>
+                    </div>
+                  </div>
+                  <p className="desc">
+                    {c.desc.map((line, i) => (
+                      <span key={i}>{line}</span>
+                    ))}
+                  </p>
+                </div>
                 <div className="preview" style={{ aspectRatio: c.aspect }}>
                   {c.preview.kind === "composite" && (
                     <img className="composite-fill" src={c.preview.src} alt="" draggable={false} />
@@ -353,19 +369,6 @@ export default function VideoReproduceHub() {
                     </div>
                   )}
                 </div>
-                <div className="titleRow">
-                  <span className="title">{c.title}</span>
-                  <div className="arrowCircle" aria-hidden>
-                    <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M5 12h14M13 5l7 7-7 7" />
-                    </svg>
-                  </div>
-                </div>
-                <p className="desc">
-                  {c.desc.map((line, i) => (
-                    <span key={i}>{line}</span>
-                  ))}
-                </p>
               </div>
               );
             })}
