@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import FeatureShowcase from "@/components/FeatureShowcase";
+import DashboardCarousel from "@/components/DashboardCarousel";
 import { useLang } from "@/lib/i18n/LanguageContext";
 import { useLocalStorageItem } from "@/lib/hooks/useLocalStorageItem";
 
@@ -55,6 +56,7 @@ export default function Dashboard() {
           <h1 style={{fontSize:"2.4rem",fontWeight:300,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif",fontStyle:"italic"}}>{t("dashboard.todayCreate")}</h1>
         </div>
 
+        <DashboardCarousel />
         <FeatureShowcase mode="embedded" />
       </main>
       {showPopup && <FeatureShowcase mode="popup" onClose={dismissPopup} />}
