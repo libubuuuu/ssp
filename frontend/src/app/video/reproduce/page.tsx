@@ -113,8 +113,6 @@ export default function VideoReproduceHub() {
           background: transparent;
           padding: 0;
           box-sizing: border-box;
-          border: 1px solid rgba(0, 0, 0, 0.08);
-          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
         }
         .preview img {
           width: 100%;
@@ -164,7 +162,7 @@ export default function VideoReproduceHub() {
           height: 12px;
         }
         .stack-3-1 .large {
-          flex: 3;
+          flex: 2;
           min-height: 0;
           overflow: hidden;
           border-radius: 4px;
@@ -187,13 +185,13 @@ export default function VideoReproduceHub() {
         }
         .stack-2 .videoCell .tag {
           position: absolute;
-          top: 4px;
-          left: 6px;
-          font-size: 9px;
+          top: 8px;
+          left: 8px;
+          font-size: 11px;
           color: #fff;
-          background: rgba(0, 0, 0, 0.45);
-          padding: 1px 6px;
-          border-radius: 3px;
+          background: rgba(0, 0, 0, 0.65);
+          padding: 2px 8px;
+          border-radius: 4px;
           z-index: 2;
         }
         .stack-2 .videoCell .play {
@@ -265,7 +263,7 @@ export default function VideoReproduceHub() {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(0, 1.05fr) minmax(0, 0.85fr) minmax(0, 1.1fr)",
+              gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
               alignItems: "start",
               gap: 22,
             }}
