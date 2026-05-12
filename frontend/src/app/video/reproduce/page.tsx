@@ -113,6 +113,8 @@ export default function VideoReproduceHub() {
           background: transparent;
           padding: 0;
           box-sizing: border-box;
+          border: 1px solid rgba(0, 0, 0, 0.08);
+          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
         }
         .preview img {
           width: 100%;
