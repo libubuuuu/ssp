@@ -30,7 +30,7 @@ const CARDS: CardDef[] = [
     desc: ["视频拆成 9 宫格", "替换元素重新出片"],
     route: "/video/frame-extract",
     preview: { kind: "composite", src: "/reproduce-preview/card1.png" },
-    aspect: "420 / 480",
+    aspect: "381 / 458",
   },
   {
     title: "图片复刻",
