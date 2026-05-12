@@ -117,8 +117,16 @@ class FalVideoService:
         # 3. 兜底:代码默认值
         return self.DEFAULT_ENDPOINTS.get(model_key), "default"
 
-    async def generate_from_image(self, image_url: str, prompt: str = "", tail_image_url=None) -> dict:
-        args = {"image_url": image_url, "prompt": prompt, "generate_audio": True}
+    async def generate_from_image(self, image_url: str, prompt: str = "", tail_image_url=None, duration_sec: int = 5) -> dict:
+        # 2026-05-13:之前 duration 没传 → kling 默认 5s 不管用户选啥。
+        # kling o3 standard image-to-video 支持 3/5/10/15s,clamp + 字符串(端点要求)
+        safe_dur = max(3, min(15, int(duration_sec or 5)))
+        args = {
+            "image_url": image_url,
+            "prompt": prompt,
+            "generate_audio": True,
+            "duration": str(safe_dur),
+        }
         if tail_image_url:
             args["tail_image_url"] = tail_image_url
         return await self._generate_video("kling/image-to-video", args)

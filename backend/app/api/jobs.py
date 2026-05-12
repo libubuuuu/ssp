@@ -151,7 +151,12 @@ async def _run_image_job(params: dict):
 async def _run_video_job(params: dict, job_type: str):
     service = get_video_service()
     if job_type == "video_i2v":
-        r = await service.generate_from_image(params["image_url"], params.get("prompt", ""), params.get("tail_image_url"))
+        # 2026-05-13:之前 duration_sec 没传给 fal,kling 默认出 5s,用户点 10s 也只得 5s。
+        duration_sec = int(params.get("duration_sec") or 5)
+        r = await service.generate_from_image(
+            params["image_url"], params.get("prompt", ""), params.get("tail_image_url"),
+            duration_sec=duration_sec,
+        )
     elif job_type == "video_edit":
         r = await service.replace_element(params["video_url"], params["element_image_url"], params["instruction"], params.get("product_image_url"))
     elif job_type == "video_clone":
@@ -3904,9 +3909,38 @@ async def _run_video_general_analyze_job(params: dict) -> dict:
             f"scenes={len(scenes)} — qwen-vl 没严格遵守自适应分段,前端会显示不一致总时长"
         )
 
+    # 2026-05-13 用户硬性规则:max 10s/段,总长按用户点击秒数严格切。
+    # qwen-vl 可能不按规则,我们这里强制改写每段 duration_sec(段数也按规则切,多余的丢)
+    target_segs = _split_general_durations(total_duration)
+    if len(scenes) != len(target_segs):
+        log_info(
+            f"video_general_analyze 段数对齐:qwen-vl 给了 {len(scenes)} 段,"
+            f"用户规则要 {len(target_segs)} 段(durations={target_segs}),"
+            f"truncate/pad 到正确段数"
+        )
+        if len(scenes) > len(target_segs):
+            scenes = scenes[: len(target_segs)]
+        else:
+            while len(scenes) < len(target_segs):
+                # pad 用最后 1 段的副本(避免空 scene 引爆下游)
+                import copy as _copy
+                scenes.append(_copy.deepcopy(scenes[-1]) if scenes else {
+                    "id": len(scenes) + 1,
+                    "narrative_role": "showcase",
+                    "shot": "medium",
+                    "action": "展示产品",
+                    "visual_prompt": "Showing the product naturally",
+                    "speech": "",
+                })
+    # 重写每段 duration_sec + time_range,按用户规则强制对齐
+    cur_t = 0
+    for sc, dur in zip(scenes, target_segs):
+        sc["duration_sec"] = int(dur)
+        sc["time_range"] = f"{cur_t}-{cur_t + int(dur)}s"
+        cur_t += int(dur)
     log_info(
         f"video_general_analyze OK category={category} target_user={target_user[:30]!r} "
-        f"scenes={len(scenes)} sum_duration={sum_dur}/{total_duration} "
+        f"scenes={len(scenes)} aligned_durations={target_segs} total={total_duration}s "
         f"selling_points={len(selling_points)} "
         f"creative_brief_keys={list(creative_brief.keys())[:7]}"
     )
@@ -3917,8 +3951,130 @@ async def _run_video_general_analyze_job(params: dict) -> dict:
         "creative_brief": creative_brief,
         "product_specifics": product_specifics,
         "scenes": scenes,
-        "total_duration": params.get("total_duration", 15),
+        "total_duration": total_duration,
     }
+
+
+async def _stretch_and_archive_general_seg(
+    fal_url: str, target_dur: float, job_id: str, seg_idx: int, user_id: str,
+) -> str:
+    """video_general 每段:下载 fal output → setpts 拉伸到精确 target_dur → 归档,返本地 URL。
+    fal seedance r2v 输出比请求短 1.04%(8s 请求出 7.917s)。用户点 60s 不能给 59.5s。
+    """
+    import tempfile as _tf, os as _os, httpx as _httpx, subprocess as _sp, time as _t
+    import shutil as _sh, json as _json
+
+    work_dir = _tf.mkdtemp(prefix=f"vg_seg_{job_id}_{seg_idx}_")
+    fal_local = _os.path.join(work_dir, "fal_in.mp4")
+    try:
+        async with _httpx.AsyncClient(timeout=120, follow_redirects=True) as cli:
+            r = await cli.get(fal_url)
+            r.raise_for_status()
+            with open(fal_local, "wb") as f:
+                f.write(r.content)
+
+        # ffprobe 实际时长
+        probe = _sp.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", fal_local],
+            capture_output=True, text=True, timeout=15,
+        )
+        try:
+            actual = float(_json.loads(probe.stdout).get("format", {}).get("duration", 0))
+        except Exception:
+            actual = 0.0
+        if actual <= 0:
+            raise RuntimeError(f"ffprobe 拿不到时长:{probe.stderr[-200:]}")
+
+        target = float(target_dur)
+        # 偏差 < 20ms 不动(浮点 noise)
+        if abs(actual - target) <= 0.02:
+            log_info(f"video_general seg {seg_idx} 时长 OK ({actual:.3f}s ≈ target {target}s),跳过拉伸")
+            archive_local = fal_local  # 直接归档原 fal 输出
+        else:
+            ratio = target / actual  # > 1 慢放;< 1 快放
+            stretched = _os.path.join(work_dir, "stretched.mp4")
+            # video setpts + audio atempo(若有音轨)。video_general fal 默认 enable_audio=True
+            has_audio = b"audio" in _sp.run(
+                ["ffprobe", "-v", "error", "-select_streams", "a:0",
+                 "-show_entries", "stream=codec_type", "-of", "csv=p=0", fal_local],
+                capture_output=True, timeout=15,
+            ).stdout
+            if has_audio:
+                fc = (
+                    f"[0:v]setpts={ratio:.6f}*PTS[v];"
+                    f"[0:a]atempo={1.0 / ratio:.6f}[a]"
+                )
+                cmd = [
+                    "ffmpeg", "-y", "-i", fal_local,
+                    "-filter_complex", fc,
+                    "-map", "[v]", "-map", "[a]",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                    "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+                    stretched,
+                ]
+            else:
+                cmd = [
+                    "ffmpeg", "-y", "-i", fal_local,
+                    "-vf", f"setpts={ratio:.6f}*PTS",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                    "-an",
+                    stretched,
+                ]
+            rr = _sp.run(cmd, capture_output=True, text=True, timeout=120)
+            if rr.returncode != 0:
+                raise RuntimeError(f"setpts 拉伸失败:{rr.stderr[-500:]}")
+            log_info(
+                f"video_general seg {seg_idx} setpts {actual:.3f}s → {target}s (ratio={ratio:.4f})"
+            )
+            archive_local = stretched
+
+        # 归档到 /opt/ssp/uploads/{user_id}/{YYYY-MM}/(同 media_archiver.archive_url 语义)
+        from datetime import datetime as _dt
+        import uuid as _uuid, re as _re, pathlib as _pl
+        safe_uid = (_re.sub(r"[^a-zA-Z0-9_\-.@]", "_", user_id or "anon"))[:64] or "anon"
+        yyyymm = _dt.utcnow().strftime("%Y-%m")
+        uploads_root = _pl.Path(_os.environ.get("SSP_UPLOADS_ROOT", "/opt/ssp/uploads"))
+        target_dir = uploads_root / safe_uid / yyyymm
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_file = target_dir / f"video_{_uuid.uuid4().hex}.mp4"
+        _sh.copy2(archive_local, target_file)
+        try:
+            _sh.chown(str(target_file), user="ssp-app", group="ssp-app")
+        except (LookupError, PermissionError):
+            pass
+        _os.chmod(target_file, 0o644)
+        public_base = _os.environ.get("SSP_UPLOADS_PUBLIC_BASE", "https://ailixiao.com/uploads").rstrip("/")
+        return f"{public_base}/{safe_uid}/{yyyymm}/{target_file.name}"
+    finally:
+        try:
+            _sh.rmtree(work_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+def _split_general_durations(total: int) -> list:
+    """图片复刻按用户点击秒数严格切片,每段 ≤ 10s,最少 4s(fal 端点要求)。
+    2026-05-13 老板规则:
+      5  → [5]
+      10 → [10]
+      15 → [10, 5]
+      20 → [10, 10]
+      30 → [10, 10, 10]
+      60 → [10, 10, 10, 10, 10, 10]
+    """
+    total = int(total)
+    if total <= 0:
+        return [4]
+    if total <= 10:
+        return [max(4, total)]
+    full = total // 10
+    remainder = total % 10
+    if remainder == 0:
+        return [10] * full
+    if remainder >= 4:
+        return [10] * full + [remainder]
+    # remainder 1-3:跟最后一段并(变 11/12/13,fal 仍接受 ≤15)
+    return [10] * (full - 1) + [10 + remainder]
 
 
 def _build_video_general_lookbook(
@@ -4279,28 +4435,55 @@ async def _run_video_general_job(params: dict) -> dict:
                 ref_anchor = " @Image1 是参考画面,跨帧严格保持构图。"
 
             r2v_prompt = (visual or f"Showing the {category} product naturally, model demonstrates use") + ref_anchor
-            log_info(f"video_general seg {idx} Seedance r2v 提交 n_refs={len(image_urls)} prompt_len={len(r2v_prompt)}")
 
-            sub = await ad_video_models.submit_seedance_fast_r2v_video(
-                image_urls=image_urls,
-                prompt=r2v_prompt,
-                duration=8,
-                aspect_ratio=aspect_ratio,
-                resolution="480p",
-                enable_audio=True,
-            )
-            if sub.get("error"):
-                raise Exception(f"seg {idx} Seedance r2v: {sub['error']}")
-            tid = sub.get("task_id")
-            for _ in range(180):
-                await _aio.sleep(5)
-                st = await ad_video_models.poll_seedance_fast_r2v_status(tid)
-                if st.get("status") == "completed" and st.get("video_url"):
-                    log_info(f"video_general seg {idx} Seedance r2v OK url={st['video_url'][:60]}")
-                    return st["video_url"]
-                if st.get("status") == "failed":
-                    raise Exception(f"seg {idx} Seedance r2v failed: {st.get('error')}")
-            raise Exception(f"seg {idx} 超时")
+            # 2026-05-13:fal Seedance r2v 偶发个别 task 卡住(seg 0 4 分钟出,seg 1 15 分钟没出)。
+            # 单次 25 分钟窗口 + 超时后用新 submit 重试 1 次(新 task id 通常能避开卡住的)。
+            async def _submit_and_poll(attempt: int) -> str:
+                log_info(
+                    f"video_general seg {idx} Seedance r2v 提交(attempt={attempt}) "
+                    f"n_refs={len(image_urls)} prompt_len={len(r2v_prompt)}"
+                )
+                seg_dur = max(4, min(15, int(scene.get("duration_sec") or 8)))
+                sub = await ad_video_models.submit_seedance_fast_r2v_video(
+                    image_urls=image_urls,
+                    prompt=r2v_prompt,
+                    duration=seg_dur,
+                    aspect_ratio=aspect_ratio,
+                    resolution="480p",
+                    enable_audio=True,
+                )
+                if sub.get("error"):
+                    raise Exception(f"seg {idx} Seedance r2v submit: {sub['error']}")
+                tid = sub.get("task_id")
+                for _ in range(300):  # 25 分钟 (5s × 300)
+                    await _aio.sleep(5)
+                    st = await ad_video_models.poll_seedance_fast_r2v_status(tid)
+                    if st.get("status") == "completed" and st.get("video_url"):
+                        log_info(f"video_general seg {idx} Seedance r2v OK(attempt={attempt}) url={st['video_url'][:60]}")
+                        return st["video_url"]
+                    if st.get("status") == "failed":
+                        raise Exception(f"seg {idx} Seedance r2v failed(attempt={attempt}): {st.get('error')}")
+                raise TimeoutError(f"seg {idx} 25 分钟轮询无结果(attempt={attempt})")
+
+            try:
+                fal_url = await _submit_and_poll(0)
+            except TimeoutError as e1:
+                log_info(f"video_general seg {idx} 首次超时,新 submit 重试一次:{e1}")
+                try:
+                    fal_url = await _submit_and_poll(1)
+                except TimeoutError as e2:
+                    raise Exception(f"seg {idx} 两次都超时:{e2}")
+
+            # 2026-05-13:fal 输出比请求短 ~1%(8s 请求出 7.917s)。要精确按用户选的秒数
+            # 出片,下载 → setpts 拉伸到 seg_dur → 归档,返本地 URL。
+            try:
+                return await _stretch_and_archive_general_seg(
+                    fal_url, target_dur=seg_dur, job_id=job_id, seg_idx=idx,
+                    user_id=params.get("_user_id", "anon"),
+                )
+            except Exception as e:
+                log_warning(f"video_general seg {idx} setpts 拉伸失败,降级返 fal URL: {e}")
+                return fal_url
 
     # 2026-05-12:用户明令"每个分镜要都是独立的"— 去 concat,直接返 N 段独立分镜视频
     # 矩阵 = batch_count × n_scenes 个独立 5s 视频(每段独立 fal storage URL)

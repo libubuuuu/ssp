@@ -172,31 +172,23 @@ _ANALYZE_INSTRUCTION = """你是顶级短视频广告脚本专家。看完用户
 6. 💎 memorable_moment(记忆点):反转/金句/反差/视觉强符号,让用户截图保存的瞬间
 7. 📢 cta(结尾召唤):"立即下单"/"点击购买同款"/"关注获取链接" 之类
 
-【任务三:N 段脚本 — 按 total_duration 自适应分段】
-总时长 user_total_duration 秒。**所有段 duration_sec 之和必须 = total_duration**(严格)。
-按时长档位选择分段模板:
+【任务三:N 段脚本 — 严格 10 秒切片】
+总时长 user_total_duration 秒。规则:**每段 ≤ 10 秒,最少 4 秒(fal 端点限制)**。
+**所有段 duration_sec 之和必须 = total_duration**(严格)。
+档位:
 
-档位 A — total_duration ≤ 8 秒 → 输出 1 段
-  [{"id":1,"duration_sec":total,"narrative_role":"cta"}]
-  (1 段需综合钩子+展示+召唤,role 标 cta 即可)
+档位 A — total = 5 秒 → 1 段(5s),role cta
+档位 B — total = 10 秒 → 1 段(10s),role cta(综合钩子+展示+召唤)
+档位 C — total = 15 秒 → 2 段:[hook+showcase 10s, cta 5s]
+档位 D — total = 20 秒 → 2 段:[hook 10s, showcase+cta 10s]
+档位 E — total = 30 秒 → 3 段:[hook 10s, showcase 10s, cta 10s]
+档位 F — total = 60 秒 → 6 段:[hook 10, setup_pain 10, showcase 10, solve 10, memorable 10, cta 10]
 
-档位 B — total_duration 9-12 秒 → 输出 2 段
-  [hook(3s) + cta(余下)]
-  示例 10s: [hook 3s, cta 7s]
+通用规则:段数 N = ceil(total / 10);前 N-1 段一律 10s,末段 = total - 10*(N-1)(≥5)。
 
-档位 C — total_duration 13-20 秒 → 输出 3 段
-  [hook(3s) + showcase(中) + cta(3s)]
-  示例 15s: [hook 3s, showcase 8s, cta 4s] sum=15 ✓
-
-档位 D — total_duration 21-35 秒 → 输出 5 段
-  [hook(3s) + setup_pain + showcase + memorable(3s) + cta(3s)]
-  示例 30s: [hook 3, setup_pain 6, showcase 12, memorable 3, cta 6] sum=30 ✓
-
-档位 E — total_duration 36-60 秒 → 输出 6-8 段
-  完整模板 [hook + setup_pain + showcase + solve + memorable + cta(+ 可加 1-2 个 showcase)]
-  示例 60s: [hook 3, setup_pain 8, showcase 12, solve 12, showcase 12, memorable 5, cta 8] sum=60 ✓
-
-⚠️ 段数必须严格按上面档位,不能多也不能少。各段 duration_sec 加起来必须等于 user_total_duration。
+⚠️ 每段 duration_sec ∈ [4, 10] 整数。每段都是独立的 fal seedance r2v 生成,
+   段越长 fal 越慢(8s ~ 3 分钟,10s ~ 4 分钟)。
+⚠️ 后端会强制改写 duration_sec 对齐用户秒数,不要试图扩展或缩短。
 
 每段字段:
 - id, time_range(如 "0-3s"), duration_sec(整数秒)
