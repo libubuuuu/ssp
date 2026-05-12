@@ -52,6 +52,8 @@ export default function VideoReproduceHub() {
           will-change: transform;
           display: flex;
           flex-direction: column;
+          min-width: 0;
+          overflow: hidden;
         }
         .reproCard:hover {
           transform: translateY(-10px);
