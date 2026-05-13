@@ -400,7 +400,7 @@ export default function VideoFrameExtractPage() {
         {videoUrl && !scenes && (
           <button onClick={extract} disabled={loading}
             style={{ background: "#0d0d0d", color: "#fff", border: "none", padding: "0.9rem 1.6rem", borderRadius: 10, fontSize: "0.95rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1, marginBottom: "1rem" }}>
-            {loading ? loadingMsg || "提取中..." : "🔍 提取 storyboard(消耗 1 积分)"}
+            {loading ? loadingMsg || "提取中..." : "🔍 提取 storyboard(消耗 5 积分)"}
           </button>
         )}
 
@@ -494,7 +494,7 @@ export default function VideoFrameExtractPage() {
         {scenes && (productImageUrl || modelImageUrl || sceneImageUrl) && replacedGridUrls.length === 0 && (
           <button onClick={doReplace} disabled={loading}
             style={{ background: "#0d0d0d", color: "#fff", border: "none", padding: "0.9rem 1.6rem", borderRadius: 10, fontSize: "0.95rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1, marginBottom: "1rem" }}>
-            {loading ? loadingMsg || "替换中..." : `🎨 替换九宫格元素(消耗 ${Math.max(3, 3 * gridUrls.length)} 积分,每张 3-5 分钟)`}
+            {loading ? loadingMsg || "替换中..." : `🎨 替换九宫格元素(消耗 20 积分/张 · 共 ${gridUrls.length} 张)`}
           </button>
         )}
 
@@ -545,7 +545,7 @@ export default function VideoFrameExtractPage() {
         {replacedGridUrls.length > 0 && !videoOutputUrl && scenes && (
           <button onClick={doGenerate} disabled={loading}
             style={{ background: "#0d8a3e", color: "#fff", border: "none", padding: "1rem 1.8rem", borderRadius: 10, fontSize: "1rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1, marginBottom: "1rem", fontWeight: 600 }}>
-            {loading ? loadingMsg || "生成中..." : `🎬 生成完整视频(消耗 ${Math.max(10, scenes.length * 5)} 积分,${scenes.length} 段并发 ~3-5 分钟)`}
+            {loading ? loadingMsg || "生成中..." : `🎬 生成完整视频(65 积分/秒 · ${scenes.length} 段并发 ~3-5 分钟)`}
           </button>
         )}
 

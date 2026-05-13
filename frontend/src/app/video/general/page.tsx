@@ -521,7 +521,7 @@ export default function VideoGeneralPage() {
 
         {!analyzeResult && (
           <button onClick={analyze} disabled={analyzing || !productImageUrls.length} style={{ background: "#0d0d0d", color: "#fff", border: "none", padding: "0.9rem 1.6rem", borderRadius: 10, fontSize: "0.95rem", cursor: analyzing ? "not-allowed" : "pointer", opacity: analyzing ? 0.6 : 1, marginBottom: "1rem" }}>
-            {analyzing ? analyzeMsg : "🔍 AI 分析产品 + 出脚本(消耗 1 积分)"}
+            {analyzing ? analyzeMsg : "🔍 AI 分析产品 + 出脚本(消耗 5 积分)"}
           </button>
         )}
 
@@ -626,14 +626,14 @@ export default function VideoGeneralPage() {
 
             {/* 2026-05-11 P226:分镜板预览(2 积分,3-5 分钟,N≤4 宫格,可看着满意再生成视频)*/}
             {!resultVideoUrl && (
-              <Box label={`④.5 分镜板预览(可选 · 2 积分 · ${analyzeResult.scenes.length >= 2 ? `最多 ${Math.min(4, analyzeResult.scenes.length)} 宫格` : "1 张首帧图"})`}>
+              <Box label={`④.5 分镜板预览(可选 · 20 积分 · ${analyzeResult.scenes.length >= 2 ? `最多 ${Math.min(4, analyzeResult.scenes.length)} 宫格` : "1 张首帧图"})`}>
                 <div style={{ fontSize: "0.82rem", color: "#666", marginBottom: 10, lineHeight: 1.5 }}>
                   生成 1 张分镜板预览图(GPT-Image 2 出图,模特/产品/场景全锁同一 lookbook)。
                   看着满意再生成完整视频,省时间省钱。
                 </div>
                 {!storyboardUrl && (
                   <button onClick={generateStoryboard} disabled={storyboardLoading} style={{ background: "#7c3aed", color: "#fff", border: "none", padding: "0.7rem 1.2rem", borderRadius: 10, fontSize: "0.9rem", cursor: storyboardLoading ? "not-allowed" : "pointer", opacity: storyboardLoading ? 0.6 : 1 }}>
-                    {storyboardLoading ? storyboardMsg : "🎨 生成分镜板预览(消耗 2 积分)"}
+                    {storyboardLoading ? storyboardMsg : "🎨 生成分镜板预览(消耗 20 积分)"}
                   </button>
                 )}
                 {storyboardUrl && (
@@ -680,7 +680,7 @@ export default function VideoGeneralPage() {
                   </select>
                 </div>
                 <button onClick={generate} disabled={generating} style={{ background: "#dc2626", color: "#fff", border: "none", padding: "0.9rem 1.6rem", borderRadius: 10, fontSize: "0.95rem", cursor: generating ? "not-allowed" : "pointer", opacity: generating ? 0.6 : 1 }}>
-                  {generating ? generateMsg : `🎬 生成视频(消耗 ${analyzeResult.scenes.length * 5 * batchCount} 积分)`}
+                  {generating ? generateMsg : `🎬 生成视频(55 积分/秒 · 约 ${analyzeResult.scenes.length * 5 * 55 * batchCount} 积分)`}
                 </button>
                 {batchCount > 1 && !generating && (
                   <span style={{ fontSize: "0.78rem", color: "#9ca3af" }}>同 prompt 跑 {batchCount} 个独立版本,挑最佳</span>
