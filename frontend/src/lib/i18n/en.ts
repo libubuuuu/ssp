@@ -92,7 +92,7 @@ export const en = {
     loginTitle: "Log In",
     registerTitle: "Sign Up",
     welcomeBack: "Welcome back",
-    registerTip: "Create account, get 10 free credits",
+    registerTip: "Create account, get 100 free credits",
     email: "Email",
     password: "Password",
     pleaseWait: "Please wait...",

@@ -216,7 +216,7 @@ def get_user_by_id(user_id: str) -> Optional[Dict]:
         return None
 
 
-INITIAL_CREDITS = 10  # 防羊毛(2026-04-27 P3-1):新用户默认积分;早前为 100
+INITIAL_CREDITS = 100  # 新用户注册赠送积分(可用图片5次/文案20次)
 
 
 def create_user(email: str, password: str, name: Optional[str] = None) -> Optional[Dict]:
