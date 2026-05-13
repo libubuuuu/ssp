@@ -339,7 +339,7 @@ async def generate_submit(
     user_id = str(current_user["id"])
     # 2026-05-13:50 积分/秒。sum 每段实际秒数,fal 端点支持 4-12s
     total_duration_sec = sum(max(4, int(round(float(s.get("duration_sec") or 4)))) for s in scenes)
-    cost = max(50, total_duration_sec * 50)
+    cost = max(65, total_duration_sec * 65)
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
 

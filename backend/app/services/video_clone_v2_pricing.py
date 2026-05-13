@@ -17,7 +17,7 @@ from typing import Final, Mapping, Sequence
 #
 # 2026-05-13 老板重定汇率/单价:50 积分 = 1 元,视频 50 积分/秒。按段 duration 计费,
 # 不再 "每段固定 20"(老规则等于 4s 段 5 积分/秒、8s 段 2.5 积分/秒,跟新口径不一致)。
-CREDITS_PER_SEC:       Final[int] = 50      # 50 积分 / 秒(¥1/秒,2026-05-13 锁定)
+CREDITS_PER_SEC:       Final[int] = 60      # 60 积分 / 秒(¥1.2/秒,视频复刻,2026-05-14 重定)
 CREDITS_PER_YUAN:      Final[int] = 50      # 50 积分 = 1 元(2026-05-13 锁定汇率)
 SEGMENT_LABEL:         Final[str] = "AI 替换"  # 前端段卡片显示名
 SEGMENT_INPUT_SECONDS_MAX: Final[int] = 8   # worst-case 估算上限,实际段长 4-8s

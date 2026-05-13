@@ -438,7 +438,7 @@ async def generate(
     user_id = str(current_user["id"])
     # 2026-05-13:50 积分/秒,batch_count 倍(批量生成 N 个独立版本)
     total_duration_sec = sum(int(s.duration_sec or 0) for s in req.scenes)
-    cost = max(50, total_duration_sec * 50) * max(1, min(5, req.batch_count or 1))
+    cost = max(55, total_duration_sec * 55) * max(1, min(5, req.batch_count or 1))
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
 

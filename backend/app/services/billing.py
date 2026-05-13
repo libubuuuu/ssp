@@ -35,10 +35,10 @@ PRICING: Dict[str, int] = {
     # 通用 video_general / frame-extract / replicate
     "video/general/analyze":      5,
     "video/general/storyboard":   20,
-    "video/general/generate":     50,  # 实际按 sum(scenes.duration) * 50
+    "video/general/generate":     55,  # 实际按 sum(scenes.duration) * 55(图片复刻 ¥1.1/s)
     "video/frame-extract/analyze": 5,
     "video/frame-extract/replace": 20, # 单张九宫格 20
-    "video/frame-extract/generate": 50, # 实际按 sum(scenes.duration) * 50
+    "video/frame-extract/generate": 65, # 实际按 sum(scenes.duration) * 65(分镜复刻 ¥1.3/s)
     "video/replicate/analyze": 5,
 }
 

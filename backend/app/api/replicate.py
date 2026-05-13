@@ -341,7 +341,7 @@ async def generate(
 
     total_duration = sum(s.duration_sec for s in req.script.scenes)
     # 2026-05-13 老板重定:50 积分/秒(¥1/s)
-    cost = max(50, int(round(total_duration * 50)))
+    cost = max(60, int(round(total_duration * 60)))
     module = "video/replicate"
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
