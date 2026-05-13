@@ -46,7 +46,7 @@ def test_login_by_code_first_time_auto_registers(client):
     body = r.json()
     assert "token" in body
     assert body["user"]["email"] == "newuser@example.com"
-    assert body["user"]["credits"] == 10  # 首登默认 10 额度
+    assert body["user"]["credits"] == 100  # 新用户赠送 100 积分
 
 
 def test_login_by_code_wrong_code_rejected(client):
