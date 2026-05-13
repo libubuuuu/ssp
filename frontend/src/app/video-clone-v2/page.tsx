@@ -549,7 +549,7 @@ export default function VideoCloneV2Page() {
               {t("videoCloneV2.titleMain")}<span style={{ fontStyle: "italic" }}> {t("videoCloneV2.titleAccent")}</span>
             </h1>
             <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
-              支持 4-64 秒视频 · ¥19.9 / 段 · 以原视频风格为参考生成含你产品的新视频 · 输出默认含水印
+              支持 4-64 秒视频 · 50 积分/秒 · 以原视频风格为参考生成含你产品的新视频 · 输出默认含水印
             </div>
           </div>
           <button
@@ -702,7 +702,7 @@ export default function VideoCloneV2Page() {
                     <div style={{ fontSize: "0.78rem", marginTop: 4 }}>
                       {sel.source_type === "ai" ? (
                         <span style={{ color: "#666" }}>
-                          {SEGMENT_PRICE.label} · ¥{SEGMENT_PRICE.rmb} / 段
+                          {SEGMENT_PRICE.label} · 50 积分/秒
                         </span>
                       ) : (
                         <span style={{ color: "#999" }}>

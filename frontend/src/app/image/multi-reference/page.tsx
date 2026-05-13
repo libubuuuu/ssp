@@ -249,7 +249,7 @@ export default function MultiReferencePage() {
               disabled={loading || referenceImages.length === 0}
               className="w-full py-3 rounded-lg bg-amber-500 text-black font-medium hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {loading ? "生成中..." : "生成图片"}
+              {loading ? "生成中..." : "生成图片(消耗 20 积分/张)"}
             </button>
           </form>
 
