@@ -264,6 +264,8 @@ export default function VideoCloneV2Page() {
           }
           return { idx: s.idx, source_type: "original" };
         });
+    // 2026-05-13:加 video_duration_sec 让后端按段 duration × 50 算积分
+    const totalDur = preview.segments.reduce((acc, s) => acc + (s.duration || 0), 0);
     fetch(`${API_BASE}/api/video/clone-v2/estimate`, {
       method: "POST",
       credentials: "include",
@@ -272,6 +274,7 @@ export default function VideoCloneV2Page() {
         type: preview.type,
         replacement_mode: preview.type === "ultimate" ? replacementMode : "full",
         segments,
+        video_duration_sec: totalDur,
       }),
     })
       .then((r) => r.json())

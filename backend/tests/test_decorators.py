@@ -48,14 +48,14 @@ def test_no_current_user_raises_401():
 def test_current_user_via_kwargs():
     user = _mk_user("dec-kw@example.com", 50)
 
-    @require_credits("image/style")  # cost=2
+    @require_credits("image/style")  # 2026-05-13:cost=20
     async def handler(**kw):
         return {"ok": True}
 
     res = _run(handler(current_user=user))
     assert res["ok"] is True
-    assert res["cost"] == 2
-    assert get_user_credits(user["id"]) == 48
+    assert res["cost"] == 20
+    assert get_user_credits(user["id"]) == 30
 
 
 def test_current_user_via_args_dict():
@@ -68,13 +68,13 @@ def test_current_user_via_args_dict():
 
     res = _run(handler({"prompt": "x"}, user))
     assert res["ok"] is True
-    assert get_user_credits(user["id"]) == 48
+    assert get_user_credits(user["id"]) == 30  # 2026-05-13: image/style=20
 
 
 # === 余额不足 ===
 
 def test_insufficient_credits_402_no_deduct():
-    user = _mk_user("dec-poor@example.com", 1)  # < 2
+    user = _mk_user("dec-poor@example.com", 5)  # < 20
 
     @require_credits("image/style")
     async def handler(**kw):
@@ -85,7 +85,7 @@ def test_insufficient_credits_402_no_deduct():
     assert ei.value.status_code == 402
     assert "积分" in ei.value.detail
     # 余额不变(未扣)
-    assert get_user_credits(user["id"]) == 1
+    assert get_user_credits(user["id"]) == 5
 
 
 # === 扣费成功路径 ===
@@ -99,7 +99,7 @@ def test_success_writes_generation_history():
 
     res = _run(handler(current_user=user))
     assert "image_url" in res
-    assert res["cost"] == 2
+    assert res["cost"] == 20
 
     # 验证写入 generation_history
     from app.database import get_db
@@ -111,7 +111,7 @@ def test_success_writes_generation_history():
     assert len(rows) == 1
     assert rows[0][0] == "image/style"
     assert rows[0][1] == "test prompt"  # description 字段提取
-    assert rows[0][2] == 2
+    assert rows[0][2] == 20
 
 
 def test_result_without_description_uses_module_as_desc():
@@ -141,8 +141,8 @@ def test_non_dict_result_no_cost_attached():
 
     res = _run(handler(current_user=user))
     assert res == "raw string"
-    # 仍扣费
-    assert get_user_credits(user["id"]) == 98
+    # 仍扣费(2026-05-13: image/style=20)
+    assert get_user_credits(user["id"]) == 80
 
 
 # === 失败返还 ===
@@ -179,14 +179,14 @@ def test_unknown_exception_refunds_and_500():
 def test_value_error_also_refunds():
     user = _mk_user("dec-ve@example.com", 100)
 
-    @require_credits("video/clone")  # cost=20,确认大额也返还
+    @require_credits("video/clone")  # 2026-05-13:cost=50,确认大额也返还
     async def handler(**kw):
         raise ValueError("malformed")
 
     with pytest.raises(HTTPException) as ei:
         _run(handler(current_user=user))
     assert ei.value.status_code == 500
-    assert get_user_credits(user["id"]) == 100  # 20 退回
+    assert get_user_credits(user["id"]) == 100  # 50 退回
 
 
 # === get_user_credits 工具函数(decorators 内部依赖)===

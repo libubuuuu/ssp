@@ -8,33 +8,38 @@ from typing import Optional, Dict
 from ..database import get_db
 from .auth import get_user_by_id
 
-# 各功能定价（积分/次）
+# 各功能定价(积分/次)
+# 2026-05-13 老板重定:50 积分 = 1 元,视频 50 积分/秒,图片 20 积分/张,文案 5 积分/次
 PRICING: Dict[str, int] = {
-    # 图片生成
-    "image/style": 2,
-    "image/realistic": 2,
-    "image/multi-reference": 5,
-    "image/inpaint": 3,
+    # 图片生成(GPT-image-2)统一 20/张
+    "image/style": 20,
+    "image/realistic": 20,
+    "image/multi-reference": 20,
+    "image/inpaint": 20,
 
-    # 视频生成
-    "video/image-to-video": 10,
-    "video/replace/element": 15,
-    "video/clone": 20,
+    # 视频生成(动态:实际按 duration_sec * 50 计算,这里写下限作 fallback)
+    "video/image-to-video": 50,
+    "video/replace/element": 50,
+    "video/clone": 50,
     "video/editor/parse": 5,
-    "video/editor/regenerate": 10,
-    "video/editor/compose": 15,
-    "video/replicate": 0,  # 入历史用,真正定价按时长在 replicate.py 算
+    "video/editor/regenerate": 50,
+    "video/editor/compose": 50,
+    "video/replicate": 0,  # 真正定价按时长 replicate.py 算 (* 50)
 
-    # AI 带货视频(2026-04-28 v3 新增)
-    # analyze: VLM 视觉调用(qwen3-vl 235B via fal openrouter),成本约 $0.02 → 1 积分
-    # preview: Nano Banana 单图,成本约 $0.04 → 2 积分
-    # scene_regen: VLM 文本调用,几乎免费 → 1 积分
-    # generate: Seedance 2.0 1080p 15s 带音,成本约 $4.20 → 30 积分(留毛利)
-    "ad_video/analyze": 1,
-    "ad_video/preview": 2,
-    "ad_video/scene_regen": 1,
-    "ad_video/generate": 30,
-    # 经济 ¥80 / 标准 ¥180 / 顶级 ¥350,假设 1 积分 ≈ ¥0.50
+    # AI 带货视频
+    "ad_video/analyze": 5,        # 生成文案
+    "ad_video/preview": 20,       # 分镜图 1 张
+    "ad_video/scene_regen": 5,    # 重出一段文案
+    "ad_video/generate": 50,      # 实际按 duration_sec * 50
+
+    # 通用 video_general / frame-extract / replicate
+    "video/general/analyze":      5,
+    "video/general/storyboard":   20,
+    "video/general/generate":     50,  # 实际按 sum(scenes.duration) * 50
+    "video/frame-extract/analyze": 5,
+    "video/frame-extract/replace": 20, # 单张九宫格 20
+    "video/frame-extract/generate": 50, # 实际按 sum(scenes.duration) * 50
+    "video/replicate/analyze": 5,
 }
 
 

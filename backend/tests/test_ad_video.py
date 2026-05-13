@@ -127,7 +127,7 @@ def test_analyze_success_deducts_credits(client_av, mock_fal_upload, register, a
 
     # 扣 1 积分
     me = client_av.get("/api/auth/me", headers=auth_header(token)).json()
-    assert me["credits"] == 49
+    assert me["credits"] == 45  # 2026-05-13:analyze=5(50-5)
 
 
 def test_analyze_insufficient_credits_402(client_av, mock_fal_upload, register, auth_header, set_credits):
@@ -243,7 +243,7 @@ def test_preview_success_deducts_credits(client_av, register, auth_header, set_c
     assert r.status_code == 200, r.text
     assert r.json()["image_url"] == "https://archived/img.jpg"
     me = client_av.get("/api/auth/me", headers=auth_header(token)).json()
-    assert me["credits"] == 48  # 50 - 2
+    assert me["credits"] == 30  # 2026-05-13:preview=20(50-20)
 
 
 def test_preview_blocks_unsafe_prompt(client_av, register, auth_header, set_credits):
@@ -294,12 +294,12 @@ def test_generate_submits_to_jobs_queue(client_av, register, auth_header, set_cr
     assert r.status_code == 200, r.text
     body = r.json()
     assert "job_id" in body
-    assert body["cost"] == 30
+    assert body["cost"] == 50  # 2026-05-13:ad_video/generate=50
     assert body["status"] == "pending"
 
     # 余额应扣 30
     me = client_av.get("/api/auth/me", headers=auth_header(token)).json()
-    assert me["credits"] == 70
+    assert me["credits"] == 50  # 100 - 50
 
     # 验证 jobs 队列里确实有
     job_id = body["job_id"]
@@ -312,7 +312,7 @@ def test_generate_submits_to_jobs_queue(client_av, register, auth_header, set_cr
 
 def test_generate_insufficient_credits_402(client_av, register, auth_header, set_credits):
     token, user = register(client_av, "av-j@example.com")
-    set_credits(user["id"], 5)  # 不够 30
+    set_credits(user["id"], 5)  # 不够 50 (2026-05-13)
 
     r = client_av.post(
         "/api/ad-video/generate",
@@ -391,7 +391,7 @@ def test_scene_regenerate_success(client_av, register, auth_header, set_credits)
     assert r.status_code == 200, r.text
     assert r.json()["scene"]["speech"] == "new line"
     me = client_av.get("/api/auth/me", headers=auth_header(token)).json()
-    assert me["credits"] == 49  # 1 积分
+    assert me["credits"] == 45  # 2026-05-13:scene_regen=5(50-5)
 
 
 # ==================== 用户隔离 ====================

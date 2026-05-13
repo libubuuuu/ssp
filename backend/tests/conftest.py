@@ -131,6 +131,9 @@ def _register(client, email: str, password: str = "secret123", name: str | None 
     P8 后端会 set httpOnly cookie。本 helper 用于 header-based 测试场景,
     所以注册后**清 client.cookies**,让后续 Authorization header 真正走 header 路径。
     需要 cookie 持久的测试(test_p8_cookies.py)直接 client.post 不通过此 helper。
+
+    2026-05-13 老板新定价(image=20、video=50/秒)→ INITIAL_CREDITS=10 不够任何任务,
+    fixture 默认把测试用户充到 1000 积分,显式想测"余额不足"的用例自己 set_credits。
     """
     import time as _time
     from app.api import auth as auth_module
@@ -148,6 +151,8 @@ def _register(client, email: str, password: str = "secret123", name: str | None 
     data = r.json()
     # P8: 清 cookie,恢复"header-only"模式让既存测试不受 cookie 优先级影响
     client.cookies.clear()
+    # 2026-05-13 默认充够 1000 积分,fixture 使用方需要"余额不足"用例自己 set_credits
+    _set_credits(data["user"]["id"], 1000)
     return data["token"], data["user"]
 
 

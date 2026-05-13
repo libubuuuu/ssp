@@ -116,9 +116,9 @@ def test_batch_generate_session_not_found(client_st, register, auth_header, set_
 
 
 def test_batch_generate_insufficient_credits_402(client_st, register, auth_header, set_credits):
-    """余额 < N × 15 → 402,不扣费"""
+    """余额 < N × 50 → 402,不扣费(2026-05-13:video/replace/element=50)"""
     token, user = register(client_st, "studio-d@example.com")
-    set_credits(user["id"], 30)  # 不够 3 × 15 = 45
+    set_credits(user["id"], 100)  # 不够 3 × 50 = 150
 
     sid = _seed_session(user["id"], 3)
     r = client_st.post(
@@ -129,13 +129,13 @@ def test_batch_generate_insufficient_credits_402(client_st, register, auth_heade
     assert r.status_code == 402
 
     me = client_st.get("/api/auth/me", headers=auth_header(token)).json()
-    assert me["credits"] == 30  # 完全没动
+    assert me["credits"] == 100  # 完全没动
 
 
 def test_batch_generate_happy_path_deducts_full(client_st, register, auth_header, set_credits):
-    """3 段全 submit 成功 → 扣 45,返 cost=45"""
+    """3 段全 submit 成功 → 扣 150,返 cost=150(2026-05-13:50/段)"""
     token, user = register(client_st, "studio-e@example.com")
-    set_credits(user["id"], 100)
+    set_credits(user["id"], 200)
 
     sid = _seed_session(user["id"], 3)
 
@@ -153,18 +153,18 @@ def test_batch_generate_happy_path_deducts_full(client_st, register, auth_header
 
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["cost"] == 45  # 3 × 15
+    assert body["cost"] == 150  # 3 × 50
     assert body["submit_failed"] == 0
     assert body["total"] == 3
 
     me = client_st.get("/api/auth/me", headers=auth_header(token)).json()
-    assert me["credits"] == 55  # 100 - 45
+    assert me["credits"] == 50  # 200 - 150
 
 
 def test_batch_generate_partial_failure_refunds_failed(client_st, register, auth_header, set_credits):
-    """3 段中 1 段 submit 失败 → 退 15,实扣 30"""
+    """3 段中 1 段 submit 失败 → 退 50,实扣 100(2026-05-13)"""
     token, user = register(client_st, "studio-f@example.com")
-    set_credits(user["id"], 100)
+    set_credits(user["id"], 200)
 
     sid = _seed_session(user["id"], 3)
 
@@ -187,17 +187,17 @@ def test_batch_generate_partial_failure_refunds_failed(client_st, register, auth
 
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["cost"] == 30  # 2 × 15(1 段返了)
+    assert body["cost"] == 100  # 2 × 50(1 段返了)
     assert body["submit_failed"] == 1
 
     me = client_st.get("/api/auth/me", headers=auth_header(token)).json()
-    assert me["credits"] == 70  # 100 - 30
+    assert me["credits"] == 100  # 200 - 100
 
 
 def test_batch_generate_all_failed_full_refund(client_st, register, auth_header, set_credits):
     """全 submit 失败 → 全退,实扣 0"""
     token, user = register(client_st, "studio-g@example.com")
-    set_credits(user["id"], 100)
+    set_credits(user["id"], 200)
 
     sid = _seed_session(user["id"], 3)
 
@@ -216,13 +216,13 @@ def test_batch_generate_all_failed_full_refund(client_st, register, auth_header,
     assert body["submit_failed"] == 3
 
     me = client_st.get("/api/auth/me", headers=auth_header(token)).json()
-    assert me["credits"] == 100  # 完全退回
+    assert me["credits"] == 200  # 完全退回
 
 
 def test_batch_generate_writes_generation_history(client_st, register, auth_header, set_credits):
     """实扣 > 0 时应写 generation_history"""
     token, user = register(client_st, "studio-h@example.com")
-    set_credits(user["id"], 100)
+    set_credits(user["id"], 200)
 
     sid = _seed_session(user["id"], 2)
 
@@ -247,7 +247,7 @@ def test_batch_generate_writes_generation_history(client_st, register, auth_head
         rows = cur.fetchall()
     assert len(rows) == 1
     assert rows[0][0] == "video/replace/element"
-    assert rows[0][1] == 30  # 2 × 15
+    assert rows[0][1] == 100  # 2 × 50
 
 
 # ==================== /batch-status async 退款 ====================
@@ -276,7 +276,7 @@ def test_batch_status_async_failure_refunds(client_st, register, auth_header, se
     token, user, sid = _seed_after_submit(client_st, register, auth_header, set_credits, "studio-async-a@example.com", 3)
 
     me_after_submit = client_st.get("/api/auth/me", headers=auth_header(token)).json()
-    assert me_after_submit["credits"] == 1000 - 45  # 3 × 15 已扣
+    assert me_after_submit["credits"] == 1000 - 150  # 3 × 50 已扣
 
     # 模拟 poll:第一段 completed,第二段 failed (async 挂),第三段 still processing
     call_count = {"n": 0}
@@ -298,10 +298,10 @@ def test_batch_status_async_failure_refunds(client_st, register, auth_header, se
     assert body["completed"] == 1
     assert body["failed"] == 1
     assert body["processing"] == 1
-    assert body["refunded_this_call"] == 15
+    assert body["refunded_this_call"] == 50
 
     me = client_st.get("/api/auth/me", headers=auth_header(token)).json()
-    assert me["credits"] == 1000 - 45 + 15  # 退一段
+    assert me["credits"] == 1000 - 150 + 50  # 退一段
 
 
 def test_batch_status_no_double_refund_on_repoll(client_st, register, auth_header, set_credits):
@@ -317,10 +317,10 @@ def test_batch_status_no_double_refund_on_repoll(client_st, register, auth_heade
         mock_svc.get_task_status = AsyncMock(side_effect=always_failed)
         r1 = client_st.get(f"/api/studio/batch-status/{sid}", headers=auth_header(token))
     assert r1.status_code == 200
-    assert r1.json()["refunded_this_call"] == 30  # 2 段 × 15
+    assert r1.json()["refunded_this_call"] == 100  # 2 段 × 50
 
     me1 = client_st.get("/api/auth/me", headers=auth_header(token)).json()
-    assert me1["credits"] == 1000 - 30 + 30  # 全退 = 没扣
+    assert me1["credits"] == 1000 - 100 + 100  # 全退 = 没扣
 
     # 第二次 poll 同 session — 不应再退
     with patch("app.api.video_studio.get_video_service") as mock_svc_factory:
@@ -356,9 +356,9 @@ def test_batch_status_submit_failed_segments_not_double_refunded(client_st, regi
             json=_payload(sid),
             headers=auth_header(token),
         )
-    assert r_gen.json()["cost"] == 30  # 2 × 15 (1 段已退)
+    assert r_gen.json()["cost"] == 100  # 2 × 50 (1 段已退)
     me_after_submit = client_st.get("/api/auth/me", headers=auth_header(token)).json()
-    assert me_after_submit["credits"] == 1000 - 30  # 已退过 1 段
+    assert me_after_submit["credits"] == 1000 - 100  # 已退过 1 段
 
     # poll:剩下 2 段都 completed
     async def fake_status(task_id, endpoint_hint=None):
@@ -375,7 +375,7 @@ def test_batch_status_submit_failed_segments_not_double_refunded(client_st, regi
     assert body["refunded_this_call"] == 0  # 关键:不应重复退
 
     me = client_st.get("/api/auth/me", headers=auth_header(token)).json()
-    assert me["credits"] == 1000 - 30  # 不变,没多退
+    assert me["credits"] == 1000 - 100  # 不变,没多退
 
 
 # ==================== /upload-chunk size 守卫 ====================
@@ -521,12 +521,12 @@ def test_batch_status_concurrent_polls_no_double_refund(client_st, register, aut
                 return r1.json(), r2.json()
 
     body1, body2 = asyncio.run(run_concurrent())
-    # 关键:两次 refunded_this_call 之和应该正好等于 30(2 段 × 15),不是 60
+    # 关键:两次 refunded_this_call 之和应该正好等于 100(2 段 × 50),不是 200
     total_refund = body1["refunded_this_call"] + body2["refunded_this_call"]
-    assert total_refund == 30, f"双退:body1={body1['refunded_this_call']}, body2={body2['refunded_this_call']}, total={total_refund}"
+    assert total_refund == 100, f"双退:body1={body1['refunded_this_call']}, body2={body2['refunded_this_call']}, total={total_refund}"
 
     me = client_st.get("/api/auth/me", headers=auth_header(token)).json()
-    assert me["credits"] == 1000 - 30 + 30  # 只退了一次,结果余额 = 初始
+    assert me["credits"] == 1000 - 100 + 100  # 只退了一次,结果余额 = 初始
 
 
 def test_clean_stale_uploads_removes_old_dirs(tmp_path, monkeypatch):

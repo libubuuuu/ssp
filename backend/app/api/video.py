@@ -72,6 +72,8 @@ class ImageToVideoRequest(BaseModel):
     """图生视频 (单镜头)"""
     image_url: str
     prompt: Optional[str] = ""
+    # 2026-05-13:kling o3 standard 支持 3/5/10/15s。前端用户点的秒数透传到 fal
+    duration_sec: Optional[int] = 5
 
 
 class VideoElementReplaceRequest(BaseModel):
@@ -177,30 +179,81 @@ async def text_to_video(req: TextToVideoRequest):
 
 
 @router.post("/image-to-video")
-@require_credits("video/image-to-video")
 async def image_to_video(req: ImageToVideoRequest, current_user: dict = Depends(get_current_user)):
-    """图生视频 (Kling)"""
+    """图生视频 (Kling) — 2026-05-13:按 duration × 50 积分动态扣费(不再 flat 50)。"""
     assert_safe_prompt(req.prompt)
     from app.services import task_ownership
+    from app.services.billing import check_user_credits, deduct_credits, add_credits, create_consumption_record
+    from app.services.rate_limiter import check_task_quota
+    import uuid as _uuid
 
-    service = get_video_service()
+    user_id = current_user["id"]
+    role = current_user.get("role", "user")
 
-    result = await service.generate_from_image(req.image_url, req.prompt)
+    # 2026-05-13 动态定价:50 积分 / 秒(clamp 到 kling 支持的 3/5/10/15s)
+    safe_dur = max(3, min(15, int(req.duration_sec or 5)))
+    cost = safe_dur * 50
 
-    if "error" in result:
-        raise HTTPException(status_code=500, detail=result["error"])
+    # 任务级限流
+    allowed, reason = check_task_quota(user_id, cost, role=role)
+    if not allowed:
+        raise HTTPException(status_code=429, detail=reason)
 
-    task_ownership.register(result.get("task_id", ""), current_user["id"])
+    # 检查 + 扣费
+    if not check_user_credits(user_id, cost):
+        from app.services.billing import get_user_credits
+        raise HTTPException(
+            status_code=402,
+            detail=f"额度不足，需要 {cost} 积分，当前剩余 {get_user_credits(user_id)} 积分",
+        )
+    task_id_internal = str(_uuid.uuid4())
+    if not deduct_credits(user_id, cost, ref_id=task_id_internal, module="video/image-to-video"):
+        raise HTTPException(status_code=500, detail="扣费失败，请重试")
 
-    # BUG-2: 归档(若同步返回了 video_url;异步任务在 jobs.py / WS 完成时归档)
-    if result.get("video_url"):
-        result["video_url"] = await archive_url(result["video_url"], current_user["id"], "video")
+    try:
+        service = get_video_service()
+        result = await service.generate_from_image(
+            req.image_url, req.prompt, duration_sec=safe_dur,
+        )
 
-    return {
-        "success": True,
-        **result,
-        "description": f"图生视频：{req.prompt[:50] if req.prompt else '无提示词'}...",
-    }
+        if "error" in result:
+            raise HTTPException(status_code=500, detail=result["error"])
+
+        task_ownership.register(result.get("task_id", ""), current_user["id"])
+
+        # BUG-2: 归档(若同步返回了 video_url;异步任务在 jobs.py / WS 完成时归档)
+        if result.get("video_url"):
+            result["video_url"] = await archive_url(result["video_url"], current_user["id"], "video")
+
+        # 消费记录 + 退款挂钩 + 余额回填
+        record_id = result.get("task_id") or task_id_internal
+        create_consumption_record(
+            user_id=user_id, task_id=record_id, module="video/image-to-video",
+            cost=cost,
+            description=f"图生视频 {safe_dur}s：{(req.prompt or '')[:50]}",
+            videos=[result["video_url"]] if result.get("video_url") else None,
+        )
+        if result.get("task_id"):
+            from app.services.refund_tracker import register as register_refund
+            register_refund(result["task_id"], user_id, cost)
+
+        from app.services.billing import get_user_credits
+        return {
+            "success": True,
+            **result,
+            "cost": cost,
+            "duration_sec": safe_dur,
+            "new_credits": get_user_credits(user_id),
+            "description": f"图生视频 {safe_dur}s：{(req.prompt or '无提示词')[:50]}...",
+        }
+    except HTTPException:
+        add_credits(user_id, cost, reason="task_refund",
+                    ref_id=task_id_internal, module="video/image-to-video")
+        raise
+    except Exception as e:
+        add_credits(user_id, cost, reason="task_refund",
+                    ref_id=task_id_internal, module="video/image-to-video")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/status/{task_id}")

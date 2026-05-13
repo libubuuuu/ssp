@@ -17,14 +17,15 @@ def _make_user(email: str, credits: int = 100) -> str:
 
 
 def test_pricing_exact_match():
-    assert billing.get_task_cost("image/style") == 2
-    assert billing.get_task_cost("video/clone") == 20
-    assert billing.get_task_cost("ad_video/generate") == 30
+    # 2026-05-13 老板重定:50 积分 = 1 元、视频 50/秒、图片 20/张、文案 5/次
+    assert billing.get_task_cost("image/style") == 20
+    assert billing.get_task_cost("video/clone") == 50
+    assert billing.get_task_cost("ad_video/generate") == 50
 
 
 def test_pricing_prefix_match():
     # "image/style/anything" 应当通过前缀匹配命中 "image/style"
-    assert billing.get_task_cost("image/style/extra/path") == 2
+    assert billing.get_task_cost("image/style/extra/path") == 20
     # 完全没匹配时走默认 5
     assert billing.get_task_cost("totally/unknown/endpoint") == 5
 
@@ -88,7 +89,7 @@ def test_consumption_record_persists():
         user_id=uid,
         task_id="task-xxx",
         module="image/style",
-        cost=2,
+        cost=20,
         description="测试任务",
         images=["https://cdn/x.png"],
     )
@@ -101,7 +102,7 @@ def test_consumption_record_persists():
         rows = c.fetchall()
     assert len(rows) == 1
     assert rows[0][0] == "image/style"
-    assert rows[0][1] == 2
+    assert rows[0][1] == 20
     assert "https://cdn/x.png" in rows[0][2]
 
 

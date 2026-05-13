@@ -25,13 +25,14 @@ from .billing import add_credits
 from .logger import log_info, log_error
 from .video_clone_v2_archive import archive_dual_versions
 from .video_clone_v2_pricing import (
-    SEGMENT_CREDITS,
+    CREDITS_PER_SEC,
     SEGMENT_INPUT_SECONDS_MAX,
     FAL_ENDPOINT,
     FAL_RESOLUTION,
     FAL_OUTPUT_DURATION,
     FAL_GENERATE_AUDIO,
     build_prompt,
+    calc_segment_credits,
     sha256_file,
     sha256_url_first8,
 )
@@ -1122,8 +1123,11 @@ async def _process_ultimate(
 
     # 全失败:status=failed + per-seg 退款(等于全额退,但不归档,行为同 v2 旧契约)
     if ai_failed and not ai_completed:
+        # 2026-05-13 改按段实际 duration × 50 积分退,不再固定 SEGMENT_CREDITS
+        plan_by_idx_for_refund = {p["idx"]: p for p in plan}
         for r in ai_failed:
-            await _refund_partial(job, r["idx"], SEGMENT_CREDITS)
+            dur = float(plan_by_idx_for_refund.get(r["idx"], {}).get("duration") or 0)
+            await _refund_partial(job, r["idx"], calc_segment_credits(dur))
         fail_summary = "; ".join(
             f"seg {r['idx']}: {(r.get('error') or '未知')[:80]}" for r in ai_failed
         )
@@ -1146,9 +1150,11 @@ async def _process_ultimate(
             f"per-seg 归档 + 失败段退款:job_id={job_id} fails=[{fail_summary[:300]}]"
         )
 
-        # 3a. 失败段 per-seg 退款
+        # 3a. 失败段 per-seg 退款(2026-05-13 按段 duration × 50)
+        plan_by_idx_for_refund = {p["idx"]: p for p in plan}
         for r in ai_failed:
-            await _refund_partial(job, r["idx"], SEGMENT_CREDITS)
+            dur = float(plan_by_idx_for_refund.get(r["idx"], {}).get("duration") or 0)
+            await _refund_partial(job, r["idx"], calc_segment_credits(dur))
 
         # 3b. 成功段(AI + original)每段单独归档双版本
         plan_by_idx = {p["idx"]: p for p in plan}

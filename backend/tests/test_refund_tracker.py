@@ -153,19 +153,19 @@ def test_decorator_registers_on_async_task():
 
     user = _mk_user("rt-deco-async@example.com", 100)
 
-    @require_credits("video/image-to-video")  # cost=10
+    @require_credits("video/image-to-video")  # 2026-05-13:flat 50(动态算在 api 层)
     async def handler(**kw):
         return {"task_id": "fal_from_decorator", "status": "pending"}
 
     asyncio.run(handler(current_user=user))
-    # 扣费成功 → 余额减 10
-    assert get_user_credits(user["id"]) == 90
+    # 扣费成功 → 余额减 50
+    assert get_user_credits(user["id"]) == 50
     # refund_tracker 已注册
     rec = refund_tracker.peek("fal_from_decorator")
-    assert rec == (user["id"], 10)
+    assert rec == (user["id"], 50)
     # 失败 polling 触发 try_refund → 余额恢复
     refunded = refund_tracker.try_refund("fal_from_decorator")
-    assert refunded == 10
+    assert refunded == 50
     assert get_user_credits(user["id"]) == 100
 
 
@@ -175,12 +175,12 @@ def test_decorator_no_register_when_no_task_id():
 
     user = _mk_user("rt-deco-sync@example.com", 100)
 
-    @require_credits("image/style")  # cost=2
+    @require_credits("image/style")  # 2026-05-13:cost=20
     async def handler(**kw):
         return {"url": "data:image/png;base64,..."}  # 同步成功,无 task_id
 
     asyncio.run(handler(current_user=user))
     # 扣费成功
-    assert get_user_credits(user["id"]) == 98
+    assert get_user_credits(user["id"]) == 80
     # 但没 register(同步任务无需 refund_tracker)
     assert refund_tracker.peek("any_task_id") is None

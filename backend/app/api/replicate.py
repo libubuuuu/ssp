@@ -265,7 +265,7 @@ async def analyze_submit(
     if not video_url:
         raise HTTPException(400, "video_url 必填")
     user_id = str(current_user["id"])
-    cost = 1
+    cost = 5  # 2026-05-13:生成文案 5 积分
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
 
@@ -340,8 +340,8 @@ async def generate(
     user_id_str = str(user_id)
 
     total_duration = sum(s.duration_sec for s in req.script.scenes)
-    # 定价:¥0.5/秒 ≈ 1 积分/秒,留毛利 → 1.5 积分/秒
-    cost = max(5, int(round(total_duration * 1.5)))
+    # 2026-05-13 老板重定:50 积分/秒(¥1/s)
+    cost = max(50, int(round(total_duration * 50)))
     module = "video/replicate"
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")

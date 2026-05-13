@@ -14,9 +14,11 @@ from typing import Final, Mapping, Sequence
 # - fal 端点 duration 最低 4 + input<output 触发 hallucinate(2026-05-10 probe 验证)
 #   → 全段 input=output=N 秒(N ∈ [4,8],plan_segments_v2 决定)
 # - 砍单档后 economy/standard 行为已等价(同端点/同分辨率/同参数),分档只是 UI 噱头
-# - 占位定价用原 standard 档上限值(20 积分 / ¥19.9),commit 5 真测 fal cost 后重定
-SEGMENT_CREDITS:       Final[int] = 20      # 每个 ai 段固定扣 20 积分
-SEGMENT_DISPLAY_RMB:   Final[str] = "19.9"  # 前端营销展示价
+#
+# 2026-05-13 老板重定汇率/单价:50 积分 = 1 元,视频 50 积分/秒。按段 duration 计费,
+# 不再 "每段固定 20"(老规则等于 4s 段 5 积分/秒、8s 段 2.5 积分/秒,跟新口径不一致)。
+CREDITS_PER_SEC:       Final[int] = 50      # 50 积分 / 秒(¥1/秒,2026-05-13 锁定)
+CREDITS_PER_YUAN:      Final[int] = 50      # 50 积分 = 1 元(2026-05-13 锁定汇率)
 SEGMENT_LABEL:         Final[str] = "AI 替换"  # 前端段卡片显示名
 SEGMENT_INPUT_SECONDS_MAX: Final[int] = 8   # worst-case 估算上限,实际段长 4-8s
 
@@ -88,16 +90,51 @@ WATERMARK_POSITION:           Final[str]   = "bottom-right"
 WATERMARK_FONT_FAMILY:        Final[str]   = "Noto Sans CJK SC Bold"  # 六审升级到 Bold
 
 
-def calc_total_credits(segments: Sequence[Mapping]) -> int:
-    """算订单总积分(忽略 source_type='original' 段,只对 ai 段累加单档单价)。
+def calc_segment_credits(duration_sec: float) -> int:
+    """单段积分 = round(duration_sec × 50),下限 1 秒 = 50。"""
+    if duration_sec <= 0:
+        return 0
+    return max(CREDITS_PER_SEC, int(round(float(duration_sec) * CREDITS_PER_SEC)))
+
+
+def calc_total_credits(
+    segments: Sequence[Mapping],
+    plan: Sequence[Mapping] | None = None,
+) -> int:
+    """算订单总积分:只对 source_type='ai' 段按 duration × 50 计。
 
     Args:
-        segments: [{"source_type": "ai"|"original", ...}, ...]
+        segments: [{"idx", "source_type": "ai"|"original", ...}, ...]
+                  (用户选择;source_type 在这里)
+        plan:     plan_segments_v2 输出 [{"idx", "start", "duration"}, ...]
+                  (后端切片;duration 在这里)
+                  如果 segments 元素自身已携带 duration / duration_sec,可省略 plan
     Returns:
-        总积分(int)= ai 段数 × SEGMENT_CREDITS
+        总积分(int)= Σ round(ai 段 duration × CREDITS_PER_SEC),下限 CREDITS_PER_SEC
     """
-    ai_count = sum(1 for seg in segments if seg.get("source_type") == "ai")
-    return ai_count * SEGMENT_CREDITS
+    # 1) 优先 segments 自带 duration (老调用方传 plan 的合并 dict)
+    plan_by_idx: dict[int, float] = {}
+    if plan:
+        for p in plan:
+            try:
+                plan_by_idx[int(p["idx"])] = float(p.get("duration") or p.get("duration_sec") or 0)
+            except (KeyError, TypeError, ValueError):
+                continue
+
+    total = 0
+    for seg in segments:
+        if seg.get("source_type") != "ai":
+            continue
+        dur = float(seg.get("duration") or seg.get("duration_sec") or 0)
+        if dur <= 0 and plan_by_idx:
+            try:
+                dur = plan_by_idx.get(int(seg["idx"]), 0.0)
+            except (KeyError, TypeError, ValueError):
+                dur = 0.0
+        total += calc_segment_credits(dur)
+
+    # 至少 1 秒下限,避免空订单走通
+    return max(CREDITS_PER_SEC, total) if total > 0 else 0
 
 
 # alias 对齐 A2 任务清单命名("calc_credits");新代码调用方推荐用 calc_credits

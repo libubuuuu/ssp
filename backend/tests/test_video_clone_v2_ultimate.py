@@ -18,7 +18,7 @@ import pytest
 
 from app.database import get_db
 from app.services import video_clone_v2_processor as proc_mod
-from app.services.video_clone_v2_pricing import SEGMENT_CREDITS
+from app.services.video_clone_v2_pricing import CREDITS_PER_SEC, calc_segment_credits
 
 
 P220_VIDEO = "/opt/ssp/uploads/probe/p220_balance_test/result_480p_2s_input.mp4"
@@ -209,8 +209,9 @@ class TestProcessUltimate:
         user = create_user(email=f"u{uuid.uuid4().hex[:8]}@test.com", password="x" * 8)
         with get_db() as conn:
             conn.execute("UPDATE users SET credits = ? WHERE id = ?", (100, user["id"]))
+            # 2026-05-13:按段 duration × 50 算
             total_credits = sum(
-                SEGMENT_CREDITS
+                calc_segment_credits(float(p.get("duration") or 0))
                 for p in plan_segments if p.get("source_type") == "ai"
             )
             job_id = str(uuid.uuid4())
@@ -391,7 +392,7 @@ class TestProcessUltimate:
                 "SELECT credits FROM users WHERE id = ?", (user_id,)
             ).fetchone()[0]
         assert row[0] == "failed", f"期望 failed(整单失败),实际:{row[0]}"
-        # 全额退款 = 段数 × SEGMENT_CREDITS(3 段 × 20 = 60)
+        # 2026-05-13:全额退款 = Σ(每段 duration × 50)= charged
         assert row[1] == charged, f"期望全额退 {charged},实际退 {row[1]}"
         assert user_credits == balance_before + charged
 
@@ -439,7 +440,8 @@ class TestProcessUltimate:
                 (job_id,),
             ).fetchone()
         assert row[0] == "failed"
-        assert row[1] == 2 * SEGMENT_CREDITS   # 全段都退,单档 2 × 20 = 40
+        # 2026-05-13:2 段 ai 各 2s × 50 = 各 100 → 全退 200
+        assert row[1] == 2 * calc_segment_credits(2.0)
 
 
 # ─── Pydantic extra="forbid" 安全网测试 ────────────────────────────────
@@ -545,7 +547,8 @@ class TestCreateUltimateApi:
         from app.services.auth import create_user, create_jwt_token
         u = create_user(email=em, password="x" * 8)
         with get_db() as conn:
-            conn.execute("UPDATE users SET credits = ? WHERE id = ?", (200, u["id"]))
+            # 2026-05-13 新定价:2 段 × 8s × 50 = 800 积分/单,需够 4 次扣(尾/中/无效/multi)
+            conn.execute("UPDATE users SET credits = ? WHERE id = ?", (5000, u["id"]))
             conn.commit()
         token = create_jwt_token(u["id"], em, "user")
 
@@ -584,7 +587,8 @@ class TestCreateUltimateApi:
         assert row[2] == 16.0
         assert row[3] == 18.0
         assert row[4] == 2.0
-        assert row[5] == 2 * SEGMENT_CREDITS
+        # 2 段 ai × 8s × 50 = 800 (effective_duration=16, plan=[8s, 8s])
+        assert row[5] == 2 * 8 * CREDITS_PER_SEC
         assert row[6] == 2  # 2 段(plan 用 effective=16s 算)
 
         # ── 同一 client 测中段 drop:18s 视频丢中间 [8, 10] 2s → effective 16s → 2 段 ──
@@ -827,7 +831,8 @@ class TestSSRFGuard:
         from app.services.auth import create_user, create_jwt_token
         u = create_user(email=em, password="x" * 8)
         with get_db() as conn:
-            conn.execute("UPDATE users SET credits = ? WHERE id = ?", (200, u["id"]))
+            # 2026-05-13 新定价:1 段 6s × 50 = 300 积分,余额 2000 够多次试
+            conn.execute("UPDATE users SET credits = ? WHERE id = ?", (2000, u["id"]))
             conn.commit()
         token = create_jwt_token(u["id"], em, "user")
 

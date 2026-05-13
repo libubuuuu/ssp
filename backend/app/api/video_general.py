@@ -247,7 +247,7 @@ async def analyze_submit(
     user_brief = (body.get("user_brief") or "").strip()[:500]
 
     user_id = str(current_user["id"])
-    cost = 1
+    cost = 5  # 2026-05-13:生成文案 5 积分
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
 
@@ -364,7 +364,7 @@ async def storyboard_submit(
 ):
     """生成分镜板预览(1 张 N 宫格图,N=min(4, len(scenes)))"""
     user_id = str(current_user["id"])
-    cost = 2  # 模特图(如果没传)+ storyboard grid 一张
+    cost = 20  # 2026-05-13:分镜图 1 张 20 积分
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
 
@@ -436,8 +436,9 @@ async def generate(
         raise HTTPException(400, "至少 1 段脚本")
 
     user_id = str(current_user["id"])
-    # 简化定价:每段 5 积分,batch_count 倍数(批量生成 N 个独立版本)
-    cost = max(5, len(req.scenes) * 5) * max(1, min(5, req.batch_count or 1))
+    # 2026-05-13:50 积分/秒,batch_count 倍(批量生成 N 个独立版本)
+    total_duration_sec = sum(int(s.duration_sec or 0) for s in req.scenes)
+    cost = max(50, total_duration_sec * 50) * max(1, min(5, req.batch_count or 1))
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
 

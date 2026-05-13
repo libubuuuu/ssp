@@ -132,7 +132,7 @@ async def analyze_submit(
     if not video_url:
         raise HTTPException(400, "video_url 必填")
     user_id = str(current_user["id"])
-    cost = 1
+    cost = 5  # 2026-05-13:生成文案 5 积分
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
 
@@ -256,8 +256,8 @@ async def replace_submit(
         raise HTTPException(400, "产品图 / 人物图 / 场景图 至少上传 1 张")
 
     user_id = str(current_user["id"])
-    # 单张九宫格替换 ~¥1.5-2,按张数计费:3 积分 / 张
-    cost = max(3, 3 * len(grid_urls))
+    # 2026-05-13:每张九宫格替换 = 1 张 GPT-image-2 编辑 = 20 积分
+    cost = max(20, 20 * len(grid_urls))
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
 
@@ -337,7 +337,9 @@ async def generate_submit(
         raise HTTPException(400, "产品图 / 人物图 / 场景图 至少上传 1 张")
 
     user_id = str(current_user["id"])
-    cost = max(10, len(scenes) * 5)
+    # 2026-05-13:50 积分/秒。sum 每段实际秒数,fal 端点支持 4-12s
+    total_duration_sec = sum(max(4, int(round(float(s.get("duration_sec") or 4)))) for s in scenes)
+    cost = max(50, total_duration_sec * 50)
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
 

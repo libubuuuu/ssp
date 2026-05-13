@@ -10,37 +10,39 @@
 
 def test_submit_image_job_deducts_credits(client, register, auth_header, set_credits):
     token, user = register(client, "j-a@example.com")
-    set_credits(user["id"], 100)  # 显式设到 100,P3-1 后默认是 10 不够 image=2 任务多次测试
+    # 2026-05-13 新定价:image=20,设到 1000 够多次试
+    set_credits(user["id"], 1000)
     r = client.post("/api/jobs/submit",
                     json={"type": "image", "params": {"prompt": "hello"}, "title": "t1"},
                     headers=auth_header(token))
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["status"] == "pending"
-    assert body["cost"] == 2
+    assert body["cost"] == 20
 
-    # 余额应当从 100 减到 98
+    # 余额应当从 1000 减到 980
     r2 = client.get("/api/auth/me", headers=auth_header(token))
-    assert r2.json()["credits"] == 98
+    assert r2.json()["credits"] == 980
 
 
 def test_submit_video_clone_deducts_higher_cost(client, register, auth_header, set_credits):
     token, user = register(client, "j-b@example.com")
-    set_credits(user["id"], 100)  # video/clone=20,P3-1 默认 10 不够
+    # 2026-05-13 新定价:video/clone=50(flat fallback,真正动态算在 processor)
+    set_credits(user["id"], 1000)
     r = client.post("/api/jobs/submit",
                     json={"type": "video_clone",
                           "params": {"reference_video_url": "x", "model_image_url": "y"}},
                     headers=auth_header(token))
     assert r.status_code == 200
-    assert r.json()["cost"] == 20  # video/clone = 20
+    assert r.json()["cost"] == 50
 
     me = client.get("/api/auth/me", headers=auth_header(token)).json()
-    assert me["credits"] == 80
+    assert me["credits"] == 950
 
 
 def test_submit_insufficient_credits_402(client, register, auth_header, set_credits):
     token, user = register(client, "j-c@example.com")
-    set_credits(user["id"], 1)  # 余额仅 1,做不起 image(2)
+    set_credits(user["id"], 1)  # 余额仅 1,做不起 image(20)
     r = client.post("/api/jobs/submit",
                     json={"type": "image", "params": {"prompt": "no money"}},
                     headers=auth_header(token))
@@ -305,7 +307,7 @@ def test_get_job_owner_returns_200_with_full_payload(client, register, auth_head
     body = r_get.json()
     assert body["id"] == job_id
     assert body["type"] == "image"
-    assert body["cost"] == 2
+    assert body["cost"] == 20  # 2026-05-13 image=20
     assert body["status"] == "pending"
     assert body["title"] == "OK"
 

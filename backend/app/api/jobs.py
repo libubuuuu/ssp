@@ -1724,10 +1724,16 @@ def _module_from_type(job_type: str, params: dict) -> str:
 async def submit_job(req: SubmitJobRequest, current_user: dict = Depends(get_current_user)):
     user_id = current_user.get("id") or current_user.get("email", "unknown")
     user_id_str = str(user_id)
-    
+
     module = _module_from_type(req.type, req.params)
-    cost = get_task_cost(module)
-    
+    # 2026-05-13 动态定价:视频类按 duration_sec × 50 计,clamp 到端点限制
+    if req.type == "video_i2v":
+        # kling o3 standard image-to-video 支持 3/5/10/15s
+        safe_dur = max(3, min(15, int(req.params.get("duration_sec") or 5)))
+        cost = safe_dur * 50
+    else:
+        cost = get_task_cost(module)
+
     # 扣费(原子:SQL 层 WHERE credits >= ?,无竞态)
     if cost > 0:
         if not deduct_credits(user_id, cost):

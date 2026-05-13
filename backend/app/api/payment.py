@@ -14,39 +14,39 @@ import uuid
 router = APIRouter()
 
 
-# 套餐配置
+# 套餐配置(2026-05-13 老板锁定:50 积分 = 1 元,套餐价 = credits / 50 × 折扣)
 PACKAGES = [
     {
         "id": "monthly",
         "name": "月卡",
-        "credits": 500,
+        "credits": 12500,
         "price": 199.00,
         "discount": "8 折",
-        "description": "每月 500 积分，生成享 8 折优惠",
+        "description": "每月 12500 积分(≈¥250 等值,8 折回赠)",
     },
     {
         "id": "quarterly",
         "name": "季卡",
-        "credits": 1500,
+        "credits": 35000,
         "price": 499.00,
         "discount": "7 折",
-        "description": "每季 1500 积分，生成享 7 折优惠",
+        "description": "每季 35000 积分(≈¥700 等值,7 折回赠)",
     },
     {
         "id": "yearly",
         "name": "年卡",
-        "credits": 6000,
+        "credits": 140000,
         "price": 1699.00,
         "discount": "6 折",
-        "description": "每年 6000 积分，生成享 6 折优惠",
+        "description": "每年 140000 积分(≈¥2800 等值,6 折回赠)",
     },
 ]
 
-# 充值包
+# 充值包(2026-05-13:50 积分 = 1 元,大额送积分)
 CREDIT_PACKS = [
-    {"id": "small", "credits": 100, "price": 99.00},
-    {"id": "medium", "credits": 500, "price": 399.00},
-    {"id": "large", "credits": 2000, "price": 1299.00},
+    {"id": "small",  "credits": 500,  "price": 10.00},   # 10 元 = 500 积分(1:1 兑换)
+    {"id": "medium", "credits": 2500, "price": 50.00},   # 50 元 = 2500 积分(1:1 兑换)
+    {"id": "large",  "credits": 5250, "price": 100.00},  # 100 元 = 5250 积分(9.5 折,送 250)
 ]
 
 
