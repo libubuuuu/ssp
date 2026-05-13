@@ -15,26 +15,26 @@ from app.services.video_clone_v2_pricing import (
 )
 
 
-# ─── calc_credits(2026-05-13 改按段 duration × 50)─────────────────────
+# ─── calc_credits(2026-05-14 改按段 duration × 60)─────────────────────
 
 class TestCalcCredits:
     def test_alias_equality(self):
         assert calc_credits is calc_total_credits
 
     def test_single_ai_segment_8s(self):
-        """1 段 ai 8 秒:8 × 50 = 400 积分"""
+        """1 段 ai 8 秒:8 × 60 = 480 积分"""
         plan = [{"idx": 0, "start": 0.0, "duration": 8.0}]
         segs = [{"idx": 0, "source_type": "ai"}]
-        assert calc_credits(segs, plan) == 400
+        assert calc_credits(segs, plan) == 8 * CREDITS_PER_SEC
 
     def test_single_ai_segment_4s_floor(self):
-        """1 段 ai 4 秒:4 × 50 = 200 积分"""
+        """1 段 ai 4 秒:4 × 60 = 240 积分"""
         plan = [{"idx": 0, "start": 0.0, "duration": 4.0}]
         segs = [{"idx": 0, "source_type": "ai"}]
-        assert calc_credits(segs, plan) == 200
+        assert calc_credits(segs, plan) == 4 * CREDITS_PER_SEC
 
     def test_four_ai_segments_30s(self):
-        """4 段 ai(30s ultimate, 8+8+8+6):30 × 50 = 1500 积分"""
+        """4 段 ai(30s ultimate, 8+8+8+6):30 × 60 = 1800 积分"""
         plan = [
             {"idx": 0, "start": 0.0,  "duration": 8.0},
             {"idx": 1, "start": 8.0,  "duration": 8.0},
@@ -42,10 +42,10 @@ class TestCalcCredits:
             {"idx": 3, "start": 24.0, "duration": 6.0},
         ]
         segs = [{"idx": i, "source_type": "ai"} for i in range(4)]
-        assert calc_credits(segs, plan) == 8 * 50 + 8 * 50 + 8 * 50 + 6 * 50  # 1500
+        assert calc_credits(segs, plan) == 8 * CREDITS_PER_SEC + 8 * CREDITS_PER_SEC + 8 * CREDITS_PER_SEC + 6 * CREDITS_PER_SEC
 
     def test_mixed_ai_and_original(self):
-        """混合 AI/原片:只对 ai 段扣费 — 2 段 ai × 8s = 800 积分"""
+        """混合 AI/原片:只对 ai 段扣费 — 2 段 ai × 8s"""
         plan = [
             {"idx": 0, "start": 0.0,  "duration": 8.0},
             {"idx": 1, "start": 8.0,  "duration": 8.0},
@@ -58,7 +58,7 @@ class TestCalcCredits:
             {"idx": 2, "source_type": "ai"},
             {"idx": 3, "source_type": "original"},
         ]
-        assert calc_credits(segs, plan) == 2 * 8 * 50  # 800
+        assert calc_credits(segs, plan) == 2 * 8 * CREDITS_PER_SEC
 
     def test_all_original_zero(self):
         plan = [
@@ -75,12 +75,12 @@ class TestCalcCredits:
         assert calc_segment_credits(0) == 0
         assert calc_segment_credits(1) == CREDITS_PER_SEC
         assert calc_segment_credits(8) == 8 * CREDITS_PER_SEC
-        assert calc_segment_credits(0.5) == CREDITS_PER_SEC  # 下限 50
+        assert calc_segment_credits(0.5) == CREDITS_PER_SEC  # 下限 1秒
 
     def test_seg_duration_inline_works(self):
         """如果 seg 本身带 duration,可不传 plan"""
         segs = [{"idx": 0, "source_type": "ai", "duration": 8.0}]
-        assert calc_credits(segs) == 400
+        assert calc_credits(segs) == 8 * CREDITS_PER_SEC
 
 
 # ─── build_prompt ────────────────────────────────────────────────────

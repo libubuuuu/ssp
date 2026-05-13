@@ -177,7 +177,7 @@ class EstimateRequest(BaseModel):
     type: Literal["single", "ultimate"]
     replacement_mode: Literal["partial", "full"]
     segments: List[SegmentPlanItem]
-    # 2026-05-13:新计价模型按段 duration × 50,需要 plan_segments_v2 还原 duration
+    # 2026-05-13:新计价模型按段 duration × CREDITS_PER_SEC,需要 plan_segments_v2 还原 duration
     # 兼容:Optional,缺省时 ai 段按 worst-case 8s 估算(老前端兜底,只多报不少报)
     video_duration_sec: Optional[float] = Field(None, gt=0)
 
@@ -521,7 +521,7 @@ async def estimate(
     if not any(seg.source_type == "ai" for seg in req.segments):
         raise HTTPException(400, "至少要有 1 段 source_type=ai")
 
-    # 算总积分(2026-05-13:按 ai 段实际 duration × 50)
+    # 算总积分(2026-05-13:按 ai 段实际 duration × CREDITS_PER_SEC)
     seg_dicts = [s.model_dump() for s in req.segments]
     plan_for_estimate: List[Dict[str, Any]] = []
     if req.video_duration_sec is not None:
@@ -530,7 +530,7 @@ async def estimate(
         except ValueError as e:
             raise HTTPException(400, str(e))
     total_credits = calc_credits(seg_dicts, plan_for_estimate or None)
-    # 兼容老前端:没传 video_duration_sec 时按 ai 段 × worst-case 8s × 50 估算
+    # 兼容老前端:没传 video_duration_sec 时按 ai 段 × worst-case 8s × CREDITS_PER_SEC 估算
     if total_credits == 0:
         ai_count_for_fallback = sum(1 for s in req.segments if s.source_type == "ai")
         total_credits = ai_count_for_fallback * SEGMENT_INPUT_SECONDS_MAX * CREDITS_PER_SEC
@@ -652,7 +652,7 @@ async def create(
         raise HTTPException(400, str(e))
     _validate_segments(req.type, req.segments, plan_back)
 
-    # 4. 算总积分 + 保险 2(2026-05-13:按 ai 段 duration × 50,plan_back 提供 duration)
+    # 4. 算总积分 + 保险 2(2026-05-13:按 ai 段 duration × CREDITS_PER_SEC,plan_back 提供 duration)
     settings = get_settings()
     seg_dicts = [s.model_dump() for s in req.segments]
     total_credits = calc_credits(seg_dicts, plan_back)

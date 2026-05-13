@@ -1182,7 +1182,7 @@ async def _process_ultimate(
 
     # 全失败:status=failed + per-seg 退款(等于全额退,但不归档,行为同 v2 旧契约)
     if ai_failed and not ai_completed:
-        # 2026-05-13 改按段实际 duration × 50 积分退,不再固定 SEGMENT_CREDITS
+        # 2026-05-13 改按段实际 duration × CREDITS_PER_SEC 积分退,不再固定 SEGMENT_CREDITS
         plan_by_idx_for_refund = {p["idx"]: p for p in plan}
         for r in ai_failed:
             dur = float(plan_by_idx_for_refund.get(r["idx"], {}).get("duration") or 0)
@@ -1209,7 +1209,7 @@ async def _process_ultimate(
             f"per-seg 归档 + 失败段退款:job_id={job_id} fails=[{fail_summary[:300]}]"
         )
 
-        # 3a. 失败段 per-seg 退款(2026-05-13 按段 duration × 50)
+        # 3a. 失败段 per-seg 退款(2026-05-13 按段 duration × CREDITS_PER_SEC)
         plan_by_idx_for_refund = {p["idx"]: p for p in plan}
         for r in ai_failed:
             dur = float(plan_by_idx_for_refund.get(r["idx"], {}).get("duration") or 0)

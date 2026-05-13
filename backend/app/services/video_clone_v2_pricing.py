@@ -15,7 +15,7 @@ from typing import Final, Mapping, Sequence
 #   → 全段 input=output=N 秒(N ∈ [4,8],plan_segments_v2 决定)
 # - 砍单档后 economy/standard 行为已等价(同端点/同分辨率/同参数),分档只是 UI 噱头
 #
-# 2026-05-13 老板重定汇率/单价:50 积分 = 1 元,视频 50 积分/秒。按段 duration 计费,
+# 2026-05-14 视频复刻定价:60 积分/秒(¥1.2/s)。按段 duration 计费,
 # 不再 "每段固定 20"(老规则等于 4s 段 5 积分/秒、8s 段 2.5 积分/秒,跟新口径不一致)。
 CREDITS_PER_SEC:       Final[int] = 60      # 60 积分 / 秒(¥1.2/秒,视频复刻,2026-05-14 重定)
 CREDITS_PER_YUAN:      Final[int] = 50      # 50 积分 = 1 元(2026-05-13 锁定汇率)
@@ -91,7 +91,7 @@ WATERMARK_FONT_FAMILY:        Final[str]   = "Noto Sans CJK SC Bold"  # 六审�
 
 
 def calc_segment_credits(duration_sec: float) -> int:
-    """单段积分 = round(duration_sec × 50),下限 1 秒 = 50。"""
+    """单段积分 = round(duration_sec × CREDITS_PER_SEC),下限 1 秒。"""
     if duration_sec <= 0:
         return 0
     return max(CREDITS_PER_SEC, int(round(float(duration_sec) * CREDITS_PER_SEC)))
@@ -101,7 +101,7 @@ def calc_total_credits(
     segments: Sequence[Mapping],
     plan: Sequence[Mapping] | None = None,
 ) -> int:
-    """算订单总积分:只对 source_type='ai' 段按 duration × 50 计。
+    """算订单总积分:只对 source_type='ai' 段按 duration × CREDITS_PER_SEC 计。
 
     Args:
         segments: [{"idx", "source_type": "ai"|"original", ...}, ...]

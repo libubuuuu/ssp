@@ -337,7 +337,7 @@ async def generate_submit(
         raise HTTPException(400, "产品图 / 人物图 / 场景图 至少上传 1 张")
 
     user_id = str(current_user["id"])
-    # 2026-05-13:50 积分/秒。sum 每段实际秒数,fal 端点支持 4-12s
+    # 2026-05-14:65 积分/秒(分镜复刻)。sum 每段实际秒数,fal 端点支持 4-12s
     total_duration_sec = sum(max(4, int(round(float(s.get("duration_sec") or 4)))) for s in scenes)
     cost = max(65, total_duration_sec * 65)
     if not deduct_credits(user_id, cost):
