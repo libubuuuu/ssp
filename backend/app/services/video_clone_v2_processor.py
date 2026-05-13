@@ -38,9 +38,11 @@ from .video_clone_v2_pricing import (
 )
 
 
-# fallback fal 单段成本估算($0.0925/s = ¥0.66/s ÷ 7.2 USD/CNY):
-# fal API 不返 actual_cost → worst-case 按 SEGMENT_INPUT_SECONDS_MAX × 这个数字 × 1.3 估算
-# 保证不少扣,真实 cost 以 fal dashboard 为准
+# fal seedance-2.0/fast/reference-to-video 真实计费(2026-05-13 billing CSV 实证):
+# 按 token 计费:$0.0112 / 1000 tokens。
+# token 数 ≈ 与视频分辨率 × 帧数相关,8s@480p 具体 token 数待下月账单校准。
+# 暂用 worst-case 估算:$0.962/段(8s × $0.0925 × 1.3),偏高但安全。
+# 下次校准:用6月账单(含5月V2数据)→ 总token数 ÷ V2段数 → 得出 token/段 → 更新公式。
 FAL_FALLBACK_USD_PER_INPUT_SEC = 0.0925
 FAL_FALLBACK_OVERESTIMATE = 1.3
 

@@ -1086,7 +1086,8 @@ class FalPixverseSwapService:
       input  : video_url(MP4/MOV/WebM/M4V/GIF) + image_url
       output : video.url
       duration: 5s 基线,>5s 加倍
-      pricing: $0.20 / 5s @720p,$0.40 / 5s @1080p
+      pricing: $0.05 / 次(固定,不按时长,2026-05-13 fal billing CSV 实证)
+               原文档写 $0.20/5s 是错的,实际 fal 账单 276 次 = $13.80 ÷ 276 = $0.05/次
       audio  : 自动保留原音(我们 lipsync 接管所以无所谓)
 
     限制(已知):
