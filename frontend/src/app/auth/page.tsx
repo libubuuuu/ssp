@@ -177,7 +177,7 @@ export default function AuthPage() {
         </h2>
         <p style={{color:"#888",textAlign:"center",marginBottom:"1.5rem",fontSize:"0.9rem"}}>
           {mode === "register"
-            ? (lang==="en"?"Create account, get 10 free credits":"创建新账号，赠送 10 积分")
+            ? (lang==="en"?"Create account, get 100 free credits":"创建新账号，赠送 100 积分")
             : mode === "email_code"
               ? t("auth.codeLoginTip")
               : (lang==="en"?"Welcome back":"欢迎回来")}
