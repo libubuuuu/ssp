@@ -92,7 +92,7 @@ export const zh = {
     loginTitle: "登录",
     registerTitle: "注册",
     welcomeBack: "欢迎回来",
-    registerTip: "创建新账号，赠送 100 积分",
+    registerTip: "创建新账号，赠送 10 积分",
     email: "邮箱",
     password: "密码",
     pleaseWait: "请稍候...",
