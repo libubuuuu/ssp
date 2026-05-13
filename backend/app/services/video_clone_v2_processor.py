@@ -27,18 +27,22 @@ from .video_clone_v2_archive import archive_dual_versions
 from .video_clone_v2_pricing import (
     CREDITS_PER_SEC,
     SEGMENT_INPUT_SECONDS_MAX,
+    FAL_ENDPOINT,
+    FAL_RESOLUTION,
+    FAL_OUTPUT_DURATION,
+    FAL_GENERATE_AUDIO,
     build_prompt,
     calc_segment_credits,
     sha256_file,
     sha256_url_first8,
 )
-from .fal_service import get_pixverse_swap_service
 
 
-# Pixverse Swap 成本估算:$0.20/5s @720p,>5s 加倍($0.40)
-# fal 不返 actual_cost → worst-case 以 >5s 档($0.40)× 1.2 overestimate
-PIXVERSE_USD_PER_5SEC = 0.20
-PIXVERSE_OVERESTIMATE = 1.2
+# fallback fal 单段成本估算($0.0925/s = ¥0.66/s ÷ 7.2 USD/CNY):
+# fal API 不返 actual_cost → worst-case 按 SEGMENT_INPUT_SECONDS_MAX × 这个数字 × 1.3 估算
+# 保证不少扣,真实 cost 以 fal dashboard 为准
+FAL_FALLBACK_USD_PER_INPUT_SEC = 0.0925
+FAL_FALLBACK_OVERESTIMATE = 1.3
 
 
 def stable_seed(job_id: str) -> int:
@@ -172,7 +176,11 @@ async def prepare_segment_input(seg_file: str, plan_item: Dict[str, Any]) -> str
 
     ⚠ 仅 source_type='ai' 段调用本函数(original 段在 processor 直接 short-circuit)。
 
-    Pixverse Swap 接受完整切片,直接返回 seg_file。
+    2026-05-10 改:不再做截短 / padding。
+    - fal seedance fast/r2v 端点接受 duration ∈ {'auto', '4'-'15'},input < output 时
+      模型 hallucinate 后段 → reference 漂移
+    - input = output = 段实际秒数,全程都有原视频指导,reference 不漂
+    - plan_segments_v2 已保证所有段 ≥ 4s(末段 < 4s 并到前段),不存在 padding 必要
 
     Returns:
         本地视频路径(等于 seg_file)
@@ -188,76 +196,90 @@ async def _fal_upload(local_path: str) -> str:
     return await fal_client.upload_file_async(local_path)
 
 
-# role → Pixverse mode 映射
-_ROLE_TO_PIXVERSE_MODE: Dict[str, str] = {
-    "product":   "object",
-    "person":    "person",
-    "scene":     "background",
-    "reference": "object",
-}
+def _fal_duration_for_input(input_seconds: float) -> str:
+    """把段实际秒数对齐到 fal 接受的 duration 枚举值 ('4'-'15' 的字符串)。
 
-
-def _select_swap_target(image_urls: List[Dict[str, Any]]) -> tuple[str, str]:
-    """按 role 优先级选出最合适的 (image_url, pixverse_mode)。
-
-    优先级:product > person > scene > reference
-    product/reference → Pixverse object 模式(clothing fallback 到 person 在调用层处理)
+    fal seedance fast/r2v 端点接受:'auto', '4', '5', ..., '15'
+    我们传字符串(跟 ad_video_models.py 同协议),round 到最近整数后夹到 [4, 15]
     """
-    for role in ("product", "person", "scene", "reference"):
-        for img in image_urls:
-            if img.get("role") == role:
-                return img["url"], _ROLE_TO_PIXVERSE_MODE[role]
-    return image_urls[0]["url"], "object"
+    rounded = max(4, min(15, round(input_seconds)))
+    return str(rounded)
 
 
-def _estimate_pixverse_cost_usd(input_duration_sec: float) -> float:
-    """Pixverse $0.20/5s @720p,>5s 加倍($0.40)。加 20% overestimate buffer。"""
-    blocks = 1 if input_duration_sec <= 5.0 else 2
-    return blocks * PIXVERSE_USD_PER_5SEC * PIXVERSE_OVERESTIMATE
-
-
-async def call_pixverse_swap(
+async def call_fal_seedance(
     video_url: str,
-    image_url: str,
-    mode: str,
+    image_urls: List[str],
+    prompt_compiled: str,
+    seed: int,
+    aspect_ratio: str = "auto",
     *,
     job_id: str = "",
     seg_idx: int = -1,
     input_duration_sec: float = 8.0,
 ) -> Dict[str, Any]:
-    """Pixverse Swap:真对象替换(替换人/物/场景,保留原视频结构)。
+    """实际调 fal seedance r2v fast。
 
-    替换 seedance r2v — seedance 是"参考生成"(从零生成新视频),不是对象替换。
-    Pixverse object/person/background 模式硬约束 mask 区域,非 mask 区域帧级保留。
+    ⭐ 红线 2:每次调用前 log 完整上下文(input_hash + prompt 前 50 + seed),
+       便于审计"是不是上传了同一视频用同一参数"。
 
-    object 模式遇到服装类("Could not generate mask")自动 fallback 到 person 模式。
+    input_duration_sec: 段实际秒数,用于对齐 fal duration 字段
+                       (fal 端点接受 ['auto', '4'-'15'],input < output 会触发 hallucinate)
+
+    Returns:
+        {"video_url", "actual_cost_usd"(可能 None), "raw_response"}
+    Raises:
+        RuntimeError: fal 失败 / NSFW 拦截
     """
     input_hash = sha256_url_first8(video_url)
+    fal_duration = _fal_duration_for_input(input_duration_sec)
     log_info(
-        f"[V2-PIXVERSE] job={job_id} seg={seg_idx} "
-        f"mode={mode} input_hash={input_hash} image_url={image_url[:60]} "
-        f"input_dur={input_duration_sec:.1f}s"
+        f"[V2-FAL] job={job_id} seg={seg_idx} "
+        f"input_hash={input_hash} prompt={prompt_compiled[:50]!r} seed={seed} "
+        f"aspect={aspect_ratio} input_dur={input_duration_sec:.1f}s fal_duration={fal_duration!r}"
     )
-    svc = get_pixverse_swap_service()
-    result = await svc.swap(video_url, image_url, mode)
-    if "error" in result and mode == "object":
-        log_info(f"[V2-PIXVERSE] object mode failed ({result['error']!r:.120}), retry person mode")
-        result = await svc.swap(video_url, image_url, "person")
-    if "error" in result:
-        raise RuntimeError(f"Pixverse swap failed: {result['error']}")
+    # fal seedance r2v 端点(fast/reference-to-video)真实字段名 = image_urls
+    # 出处:fal 官方文档 + V1 项目内同端点用法 backend/app/api/jobs.py:3337
+    # 注:ad_video_models.py 用的是 bytedance/seedance-2.0/reference-to-video(无 fast/),
+    # 是不同端点,字段名规则不能直接对照
+    # 2026-05-11:1:1 对齐老板 playground 完美 request 019e0951 payload(实证)。
+    # 必传 audio_urls=[](完美/1秒漂 都传了 [],删除曾导致 prod 920b2000 只换 1 帧)。
+    # 删 enable_safety_checker(playground 不传,fal schema 也无此字段)。
+    arguments = {
+        "video_urls": [video_url],
+        "image_urls": image_urls,
+        "audio_urls": [],
+        "prompt": prompt_compiled,
+        "resolution": FAL_RESOLUTION,
+        "duration": fal_duration,
+        "aspect_ratio": aspect_ratio,
+        "generate_audio": FAL_GENERATE_AUDIO,
+        "seed": seed,
+    }
+    try:
+        result = await fal_client.subscribe_async(FAL_ENDPOINT, arguments=arguments)
+    except Exception as e:
+        raise RuntimeError(f"fal 调用失败:{e}")
 
-    output_url = result["video_url"]
-    output_hash = sha256_url_first8(output_url)
+    video_url_out = (result or {}).get("video", {}).get("url")
+    if not video_url_out:
+        raise RuntimeError(f"fal 返回无 video.url:{json.dumps(result, ensure_ascii=False)[:500]}")
+
+    output_hash = sha256_url_first8(video_url_out)
     log_info(
-        f"[V2-PIXVERSE-OK] job={job_id} seg={seg_idx} "
+        f"[V2-FAL-OK] job={job_id} seg={seg_idx} "
         f"input_hash={input_hash} → output_hash={output_hash} "
-        f"output_url={output_url[:80]}"
+        f"output_url={video_url_out[:80]}"
     )
     return {
-        "video_url": output_url,
-        "actual_cost_usd": _estimate_pixverse_cost_usd(input_duration_sec),
+        "video_url": video_url_out,
+        "actual_cost_usd": None,
         "raw_response": result,
     }
+
+
+def _estimate_cost_usd() -> float:
+    """fallback:fal 不返 cost 时按 worst-case 8s × $0.0925 × 1.3 = $0.962 估算。"""
+    return SEGMENT_INPUT_SECONDS_MAX * FAL_FALLBACK_USD_PER_INPUT_SEC * FAL_FALLBACK_OVERESTIMATE
 
 
 # ─── 单段调度(A2 范围)─────────────────────────────────────────────────
@@ -283,21 +305,25 @@ async def _run_one_ai_segment(
     try:
         prepared = await prepare_segment_input(seg_file, plan_item)
         input_url = await _fal_upload(prepared)
-        image_url, mode = _select_swap_target(image_urls)
+        url_only = [img["url"] for img in image_urls]
+        # 段实际秒数 — fal duration 跟它对齐,避免 input < output 触发 hallucinate
         prepared_dur = await _ffprobe_duration(prepared)
-        result = await call_pixverse_swap(
-            input_url, image_url, mode,
+        result = await call_fal_seedance(
+            input_url, url_only, prompt_compiled, seed, aspect_ratio,
             job_id=job_id, seg_idx=idx,
             input_duration_sec=prepared_dur,
         )
+        actual_cost = result["actual_cost_usd"]
+        if actual_cost is None:
+            actual_cost = _estimate_cost_usd()
         return {
             "idx": idx,
             "source_type": "ai",
             "status": "completed",
-            "fal_request_id": None,
+            "fal_request_id": (result["raw_response"] or {}).get("request_id"),
             "output_url": result["video_url"],
             "retry_count": retry,
-            "actual_cost_usd": result["actual_cost_usd"],
+            "actual_cost_usd": actual_cost,
             "error": None,
         }
     except Exception as e:
