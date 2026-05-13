@@ -783,6 +783,7 @@ async def get_job(
             "source_type": p["source_type"],
             # 2026-05-10 砍单档:tier 字段不再返(前端 JobView.segments 也已删)
             "status": r.get("status", "pending"),
+            "stage": r.get("stage", "pending"),
             "output_url": r.get("output_url"),
             # 2026-05-13 partial_completed:每段独立归档下载 URL
             "watermarked_url": r.get("watermarked_url"),
@@ -799,6 +800,7 @@ async def get_job(
         "type": row["type"],
         "replacement_mode": row["replacement_mode"],
         "status": row["status"],
+        "created_at": row["created_at"],
         "progress": {
             "completed": completed,
             "total_ai": total_ai,

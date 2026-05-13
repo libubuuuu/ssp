@@ -74,8 +74,9 @@ interface JobView {
   type: string;
   replacement_mode: string;
   status: string;
+  created_at?: string;
   progress: { completed: number; total_ai: number; total_original: number };
-  segments: Array<{ idx: number; source_type: string; status: string; output_url: string | null; watermarked_url?: string | null; raw_url?: string | null; error?: string | null }>;
+  segments: Array<{ idx: number; source_type: string; status: string; stage?: string; output_url: string | null; watermarked_url?: string | null; raw_url?: string | null; error?: string | null }>;
   final_video_url: string | null;
   final_video_url_watermarked: string | null;
   final_video_url_raw: string | null;
@@ -154,6 +155,8 @@ export default function VideoCloneV2Page() {
   // 任务追踪
   const [job, setJob] = useState<JobView | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // 无标识版下载二次确认
   const [showRawConfirm, setShowRawConfirm] = useState(false);
@@ -480,8 +483,26 @@ export default function VideoCloneV2Page() {
 
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
+  // 经过时间计时器 — processing 期间每秒 +1
+  useEffect(() => {
+    if (submitStatus === "processing" && job?.created_at) {
+      if (elapsedRef.current) clearInterval(elapsedRef.current);
+      const startMs = new Date(
+        job.created_at.endsWith("Z") ? job.created_at : job.created_at + "Z"
+      ).getTime();
+      elapsedRef.current = setInterval(() => {
+        setElapsedSec(Math.floor((Date.now() - startMs) / 1000));
+      }, 1000);
+    } else {
+      if (elapsedRef.current) { clearInterval(elapsedRef.current); elapsedRef.current = null; }
+    }
+    return () => { if (elapsedRef.current) { clearInterval(elapsedRef.current); elapsedRef.current = null; } };
+  }, [submitStatus, job?.created_at]);
+
   function reset() {
     if (pollRef.current) clearInterval(pollRef.current);
+    if (elapsedRef.current) { clearInterval(elapsedRef.current); elapsedRef.current = null; }
+    setElapsedSec(0);
     setVideo(null); setImages([]); setPrompt(""); setEstimate(null);
     setPreview(null); setSubmitStatus("idle"); setError("");
     setDisclaimerChecked(false); setJob(null); setShowRawConfirm(false);
@@ -787,20 +808,61 @@ export default function VideoCloneV2Page() {
         )}
 
         {/* Step 6:任务进度 */}
-        {job && submitStatus === "processing" && (
-          <Section title="6. 生成中">
-            <div style={{ fontSize: "0.9rem", color: "#666", marginBottom: 8 }}>
-              进度:{job.progress.completed} / {job.progress.total_ai + job.progress.total_original}
-            </div>
-            <div style={{ height: 8, background: "#e5e7eb", borderRadius: 4, overflow: "hidden" }}>
-              <div style={{
-                width: `${(job.progress.completed / Math.max(1, job.progress.total_ai + job.progress.total_original)) * 100}%`,
-                height: "100%", background: "#2563eb", transition: "width 0.5s",
-              }} />
-            </div>
-            <div style={{ fontSize: "0.78rem", color: "#999", marginTop: 8 }}>状态:{job.status}</div>
-          </Section>
-        )}
+        {job && submitStatus === "processing" && (() => {
+          const totalSegs = job.progress.total_ai + job.progress.total_original;
+          const completedSegs = job.progress.completed;
+          // 预估总时长:每段 ~130s(fal ~120s + 上传/下载 ~10s)
+          const estimatedTotal = Math.max(130, job.progress.total_ai * 130);
+          const timeRatio = Math.min(0.97, elapsedSec / estimatedTotal);
+          const realRatio = totalSegs > 0 ? completedSegs / totalSegs : 0;
+          const barPct = Math.max(realRatio, timeRatio) * 100;
+          const remaining = Math.max(0, estimatedTotal - elapsedSec);
+          const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+          const stageLabel = (stage?: string) => {
+            if (stage === "uploading") return "上传中…";
+            if (stage === "fal_processing") return "AI 处理中…";
+            if (stage === "completed") return "✓ 完成";
+            if (stage === "failed") return "✗ 失败";
+            return "等待中";
+          };
+          return (
+            <Section title="6. 生成中">
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.85rem", color: "#555", marginBottom: 6 }}>
+                <span>已完成 {completedSegs} / {totalSegs} 段</span>
+                <span style={{ color: "#999" }}>
+                  已用 {fmt(elapsedSec)}
+                  {remaining > 0 && completedSegs < totalSegs ? ` · 预计还需 ${fmt(remaining)}` : ""}
+                </span>
+              </div>
+              <div style={{ height: 8, background: "#e5e7eb", borderRadius: 4, overflow: "hidden" }}>
+                <div style={{
+                  width: `${barPct}%`,
+                  height: "100%", background: "#2563eb",
+                  transition: "width 1s linear",
+                }} />
+              </div>
+              <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>
+                {job.segments.map(s => (
+                  <div key={s.idx} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.8rem", color: "#555" }}>
+                    <span style={{
+                      width: 10, height: 10, borderRadius: "50%", flexShrink: 0,
+                      background: s.stage === "completed" ? "#16a34a"
+                        : s.stage === "failed" ? "#dc2626"
+                          : s.stage === "fal_processing" ? "#2563eb"
+                            : s.stage === "uploading" ? "#f59e0b"
+                              : "#d1d5db",
+                    }} />
+                    <span>
+                      {s.source_type === "original" ? "原视频段" : `AI 段 ${s.idx + 1}`}
+                      {" — "}
+                      {s.source_type === "original" ? "保留" : stageLabel(s.stage)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </Section>
+          );
+        })()}
 
         {/* Step 7:完成,双版本下载 */}
         {job && submitStatus === "completed" && (

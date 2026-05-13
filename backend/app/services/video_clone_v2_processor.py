@@ -256,7 +256,12 @@ async def call_fal_seedance(
         "seed": seed,
     }
     try:
-        result = await fal_client.subscribe_async(FAL_ENDPOINT, arguments=arguments)
+        result = await asyncio.wait_for(
+            fal_client.subscribe_async(FAL_ENDPOINT, arguments=arguments),
+            timeout=300.0,
+        )
+    except asyncio.TimeoutError:
+        raise RuntimeError("fal seedance 调用超时(>300s)")
     except Exception as e:
         raise RuntimeError(f"fal 调用失败:{e}")
 
@@ -303,8 +308,13 @@ async def _run_one_ai_segment(
     """
     idx = plan_item["idx"]
     try:
+        async with _seg_lock(job_id):
+            _db_update_segment_stage(job_id, idx, "uploading")
         prepared = await prepare_segment_input(seg_file, plan_item)
         input_url = await _fal_upload(prepared)
+
+        async with _seg_lock(job_id):
+            _db_update_segment_stage(job_id, idx, "fal_processing")
         url_only = [img["url"] for img in image_urls]
         # 段实际秒数 — fal duration 跟它对齐,避免 input < output 触发 hallucinate
         prepared_dur = await _ffprobe_duration(prepared)
@@ -320,6 +330,7 @@ async def _run_one_ai_segment(
             "idx": idx,
             "source_type": "ai",
             "status": "completed",
+            "stage": "completed",
             "fal_request_id": (result["raw_response"] or {}).get("request_id"),
             "output_url": result["video_url"],
             "retry_count": retry,
@@ -331,6 +342,7 @@ async def _run_one_ai_segment(
             "idx": idx,
             "source_type": "ai",
             "status": "failed",
+            "stage": "failed",
             "fal_request_id": None,
             "output_url": None,
             "retry_count": retry,
@@ -390,6 +402,48 @@ def _db_load_job(job_id: str) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
+# asyncio lock per job — ultimate 路径多段并发写 segments_results 时保证原子性
+_seg_locks: Dict[str, asyncio.Lock] = {}
+
+
+def _seg_lock(job_id: str) -> asyncio.Lock:
+    if job_id not in _seg_locks:
+        _seg_locks[job_id] = asyncio.Lock()
+    return _seg_locks[job_id]
+
+
+def _db_update_segment_stage(job_id: str, idx: int, stage: str) -> None:
+    """Read-modify-write: 更新单段 stage 字段到 segments_results。调用方持锁。"""
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT segments_results FROM video_clone_v2_jobs WHERE id = ?",
+            (job_id,)
+        ).fetchone()
+        if not row:
+            return
+        results = json.loads((row["segments_results"] or "[]"))
+        found = False
+        for r in results:
+            if r.get("idx") == idx:
+                r["stage"] = stage
+                r["stage_updated_at"] = now
+                found = True
+                break
+        if not found:
+            results.append({
+                "idx": idx, "source_type": "ai", "status": "processing",
+                "stage": stage, "started_at": now, "stage_updated_at": now,
+                "fal_request_id": None, "output_url": None,
+                "retry_count": 0, "actual_cost_usd": 0.0, "error": None,
+            })
+        conn.execute(
+            "UPDATE video_clone_v2_jobs SET segments_results = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (json.dumps(results, ensure_ascii=False), job_id)
+        )
+        conn.commit()
+
+
 def _db_update_job(job_id: str, **fields) -> None:
     if not fields:
         return
@@ -411,6 +465,13 @@ async def process_v2_job(job_id: str) -> None:
 
     支持 type=single(单段)+ type=ultimate(多段并发拼接)。
     """
+    try:
+        await _process_v2_job_inner(job_id)
+    finally:
+        _seg_locks.pop(job_id, None)  # 释放 lock,防内存泄漏
+
+
+async def _process_v2_job_inner(job_id: str) -> None:
     job = _db_load_job(job_id)
     if not job:
         log_error(f"process_v2_job 找不到 job_id={job_id}")
