@@ -793,7 +793,7 @@ export default function VideoCloneV2Page() {
             <div style={{ background: "#f0f7fb", padding: "1rem 1.2rem", borderRadius: 10, fontSize: "0.95rem", color: "#456", marginBottom: 12 }}>
               <div>段数:<b>{estimate.total_segments}</b> · AI 段:<b>{estimate.ai_segments_count}</b></div>
               <div style={{ fontSize: "1.3rem", color: "#2563eb", margin: "8px 0" }}>
-                总价 <b>¥{estimate.total_rmb_display}</b> · 实扣 <b>{estimate.total_credits}</b> 积分
+                消耗 <b>{estimate.total_credits} 积分</b>
               </div>
               <div style={{ fontSize: "0.8rem", color: "#789" }}>预计耗时:{estimate.estimated_minutes} 分钟</div>
             </div>
@@ -828,7 +828,7 @@ export default function VideoCloneV2Page() {
             >
               {submitStatus === "submitting" ? "提交中..." :
                 submitStatus === "processing" ? "生成中..." :
-                  `确认生成(¥${estimate.total_rmb_display})`}
+                  `确认生成(消耗 ${estimate.total_credits} 积分)`}
             </button>
           </Section>
         )}
