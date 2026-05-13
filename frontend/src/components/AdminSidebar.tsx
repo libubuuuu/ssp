@@ -93,7 +93,7 @@ export default function AdminSidebar({ isOpen = true, onClose }: Props) {
         <div style={{ padding: "0 1.5rem 1.5rem", borderBottom: "1px solid #333", display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
           <div>
             <div style={{ fontSize: "1.3rem", fontWeight: 700, fontFamily: "Georgia,serif", fontStyle: "italic" }}>
-              🛡️ AI Lixiao
+              🛡️ Xiao Liai
             </div>
             <div style={{ fontSize: "0.75rem", color: "#888", marginTop: "0.25rem" }}>
               {isEn ? "Admin Portal" : "管理后台"}

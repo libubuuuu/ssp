@@ -75,7 +75,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               }}
             >☰</button>
             <span style={{ fontSize: "0.95rem", fontWeight: 600, fontFamily: "Georgia,serif", fontStyle: "italic" }}>
-              🛡️ AI Lixiao Admin
+              🛡️ Xiao Liai Admin
             </span>
           </div>
         )}

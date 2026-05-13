@@ -17,7 +17,7 @@ import Link from "next/link";
 
 const ICP = process.env.NEXT_PUBLIC_ICP_NUMBER || "";
 const POLICE = process.env.NEXT_PUBLIC_POLICE_NUMBER || "";
-const COMPANY = process.env.NEXT_PUBLIC_COMPANY_NAME || "AI Lixiao";
+const COMPANY = process.env.NEXT_PUBLIC_COMPANY_NAME || "Xiao Liai";
 
 export default function SiteFooter() {
   return (

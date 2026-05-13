@@ -1,7 +1,7 @@
 import LegalPage from "@/components/LegalPage";
 
 export const metadata = {
-  title: "用户协议 | AI Lixiao",
+  title: "用户协议 | Xiao Liai",
   description: "{{COMPANY_SHORT}} 用户协议 — 服务条款 / 行为规范 / AIGC / 付费",
 };
 
