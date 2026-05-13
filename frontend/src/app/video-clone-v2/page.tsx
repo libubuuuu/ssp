@@ -97,7 +97,7 @@ const ROLE_LABELS: Record<Role, string> = {
 const SEGMENT_PRICE = {
   rmb: "19.9",
   credits: 20,
-  label: "AI 替换",
+  label: "AI 复刻视频",
 } as const;
 
 // 每段独立选择
@@ -168,6 +168,29 @@ export default function VideoCloneV2Page() {
     const t = typeof window !== "undefined" ? localStorage.getItem("token") : null;
     return t ? { Authorization: `Bearer ${t}` } : {};
   }
+
+  // ─── 页面加载:恢复未完成任务 ───
+  useEffect(() => {
+    const saved = typeof window !== "undefined" ? localStorage.getItem("vc2_active_job") : null;
+    if (!saved) return;
+    fetch(`${API_BASE}/api/video/clone-v2/jobs/${saved}`, { credentials: "include", headers: token() })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d: JobView | null) => {
+        if (!d) { localStorage.removeItem("vc2_active_job"); return; }
+        setJob(d);
+        if (["completed", "partial_completed", "failed", "refunded", "cancelled"].includes(d.status)) {
+          localStorage.removeItem("vc2_active_job");
+          if (d.status === "completed") setSubmitStatus("completed");
+          else if (d.status === "partial_completed") { setSubmitStatus("partial_completed"); setError(d.error || "部分段失败,失败段已退款"); }
+          else { setSubmitStatus("failed"); setError(d.error || `任务 ${d.status}`); }
+        } else {
+          setSubmitStatus("processing");
+          pollJob(saved);
+        }
+      })
+      .catch(() => localStorage.removeItem("vc2_active_job"));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ─── 拉模板 ───
   useEffect(() => {
@@ -437,6 +460,7 @@ export default function VideoCloneV2Page() {
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || "提交失败");
+      if (typeof window !== "undefined") localStorage.setItem("vc2_active_job", d.job_id);
       setSubmitStatus("processing");
       pollJob(d.job_id);
     } catch (e: unknown) {
@@ -464,6 +488,7 @@ export default function VideoCloneV2Page() {
         if (["completed", "partial_completed", "failed", "refunded", "cancelled"].includes(d.status)) {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
+          if (typeof window !== "undefined") localStorage.removeItem("vc2_active_job");
           if (d.status === "completed") setSubmitStatus("completed");
           else if (d.status === "partial_completed") setSubmitStatus("partial_completed");
           else setSubmitStatus("failed");
@@ -503,6 +528,7 @@ export default function VideoCloneV2Page() {
     if (pollRef.current) clearInterval(pollRef.current);
     if (elapsedRef.current) { clearInterval(elapsedRef.current); elapsedRef.current = null; }
     setElapsedSec(0);
+    if (typeof window !== "undefined") localStorage.removeItem("vc2_active_job");
     setVideo(null); setImages([]); setPrompt(""); setEstimate(null);
     setPreview(null); setSubmitStatus("idle"); setError("");
     setDisclaimerChecked(false); setJob(null); setShowRawConfirm(false);
@@ -523,7 +549,7 @@ export default function VideoCloneV2Page() {
               {t("videoCloneV2.titleMain")}<span style={{ fontStyle: "italic" }}> {t("videoCloneV2.titleAccent")}</span>
             </h1>
             <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
-              支持 4-64 秒视频 · ¥19.9 / 段 · 输出默认含 xiaoLi ai · AI 生成水印,无水印版需勾选声明
+              支持 4-64 秒视频 · ¥19.9 / 段 · 以原视频风格为参考生成含你产品的新视频 · 输出默认含水印
             </div>
           </div>
           <button
@@ -539,9 +565,9 @@ export default function VideoCloneV2Page() {
         <Section title="1. 上传参考视频(MP4/MOV,≤50MB,4-64 秒)">
           {!video && (
             <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 8, padding: "0.7rem 1rem", marginBottom: 12, fontSize: "0.85rem", color: "#075985", lineHeight: 1.6 }}>
-              <b>💡 效果小贴士</b>:建议上传<b>单镜头视频</b>(无明显切换),效果最稳定。多镜头视频在切换处个别帧可能效果欠佳。
+              <b>💡 效果说明</b>:本工具以上传视频的<b>运动节奏、构图和风格</b>为参考,生成包含你产品的全新视频。建议使用<b>单镜头视频</b>,效果最稳定。
               <br />
-              <b>📏 时长建议</b>:本工具最长支持 64 秒,<b>超过 60 秒建议自行分割后再分别复刻</b>,拼接稳定性 & 画质表现更好。
+              <b>📏 时长建议</b>:最长支持 64 秒,<b>超过 60 秒建议分段上传</b>,分别复刻后拼接,画质更好。
             </div>
           )}
           {!video ? (
