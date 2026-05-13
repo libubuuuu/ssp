@@ -1,67 +1,61 @@
 #!/bin/bash
-# 回滚脚本 — 从最新 archive 恢复代码，重启当前 active 服务
-# 使用：sudo bash /root/rollback.sh
-#
-# 回滚逻辑：不切换蓝绿，直接把 archive 代码覆写到 /opt/ssp，重启 active 进程。
-# archive 由 deploy.sh 在每次 rsync 前自动生成，保留最新 3 份。
+# 回滚脚本 — 启动待命 slot（旧代码），切换 nginx，关闭有问题的 active
+# 待命 slot 的代码从未被覆盖，无需 archive 恢复
 
 set -e
 
 LOG="/var/log/rollback.log"
-ARCHIVE_ROOT="/root/.ssp-archives"
 
 echo "========================================" | tee -a $LOG
 echo "回滚开始: $(date '+%Y-%m-%d %H:%M:%S')" | tee -a $LOG
 
-# ── 1. 找最新 archive ────────────────────────────────────────────────
-LATEST=$(ls -dt "$ARCHIVE_ROOT"/20* 2>/dev/null | head -1)
-if [ -z "$LATEST" ]; then
-    echo "❌ 没有可用的 archive（$ARCHIVE_ROOT 为空）" | tee -a $LOG
-    echo "   请用 git revert + bash /root/deploy.sh 手动回滚" | tee -a $LOG
-    exit 1
-fi
-echo "使用 archive：$LATEST" | tee -a $LOG
-
-# ── 2. 确定当前激活服务 ──────────────────────────────────────────────
+# ── 1. 确定当前激活/待命 ─────────────────────────────────────────────
 CURRENT=$(grep -oP 'proxy_pass http://127.0.0.1:\K[0-9]+' /etc/nginx/sites-enabled/default | head -1)
 if [ "$CURRENT" = "8000" ]; then
-    ACTIVE="blue"; ACTIVE_BACKEND=8000; ACTIVE_FRONTEND=3000
+    ACTIVE="blue";  FALLBACK="green"
+    ACTIVE_BACKEND=8000; ACTIVE_FRONTEND=3000
+    FALLBACK_BACKEND=8001; FALLBACK_FRONTEND=3002
 else
-    ACTIVE="green"; ACTIVE_BACKEND=8001; ACTIVE_FRONTEND=3002
+    ACTIVE="green"; FALLBACK="blue"
+    ACTIVE_BACKEND=8001; ACTIVE_FRONTEND=3002
+    FALLBACK_BACKEND=8000; FALLBACK_FRONTEND=3000
 fi
-echo "当前激活：$ACTIVE（nginx → $CURRENT）" | tee -a $LOG
 
-# ── 3. 恢复代码 ─────────────────────────────────────────────────────
-echo "恢复代码 from $LATEST ..." | tee -a $LOG
-rsync -a "$LATEST/backend/app/"      /opt/ssp/backend/app/
-rsync -a "$LATEST/frontend/src/"     /opt/ssp/frontend/src/
-rsync -a "$LATEST/frontend/public/"  /opt/ssp/frontend/public/
-if [ -d "$LATEST/frontend/.next" ]; then
-    rsync -a "$LATEST/frontend/.next/" /opt/ssp/frontend/.next/
-fi
-chown -R ssp-app:ssp-app /opt/ssp/backend/app /opt/ssp/frontend/src \
-    /opt/ssp/frontend/public /opt/ssp/frontend/.next 2>/dev/null || true
-echo "✅ 代码已恢复" | tee -a $LOG
+FALLBACK_DIR=/opt/ssp-${FALLBACK}
+echo "当前激活：$ACTIVE → 回滚到：$FALLBACK（$FALLBACK_DIR）" | tee -a $LOG
 
-# ── 4. 重启 active 服务（nginx 不动，流量不断）───────────────────────
-echo "重启 $ACTIVE 服务..." | tee -a $LOG
-supervisorctl restart ssp-backend-$ACTIVE  2>&1 | tee -a $LOG
-supervisorctl restart ssp-frontend-$ACTIVE 2>&1 | tee -a $LOG
+# ── 2. 启动 fallback slot（旧代码）──────────────────────────────────
+echo "启动 $FALLBACK 服务..." | tee -a $LOG
+supervisorctl start ssp-backend-$FALLBACK  2>&1 | tee -a $LOG
+supervisorctl start ssp-frontend-$FALLBACK 2>&1 | tee -a $LOG
 
+echo "健康检查（等 15 秒）..." | tee -a $LOG
 sleep 15
 
-# ── 5. 健康检查 ─────────────────────────────────────────────────────
-BACKEND=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:$ACTIVE_BACKEND/api/payment/packages)
-FRONTEND=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:$ACTIVE_FRONTEND)
-
-if [ "$BACKEND" = "200" ] && [ "$FRONTEND" = "200" ]; then
-    echo "✅ 回滚成功！$ACTIVE 已用旧版本代码重启" | tee -a $LOG
-    echo "   archive：$LATEST" | tee -a $LOG
-else
-    echo "❌ 回滚后健康检查失败！backend=$BACKEND frontend=$FRONTEND" | tee -a $LOG
-    echo "   检查日志：journalctl -u supervisor 或 /var/log/ssp-*" | tee -a $LOG
+# ── 3. 健康检查 ─────────────────────────────────────────────────────
+BACKEND=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:$FALLBACK_BACKEND/api/payment/packages)
+FRONTEND=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:$FALLBACK_FRONTEND)
+if [ "$BACKEND" != "200" ] || [ "$FRONTEND" != "200" ]; then
+    echo "❌ $FALLBACK 启动失败！backend=$BACKEND frontend=$FRONTEND" | tee -a $LOG
+    supervisorctl stop ssp-backend-$FALLBACK ssp-frontend-$FALLBACK 2>/dev/null || true
+    echo "   保持 $ACTIVE 在线，请手动检查日志：/var/log/ssp-*" | tee -a $LOG
     exit 1
 fi
+echo "✅ $FALLBACK 健康检查通过" | tee -a $LOG
 
+# ── 4. nginx 切换 ────────────────────────────────────────────────────
+sed -i "s|proxy_pass http://127.0.0.1:$ACTIVE_BACKEND;|proxy_pass http://127.0.0.1:$FALLBACK_BACKEND;|g" /etc/nginx/sites-enabled/default
+sed -i "s|proxy_pass http://127.0.0.1:$ACTIVE_FRONTEND;|proxy_pass http://127.0.0.1:$FALLBACK_FRONTEND;|g" /etc/nginx/sites-enabled/default
+nginx -t && nginx -s reload
+echo "✅ 流量已切换到 $FALLBACK" | tee -a $LOG
+
+sleep 5
+
+# ── 5. 关闭有问题的 active ────────────────────────────────────────────
+supervisorctl stop ssp-backend-$ACTIVE ssp-frontend-$ACTIVE 2>&1 | tee -a $LOG
+
+echo "" | tee -a $LOG
 echo "🎉 回滚完成！" | tee -a $LOG
+echo "   激活：$FALLBACK（旧代码 → $FALLBACK_DIR）" | tee -a $LOG
+echo "   待命：$ACTIVE （已停止）" | tee -a $LOG
 echo "========================================" | tee -a $LOG
