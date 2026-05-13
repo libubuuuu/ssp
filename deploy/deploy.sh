@@ -40,20 +40,23 @@ rsync -a --exclude='*.pyc' --exclude='__pycache__/' \
     /root/ssp/backend/app/ $STANDBY_DIR/backend/app/
 rsync -a /root/ssp/frontend/src/    $STANDBY_DIR/frontend/src/
 rsync -a /root/ssp/frontend/public/ $STANDBY_DIR/frontend/public/
-# 前端 shared 配置文件同步到 /opt/ssp/frontend/（symlinks 自动指向这里）
-rsync -a --exclude='node_modules/' --exclude='.next/' --exclude='src/' \
-    --exclude='public/' --exclude='*.log' \
-    --include='*.json' --include='*.js' --include='*.ts' --include='*.mjs' \
-    --include='*.cjs' --exclude='*' \
-    /root/ssp/frontend/ /opt/ssp/frontend/
+# 前端配置文件直接复制到 slot(Turbopack 不支持 symlink 指向 project 外的配置文件)
+for f in package.json next.config.ts next.config.js next-env.d.ts \
+          tsconfig.json postcss.config.mjs eslint.config.mjs; do
+    [ -e /root/ssp/frontend/$f ] && cp /root/ssp/frontend/$f $STANDBY_DIR/frontend/$f
+done
 chown -R ssp-app:ssp-app $STANDBY_DIR/backend/app $STANDBY_DIR/frontend/src \
-    $STANDBY_DIR/frontend/public /opt/ssp/frontend
+    $STANDBY_DIR/frontend/public $STANDBY_DIR/frontend/package.json \
+    $STANDBY_DIR/frontend/tsconfig.json 2>/dev/null || true
 echo "✅ rsync 完成" | tee -a $LOG
 
-# ── 2. 前端 build（在 standby slot 里）────────────────────────────────
-echo "[2/5] 构建前端（在 $STANDBY_DIR/frontend）..." | tee -a $LOG
-cd $STANDBY_DIR/frontend
+# ── 2. 前端 build（在 /root/ssp/frontend，有真实 node_modules）────────
+# Turbopack 不允许 symlink 指向 project 外，故在 git 工作树里 build，
+# 产物 .next/ 再 rsync 到 standby slot
+echo "[2/5] 构建前端（在 /root/ssp/frontend）..." | tee -a $LOG
+cd /root/ssp/frontend
 npm run build 2>&1 | tail -5 | tee -a $LOG
+rsync -a /root/ssp/frontend/.next/ $STANDBY_DIR/frontend/.next/
 chown -R ssp-app:ssp-app $STANDBY_DIR/frontend/.next
 echo "✅ 前端构建完成" | tee -a $LOG
 

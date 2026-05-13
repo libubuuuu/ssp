@@ -284,9 +284,11 @@ async def call_fal_seedance(
     }
 
 
-def _estimate_cost_usd() -> float:
-    """fallback:fal 不返 cost 时按 worst-case 8s × $0.0925 × 1.3 = $0.962 估算。"""
-    return SEGMENT_INPUT_SECONDS_MAX * FAL_FALLBACK_USD_PER_INPUT_SEC * FAL_FALLBACK_OVERESTIMATE
+def _estimate_cost_usd(duration_sec: float = SEGMENT_INPUT_SECONDS_MAX) -> float:
+    """fallback:fal 不返 cost 时按实际段长估算。
+    fal 按 token 计费(token ≈ 分辨率×帧数),帧数与时长线性相关,故用实际秒数代替 worst-case 8s。
+    校准基线:8s@480p ≈ $0.962(2026-05-13 billing CSV 实证)。"""
+    return duration_sec * FAL_FALLBACK_USD_PER_INPUT_SEC * FAL_FALLBACK_OVERESTIMATE
 
 
 # ─── 单段调度(A2 范围)─────────────────────────────────────────────────
@@ -320,6 +322,7 @@ async def _run_one_ai_segment(
         url_only = [img["url"] for img in image_urls]
         # 段实际秒数 — fal duration 跟它对齐,避免 input < output 触发 hallucinate
         prepared_dur = await _ffprobe_duration(prepared)
+        fal_called_at = time.strftime("%Y-%m-%d %H:%M:%S")
         result = await call_fal_seedance(
             input_url, url_only, prompt_compiled, seed, aspect_ratio,
             job_id=job_id, seg_idx=idx,
@@ -327,12 +330,13 @@ async def _run_one_ai_segment(
         )
         actual_cost = result["actual_cost_usd"]
         if actual_cost is None:
-            actual_cost = _estimate_cost_usd()
+            actual_cost = _estimate_cost_usd(prepared_dur)
         return {
             "idx": idx,
             "source_type": "ai",
             "status": "completed",
             "stage": "completed",
+            "fal_called_at": fal_called_at,
             "fal_request_id": (result["raw_response"] or {}).get("request_id"),
             "output_url": result["video_url"],
             "retry_count": retry,

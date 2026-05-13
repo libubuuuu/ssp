@@ -799,3 +799,58 @@ async def admin_oral_task_detail(session_id: str, _admin: dict = Depends(require
         d["original_video_url"] = None
 
     return d
+
+
+@router.get("/v2-cost-report")
+async def admin_v2_cost_report(_admin: dict = Depends(require_admin)):
+    """V2 视频复刻 fal 成本对账报告（估算值，以 fal dashboard 账单为准）。
+
+    对账方法：
+    1. 登录 fal.ai → Billing → Export CSV（选对应月份）
+    2. 用下方 estimated_usd_by_month 对应月份数字做对比
+    3. 差额 > 10% 则排查（可能是估算倍率偏差或新段长分布变化）
+    """
+    with get_db() as conn:
+        # 按月汇总 completed job 的估算成本
+        monthly = conn.execute(
+            """SELECT strftime('%Y-%m', completed_at) AS month,
+                      COUNT(*) AS jobs,
+                      ROUND(SUM(fal_cost_total_usd), 4) AS estimated_usd,
+                      SUM(CASE WHEN type='single' THEN 1 ELSE 0 END) AS single_jobs,
+                      SUM(CASE WHEN type='ultimate' THEN 1 ELSE 0 END) AS ultimate_jobs
+               FROM video_clone_v2_jobs
+               WHERE status IN ('completed', 'partial_completed')
+                 AND completed_at IS NOT NULL
+               GROUP BY month
+               ORDER BY month DESC
+               LIMIT 12""",
+        ).fetchall()
+
+        # 每日预算累计表（也是估算）
+        daily = conn.execute(
+            """SELECT date, ROUND(spent_usd, 4) AS spent_usd
+               FROM video_clone_v2_daily_budget
+               ORDER BY date DESC
+               LIMIT 30""",
+        ).fetchall()
+
+        # 全时段合计
+        totals = conn.execute(
+            """SELECT COUNT(*) AS total_jobs,
+                      ROUND(SUM(fal_cost_total_usd), 4) AS total_estimated_usd
+               FROM video_clone_v2_jobs
+               WHERE status IN ('completed', 'partial_completed')""",
+        ).fetchone()
+
+    return {
+        "note": "以下均为估算值（实际段长×$0.0925×1.3），以 fal.ai Billing 账单为准",
+        "reconcile_instructions": [
+            "1. 登录 fal.ai → Billing → Export CSV",
+            "2. 筛选 endpoint 含 seedance 的行，SUM(amount)",
+            "3. 与下方 estimated_usd_by_month 对比，差额 > 10% 需排查",
+        ],
+        "total_jobs": totals["total_jobs"] if totals else 0,
+        "total_estimated_usd": totals["total_estimated_usd"] if totals else 0,
+        "estimated_usd_by_month": [dict(r) for r in monthly],
+        "daily_spend_last_30d": [dict(r) for r in daily],
+    }
