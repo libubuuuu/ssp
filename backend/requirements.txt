@@ -1,7 +1,7 @@
 # AI 创意平台 - 后端依赖
 fastapi==0.122.1
 uvicorn[standard]==0.27.1
-python-multipart==0.0.26
+python-multipart==0.0.27
 pydantic==2.6.1
 pydantic-settings==2.1.0
 
