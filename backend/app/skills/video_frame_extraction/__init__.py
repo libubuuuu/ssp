@@ -67,96 +67,86 @@ class VideoFrameSkill:
           layout:        (3, 3) 固定
         """
         import os, subprocess
-        # 单次检测:阈值10.0兼顾精度与速度,比27宽松能捕捉景别/机位细微变化
-        scenes = self.detect_scenes(video_path, threshold=10.0)
+        from PIL import Image
+        import numpy as np
 
-        if not scenes:
-            return {"scenes": [], "keyframe_paths": [], "grid_paths": [], "n_frames": 0, "n_grids": 0, "layout": (3, 3)}
+        # 1. 获取视频时长
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+            capture_output=True, text=True, timeout=15,
+        )
+        try:
+            duration = float(r.stdout.strip())
+        except Exception:
+            duration = 0.0
+        if duration <= 0:
+            return {"scenes": [], "keyframe_paths": [], "grid_paths": [],
+                    "n_frames": 0, "n_grids": 0, "layout": (3, 3)}
 
-        frame_paths = self.extract_keyframes(video_path, scenes, output_dir=output_dir)
+        # 2. ffmpeg 一次 pass 抽缩略图(1fps 64x64),比 PySceneDetect 快 5-10x
+        thumb_dir = os.path.join(output_dir, "thumbs")
+        os.makedirs(thumb_dir, exist_ok=True)
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", video_path,
+             "-vf", "fps=1,scale=64:64", "-q:v", "5",
+             os.path.join(thumb_dir, "t%04d.jpg")],
+            capture_output=True, timeout=60,
+        )
+        thumbs = sorted(
+            os.path.join(thumb_dir, f) for f in os.listdir(thumb_dir) if f.endswith(".jpg")
+        )
+        if not thumbs:
+            return {"scenes": [], "keyframe_paths": [], "grid_paths": [],
+                    "n_frames": 0, "n_grids": 0, "layout": (3, 3)}
 
-        # 兜底:三轮降阈值后还不足 5 帧,用画面差异最大化选帧
-        # 每秒抽 1 帧,用颜色直方图差值贪心选出 9 张视觉差异最大的帧
-        if len(frame_paths) < 5:
-            try:
-                r = subprocess.run(
-                    ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                     "-of", "default=noprint_wrappers=1:nokey=1", video_path],
-                    capture_output=True, text=True, timeout=15,
-                )
-                duration = float(r.stdout.strip()) if r.returncode == 0 else 0
-            except Exception:
-                duration = 0
-            if duration > 0:
-                # 每秒抽 1 帧
-                n_sample = max(18, int(duration))
-                sample_frames = []
-                sample_times = []
-                for i in range(n_sample):
-                    ts = duration * i / n_sample
-                    out_path = os.path.join(output_dir, f"sample_{i:03d}.jpg")
-                    ret = subprocess.run(
-                        ["ffmpeg", "-y", "-ss", f"{ts:.3f}", "-i", video_path,
-                         "-vframes", "1", "-q:v", "3", "-vf", "scale=64:64", out_path],
-                        capture_output=True, timeout=15,
-                    )
-                    if ret.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 50:
-                        sample_frames.append(out_path)
-                        sample_times.append(ts)
+        n_total = len(thumbs)
+        # 每张缩略图对应视频中 (i+0.5)/n_total * duration 时刻
+        sample_times = [duration * (i + 0.5) / n_total for i in range(n_total)]
 
-                if len(sample_frames) >= 5:
-                    # 计算各帧直方图
-                    try:
-                        from PIL import Image
-                        import numpy as np
+        # 3. 颜色直方图差异最大化选帧(贪心)
+        n_grids_target = max(1, min(6, round(duration / 10)))
+        n_pick = min(n_grids_target * 9, n_total)
 
-                        def hist(p):
-                            img = Image.open(p).convert("RGB")
-                            arr = np.array(img).reshape(-1, 3)
-                            h = []
-                            for c in range(3):
-                                h.extend(np.histogram(arr[:, c], bins=16, range=(0, 256))[0])
-                            return np.array(h, dtype=float)
+        def _hist(p: str) -> np.ndarray:
+            img = Image.open(p).convert("RGB")
+            arr = np.array(img).reshape(-1, 3)
+            return np.concatenate([
+                np.histogram(arr[:, c], bins=16, range=(0, 256))[0]
+                for c in range(3)
+            ]).astype(float)
 
-                        hists = [hist(p) for p in sample_frames]
-                        # 贪心:每次选与已选集合差异最大的帧
-                        # 按视频时长算张数:每 ~10 秒 1 张九宫格(9 帧),最少 1 张,最多 6 张
-                        n_grids_target = max(1, min(6, round(duration / 10)))
-                        n_pick = min(n_grids_target * 9, len(sample_frames))
-                        picked = [0]  # 从第一帧开始
-                        while len(picked) < n_pick:
-                            best_i, best_d = -1, -1.0
-                            for i in range(len(sample_frames)):
-                                if i in picked:
-                                    continue
-                                d = min(np.linalg.norm(hists[i] - hists[j]) for j in picked)
-                                if d > best_d:
-                                    best_d, best_i = d, i
-                            if best_i == -1:
-                                break
-                            picked.append(best_i)
-                        picked.sort()
+        hists = [_hist(p) for p in thumbs]
+        picked = [0]
+        while len(picked) < n_pick:
+            best_i, best_d = -1, -1.0
+            for i in range(n_total):
+                if i in picked:
+                    continue
+                d = min(float(np.linalg.norm(hists[i] - hists[j])) for j in picked)
+                if d > best_d:
+                    best_d, best_i = d, i
+            if best_i == -1:
+                break
+            picked.append(best_i)
+        picked.sort()
 
-                        # 用真实分辨率重新抽这 9 帧
-                        diverse_frames = []
-                        diverse_scenes = []
-                        for rank, si in enumerate(picked):
-                            ts = sample_times[si]
-                            out_path = os.path.join(output_dir, f"diverse_{rank:02d}.jpg")
-                            ret = subprocess.run(
-                                ["ffmpeg", "-y", "-ss", f"{ts:.3f}", "-i", video_path,
-                                 "-vframes", "1", "-q:v", "2", out_path],
-                                capture_output=True, timeout=30,
-                            )
-                            if ret.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 100:
-                                diverse_frames.append(out_path)
-                                diverse_scenes.append(Scene(idx=rank, start_seconds=ts,
-                                                            end_seconds=min(ts + duration / n_pick, duration)))
-                        if len(diverse_frames) >= 5:
-                            frame_paths = diverse_frames
-                            scenes = diverse_scenes
-                    except Exception:
-                        pass
+        # 4. 用全分辨率重新抽选中的帧
+        frame_paths: list[str] = []
+        scenes: list[Scene] = []
+        seg = duration / max(n_pick, 1)
+        for rank, si in enumerate(picked):
+            ts = sample_times[si]
+            out_path = os.path.join(output_dir, f"frame_{rank:03d}.jpg")
+            ret = subprocess.run(
+                ["ffmpeg", "-y", "-ss", f"{ts:.3f}", "-i", video_path,
+                 "-vframes", "1", "-q:v", "2", out_path],
+                capture_output=True, timeout=30,
+            )
+            if ret.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 100:
+                frame_paths.append(out_path)
+                scenes.append(Scene(idx=rank, start_seconds=ts,
+                                    end_seconds=min(ts + seg, duration)))
 
         # 多九宫格分页:每 9 帧一张
         layout = (3, 3)
