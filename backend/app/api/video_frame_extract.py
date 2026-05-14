@@ -343,9 +343,26 @@ async def generate_submit(
         raise HTTPException(400, "产品图 / 人物图 / 场景图 至少上传 1 张")
 
     user_id = str(current_user["id"])
-    # 只对非跳过分镜计费；短于3s的会被合并，按合并后时长计
+    # 按合并后实际段数计费（跳过的不算，短于3s的合并后算一段）
     active_scenes = [s for s in scenes if s.get("id") not in set(skipped_scene_ids)]
-    total_duration_sec = sum(max(4, int(round(float(s.get("duration_sec") or 4)))) for s in active_scenes)
+
+    def _preview_merge(scs, min_dur=3.0):
+        result, i = [], 0
+        while i < len(scs):
+            sc = dict(scs[i])
+            while sc.get("duration_sec", 4) < min_dur and i + 1 < len(scs):
+                nxt = scs[i + 1]
+                if sc["duration_sec"] + nxt.get("duration_sec", 4) <= 15.0:
+                    sc["duration_sec"] += nxt.get("duration_sec", 4)
+                    i += 1
+                else:
+                    break
+            result.append(sc)
+            i += 1
+        return result
+
+    merged_scenes = _preview_merge(active_scenes)
+    total_duration_sec = sum(max(4, int(round(float(s.get("duration_sec") or 4)))) for s in merged_scenes)
     cost = max(65, total_duration_sec * 65)
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
