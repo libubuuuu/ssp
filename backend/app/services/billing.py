@@ -26,12 +26,6 @@ PRICING: Dict[str, int] = {
     "video/editor/compose": 50,
     "video/replicate": 0,  # 真正定价按时长 replicate.py 算 (* 50)
 
-    # AI 带货视频
-    "ad_video/analyze": 5,        # 生成文案
-    "ad_video/preview": 20,       # 分镜图 1 张
-    "ad_video/scene_regen": 5,    # 重出一段文案
-    "ad_video/generate": 50,      # 实际按 duration_sec * 50
-
     # 通用 video_general / frame-extract / replicate
     "video/general/analyze":      5,
     "video/general/storyboard":   20,

@@ -103,8 +103,6 @@ export default function JobPanel() {
     video_clone: t("jobs.typeClone"),
     video_clone_v2: "视频复刻",  // 2026-05-13:V2 虚拟 job
     video_general: "图片复刻",
-    long_video: "长视频翻拍",
-    oral_broadcast: "口播带货",  // 七十五续:long-video 虚拟 job(暂中文硬编码,i18n 留下次)
   } as Record<string, string>)[typ] || typ;
 
   const deleteJob = async (id: string) => {
@@ -148,7 +146,7 @@ export default function JobPanel() {
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <button onClick={async () => {
-                if (!confirm("清空所有任务记录?常规任务后端会删除,口播/长视频会话仅从此列表移除,实际数据保留。")) return;
+                if (!confirm("清空所有任务记录?")) return;
                 const t = localStorage.getItem("token") || "";
                 try {
                   await fetch(`${API_BASE}/api/jobs/clear`, { method: "POST", headers: { Authorization: `Bearer ${t}` } });

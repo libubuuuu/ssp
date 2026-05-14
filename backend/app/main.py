@@ -92,23 +92,17 @@ init_circuit_breaker()
 init_alert_service(settings.ALIYUN_ACCESS_KEY_ID, settings.ALIYUN_ACCESS_KEY_SECRET, "AI创意平台", settings.ALIYUN_SMS_TEMPLATE_CODE, [settings.DEVELOPER_PHONE] if settings.DEVELOPER_PHONE else [])
 init_task_queue()
 
-# 2026-04-28 v3: AI 带货视频 - VLM 服务(走 fal OpenRouter,复用 FAL_KEY,零新依赖)
-from app.services.vlm_service import init_vlm_service
-init_vlm_service()
-
-from app.api import image, video, tasks, content, products, admin, auth, payment, video_studio, jobs, ad_video, wechat_pay, storage, replicate, video_general, video_clone, video_clone_v2, video_frame_extract
+from app.api import image, video, tasks, content, products, admin, auth, payment, jobs, wechat_pay, storage, replicate, video_general, video_clone, video_clone_v2, video_frame_extract
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(payment.router, prefix="/api/payment", tags=["支付"])
 app.include_router(wechat_pay.router, prefix="/api/wechat-pay", tags=["微信支付"])
 app.include_router(storage.router, prefix="/api/storage", tags=["对象存储直传"])
 app.include_router(image.router, prefix="/api/image", tags=["图片"])
 app.include_router(video.router, prefix="/api/video", tags=["视频"])
-app.include_router(video_studio.router, prefix="/api/studio", tags=["长视频工作台"])
 app.include_router(jobs.router, prefix="/api/jobs", tags=["任务队列"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["任务"])
 app.include_router(content.router, prefix="/api/content", tags=["内容"])
 app.include_router(products.router, prefix="/api/products", tags=["产品"])
-app.include_router(ad_video.router, prefix="/api/ad-video", tags=["AI带货视频"])
 app.include_router(replicate.router, prefix="/api/video/replicate", tags=["视频复刻工作台"])
 app.include_router(video_general.router, prefix="/api/video/general", tags=["通用产品视频"])
 app.include_router(video_clone.router, prefix="/api/video/clone", tags=["视频复刻 Seedance r2v"])

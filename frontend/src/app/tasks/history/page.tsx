@@ -40,13 +40,7 @@ export default function HistoryPage() {
     "avatar/generate": t("tasks.mod_avatar"),
     "voice/clone": t("tasks.mod_voice_clone"),
     "voice/tts": t("tasks.mod_tts"),
-    "oral-broadcast": t("tasks.mod_oral"),
-    "ad_video/generate": t("tasks.mod_ad_video"),
-    "ad_video/analyze": t("tasks.mod_ad_analyze"),
-    "ad_video/preview": t("tasks.mod_ad_preview"),
-    "ad_video/scene_regen": t("tasks.mod_ad_scene_regen"),
     "video/editor/compose": t("tasks.mod_editor_compose"),
-    "video/studio/clone": t("tasks.mod_studio_clone"),
     "video/replicate": t("tasks.mod_replicate"),
   };
 
