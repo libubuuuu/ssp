@@ -40,6 +40,7 @@ async def upload_video(
     """视频上传:流式落盘 → fal storage URL。支持慢速网络。"""
     import os
     from app.services.upload_guard import stream_bounded_to_path
+    from pathlib import Path
     _check_mime(file, VIDEO_MIMES, "参考视频")
     suffix = ".mp4"
     if file.filename and "." in file.filename:
@@ -47,7 +48,7 @@ async def upload_video(
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp_path = tmp.name
     try:
-        await stream_bounded_to_path(file, tmp_path, MAX_VIDEO_SIZE, VIDEO_MIMES, "参考视频")
+        await stream_bounded_to_path(file, Path(tmp_path), MAX_VIDEO_SIZE, VIDEO_MIMES, "参考视频")
         url = await fal_upload_with_retry(tmp_path)
     finally:
         try: os.unlink(tmp_path)
