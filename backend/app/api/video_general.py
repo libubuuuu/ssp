@@ -259,7 +259,7 @@ async def analyze_submit(
         raise HTTPException(503, "qwen-vl 视频理解服务不可用")
 
     # 推到 JOBS 队列 type=video_general_analyze
-    from app.api.jobs import JOBS, _save_jobs, _execute_job
+    from app.api.jobs import JOBS, _save_jobs, _execute_job, create_tracked_task
     job_id = str(uuid.uuid4())[:8]
     JOBS[job_id] = {
         "id": job_id,
@@ -285,7 +285,7 @@ async def analyze_submit(
         "created_at": time.time(),
     }
     _save_jobs()
-    asyncio.create_task(_execute_job(job_id))
+    create_tracked_task(_execute_job(job_id))
     log_info(f"video_general/analyze submitted job={job_id} user={user_id} n_images={len(product_image_urls)}")
     return {"analyze_job_id": job_id, "status": "pending"}
 
@@ -368,7 +368,7 @@ async def storyboard_submit(
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
 
-    from app.api.jobs import JOBS, _save_jobs, _execute_job
+    from app.api.jobs import JOBS, _save_jobs, _execute_job, create_tracked_task
     job_id = str(uuid.uuid4())[:8]
     JOBS[job_id] = {
         "id": job_id,
@@ -398,7 +398,7 @@ async def storyboard_submit(
         "created_at": time.time(),
     }
     _save_jobs()
-    asyncio.create_task(_execute_job(job_id))
+    create_tracked_task(_execute_job(job_id))
     log_info(f"video_general/storyboard submitted job={job_id} user={user_id} n_scenes={len(req.scenes)}")
     return {"job_id": job_id, "status": "pending", "cost": cost}
 
@@ -442,7 +442,7 @@ async def generate(
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
 
-    from app.api.jobs import JOBS, _save_jobs, _execute_job
+    from app.api.jobs import JOBS, _save_jobs, _execute_job, create_tracked_task
     job_id = str(uuid.uuid4())[:8]
     JOBS[job_id] = {
         "id": job_id,
@@ -477,6 +477,6 @@ async def generate(
         "created_at": time.time(),
     }
     _save_jobs()
-    asyncio.create_task(_execute_job(job_id))
+    create_tracked_task(_execute_job(job_id))
     log_info(f"video_general/generate submitted job={job_id} user={user_id} n_scenes={len(req.scenes)} category={req.category}")
     return {"job_id": job_id, "status": "pending", "cost": cost}

@@ -26,6 +26,33 @@ JOBS_DIR = JOBS_FILE.parent
 MAX_CONCURRENT = 5
 _semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 
+# ── 全局后台任务注册表 ──────────────────────────────────────────────────
+# 所有 asyncio.create_task 的后台任务都注册到这里
+# uvicorn shutdown 时等待所有任务完成，彻底防止任务被强杀
+_bg_tasks: set = set()
+
+def create_tracked_task(coro) -> asyncio.Task:
+    """创建后台任务并注册到全局注册表，任务结束自动移除。"""
+    task = asyncio.create_task(coro)
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+    return task
+
+async def wait_all_bg_tasks(timeout: float = 600.0) -> None:
+    """等待所有注册的后台任务完成（最多 timeout 秒）。供 lifespan 关闭时调用。"""
+    if not _bg_tasks:
+        return
+    pending = list(_bg_tasks)
+    log_info(f"shutdown: 等待 {len(pending)} 个后台任务完成...")
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*pending, return_exceptions=True),
+            timeout=timeout,
+        )
+        log_info("shutdown: 所有后台任务已完成")
+    except asyncio.TimeoutError:
+        log_info(f"shutdown: 超时({timeout}s)，强制退出（积分已自动退还）")
+
 def _load_jobs():
     """读取 jobs.json,加共享锁(LOCK_SH)避免读到正在写的半量"""
     if not JOBS_FILE.exists():
@@ -1766,7 +1793,7 @@ async def submit_job(req: SubmitJobRequest, current_user: dict = Depends(get_cur
         "created_at": time.time(),
     }
     _save_jobs()
-    asyncio.create_task(_execute_job(job_id))
+    create_tracked_task(_execute_job(job_id))
     return {"job_id": job_id, "status": "pending", "cost": cost}
 
 

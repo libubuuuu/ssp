@@ -277,7 +277,7 @@ async def analyze_submit(
         raise HTTPException(503, "qwen-vl 视频理解服务不可用")
 
     # 推到 JOBS 队列 type=replicate_analyze
-    from app.api.jobs import JOBS, _save_jobs, _execute_job
+    from app.api.jobs import JOBS, _save_jobs, _execute_job, create_tracked_task
     job_id = str(uuid.uuid4())[:8]
     JOBS[job_id] = {
         "id": job_id,
@@ -292,7 +292,7 @@ async def analyze_submit(
         "created_at": time.time(),
     }
     _save_jobs()
-    asyncio.create_task(_execute_job(job_id))
+    create_tracked_task(_execute_job(job_id))
     log_info(f"replicate/analyze submitted job={job_id} user={user_id}")
     return {"analyze_job_id": job_id, "status": "pending"}
 
@@ -347,7 +347,7 @@ async def generate(
         raise HTTPException(402, f"积分不足,需 {cost}")
 
     job_id = str(uuid.uuid4())[:8]
-    from app.api.jobs import JOBS, _save_jobs, _execute_job
+    from app.api.jobs import JOBS, _save_jobs, _execute_job, create_tracked_task
 
     JOBS[job_id] = {
         "id": job_id,
@@ -371,6 +371,6 @@ async def generate(
         "created_at": time.time(),
     }
     _save_jobs()
-    asyncio.create_task(_execute_job(job_id))
+    create_tracked_task(_execute_job(job_id))
 
     return {"job_id": job_id, "status": "pending", "cost": cost}

@@ -59,8 +59,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"orphan cleanup failed at startup: {e}")
     yield
-    # 关闭
+    # 关闭:等所有后台任务完成再退出（最多 10 分钟）
     log_info("AI 创意平台 正在关闭...")
+    try:
+        from app.api.jobs import wait_all_bg_tasks
+        await wait_all_bg_tasks(timeout=600.0)
+    except Exception as e:
+        log_error(f"shutdown wait_all_bg_tasks 失败: {e}")
 
 
 app = FastAPI(title="AI 创意平台", version="1.0.0", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)

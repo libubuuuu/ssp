@@ -150,7 +150,7 @@ async def analyze_submit(
         add_credits(user_id, cost, reason="task_refund")
         raise HTTPException(503, f"qwen-vl 初始化失败: {str(e)[:200]}")
 
-    from app.api.jobs import JOBS, _save_jobs, _execute_job
+    from app.api.jobs import JOBS, _save_jobs, _execute_job, create_tracked_task
     job_id = str(uuid.uuid4())[:8]
     JOBS[job_id] = {
         "id": job_id,
@@ -165,7 +165,7 @@ async def analyze_submit(
         "created_at": time.time(),
     }
     _save_jobs()
-    asyncio.create_task(_execute_job(job_id))
+    create_tracked_task(_execute_job(job_id))
     log_info(f"frame-extract/analyze submitted job={job_id} user={user_id}")
     return {"analyze_job_id": job_id, "status": "pending"}
 
@@ -265,7 +265,7 @@ async def replace_submit(
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
 
-    from app.api.jobs import JOBS, _save_jobs, _execute_job
+    from app.api.jobs import JOBS, _save_jobs, _execute_job, create_tracked_task
     job_id = str(uuid.uuid4())[:8]
     JOBS[job_id] = {
         "id": job_id,
@@ -290,7 +290,7 @@ async def replace_submit(
         "created_at": time.time(),
     }
     _save_jobs()
-    asyncio.create_task(_execute_job(job_id))
+    create_tracked_task(_execute_job(job_id))
     log_info(f"frame-extract/replace submitted job={job_id} user={user_id} n_grids={len(grid_urls)} cost={cost}")
     return {"replace_job_id": job_id, "status": "pending", "cost": cost}
 
@@ -350,7 +350,7 @@ async def generate_submit(
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
 
-    from app.api.jobs import JOBS, _save_jobs, _execute_job
+    from app.api.jobs import JOBS, _save_jobs, _execute_job, create_tracked_task
     job_id = str(uuid.uuid4())[:8]
     JOBS[job_id] = {
         "id": job_id,
@@ -376,7 +376,7 @@ async def generate_submit(
         "created_at": time.time(),
     }
     _save_jobs()
-    asyncio.create_task(_execute_job(job_id))
+    create_tracked_task(_execute_job(job_id))
     log_info(f"frame-extract/generate submitted job={job_id} user={user_id} scenes={len(scenes)} grids={len(replaced_grid_urls)} cost={cost}")
     return {"generate_job_id": job_id, "status": "pending", "cost": cost}
 

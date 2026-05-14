@@ -203,7 +203,7 @@ async def generate(
         "created_at": time.time(),
     }
     _save_jobs()
-    asyncio.create_task(_execute_job(job_id))
+    create_tracked_task(_execute_job(job_id))
     log_info(f"video_clone/generate submitted job={job_id} user={user_id} duration={req.duration} count={req.count} cost={cost}")
     return {
         "job_id": job_id,

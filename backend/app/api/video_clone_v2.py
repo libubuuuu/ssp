@@ -34,6 +34,7 @@ from app.services.billing import check_user_credits, deduct_credits
 from app.services.content_filter import check_prompt
 from app.services.fal_service import fal_upload_with_retry
 from app.services.logger import log_info, log_error
+from app.api.jobs import create_tracked_task
 from app.services.upload_guard import read_bounded
 from app.services.video_clone_v2_pricing import (
     PROMPT_TEMPLATES,
@@ -733,7 +734,7 @@ async def create(
         conn.commit()
 
     # 10. 异步推 worker
-    asyncio.create_task(process_v2_job(job_id))
+    create_tracked_task(process_v2_job(job_id))
 
     log_info(
         f"video_clone_v2 create:job_id={job_id} user={user_id} type={req.type} "
