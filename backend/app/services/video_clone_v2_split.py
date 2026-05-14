@@ -77,44 +77,60 @@ _TARGET_TOLERANCE = 0.05
 
 
 def check_duration(duration_sec: float) -> Dict[str, Any]:
-    """检查视频时长是否需要 trim 到 8 整倍数。
+    """检查视频时长是否需要 trim。
+
+    Seedance 2.0 支持每段 4-15 秒，plan_segments_v2 按 ≤8s 切段。
+    末段 < 4s 时并入前段（合并后 ≤ 12s，在 fal 15s 限制内）。
+    因此 4-64 秒内任何时长都能合法切段，极少需要 trim。
+
+    需要 trim 的唯一情况：末段 < 4s 且无法合并（理论上不出现）。
 
     Returns:
-        needs_trim=False:无需 trim(单段或完美 8 倍数);只含 current/target
-        needs_trim=True:需要 trim;含 current/target/drop_seconds(供前端弹窗展示候选)
+        needs_trim=False: 直接切段即可,target_duration=duration_sec
+        needs_trim=True:  末段不合法需丢弃,含 drop_seconds 供弹窗展示
 
     Raises:
-        ValueError: < 2 / > 64
+        ValueError: < 4s / > 64s
     """
-    if duration_sec < 2.0:
-        raise ValueError(f"视频太短(<2 秒),最少 2 秒")
+    if duration_sec < 4.0:
+        raise ValueError(f"视频太短(<4 秒),最少 4 秒")
     if duration_sec > MAX_ULTIMATE_SECONDS:
         raise ValueError(f"视频太长,最多 {MAX_ULTIMATE_SECONDS} 秒")
 
-    # 单段路径:duration ≤ 8 不需要 trim(直接当一整段处理)
-    if duration_sec <= 8.0 + _TARGET_TOLERANCE:
-        return {
-            "needs_trim": False,
-            "current_duration": round(duration_sec, 2),
-            "target_duration": round(min(duration_sec, 8.0), 2),
-        }
+    # 模拟切段,检查末段是否合法
+    segments: list[float] = []
+    cur = 0.0
+    while cur < duration_sec - _TARGET_TOLERANCE:
+        seg = min(8.0, duration_sec - cur)
+        segments.append(seg)
+        cur += seg
 
-    # 多段路径:target 是 ≤ duration 的最大 8 整倍数
-    target = int(duration_sec // 8) * 8
-    if duration_sec - target < _TARGET_TOLERANCE:
-        # 完美 8 倍数(容差内)
-        return {
-            "needs_trim": False,
-            "current_duration": round(duration_sec, 2),
-            "target_duration": float(target),
-        }
+    if not segments:
+        return {"needs_trim": False, "current_duration": round(duration_sec, 2),
+                "target_duration": round(duration_sec, 2)}
 
-    drop = duration_sec - target
+    last = segments[-1]
+
+    # 末段 ≥ 4s → 合法，无需 trim
+    if last >= 4.0 - _TARGET_TOLERANCE:
+        return {"needs_trim": False, "current_duration": round(duration_sec, 2),
+                "target_duration": round(duration_sec, 2)}
+
+    # 末段 < 4s → 并入前段（最多 12s，在 fal 15s 内）
+    if len(segments) >= 2:
+        merged = segments[-2] + last
+        if merged <= 15.0 + _TARGET_TOLERANCE:
+            # 合并后合法，无需 trim
+            return {"needs_trim": False, "current_duration": round(duration_sec, 2),
+                    "target_duration": round(duration_sec, 2)}
+
+    # 合并后 > 15s（极端情况）→ 需要丢弃末段
+    target = duration_sec - last
     return {
         "needs_trim": True,
         "current_duration": round(duration_sec, 2),
-        "target_duration": float(target),
-        "drop_seconds": round(drop, 2),
+        "target_duration": round(target, 2),
+        "drop_seconds": round(last, 2),
     }
 
 
