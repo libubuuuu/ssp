@@ -56,6 +56,7 @@ export default function VideoFrameExtractPage() {
   // 第一步:视频提取
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [videoDuration, setVideoDuration] = useState<number>(0);
   const [scenes, setScenes] = useState<Scene[] | null>(null);
   const [gridUrls, setGridUrls] = useState<string[]>([]);
   const [detectedRatio, setDetectedRatio] = useState<string>("9:16");
@@ -391,7 +392,8 @@ export default function VideoFrameExtractPage() {
             {videoFile ? (
               <div>
                 <div style={{ fontSize: "0.85rem", color: "#0d0d0d", marginBottom: 6 }}>✓ {videoFile.name}</div>
-                {videoUrl && <video src={videoUrl} controls style={{ maxWidth: 280, maxHeight: 200, marginTop: 6, borderRadius: 8 }} />}
+                {videoUrl && <video src={videoUrl} controls style={{ maxWidth: 280, maxHeight: 200, marginTop: 6, borderRadius: 8 }}
+                  onLoadedMetadata={e => setVideoDuration(Math.round((e.target as HTMLVideoElement).duration))} />}
               </div>
             ) : (
               <div style={{ color: "#999", fontSize: "0.9rem" }}>点击上传视频(MP4/MOV,≤100MB)</div>
@@ -400,10 +402,17 @@ export default function VideoFrameExtractPage() {
         </Box>
 
         {videoUrl && !scenes && (
-          <button onClick={extract} disabled={loading}
-            style={{ background: "#0d0d0d", color: "#fff", border: "none", padding: "0.9rem 1.6rem", borderRadius: 10, fontSize: "0.95rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1, marginBottom: "1rem" }}>
-            {loading ? loadingMsg || "提取中..." : "🔍 提取 storyboard(消耗 5 积分)"}
-          </button>
+          <div style={{ marginBottom: "1rem" }}>
+            {videoDuration > 0 && !loading && (
+              <div style={{ fontSize: "0.8rem", color: "#888", marginBottom: 8, padding: "0.5rem 0.8rem", background: "#f5f3ed", borderRadius: 8 }}>
+                📹 视频时长 {videoDuration}s · 预计分析需要 {Math.max(60, Math.round(videoDuration * 1.5 + 40))}s，请耐心等待
+              </div>
+            )}
+            <button onClick={extract} disabled={loading}
+              style={{ background: "#0d0d0d", color: "#fff", border: "none", padding: "0.9rem 1.6rem", borderRadius: 10, fontSize: "0.95rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1 }}>
+              {loading ? loadingMsg || "提取中..." : "🔍 提取 storyboard(消耗 5 积分)"}
+            </button>
+          </div>
         )}
 
         {gridUrls.length > 0 && (
