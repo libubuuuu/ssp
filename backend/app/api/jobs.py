@@ -2710,15 +2710,9 @@ NO TEXT OVERLAYS other than the original number labels. NO new words, signs, bra
             except Exception as e:
                 err_str = str(e)
                 if "content_policy" in err_str or "content_checker" in err_str:
-                    log_info(f"skill_replace [{idx+1}] content_policy → 简化 prompt 重试")
-                    # 尝试 2：简化 prompt + 去掉九宫格图（只传参考图）
-                    try:
-                        result = await _call_gpt2(simple_prompt, refs_urls_extra or image_urls)
-                    except asyncio.TimeoutError:
-                        raise RuntimeError(f"GPT-Image 2 edit 第 {idx+1} 张超时 420s")
-                    except Exception as e2:
-                        log_error(f"skill_replace [{idx+1}] 简化重试仍失败: {e2}")
-                        raise RuntimeError(f"GPT-Image 2 edit 第 {idx+1} 张内容审核拒绝,换用其他品类或图片")
+                    # 内容审核拒绝：不重试（重试也会被拒，白等 5 分钟）
+                    log_error(f"skill_replace [{idx+1}] 内容审核拒绝，不重试直接失败")
+                    raise RuntimeError(f"GPT-Image 2 第 {idx+1} 张被内容审核拒绝（产品图含敏感内容）")
                 else:
                     log_error(f"skill_replace [{idx+1}] fal 异常: {e}")
                     raise RuntimeError(f"GPT-Image 2 edit 第 {idx+1} 张失败: {str(e)[:200]}")
