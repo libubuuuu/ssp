@@ -58,6 +58,7 @@ export default function VideoFrameExtractPage() {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [videoDuration, setVideoDuration] = useState<number>(0);
   const [scenes, setScenes] = useState<Scene[] | null>(null);
+  const [skippedScenes, setSkippedScenes] = useState<Set<number>>(new Set());
   const [gridUrls, setGridUrls] = useState<string[]>([]);
   const [detectedRatio, setDetectedRatio] = useState<string>("9:16");
   const [originalSpeech, setOriginalSpeech] = useState<string>("");
@@ -328,6 +329,7 @@ export default function VideoFrameExtractPage() {
         body: JSON.stringify({
           replaced_grid_urls: replacedGridUrls,
           scenes,
+          skipped_scene_ids: Array.from(skippedScenes),
           product_image_url: productImageUrl,
           model_image_url: modelImageUrl,
           scene_image_url: sceneImageUrl || undefined,
@@ -476,28 +478,54 @@ export default function VideoFrameExtractPage() {
         )}
 
         {scenes && (
-          <Box label={`④ 检测到的 ${scenes.length} 个分镜(可手动修改)`}>
+          <Box label={`④ 检测到的 ${scenes.length} 个分镜(选择复刻哪些)`}>
             <div style={{ fontSize: "0.78rem", color: "#999", marginBottom: 10 }}>
-              修改 visual prompt 会影响最终视频生成
+              勾选的分镜才会生成 · 不勾选直接跳过省积分 · 小于3秒的会自动与相邻合并
             </div>
-            {scenes.map((sc, idx) => (
-              <div key={sc.id} style={{ borderTop: idx > 0 ? "1px solid #eee" : "none", paddingTop: idx > 0 ? "1rem" : 0, marginTop: idx > 0 ? "1rem" : 0 }}>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
-                  <strong style={{ fontSize: "0.9rem" }}>镜 {sc.id}</strong>
-                  <span style={{ fontSize: "0.78rem", color: "#666", padding: "0.2rem 0.5rem", background: "#f5f3ed", borderRadius: 4 }}>{sc.time_range}</span>
-                  <span style={{ fontSize: "0.78rem", color: "#666", padding: "0.2rem 0.5rem", background: "#f5f3ed", borderRadius: 4 }}>{sc.shot}</span>
-                  <span style={{ fontSize: "0.78rem", color: "#999" }}>{sc.duration_sec}s</span>
+            {(() => {
+              const activeCnt = scenes.filter(sc => !skippedScenes.has(sc.id)).length;
+              const activeDur = scenes.filter(sc => !skippedScenes.has(sc.id)).reduce((s, sc) => s + Math.max(4, Math.round(sc.duration_sec)), 0);
+              return (
+                <div style={{ fontSize: "0.78rem", color: "#0d0d0d", background: "#f5f3ed", borderRadius: 8, padding: "0.4rem 0.8rem", marginBottom: 10 }}>
+                  已选 <b>{activeCnt}</b> 个分镜 · 预计消耗 <b>{activeDur * 65}</b> 积分（¥{((activeDur * 65) / 50).toFixed(1)}）
                 </div>
-                <div style={{ marginBottom: 6 }}>
-                  <div style={{ fontSize: "0.75rem", color: "#666", marginBottom: 2 }}>画面 prompt:</div>
-                  <textarea value={sc.visual_prompt} onChange={e => updateScene(idx, "visual_prompt", e.target.value)} rows={2}
-                    style={{ width: "100%", padding: "0.4rem 0.6rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.82rem", fontFamily: "monospace", resize: "vertical" }} />
+              );
+            })()}
+            {scenes.map((sc, idx) => {
+              const skipped = skippedScenes.has(sc.id);
+              const isShort = sc.duration_sec < 3;
+              return (
+                <div key={sc.id} style={{ borderTop: idx > 0 ? "1px solid #eee" : "none", paddingTop: idx > 0 ? "1rem" : 0, marginTop: idx > 0 ? "1rem" : 0, opacity: skipped ? 0.4 : 1 }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+                      <input type="checkbox" checked={!skipped}
+                        onChange={() => setSkippedScenes(prev => {
+                          const next = new Set(prev);
+                          if (next.has(sc.id)) next.delete(sc.id); else next.add(sc.id);
+                          return next;
+                        })}
+                        style={{ width: 15, height: 15 }} />
+                      <strong style={{ fontSize: "0.9rem" }}>镜 {sc.id}</strong>
+                    </label>
+                    <span style={{ fontSize: "0.78rem", color: "#666", padding: "0.2rem 0.5rem", background: "#f5f3ed", borderRadius: 4 }}>{sc.time_range}</span>
+                    <span style={{ fontSize: "0.78rem", color: "#666", padding: "0.2rem 0.5rem", background: "#f5f3ed", borderRadius: 4 }}>{sc.shot}</span>
+                    <span style={{ fontSize: "0.78rem", color: isShort ? "#d97706" : "#999" }}>
+                      {sc.duration_sec}s{isShort ? " ⚠️ 将与相邻合并" : ""}
+                    </span>
+                  </div>
+                  {!skipped && (
+                    <div style={{ marginBottom: 6 }}>
+                      <div style={{ fontSize: "0.75rem", color: "#666", marginBottom: 2 }}>画面 prompt:</div>
+                      <textarea value={sc.visual_prompt} onChange={e => updateScene(idx, "visual_prompt", e.target.value)} rows={2}
+                        style={{ width: "100%", padding: "0.4rem 0.6rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.82rem", fontFamily: "monospace", resize: "vertical" }} />
+                    </div>
+                  )}
+                  {sc.speech && !skipped && (
+                    <div style={{ fontSize: "0.78rem", color: "#888" }}>口播:{sc.speech}</div>
+                  )}
                 </div>
-                {sc.speech && (
-                  <div style={{ fontSize: "0.78rem", color: "#888" }}>口播:{sc.speech}</div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </Box>
         )}
 

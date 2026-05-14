@@ -333,6 +333,7 @@ async def generate_submit(
     user_prompt = (body.get("user_prompt") or "").strip()
     aspect_ratio = body.get("aspect_ratio") or "9:16"
     original_video_url = body.get("video_url")  # P238:原视频 URL,用于叠加音轨到新视频
+    skipped_scene_ids = body.get("skipped_scene_ids") or []  # 用户选择跳过的分镜 id
 
     if not replaced_grid_urls:
         raise HTTPException(400, "replaced_grid_urls 必填(先调 /replace)")
@@ -342,8 +343,9 @@ async def generate_submit(
         raise HTTPException(400, "产品图 / 人物图 / 场景图 至少上传 1 张")
 
     user_id = str(current_user["id"])
-    # 2026-05-14:65 积分/秒(分镜复刻)。sum 每段实际秒数,fal 端点支持 4-12s
-    total_duration_sec = sum(max(4, int(round(float(s.get("duration_sec") or 4)))) for s in scenes)
+    # 只对非跳过分镜计费；短于3s的会被合并，按合并后时长计
+    active_scenes = [s for s in scenes if s.get("id") not in set(skipped_scene_ids)]
+    total_duration_sec = sum(max(4, int(round(float(s.get("duration_sec") or 4)))) for s in active_scenes)
     cost = max(65, total_duration_sec * 65)
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
@@ -359,6 +361,7 @@ async def generate_submit(
         "params": {
             "replaced_grid_urls": replaced_grid_urls,
             "scenes": scenes,
+            "skipped_scene_ids": skipped_scene_ids,
             "product_image_url": product_image_url,
             "model_image_url": model_image_url,
             "scene_image_url": scene_image_url,

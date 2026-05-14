@@ -2778,25 +2778,57 @@ async def _run_skill_generate_job(params: dict) -> dict:
     replaced_grid_urls = params.get("replaced_grid_urls") or []
     if not replaced_grid_urls and params.get("replaced_grid_url"):
         replaced_grid_urls = [params["replaced_grid_url"]]
-    scenes = params.get("scenes") or []
+    scenes_raw = params.get("scenes") or []
     product_url = params.get("product_image_url")
     model_url = params.get("model_image_url")
     scene_ref_url = params.get("scene_image_url")
     user_prompt = (params.get("user_prompt") or "").strip()
     aspect_ratio = params.get("aspect_ratio") or "9:16"
+    skipped_ids: set = set(params.get("skipped_scene_ids") or [])
 
     if not replaced_grid_urls:
         raise RuntimeError("replaced_grid_urls 必填(先调 /replace)")
-    if not scenes:
+    if not scenes_raw:
         raise RuntimeError("scenes 必填")
     if not any([product_url, model_url, scene_ref_url]):
         raise RuntimeError("产品图 / 人物图 / 场景图 至少 1 张")
 
+    # 过滤跳过的分镜
+    scenes_active = [s for s in scenes_raw if s.get("id") not in skipped_ids]
+    if not scenes_active:
+        raise RuntimeError("所有分镜都被跳过,请至少保留 1 个")
+
+    # 合并短于 3s 的分镜到相邻分镜(减少 fal 调用数 + 最低计费)
+    def _merge_short(scs: list, min_dur: float = 3.0) -> list:
+        result = []
+        i = 0
+        while i < len(scs):
+            sc = dict(scs[i])
+            while sc.get("duration_sec", 4) < min_dur and i + 1 < len(scs):
+                nxt = scs[i + 1]
+                merged = sc["duration_sec"] + nxt.get("duration_sec", 4)
+                if merged <= 15.0:
+                    sc["duration_sec"] = merged
+                    sc["visual_prompt"] = (sc.get("visual_prompt") or "") + " " + (nxt.get("visual_prompt") or "")
+                    i += 1
+                else:
+                    break
+            result.append(sc)
+            i += 1
+        return result
+
+    scenes = _merge_short(scenes_active)
+    n_merged = len(scenes_raw) - len(scenes_active)
+    if n_merged > 0:
+        log_info(f"skill_generate 跳过 {n_merged} 个分镜(用户选择),剩余 {len(scenes_active)} 个")
+    n_short = sum(1 for s in scenes_active if s.get("duration_sec", 4) < 3) if scenes_active else 0
+    if n_short > 0:
+        log_info(f"skill_generate 合并 {n_short} 个短于3s的分镜")
+
     n_grids = len(replaced_grid_urls)
     n_scenes = len(scenes)
-    # 不再截断:N 张九宫格 × 每张最多 9 帧 = 最多 N*9 个 scene。但只取前 n_scenes 个(后面是 padding)
     work_dir = _tmp.mkdtemp(prefix="skill_generate_")
-    log_info(f"skill_generate 开工 n_grids={n_grids} n_scenes={n_scenes} work={work_dir}")
+    log_info(f"skill_generate 开工 n_grids={n_grids} n_scenes={n_scenes} (原{len(scenes_raw)}个,跳过{len(scenes_raw)-len(scenes_active)}个) work={work_dir}")
 
     try:
         # 1. 下载每张替换后九宫格 + PIL 切回独立帧 + 上传到 fal 拿 URL
