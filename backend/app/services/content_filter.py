@@ -63,7 +63,7 @@ _BLACK_PORN_CN = [
 # === 色情(英文) ===
 _BLACK_PORN_EN = [
     "nude", "naked", "topless", "bottomless",
-    "sex", "sexy", "sexual", "porn", "pornography", "porno",
+    "sex", "sexual", "porn", "pornography", "porno",
     "fuck", "fucking", "fucker", "motherfucker",
     "dick", "cock", "penis", "vagina", "pussy", "boobs", "tits",
     "masturbation", "masturbate", "masturbating",
