@@ -62,7 +62,9 @@ export default function PricingPage() {
   const handlePurchase = async (type: string, packageId?: string, creditPackId?: string) => {
     const token = localStorage.getItem("token");
     if (!token) { router.push("/auth"); return; }
-    setLoading(true); setError(null); setSuccess(null);
+    setError(null); setSuccess(null);
+    // 立刻弹出二维码，订单号后台生成后填入
+    setProcessingOrder("生成中...");
     try {
       const res = await fetch(`${API_BASE}/api/payment/orders/create`, {
         method: "POST",
@@ -71,8 +73,8 @@ export default function PricingPage() {
       });
       const data = await res.json();
       if (data.order_id) { setProcessingOrder(data.order_id); setTimeout(() => pollOrderStatus(data.order_id, token, data.amount), 1000); }
-      else { setError(data.detail || t("errors.createOrderFailed")); setLoading(false); }
-    } catch (err) { setLoading(false); setError(err instanceof Error ? err.message : t("errors.networkError")); }
+      else { setProcessingOrder(null); setError(data.detail || t("errors.createOrderFailed")); }
+    } catch (err) { setProcessingOrder(null); setError(err instanceof Error ? err.message : t("errors.networkError")); }
   };
 
   const btn = (disabled: boolean) => ({ width: "100%", padding: "0.75rem", background: disabled ? "#ccc" : "#0d0d0d", color: "#fff", border: "none", borderRadius: "10px", cursor: disabled ? "not-allowed" as const : "pointer" as const, fontSize: "0.9rem", fontWeight: 500 });
@@ -151,21 +153,6 @@ export default function PricingPage() {
           </ul>
         </div>
       </main>
-
-      {processingOrder && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
-          <div style={{ background: "#fff", padding: "2rem", borderRadius: "20px", maxWidth: "380px", width: "90%", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }}>
-            <div style={{ width: "48px", height: "48px", border: "3px solid #eee", borderTopColor: "#0d0d0d", borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto 1rem" }}></div>
-            <h3 style={{ fontSize: "1.1rem", fontWeight: 600, color: "#0d0d0d", margin: "0 0 0.5rem" }}>{t("pricing.waitPay")}</h3>
-            <p style={{ fontSize: "0.8rem", color: "#999", margin: "0 0 1.5rem" }}>{t("pricing.orderInfo")}{processingOrder.slice(0, 8)}{t("pricing.autoConfirm")}</p>
-            <button onClick={() => { setProcessingOrder(null); setLoading(false); setError(t("errors.paymentCancelled")); }}
-              style={{ width: "100%", padding: "0.75rem", background: "#f5f5f5", color: "#666", border: "none", borderRadius: "10px", cursor: "pointer", fontSize: "0.9rem" }}>
-              {t("pricing.cancelPay")}
-            </button>
-            <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-          </div>
-        </div>
-      )}
 
       {/* 收款码弹窗 */}
       {processingOrder && (
