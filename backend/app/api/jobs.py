@@ -1619,46 +1619,45 @@ async def _execute_job(job_id: str):
         job["status"] = "running"
         job["started_at"] = time.time()
         _save_jobs()
-        try:
+        # 多段视频类任务给宽松上限,其余 10 分钟封顶;超时自动 failed + 退款
+        _LONG_TYPES = {"video_general", "skill_generate", "video_clone"}
+        _timeout_sec = 1200 if job["type"] in _LONG_TYPES else 600
+
+        async def _dispatch() -> dict:
             t = job["type"]
             if t == "image":
-                result = await _run_image_job(job["params"])
+                return await _run_image_job(job["params"])
             # P215(2026-05-08):video_general* 必须在 startswith("video_") 之前匹配
             elif t == "video_general_analyze":
-                result = await _run_video_general_analyze_job(job["params"])
+                return await _run_video_general_analyze_job(job["params"])
             elif t == "video_general_storyboard":
-                # 2026-05-11 P226:分镜板预览(N 宫格 GPT-Image 2 图)
                 job["params"]["_user_id"] = job.get("user_id") or job.get("user_numeric_id") or "anon"
-                result = await _run_video_general_storyboard_job(job["params"])
+                return await _run_video_general_storyboard_job(job["params"])
             elif t == "video_general":
                 job["params"]["_user_id"] = job.get("user_id") or job.get("user_numeric_id") or "anon"
-                result = await _run_video_general_job(job["params"])
+                return await _run_video_general_job(job["params"])
             # P216(2026-05-08):video_clone(Seedance r2v Fast)同样优先匹配
             elif t == "video_clone":
                 job["params"]["_user_id"] = job.get("user_id") or job.get("user_numeric_id") or "anon"
-                result = await _run_video_clone_job(job["params"])
+                return await _run_video_clone_job(job["params"])
             elif t.startswith("video_"):
-                result = await _run_video_job(job["params"], t)
-            elif t == "ad_video":
-                # P118: 把 user_id 透传给 _run_ad_video_job(用于 ffmpeg 拼接产物落 uploads)
-                job["params"]["_user_id"] = job.get("user_id") or job.get("user_numeric_id") or "anon"
-                result = await _run_ad_video_job(job["params"])
+                return await _run_video_job(job["params"], t)
             elif t == "replicate_analyze":
-                result = await _run_replicate_analyze_job(job["params"])
+                return await _run_replicate_analyze_job(job["params"])
             elif t == "skill_analyze":
-                # 2026-05-12:视频拆帧 storyboard(走 PySceneDetect skill + qwen-vl image)
-                result = await _run_skill_analyze_job(job["params"])
+                return await _run_skill_analyze_job(job["params"])
             elif t == "skill_replace":
-                # 2026-05-12:九宫格 GPT-2 edit 替换人物/产品/场景
-                result = await _run_skill_replace_job(job["params"])
+                return await _run_skill_replace_job(job["params"])
             elif t == "skill_generate":
-                # 2026-05-12:替换后九宫格 + scenes → N 段 Seedance r2v + ffmpeg concat
-                result = await _run_skill_generate_job(job["params"])
+                return await _run_skill_generate_job(job["params"])
             elif t == "replicate":
                 job["params"]["_user_id"] = job.get("user_id") or job.get("user_numeric_id") or "anon"
-                result = await _run_replicate_job(job["params"])
+                return await _run_replicate_job(job["params"])
             else:
                 raise Exception(f"unknown type: {t}")
+
+        try:
+            result = await asyncio.wait_for(_dispatch(), timeout=_timeout_sec)
 
             # BUG-2: 归档 fal URL → 本地 /uploads(防 fal.media 7-30 天过期)
             try:
