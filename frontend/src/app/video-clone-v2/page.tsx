@@ -221,12 +221,7 @@ export default function VideoCloneV2Page() {
       .then((r) => r.json())
       .then((d: CheckDurationResp) => {
         if (d.needs_trim) {
-          // 自动裁剪尾部,无需用户操作
-          const dropSec = d.drop_seconds ?? (d.current_duration - d.target_duration);
-          const dropStart = d.current_duration - dropSec;
-          const autoRange = { start: dropStart, end: d.current_duration };
-          setTrim({ start: autoRange.start, end: autoRange.end, trimmed: dropSec, ranges: [autoRange] });
-          fetchPreview(video.url, d.target_duration);
+          setTrimPopup(d);
         } else {
           setTrim(null);
           fetchPreview(video.url, video.duration);
