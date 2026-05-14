@@ -2612,15 +2612,7 @@ async def _run_skill_replace_job(params: dict) -> dict:
     if not any([product_url, model_url, scene_url]):
         raise RuntimeError("产品图 / 人物图 / 场景图 至少 1 张")
 
-    # ── 敏感品类路径:FLUX.2 edit(最多 4 张图,safety_tolerance=5)──────────────
-    if sensitive:
-        return await _run_skill_replace_flux2(
-            grid_urls=grid_urls,
-            product_url=product_url,
-            model_url=model_url,
-            scene_url=scene_url,
-            product_category=product_category,
-        )
+
 
     n_grids = len(grid_urls)
     # 动态拼 reference list + 描述:用户可能只传 1/2/3 张
@@ -2658,7 +2650,6 @@ Reference images provided (in this exact order after the storyboard):
 {chr(10).join(refs_desc)}
 
 Original storyboard context:
-- Original model: {model_identity or "(person visible in panels)"}
 - Original product category: {product_category}
 
 Re-render the entire storyboard with the following changes applied INDEPENDENTLY to EACH of the 9 cells:
