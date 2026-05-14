@@ -84,39 +84,38 @@ class VideoFrameSkill:
             return {"scenes": [], "keyframe_paths": [], "grid_paths": [],
                     "n_frames": 0, "n_grids": 0, "layout": (3, 3)}
 
-        # 2. ffmpeg 一次 pass 抽缩略图(1fps 64x64),比 PySceneDetect 快 5-10x
-        thumb_dir = os.path.join(output_dir, "thumbs")
-        os.makedirs(thumb_dir, exist_ok=True)
+        # 2. ffmpeg 一次 pass 出全部帧(1fps 全分辨率) — 单次调用，不逐帧单独跑
+        frames_dir = os.path.join(output_dir, "frames")
+        os.makedirs(frames_dir, exist_ok=True)
         subprocess.run(
             ["ffmpeg", "-y", "-i", video_path,
-             "-vf", "fps=1,scale=64:64", "-q:v", "5",
-             os.path.join(thumb_dir, "t%04d.jpg")],
-            capture_output=True, timeout=60,
+             "-vf", "fps=1", "-q:v", "2",
+             os.path.join(frames_dir, "f%04d.jpg")],
+            capture_output=True, timeout=120,
         )
-        thumbs = sorted(
-            os.path.join(thumb_dir, f) for f in os.listdir(thumb_dir) if f.endswith(".jpg")
+        all_frames = sorted(
+            os.path.join(frames_dir, f) for f in os.listdir(frames_dir) if f.endswith(".jpg")
         )
-        if not thumbs:
+        if not all_frames:
             return {"scenes": [], "keyframe_paths": [], "grid_paths": [],
                     "n_frames": 0, "n_grids": 0, "layout": (3, 3)}
 
-        n_total = len(thumbs)
-        # 每张缩略图对应视频中 (i+0.5)/n_total * duration 时刻
+        n_total = len(all_frames)
         sample_times = [duration * (i + 0.5) / n_total for i in range(n_total)]
 
-        # 3. 颜色直方图差异最大化选帧(贪心)
-        n_grids_target = max(1, min(6, round(duration / 10)))
+        # 3. 颜色直方图差异最大化选帧(贪心) — 在已有帧上计算，不再重新抽
+        n_grids_target = max(1, min(4, round(duration / 15)))  # 每15s 1张九宫格，最多4张
         n_pick = min(n_grids_target * 9, n_total)
 
         def _hist(p: str) -> np.ndarray:
-            img = Image.open(p).convert("RGB")
+            img = Image.open(p).convert("RGB").resize((32, 32))
             arr = np.array(img).reshape(-1, 3)
             return np.concatenate([
                 np.histogram(arr[:, c], bins=16, range=(0, 256))[0]
                 for c in range(3)
             ]).astype(float)
 
-        hists = [_hist(p) for p in thumbs]
+        hists = [_hist(p) for p in all_frames]
         picked = [0]
         while len(picked) < n_pick:
             best_i, best_d = -1, -1.0
@@ -131,22 +130,15 @@ class VideoFrameSkill:
             picked.append(best_i)
         picked.sort()
 
-        # 4. 用全分辨率重新抽选中的帧
+        # 4. 直接用已抽出的帧，无需二次 ffmpeg
         frame_paths: list[str] = []
         scenes: list[Scene] = []
         seg = duration / max(n_pick, 1)
         for rank, si in enumerate(picked):
             ts = sample_times[si]
-            out_path = os.path.join(output_dir, f"frame_{rank:03d}.jpg")
-            ret = subprocess.run(
-                ["ffmpeg", "-y", "-ss", f"{ts:.3f}", "-i", video_path,
-                 "-vframes", "1", "-q:v", "2", out_path],
-                capture_output=True, timeout=30,
-            )
-            if ret.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 100:
-                frame_paths.append(out_path)
-                scenes.append(Scene(idx=rank, start_seconds=ts,
-                                    end_seconds=min(ts + seg, duration)))
+            frame_paths.append(all_frames[si])
+            scenes.append(Scene(idx=rank, start_seconds=ts,
+                                end_seconds=min(ts + seg, duration)))
 
         # 多九宫格分页:每 9 帧一张
         layout = (3, 3)
