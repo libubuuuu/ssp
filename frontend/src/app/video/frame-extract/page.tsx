@@ -484,7 +484,20 @@ export default function VideoFrameExtractPage() {
             </div>
             {(() => {
               const activeCnt = scenes.filter(sc => !skippedScenes.has(sc.id)).length;
-              const activeDur = scenes.filter(sc => !skippedScenes.has(sc.id)).reduce((s, sc) => s + Math.max(4, Math.round(sc.duration_sec)), 0);
+              // 按合并后段数计费（<3s的合并到相邻，最多15s一段）
+              const activeScenes = scenes.filter(sc => !skippedScenes.has(sc.id));
+              const mergedScenes: {duration_sec: number}[] = [];
+              let i = 0;
+              while (i < activeScenes.length) {
+                let dur = activeScenes[i].duration_sec;
+                while (dur < 3 && i + 1 < activeScenes.length) {
+                  const next = activeScenes[i + 1].duration_sec;
+                  if (dur + next <= 15) { dur += next; i++; } else break;
+                }
+                mergedScenes.push({ duration_sec: dur });
+                i++;
+              }
+              const activeDur = mergedScenes.reduce((s, sc) => s + Math.max(4, Math.round(sc.duration_sec)), 0);
               return (
                 <div style={{ fontSize: "0.78rem", color: "#0d0d0d", background: "#f5f3ed", borderRadius: 8, padding: "0.4rem 0.8rem", marginBottom: 10 }}>
                   已选 <b>{activeCnt}</b> 个分镜 · 预计消耗 <b>{activeDur * 65}</b> 积分（¥{((activeDur * 65) / 50).toFixed(1)}）
