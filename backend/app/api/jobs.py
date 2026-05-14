@@ -1702,7 +1702,21 @@ async def _execute_job(job_id: str):
                     add_credits(uid, job.get("cost", 0))
             except:
                 pass
-        _save_jobs()
+        except BaseException as e:
+            # CancelledError 等 BaseException 也要保存状态，防止 job 永远卡在 running
+            if job.get("status") == "running":
+                job["status"] = "failed"
+                job["error"] = f"任务被中断:{type(e).__name__}"
+                job["finished_at"] = time.time()
+                try:
+                    uid = job.get("user_numeric_id")
+                    if uid and job.get("cost", 0) > 0:
+                        add_credits(uid, job.get("cost", 0))
+                except:
+                    pass
+            raise
+        finally:
+            _save_jobs()
 
 
 def _module_from_type(job_type: str, params: dict) -> str:
