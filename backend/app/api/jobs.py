@@ -2460,6 +2460,96 @@ async def _run_skill_analyze_job(params: dict) -> dict:
             pass
 
 
+async def _run_skill_replace_flux2(
+    grid_urls: list,
+    product_url: str | None,
+    model_url: str | None,
+    scene_url: str | None,
+    product_category: str = "其他",
+) -> dict:
+    """敏感品类九宫格替换:用 fal-ai/flux-2/edit,支持多参考图,safety_tolerance=5。
+
+    image_urls 顺序:[九宫格, 人物参考图(可选), 产品参考图(可选), 场景参考图(可选)]
+    """
+    import time as _t
+    import fal_client as _fc
+    from app.services.logger import log_info, log_error
+
+    n_grids = len(grid_urls)
+    sem = asyncio.Semaphore(3)
+
+    async def _replace_one(idx: int, grid_url: str) -> tuple[int, str]:
+        async with sem:
+            # 按顺序拼 image_urls:九宫格在前,参考图在后
+            image_urls = [grid_url]
+            ref_descs = []
+            if model_url:
+                image_urls.append(model_url)
+                ref_descs.append(f"Image {len(image_urls)} is the NEW model/person — replace whoever appears in the grid with this person.")
+            if product_url:
+                image_urls.append(product_url)
+                ref_descs.append(f"Image {len(image_urls)} is the NEW product/garment — replace the {product_category} in the grid with this item.")
+            if scene_url:
+                image_urls.append(scene_url)
+                ref_descs.append(f"Image {len(image_urls)} is the NEW background/scene — replace the environment in the grid with this scene.")
+
+            ref_block = " ".join(ref_descs)
+            prompt = (
+                f"Image 1 is a 3×3 storyboard grid with 9 independent video shot panels, numbered top-left to bottom-right. "
+                f"{ref_block} "
+                f"Re-render the entire grid: apply each replacement INDEPENDENTLY to ALL 9 panels. "
+                f"Preserve every panel's composition, camera angle, lighting, and background. "
+                f"Keep the 3×3 grid layout with white borders and numbered labels. "
+                f"Output a single 1024×1024 image with the same grid structure."
+            )
+
+            log_info(f"skill_replace_flux2 [{idx+1}/{n_grids}] 提交 grid={grid_url[:60]}")
+            t = _t.time()
+            try:
+                result = await asyncio.wait_for(
+                    _fc.run_async(
+                        "fal-ai/flux-2/edit",
+                        arguments={
+                            "image_urls": image_urls,
+                            "prompt": prompt,
+                            "safety_tolerance": "5",
+                            "num_images": 1,
+                            "output_format": "png",
+                        },
+                    ),
+                    timeout=300,
+                )
+            except asyncio.TimeoutError:
+                raise RuntimeError(f"FLUX.2 edit 第 {idx+1} 张超时 300s")
+            except Exception as e:
+                log_error(f"skill_replace_flux2 [{idx+1}] 失败: {e}")
+                raise RuntimeError(f"FLUX.2 edit 第 {idx+1} 张失败: {str(e)[:200]}")
+
+            imgs = result.get("images", []) if isinstance(result, dict) else []
+            if not imgs or not imgs[0].get("url"):
+                raise RuntimeError(f"FLUX.2 第 {idx+1} 张未返回图片: {str(result)[:200]}")
+            url = imgs[0]["url"]
+            log_info(f"skill_replace_flux2 [{idx+1}/{n_grids}] OK ({_t.time()-t:.1f}s) {url[:80]}")
+            return (idx, url)
+
+    t0 = _t.time()
+    results = await asyncio.gather(*[_replace_one(i, u) for i, u in enumerate(grid_urls)])
+    results.sort(key=lambda x: x[0])
+    replaced_urls = [u for _, u in results]
+    log_info(f"skill_replace_flux2 完成 N={n_grids} 总耗时 {_t.time()-t0:.1f}s")
+
+    # 替换后重写 visual_prompt(同 GPT-2 路径)
+    from app.services.logger import log_error as _le
+    original_scenes = []  # flux2 路径暂不传 scenes,后续可扩展
+    return {
+        "replaced_grid_urls": replaced_urls,
+        "n_grids": n_grids,
+        "elapsed_seconds": round(_t.time() - t0, 1),
+        "updated_scenes": original_scenes,
+        "engine": "flux2",
+    }
+
+
 async def _run_skill_replace_job(params: dict) -> dict:
     """阶段 B 第二步:对 N 张九宫格并发跑 GPT-Image 2 edit,把每张里的人/物/景换成用户素材。
 
@@ -2478,11 +2568,22 @@ async def _run_skill_replace_job(params: dict) -> dict:
     scene_url = params.get("scene_image_url")
     model_identity = params.get("model_identity") or ""
     product_category = params.get("product_category") or "其他"
+    sensitive = bool(params.get("sensitive", False))
 
     if not grid_urls:
         raise RuntimeError("grid_urls 必填")
     if not any([product_url, model_url, scene_url]):
         raise RuntimeError("产品图 / 人物图 / 场景图 至少 1 张")
+
+    # ── 敏感品类路径:FLUX.2 edit(最多 4 张图,safety_tolerance=5)──────────────
+    if sensitive:
+        return await _run_skill_replace_flux2(
+            grid_urls=grid_urls,
+            product_url=product_url,
+            model_url=model_url,
+            scene_url=scene_url,
+            product_category=product_category,
+        )
 
     n_grids = len(grid_urls)
     # 动态拼 reference list + 描述:用户可能只传 1/2/3 张

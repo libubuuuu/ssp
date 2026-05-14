@@ -64,6 +64,7 @@ export default function VideoFrameExtractPage() {
   const [hasBackgroundMusic, setHasBackgroundMusic] = useState<boolean>(false);
   const [modelIdentity, setModelIdentity] = useState<string>("");
   const [productCategory, setProductCategory] = useState<string>("");
+  const [sensitive, setSensitive] = useState<boolean>(false);
 
   // 第二步:素材上传 + 替换
   const [productImageUrl, setProductImageUrl] = useState<string>("");
@@ -261,6 +262,7 @@ export default function VideoFrameExtractPage() {
           scene_image_url: sceneImageUrl || undefined,
           model_identity: modelIdentity,
           product_category: productCategory,
+          sensitive,
           scenes,  // P237:后端用 qwen-vl 看替换后的图重写 visual_prompt
         }),
       });
@@ -425,6 +427,15 @@ export default function VideoFrameExtractPage() {
               {modelIdentity && <span>检测人物: {modelIdentity.slice(0, 60)}{modelIdentity.length > 60 ? "..." : ""}</span>}
               {productCategory && <span style={{ marginLeft: 12 }}>· 检测类目: {productCategory}</span>}
             </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, cursor: "pointer", fontSize: "0.85rem", color: "#555" }}>
+              <input
+                type="checkbox"
+                checked={sensitive}
+                onChange={e => setSensitive(e.target.checked)}
+                style={{ width: 16, height: 16, cursor: "pointer" }}
+              />
+              包含内衣 / 泳装等敏感品类（启用宽松审核模型）
+            </label>
           </Box>
         )}
 
