@@ -99,6 +99,11 @@ ACTIVE_JOBS_FILE="/opt/ssp/jobs_data/jobs.json"
 DRAIN_MAX=600   # 最多等 10 分钟
 DRAIN_ELAPSED=0
 
+# 先等 30 秒让刚提交的任务有时间写入 jobs.json（防竞态）
+echo "⏸  等待 30s 让进行中任务状态落盘..." | tee -a $LOG
+sleep 30
+DRAIN_ELAPSED=30
+
 while [ $DRAIN_ELAPSED -lt $DRAIN_MAX ]; do
     RUNNING_COUNT=$(python3 -c "
 import json, os, sys
