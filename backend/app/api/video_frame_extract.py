@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 from app.api.auth import get_current_user
 from app.services.billing import deduct_credits, add_credits
 from app.services.fal_service import fal_upload_with_retry, AliyunQwenVLVideoService
-from app.services.upload_guard import read_bounded, IMAGE_MIMES
+from app.services.upload_guard import read_bounded, IMAGE_MIMES, _check_mime
 from app.services.logger import log_info
 
 router = APIRouter()
@@ -37,16 +37,17 @@ async def upload_video(
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user),
 ):
-    """跟 /api/video/replicate/upload/video 同形:上传视频文件 → fal storage URL。"""
+    """视频上传:流式落盘 → fal storage URL。支持慢速网络。"""
     import os
-    contents = await read_bounded(file, MAX_VIDEO_SIZE, VIDEO_MIMES, "参考视频")
+    from app.services.upload_guard import stream_bounded_to_path
+    _check_mime(file, VIDEO_MIMES, "参考视频")
     suffix = ".mp4"
     if file.filename and "." in file.filename:
         suffix = "." + file.filename.rsplit(".", 1)[-1]
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(contents)
         tmp_path = tmp.name
     try:
+        await stream_bounded_to_path(file, tmp_path, MAX_VIDEO_SIZE, VIDEO_MIMES, "参考视频")
         url = await fal_upload_with_retry(tmp_path)
     finally:
         try: os.unlink(tmp_path)
