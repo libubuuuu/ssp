@@ -235,7 +235,8 @@ export default function VideoFrameExtractPage() {
             setLoading(false); setLoadingMsg("");
           } else if (sd.status === "failed") {
             clearInterval(interval);
-            setError(sd.error ?? "提取失败");
+            adjustLocalUserCredits(+5); // 退还分析积分
+            setError((sd.error ?? "提取失败") + "（已退还 5 积分）");
             setLoading(false); setLoadingMsg("");
           } else {
             pollFails = 0;
@@ -272,7 +273,8 @@ export default function VideoFrameExtractPage() {
       const d = await r.json();
       const rid = d.replace_job_id;
       if (!rid) throw new Error("没拿到 replace_job_id");
-      adjustLocalUserCredits(-(d.cost ?? 3));
+      const replaceCost = d.cost ?? 3;
+      adjustLocalUserCredits(-replaceCost);
       setLoadingMsg("GPT-Image 2 重画九宫格(高峰期 3-5 分钟)...");
       let elapsed = 0;
       let pollFails = 0;
@@ -295,7 +297,13 @@ export default function VideoFrameExtractPage() {
             setLoading(false); setLoadingMsg("");
           } else if (sd.status === "failed") {
             clearInterval(interval);
-            setError(sd.error ?? "替换失败");
+            adjustLocalUserCredits(+replaceCost);
+            const errMsg = sd.error ?? "替换失败";
+            const isNsfw = errMsg.includes("content_policy") || errMsg.includes("content_checker") || errMsg.includes("内容审核拒");
+            setError(isNsfw
+              ? `替换失败：产品图含敏感内容被审核拒绝，已退还 ${replaceCost} 积分。`
+              : `${errMsg}（已退还 ${replaceCost} 积分）`
+            );
             setLoading(false); setLoadingMsg("");
           } else {
             pollFails = 0;
@@ -332,7 +340,8 @@ export default function VideoFrameExtractPage() {
       const d = await r.json();
       const gid = d.generate_job_id;
       if (!gid) throw new Error("没拿到 generate_job_id");
-      adjustLocalUserCredits(-(d.cost ?? 30));
+      const generateCost = d.cost ?? 30;
+      adjustLocalUserCredits(-generateCost);
       setLoadingMsg(`Seedance r2v 并发 ${scenes.length} 段(3-5 分钟)...`);
       let elapsed = 0;
       let pollFails = 0;
@@ -350,7 +359,8 @@ export default function VideoFrameExtractPage() {
             setLoading(false); setLoadingMsg("");
           } else if (sd.status === "failed") {
             clearInterval(interval);
-            setError(sd.error ?? "生成失败");
+            adjustLocalUserCredits(+generateCost);
+            setError((sd.error ?? "生成失败") + `（已退还 ${generateCost} 积分）`);
             setLoading(false); setLoadingMsg("");
           } else {
             pollFails = 0;

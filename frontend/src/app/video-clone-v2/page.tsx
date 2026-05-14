@@ -181,9 +181,17 @@ export default function VideoCloneV2Page() {
         setJob(d);
         if (["completed", "partial_completed", "failed", "refunded", "cancelled"].includes(d.status)) {
           localStorage.removeItem("vc2_active_job");
-          if (d.status === "completed") setSubmitStatus("completed");
-          else if (d.status === "partial_completed") { setSubmitStatus("partial_completed"); setError(d.error || "部分段失败,失败段已退款"); }
-          else { setSubmitStatus("failed"); setError(d.error || `任务 ${d.status}`); }
+          if (d.status === "completed") {
+            setSubmitStatus("completed");
+          } else if (d.status === "partial_completed") {
+            setSubmitStatus("partial_completed");
+            if (d.total_credits_refunded > 0) adjustLocalUserCredits(+d.total_credits_refunded);
+            setError(d.error || `部分段失败,已退还 ${d.total_credits_refunded} 积分`);
+          } else {
+            setSubmitStatus("failed");
+            if (d.total_credits_refunded > 0) adjustLocalUserCredits(+d.total_credits_refunded);
+            setError(d.error || `任务 ${d.status}`);
+          }
         } else {
           setSubmitStatus("processing");
           pollJob(saved);
@@ -491,13 +499,21 @@ export default function VideoCloneV2Page() {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
           if (typeof window !== "undefined") localStorage.removeItem("vc2_active_job");
-          if (d.status === "completed") setSubmitStatus("completed");
-          else if (d.status === "partial_completed") setSubmitStatus("partial_completed");
-          else setSubmitStatus("failed");
-          if (d.status === "partial_completed") {
-            setError(d.error || "部分段失败,失败段已退款");
-          } else if (d.status !== "completed") {
-            setError(d.error || `任务 ${d.status}`);
+          if (d.status === "completed") {
+            setSubmitStatus("completed");
+          } else if (d.status === "partial_completed") {
+            setSubmitStatus("partial_completed");
+            if (d.total_credits_refunded > 0) adjustLocalUserCredits(+d.total_credits_refunded);
+            setError(d.error || `部分段失败,已退还 ${d.total_credits_refunded} 积分`);
+          } else {
+            setSubmitStatus("failed");
+            if (d.total_credits_refunded > 0) adjustLocalUserCredits(+d.total_credits_refunded);
+            const errMsg = d.error || `任务 ${d.status}`;
+            const isNsfw = errMsg.toLowerCase().includes("nsfw") || errMsg.includes("content_policy") || errMsg.includes("content_checker");
+            setError(isNsfw
+              ? `生成失败：内衣/敏感品类被 fal 拒绝，已退还 ${d.total_credits_refunded} 积分。建议换用普通服装类产品图重试。`
+              : (d.total_credits_refunded > 0 ? `${errMsg}（已退还 ${d.total_credits_refunded} 积分）` : errMsg)
+            );
           }
         }
       } catch {
