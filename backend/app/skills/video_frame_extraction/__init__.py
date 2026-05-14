@@ -130,7 +130,9 @@ class VideoFrameSkill:
 
                         hists = [hist(p) for p in sample_frames]
                         # 贪心:每次选与已选集合差异最大的帧
-                        n_pick = min(9, len(sample_frames))
+                        # 按视频时长算张数:每 ~10 秒 1 张九宫格(9 帧),最少 1 张,最多 6 张
+                        n_grids_target = max(1, min(6, round(duration / 10)))
+                        n_pick = min(n_grids_target * 9, len(sample_frames))
                         picked = [0]  # 从第一帧开始
                         while len(picked) < n_pick:
                             best_i, best_d = -1, -1.0
