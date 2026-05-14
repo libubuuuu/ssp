@@ -2543,19 +2543,28 @@ NO TEXT OVERLAYS other than the original number labels. NO new words, signs, bra
     # 并发对 N 张九宫格各跑 GPT-2 edit(每张独立 fal call)
     sem = asyncio.Semaphore(3)  # GPT-2 高峰期重,限 3 并发避免触发 fal rate limit
 
+    # content_policy 触发时的简化 prompt — 去掉品类/模特描述，只保留结构指令
+    simple_prompt = (
+        "Re-render this 3×3 storyboard grid. "
+        "Replace the person in each panel with the person from Reference 1 if provided. "
+        "Replace the product/garment in each panel with the item from Reference 2 if provided. "
+        "Preserve each panel's background, composition, lighting, and camera angle. "
+        "Keep the 3×3 grid layout with numbered labels. Output 1024×1024 PNG."
+    )
+
     async def _replace_one(idx: int, grid_url: str) -> tuple[int, str]:
         async with sem:
-            # image_urls 顺序:[base 九宫格, ...动态 references(按 model/product/scene 出现顺序)]
             image_urls = [grid_url, *refs_urls_extra]
             log_info(f"skill_replace [{idx+1}/{n_grids}] 提交 GPT-2 edit grid={grid_url[:60]}")
             t = _t.time()
-            try:
-                result = await asyncio.wait_for(
+
+            async def _call_gpt2(prompt: str, urls: list) -> dict:
+                return await asyncio.wait_for(
                     _fc.run_async(
                         "openai/gpt-image-2/edit",
                         arguments={
-                            "prompt": base_prompt,
-                            "image_urls": image_urls,
+                            "prompt": prompt,
+                            "image_urls": urls,
                             "image_size": "square_hd",
                             "num_images": 1,
                             "output_format": "png",
@@ -2563,11 +2572,28 @@ NO TEXT OVERLAYS other than the original number labels. NO new words, signs, bra
                     ),
                     timeout=420,
                 )
+
+            # 尝试 1：完整 prompt
+            try:
+                result = await _call_gpt2(base_prompt, image_urls)
             except asyncio.TimeoutError:
                 raise RuntimeError(f"GPT-Image 2 edit 第 {idx+1} 张超时 420s")
             except Exception as e:
-                log_error(f"skill_replace [{idx+1}] fal 异常: {e}")
-                raise RuntimeError(f"GPT-Image 2 edit 第 {idx+1} 张失败: {str(e)[:200]}")
+                err_str = str(e)
+                if "content_policy" in err_str or "content_checker" in err_str:
+                    log_info(f"skill_replace [{idx+1}] content_policy → 简化 prompt 重试")
+                    # 尝试 2：简化 prompt + 去掉九宫格图（只传参考图）
+                    try:
+                        result = await _call_gpt2(simple_prompt, refs_urls_extra or image_urls)
+                    except asyncio.TimeoutError:
+                        raise RuntimeError(f"GPT-Image 2 edit 第 {idx+1} 张超时 420s")
+                    except Exception as e2:
+                        log_error(f"skill_replace [{idx+1}] 简化重试仍失败: {e2}")
+                        raise RuntimeError(f"GPT-Image 2 edit 第 {idx+1} 张内容审核拒绝,换用其他品类或图片")
+                else:
+                    log_error(f"skill_replace [{idx+1}] fal 异常: {e}")
+                    raise RuntimeError(f"GPT-Image 2 edit 第 {idx+1} 张失败: {str(e)[:200]}")
+
             images = result.get("images", []) if isinstance(result, dict) else []
             if not images or not images[0].get("url"):
                 raise RuntimeError(f"GPT-Image 2 第 {idx+1} 张未返回图片: {str(result)[:200]}")
