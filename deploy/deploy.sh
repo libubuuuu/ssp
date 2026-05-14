@@ -95,7 +95,7 @@ echo "✅ 流量已切换到 $STANDBY" | tee -a $LOG
 # ── 5. drain：等旧 active 跑完进行中任务再停（最多等 10 分钟）──────────
 echo "[5/5] 关闭 $ACTIVE（先 drain 进行中任务）" | tee -a $LOG
 
-ACTIVE_JOBS_FILE="/opt/ssp-${ACTIVE}/backend/jobs_data/jobs.json"
+ACTIVE_JOBS_FILE="/opt/ssp/jobs_data/jobs.json"
 DRAIN_MAX=600   # 最多等 10 分钟
 DRAIN_ELAPSED=0
 
