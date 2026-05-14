@@ -2,6 +2,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import Sidebar from "@/components/Sidebar";
 import { useLang } from "@/lib/i18n/LanguageContext";
+import { adjustLocalUserCredits } from "@/lib/userState";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -461,6 +462,7 @@ export default function VideoCloneV2Page() {
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || "提交失败");
       if (typeof window !== "undefined") localStorage.setItem("vc2_active_job", d.job_id);
+      if (estimate?.total_credits) adjustLocalUserCredits(-estimate.total_credits);
       setSubmitStatus("processing");
       pollJob(d.job_id);
     } catch (e: unknown) {
