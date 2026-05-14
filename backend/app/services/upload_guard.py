@@ -72,19 +72,20 @@ async def read_bounded(
 
 async def stream_bounded_to_path(
     file: UploadFile,
-    target_path: Path,
+    target_path: "Path | str",
     max_bytes: int,
     allowed_mimes: Iterable[str],
     label: str = "上传文件",
     chunk_size: int = DEFAULT_CHUNK,
 ) -> int:
-    """流式落盘,超限即终止 + 清理。
+    """流式落盘,超限即终止 + 清理。str 或 Path 均可。
 
     使用场景:大视频(GB 级),不能加载到内存。
     返回总写入字节数。
     """
     _check_mime(file, allowed_mimes, label)
 
+    target_path = Path(target_path)  # 兼容 str 和 Path
     total = 0
     target_path.parent.mkdir(parents=True, exist_ok=True)
     try:
