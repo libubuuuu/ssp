@@ -67,18 +67,8 @@ class VideoFrameSkill:
           layout:        (3, 3) 固定
         """
         import os, subprocess
-        # 第一轮:标准阈值检测
-        scenes = self.detect_scenes(video_path, threshold=27.0)
-        # 第二轮:镜头变化少时降低阈值,捕捉景别/机位细微变化
-        if len(scenes) < 9:
-            scenes2 = self.detect_scenes(video_path, threshold=15.0)
-            if len(scenes2) > len(scenes):
-                scenes = scenes2
-        # 第三轮:还是不够,再降
-        if len(scenes) < 5:
-            scenes3 = self.detect_scenes(video_path, threshold=8.0)
-            if len(scenes3) > len(scenes):
-                scenes = scenes3
+        # 单次检测:阈值10.0兼顾精度与速度,比27宽松能捕捉景别/机位细微变化
+        scenes = self.detect_scenes(video_path, threshold=10.0)
 
         if not scenes:
             return {"scenes": [], "keyframe_paths": [], "grid_paths": [], "n_frames": 0, "n_grids": 0, "layout": (3, 3)}
