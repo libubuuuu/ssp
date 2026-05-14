@@ -66,12 +66,43 @@ class VideoFrameSkill:
           n_grids:       M
           layout:        (3, 3) 固定
         """
-        import os
+        import os, subprocess, math
         scenes = self.detect_scenes(video_path)
         if not scenes:
             return {"scenes": [], "keyframe_paths": [], "grid_paths": [], "n_frames": 0, "n_grids": 0, "layout": (3, 3)}
 
         frame_paths = self.extract_keyframes(video_path, scenes, output_dir=output_dir)
+
+        # 兜底:场景检测不足 5 帧时改用时间均分抽 9 帧,避免九宫格大量重复
+        if len(frame_paths) < 5:
+            try:
+                r = subprocess.run(
+                    ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+                    capture_output=True, text=True, timeout=15,
+                )
+                duration = float(r.stdout.strip()) if r.returncode == 0 else 0
+            except Exception:
+                duration = 0
+            if duration > 0:
+                n_uniform = 9
+                uniform_frames = []
+                for i in range(n_uniform):
+                    ts = duration * (i + 0.5) / n_uniform
+                    out_path = os.path.join(output_dir, f"uniform_{i:02d}.jpg")
+                    ret = subprocess.run(
+                        ["ffmpeg", "-y", "-ss", f"{ts:.3f}", "-i", video_path,
+                         "-vframes", "1", "-q:v", "2", out_path],
+                        capture_output=True, timeout=30,
+                    )
+                    if ret.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 100:
+                        uniform_frames.append(out_path)
+                if len(uniform_frames) >= 5:
+                    # 用均分帧替换场景帧，同时补全 scenes 时间信息
+                    frame_paths = uniform_frames
+                    seg = duration / len(frame_paths)
+                    scenes = [Scene(idx=i, start_seconds=i*seg, end_seconds=(i+1)*seg)
+                              for i in range(len(frame_paths))]
 
         # 多九宫格分页:每 9 帧一张
         layout = (3, 3)
