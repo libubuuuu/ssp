@@ -11,30 +11,6 @@ echo "========================================" | tee -a $LOG
 echo "部署开始: $(date '+%Y-%m-%d %H:%M:%S')" | tee -a $LOG
 echo "========================================" | tee -a $LOG
 
-# ── 0-pre. 检查分镜复刻是否有进行中任务（GPT-2 跑 3-5 分钟，部署会杀死）────
-ACTIVE_PORT_CHECK=$(grep -oP 'proxy_pass http://127.0.0.1:\K[0-9]+' /etc/nginx/sites-enabled/default | head -1)
-RUNNING_JOBS=$(python3 -c "
-import json, os
-f = '/opt/ssp-blue/backend/jobs_data/jobs.json' if '$ACTIVE_PORT_CHECK' == '8000' else '/opt/ssp-green/backend/jobs_data/jobs.json'
-try:
-    jobs = json.load(open(f)) if os.path.exists(f) else {}
-    running = [j for j in (jobs.values() if isinstance(jobs, dict) else jobs)
-               if j.get('status') in ('running','pending') and j.get('type','').startswith('skill_')]
-    print(len(running))
-except: print(0)
-" 2>/dev/null || echo 0)
-
-if [ "$RUNNING_JOBS" -gt "0" ] 2>/dev/null; then
-    echo "⚠️  有 $RUNNING_JOBS 个分镜复刻任务正在运行（GPT-2 约 3-5 分钟），部署会中断任务。"
-    echo "   等任务完成后再部署，或强制继续输入 y："
-    read -r -t 30 CONFIRM || CONFIRM="n"
-    if [ "$CONFIRM" != "y" ]; then
-        echo "已取消部署，等任务完成后重试。"
-        exit 0
-    fi
-    echo "强制继续部署..."
-fi
-
 # ── 0. 确定蓝绿状态 ──────────────────────────────────────────────────
 CURRENT=$(grep -oP 'proxy_pass http://127.0.0.1:\K[0-9]+' /etc/nginx/sites-enabled/default | head -1)
 if [ "$CURRENT" = "8000" ]; then
@@ -116,10 +92,39 @@ nginx -t 2>&1 | tee -a $LOG
 nginx -s reload
 echo "✅ 流量已切换到 $STANDBY" | tee -a $LOG
 
-sleep 10
+# ── 5. drain：等旧 active 跑完进行中任务再停（最多等 10 分钟）──────────
+echo "[5/5] 关闭 $ACTIVE（先 drain 进行中任务）" | tee -a $LOG
 
-# ── 5. 关闭 active（旧代码留在 /opt/ssp-$ACTIVE/ 供 rollback）─────────
-echo "[5/5] 关闭 $ACTIVE（旧代码保留在 /opt/ssp-$ACTIVE/）" | tee -a $LOG
+ACTIVE_JOBS_FILE="/opt/ssp-${ACTIVE}/backend/jobs_data/jobs.json"
+DRAIN_MAX=600   # 最多等 10 分钟
+DRAIN_ELAPSED=0
+
+while [ $DRAIN_ELAPSED -lt $DRAIN_MAX ]; do
+    RUNNING_COUNT=$(python3 -c "
+import json, os, sys
+f = '$ACTIVE_JOBS_FILE'
+try:
+    data = json.load(open(f))
+    jobs = list(data.values()) if isinstance(data, dict) else data
+    n = sum(1 for j in jobs if j.get('status') in ('running','pending'))
+    print(n)
+except: print(0)
+" 2>/dev/null || echo 0)
+
+    if [ "$RUNNING_COUNT" -eq "0" ] 2>/dev/null; then
+        echo "✅ 旧进程无进行中任务，可以安全停止" | tee -a $LOG
+        break
+    fi
+
+    echo "⏳ 旧进程还有 $RUNNING_COUNT 个任务进行中，等待完成... (${DRAIN_ELAPSED}s/${DRAIN_MAX}s)" | tee -a $LOG
+    sleep 10
+    DRAIN_ELAPSED=$((DRAIN_ELAPSED + 10))
+done
+
+if [ $DRAIN_ELAPSED -ge $DRAIN_MAX ]; then
+    echo "⚠️  等待超时(${DRAIN_MAX}s)，强制停止旧进程（积分已退还）" | tee -a $LOG
+fi
+
 supervisorctl stop ssp-backend-$ACTIVE ssp-frontend-$ACTIVE 2>&1 | tee -a $LOG
 
 echo "" | tee -a $LOG
