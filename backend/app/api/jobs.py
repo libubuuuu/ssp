@@ -2467,76 +2467,113 @@ async def _run_skill_replace_flux2(
     scene_url: str | None,
     product_category: str = "其他",
 ) -> dict:
-    """敏感品类九宫格替换:用 fal-ai/flux-2/edit,支持多参考图,safety_tolerance=5。
+    """敏感品类九宫格替换:拆格 → Kolors Virtual Try-On 逐帧换装 → 重拼九宫格。
 
-    image_urls 顺序:[九宫格, 人物参考图(可选), 产品参考图(可选), 场景参考图(可选)]
+    流程:
+      1. 下载每张九宫格 → PIL 拆成 9 张单帧
+      2. 每帧用 Kolors VTON 换上 product_url 的服装(精确替换,非生成式)
+      3. 检测不到人体姿态的帧(特写/背景)保留原帧
+      4. 9 帧重拼成新九宫格上传 fal
     """
     import time as _t
+    import os as _os
+    import tempfile as _tmp
+    import httpx as _httpx
     import fal_client as _fc
+    from PIL import Image
+    from app.services.fal_service import fal_upload_with_retry
     from app.services.logger import log_info, log_error
+    from app.skills.video_frame_extraction import compose_grid
+
+    if not product_url:
+        raise RuntimeError("敏感品类路径需要提供产品图(garment)")
 
     n_grids = len(grid_urls)
-    sem = asyncio.Semaphore(3)
+    border = 4
+    rows, cols = 3, 3
+    per_grid = rows * cols
 
-    async def _replace_one(idx: int, grid_url: str) -> tuple[int, str]:
-        async with sem:
-            # 按顺序拼 image_urls:九宫格在前,参考图在后
-            image_urls = [grid_url]
-            ref_descs = []
-            if model_url:
-                image_urls.append(model_url)
-                ref_descs.append(f"Image {len(image_urls)} is the NEW model/person — replace whoever appears in the grid with this person.")
-            if product_url:
-                image_urls.append(product_url)
-                ref_descs.append(f"Image {len(image_urls)} is the NEW product/garment — replace the {product_category} in the grid with this item.")
-            if scene_url:
-                image_urls.append(scene_url)
-                ref_descs.append(f"Image {len(image_urls)} is the NEW background/scene — replace the environment in the grid with this scene.")
+    # 并发上限:Kolors 9 格并发(每格独立 fal 调用)
+    cell_sem = asyncio.Semaphore(9)
 
-            ref_block = " ".join(ref_descs)
-            prompt = (
-                f"Image 1 is a 3×3 storyboard grid with 9 independent video shot panels, numbered top-left to bottom-right. "
-                f"{ref_block} "
-                f"Re-render the entire grid: apply each replacement INDEPENDENTLY to ALL 9 panels. "
-                f"Preserve every panel's composition, camera angle, lighting, and background. "
-                f"Keep the 3×3 grid layout with white borders and numbered labels. "
-                f"Output a single 1024×1024 image with the same grid structure."
-            )
-
-            log_info(f"skill_replace_flux2 [{idx+1}/{n_grids}] 提交 grid={grid_url[:60]}")
+    async def _kolors_one(cell_path: str, gi: int, ci: int) -> str:
+        """单格 Kolors VTON;检测不到姿态时返回原格路径。"""
+        async with cell_sem:
             t = _t.time()
             try:
+                cell_url = await fal_upload_with_retry(cell_path)
                 result = await asyncio.wait_for(
-                    _fc.run_async(
-                        "fal-ai/flux-2/edit",
-                        arguments={
-                            "image_urls": image_urls,
-                            "prompt": prompt,
-                            "safety_tolerance": "5",
-                            "num_images": 1,
-                            "output_format": "png",
-                        },
-                    ),
-                    timeout=300,
+                    _fc.run_async("fal-ai/kling/v1-5/kolors-virtual-try-on", arguments={
+                        "human_image_url": cell_url,
+                        "garment_image_url": product_url,
+                    }),
+                    timeout=120,
                 )
-            except asyncio.TimeoutError:
-                raise RuntimeError(f"FLUX.2 edit 第 {idx+1} 张超时 300s")
+                # Kolors 返回 {"image": {"url": ...}} 而非 {"images": [...]}
+                out_url = (result.get("image") or {}).get("url") if isinstance(result, dict) else None
+                if out_url:
+                    log_info(f"skill_replace_flux2 grid={gi} cell={ci} Kolors OK ({_t.time()-t:.1f}s)")
+                    # 下载结果写回同名文件
+                    async with _httpx.AsyncClient(timeout=60, follow_redirects=True) as cli:
+                        r = await cli.get(out_url)
+                        r.raise_for_status()
+                        with open(cell_path, "wb") as f:
+                            f.write(r.content)
+                    return cell_path
             except Exception as e:
-                log_error(f"skill_replace_flux2 [{idx+1}] 失败: {e}")
-                raise RuntimeError(f"FLUX.2 edit 第 {idx+1} 张失败: {str(e)[:200]}")
+                err = str(e)
+                if "body pose" in err or "pose" in err.lower():
+                    log_info(f"skill_replace_flux2 grid={gi} cell={ci} 无姿态保留原帧")
+                else:
+                    log_error(f"skill_replace_flux2 grid={gi} cell={ci} Kolors 失败:{err[:120]}")
+            return cell_path  # 失败/无姿态 → 保留原帧
 
-            imgs = result.get("images", []) if isinstance(result, dict) else []
-            if not imgs or not imgs[0].get("url"):
-                raise RuntimeError(f"FLUX.2 第 {idx+1} 张未返回图片: {str(result)[:200]}")
-            url = imgs[0]["url"]
-            log_info(f"skill_replace_flux2 [{idx+1}/{n_grids}] OK ({_t.time()-t:.1f}s) {url[:80]}")
-            return (idx, url)
-
+    work_dir = _tmp.mkdtemp(prefix="skill_replace_flux2_")
     t0 = _t.time()
-    results = await asyncio.gather(*[_replace_one(i, u) for i, u in enumerate(grid_urls)])
-    results.sort(key=lambda x: x[0])
-    replaced_urls = [u for _, u in results]
-    log_info(f"skill_replace_flux2 完成 N={n_grids} 总耗时 {_t.time()-t0:.1f}s")
+    replaced_urls: list[str] = []
+
+    try:
+        for gi, grid_url in enumerate(grid_urls):
+            # 1. 下载九宫格
+            grid_path = _os.path.join(work_dir, f"grid_{gi:02d}.png")
+            async with _httpx.AsyncClient(timeout=60, follow_redirects=True) as cli:
+                r = await cli.get(grid_url)
+                r.raise_for_status()
+                with open(grid_path, "wb") as f:
+                    f.write(r.content)
+
+            # 2. PIL 拆成 9 格
+            img = Image.open(grid_path).convert("RGB")
+            canvas_size = max(img.size)
+            cell_w = (canvas_size - (cols + 1) * border) // cols
+            cell_h = (canvas_size - (rows + 1) * border) // rows
+            cell_paths: list[str] = []
+            for ci in range(per_grid):
+                row = ci // cols
+                col = ci % cols
+                x = border + col * (cell_w + border)
+                y = border + row * (cell_h + border)
+                cell = img.crop((x, y, x + cell_w, y + cell_h))
+                cp = _os.path.join(work_dir, f"cell_{gi:02d}_{ci:02d}.jpg")
+                cell.save(cp, "JPEG", quality=90)
+                cell_paths.append(cp)
+
+            # 3. 并发 Kolors VTON
+            processed = await asyncio.gather(*[
+                _kolors_one(cp, gi, ci) for ci, cp in enumerate(cell_paths)
+            ])
+
+            # 4. 重拼九宫格
+            new_grid_path = _os.path.join(work_dir, f"new_grid_{gi:02d}.png")
+            compose_grid(list(processed), layout=(rows, cols), output_path=new_grid_path)
+            new_url = await fal_upload_with_retry(new_grid_path)
+            replaced_urls.append(new_url)
+            log_info(f"skill_replace_flux2 grid {gi+1}/{n_grids} 完成")
+
+        log_info(f"skill_replace_flux2 全部完成 N={n_grids} 总耗时 {_t.time()-t0:.1f}s")
+    finally:
+        import shutil as _sh
+        _sh.rmtree(work_dir, ignore_errors=True)
 
     # 替换后重写 visual_prompt(同 GPT-2 路径)
     from app.services.logger import log_error as _le
