@@ -385,6 +385,9 @@ export default function VideoFrameExtractPage() {
         )}
 
         <Box label="① 上传参考视频">
+          <div style={{ fontSize: "0.78rem", color: "#f59e0b", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "0.45rem 0.75rem", marginBottom: 10 }}>
+            💡 建议上传 <b>15 秒以内</b>的视频，分析更快、效果更好；超过 30 秒可能较慢
+          </div>
           <label style={{ display: "block", border: "2px dashed #ddd", borderRadius: 10, padding: "1rem", textAlign: "center", cursor: "pointer", background: videoFile ? "#f9f7f2" : "#fff" }}>
             <input type="file" accept="video/*" style={{ display: "none" }} onChange={e => onPickVideo(e.target.files?.[0] ?? null)} />
             {videoFile ? (
