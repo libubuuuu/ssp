@@ -473,6 +473,18 @@ async def process_v2_job(job_id: str) -> None:
     """
     try:
         await _process_v2_job_inner(job_id)
+    except Exception as e:
+        # 兜底:任何未捕获异常 → 标 failed + 全额退款,防 job 永远卡在 processing
+        from app.services.logger import log_error as _le
+        _le(f"process_v2_job 未捕获异常 job_id={job_id}: {e}")
+        try:
+            job = _db_load_job(job_id)
+            if job and job.get("status") == "processing":
+                _db_update_job(job_id, status="failed", error_step="unexpected",
+                               error_message=f"内部错误:{str(e)[:300]}")
+                await _refund_full(job)
+        except Exception:
+            pass
     finally:
         _seg_locks.pop(job_id, None)  # 释放 lock,防内存泄漏
 
