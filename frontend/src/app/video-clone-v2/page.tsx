@@ -619,6 +619,9 @@ export default function VideoCloneV2Page() {
 
         {/* Step 2:上传参考图(产品 / 人物 / 场景 各 0-3 张,总上限 9 张对齐 fal) */}
         <Section title="2. 上传参考图(产品 / 人物 / 场景 各 0-3 张)">
+          <div style={{ fontSize: "0.78rem", color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "0.45rem 0.75rem", marginBottom: 12 }}>
+            ⚠️ 内衣 / 泳装 / 情趣类产品图暂不支持，fal 平台会拒绝处理并退款
+          </div>
           {(["product", "person", "scene"] as Role[]).map((role) => {
             const roleImages = images.map((img, idx) => ({ img, idx })).filter((x) => x.img.role === role);
             return (
