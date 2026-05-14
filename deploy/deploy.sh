@@ -11,6 +11,30 @@ echo "========================================" | tee -a $LOG
 echo "部署开始: $(date '+%Y-%m-%d %H:%M:%S')" | tee -a $LOG
 echo "========================================" | tee -a $LOG
 
+# ── 0-pre. 检查分镜复刻是否有进行中任务（GPT-2 跑 3-5 分钟，部署会杀死）────
+ACTIVE_PORT_CHECK=$(grep -oP 'proxy_pass http://127.0.0.1:\K[0-9]+' /etc/nginx/sites-enabled/default | head -1)
+RUNNING_JOBS=$(python3 -c "
+import json, os
+f = '/opt/ssp-blue/backend/jobs_data/jobs.json' if '$ACTIVE_PORT_CHECK' == '8000' else '/opt/ssp-green/backend/jobs_data/jobs.json'
+try:
+    jobs = json.load(open(f)) if os.path.exists(f) else {}
+    running = [j for j in (jobs.values() if isinstance(jobs, dict) else jobs)
+               if j.get('status') in ('running','pending') and j.get('type','').startswith('skill_')]
+    print(len(running))
+except: print(0)
+" 2>/dev/null || echo 0)
+
+if [ "$RUNNING_JOBS" -gt "0" ] 2>/dev/null; then
+    echo "⚠️  有 $RUNNING_JOBS 个分镜复刻任务正在运行（GPT-2 约 3-5 分钟），部署会中断任务。"
+    echo "   等任务完成后再部署，或强制继续输入 y："
+    read -r -t 30 CONFIRM || CONFIRM="n"
+    if [ "$CONFIRM" != "y" ]; then
+        echo "已取消部署，等任务完成后重试。"
+        exit 0
+    fi
+    echo "强制继续部署..."
+fi
+
 # ── 0. 确定蓝绿状态 ──────────────────────────────────────────────────
 CURRENT=$(grep -oP 'proxy_pass http://127.0.0.1:\K[0-9]+' /etc/nginx/sites-enabled/default | head -1)
 if [ "$CURRENT" = "8000" ]; then
