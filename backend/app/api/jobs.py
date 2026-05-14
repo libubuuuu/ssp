@@ -2999,6 +2999,13 @@ def _sanitize_for_gpt2(text: str) -> str:
     if not text:
         return text
     pairs = [
+        # 中文敏感词 → 中性(fal content_checker 同样拦截中文)
+        ("内衣", "服装"),
+        ("文胸", "上衣"),
+        ("胸罩", "上衣"),
+        ("内裤", "服装"),
+        ("比基尼", "泳装"),
+        ("情趣", "服装"),
         # 服装类目 → 通用
         ("balconette bra", "structured top"),
         ("balconette", "structured"),
