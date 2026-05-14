@@ -124,8 +124,6 @@ export default function VideoFrameExtractPage() {
   const onPickVideo = async (f: File | null) => {
     if (!f) return;
     setVideoFile(f); setError("");
-    setScenes(null); setGridUrls([]); setOriginalSpeech(""); setSpeechAudioUrl("");
-    setReplacedGridUrls([]); setVideoOutputUrl("");
     setLoading(true); setLoadingMsg("上传视频...");
     try {
       const r = await uploadWithRetry(
@@ -142,6 +140,9 @@ export default function VideoFrameExtractPage() {
         throw new Error(msg);
       }
       const d = JSON.parse(r.text);
+      // 上传成功才清掉旧的分析结果
+      setScenes(null); setGridUrls([]); setOriginalSpeech(""); setSpeechAudioUrl("");
+      setReplacedGridUrls([]); setVideoOutputUrl("");
       setVideoUrl(d.video_url);
     } catch (e) { setError(errMsg(e, "上传视频失败")); }
     finally { setLoading(false); setLoadingMsg(""); }
@@ -200,6 +201,7 @@ export default function VideoFrameExtractPage() {
       adjustLocalUserCredits(-1);
       setLoadingMsg("AI 分析中(skill 切镜头 + qwen-vl 看九宫格 + wizper 转口播,40-120s)...");
       let elapsed = 0;
+      let pollFails = 0;
       const interval = setInterval(async () => {
         elapsed += 6;
         try {
@@ -236,9 +238,10 @@ export default function VideoFrameExtractPage() {
             setError(sd.error ?? "提取失败");
             setLoading(false); setLoadingMsg("");
           } else {
+            pollFails = 0;
             setLoadingMsg(`AI 分析中... 已用 ${elapsed}s`);
           }
-        } catch {}
+        } catch { if (++pollFails >= 5) { clearInterval(interval); setError("分析状态查询失败,请刷新重试"); setLoading(false); setLoadingMsg(""); } }
       }, 6000);
     } catch (e) { setError(errMsg(e, "提交失败")); setLoading(false); setLoadingMsg(""); }
   };
@@ -272,6 +275,7 @@ export default function VideoFrameExtractPage() {
       adjustLocalUserCredits(-(d.cost ?? 3));
       setLoadingMsg("GPT-Image 2 重画九宫格(高峰期 3-5 分钟)...");
       let elapsed = 0;
+      let pollFails = 0;
       const interval = setInterval(async () => {
         elapsed += 8;
         try {
@@ -294,9 +298,10 @@ export default function VideoFrameExtractPage() {
             setError(sd.error ?? "替换失败");
             setLoading(false); setLoadingMsg("");
           } else {
+            pollFails = 0;
             setLoadingMsg(`GPT-2 重画中... 已用 ${elapsed}s`);
           }
-        } catch {}
+        } catch { if (++pollFails >= 5) { clearInterval(interval); setError("替换状态查询失败,请刷新重试"); setLoading(false); setLoadingMsg(""); } }
       }, 8000);
     } catch (e) { setError(errMsg(e, "替换失败")); setLoading(false); setLoadingMsg(""); }
   };
@@ -330,6 +335,7 @@ export default function VideoFrameExtractPage() {
       adjustLocalUserCredits(-(d.cost ?? 30));
       setLoadingMsg(`Seedance r2v 并发 ${scenes.length} 段(3-5 分钟)...`);
       let elapsed = 0;
+      let pollFails = 0;
       const interval = setInterval(async () => {
         elapsed += 10;
         try {
@@ -347,9 +353,10 @@ export default function VideoFrameExtractPage() {
             setError(sd.error ?? "生成失败");
             setLoading(false); setLoadingMsg("");
           } else {
+            pollFails = 0;
             setLoadingMsg(`视频生成中... 已用 ${elapsed}s`);
           }
-        } catch {}
+        } catch { if (++pollFails >= 5) { clearInterval(interval); setError("生成状态查询失败,请刷新重试"); setLoading(false); setLoadingMsg(""); } }
       }, 10000);
     } catch (e) { setError(errMsg(e, "生成失败")); setLoading(false); setLoadingMsg(""); }
   };

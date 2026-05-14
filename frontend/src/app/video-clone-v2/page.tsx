@@ -478,6 +478,7 @@ export default function VideoCloneV2Page() {
   // ─── 轮询 job ───
   function pollJob(jobId: string) {
     if (pollRef.current) clearInterval(pollRef.current);
+    let pollFails = 0;
     const tick = async () => {
       try {
         const r = await fetch(`${API_BASE}/api/video/clone-v2/jobs/${jobId}`, {
@@ -505,7 +506,11 @@ export default function VideoCloneV2Page() {
           }
         }
       } catch {
-        // 静默继续轮询
+        if (++pollFails >= 5) {
+          if (pollRef.current) clearInterval(pollRef.current);
+          setError("任务状态查询失败,请刷新页面重试");
+          setSubmitStatus("failed");
+        }
       }
     };
     tick();
@@ -1016,7 +1021,7 @@ export default function VideoCloneV2Page() {
             setDropRanges={setDropRanges}
             onPickRecommended={pickRecommended}
             onConfirm={applyMultiTrim}
-            onCancel={() => { setTrimPopup(null); setVideo(null); setDropRanges([]); }}
+            onCancel={() => { setTrimPopup(null); setDropRanges([]); }}
           />
         )}
 
