@@ -132,7 +132,10 @@ export default function ProfilePage(){
               <div style={{fontSize:"1.6rem",fontWeight:300,color:"#0d0d0d"}}>{user.role==="admin"?t("profile.roleAdmin"):t("profile.roleUser")}</div>
               <div style={{fontSize:"0.75rem",color:"#888"}}>{t("profile.accountType")}</div>
             </div>
-            <button onClick={()=>router.push("/pricing")} style={{marginLeft:"auto",alignSelf:"center",background:"#0d0d0d",color:"#fff",border:"none",padding:"0.65rem 1.4rem",borderRadius:"999px",cursor:"pointer",fontSize:"0.85rem"}}>{t("profile.topupCredits")}</button>
+            <div style={{marginLeft:"auto",alignSelf:"center",display:"flex",gap:"0.6rem"}}>
+              <button onClick={()=>router.push("/credits")} style={{background:"none",color:"#555",border:"1px solid #ddd",padding:"0.65rem 1.1rem",borderRadius:"999px",cursor:"pointer",fontSize:"0.85rem"}}>积分明细</button>
+              <button onClick={()=>router.push("/pricing")} style={{background:"#0d0d0d",color:"#fff",border:"none",padding:"0.65rem 1.4rem",borderRadius:"999px",cursor:"pointer",fontSize:"0.85rem"}}>{t("profile.topupCredits")}</button>
+            </div>
           </div>
         </div>
 

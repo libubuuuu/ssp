@@ -1,731 +1,602 @@
 "use client";
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
-import { errMsg } from "@/lib/utils/errors";
-import { useLang } from "@/lib/i18n/LanguageContext";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
-interface Scene {
-  id: number;
-  time_range: string;
-  duration_sec: number;
-  shot: string;
-  action: string;
-  visual_prompt: string;
-  speech?: string;
-  narrative_role?: "hook" | "setup_pain" | "showcase" | "solve" | "memorable" | "cta" | string;
-}
-
-interface CreativeBrief {
-  hook?: string;
-  pain_point?: string;
-  emotional_arc?: string;
-  scene_setting?: string;
-  resonance_signal?: string;
-  memorable_moment?: string;
-  cta?: string;
-}
-
-interface ProductSpecifics {
-  subcategory?: string;
-  form_constraint?: string;
-  key_visual_features?: string[];
-}
-
-interface AnalyzeResult {
-  category: string;
-  target_user?: string;
-  selling_points: string[];
-  creative_brief?: CreativeBrief;
-  product_specifics?: ProductSpecifics;
-  scenes: Scene[];
-  total_duration: number;
-}
-
-const ROLE_META: Record<string, { label: string; bg: string; fg: string }> = {
-  hook:        { label: "🎣 钩子",   bg: "#fef3c7", fg: "#92400e" },
-  setup_pain:  { label: "💔 痛点",   bg: "#fee2e2", fg: "#991b1b" },
-  showcase:    { label: "✨ 展示",   bg: "#dbeafe", fg: "#1e40af" },
-  solve:       { label: "💡 解决",   bg: "#d1fae5", fg: "#065f46" },
-  memorable:   { label: "💎 记忆点", bg: "#ede9fe", fg: "#5b21b6" },
-  cta:         { label: "📢 CTA",    bg: "#fce7f3", fg: "#9d174d" },
-};
-
-const BRIEF_LABELS: Record<keyof CreativeBrief, string> = {
-  hook:              "🎣 钩子(前 3s 抓眼球)",
-  pain_point:        "💔 痛点/冲突",
-  emotional_arc:     "🎢 情绪主线",
-  scene_setting:     "🪞 场景代入",
-  resonance_signal:  "✨ 共鸣信号",
-  memorable_moment:  "💎 记忆点",
-  cta:               "📢 结尾 CTA",
-};
-
-function token() {
+function getToken() {
   if (typeof window === "undefined") return "";
   return localStorage.getItem("token") || "";
 }
 
-type ProductSlot = "front" | "back" | "rear";
-const PRODUCT_SLOT_ORDER: ProductSlot[] = ["front", "back", "rear"];
+// ─── 图片上传格子 ────────────────────────────────────────────────────────────
+interface ImgSlot { url: string; preview: string; uploading: boolean; }
+const emptySlot = (): ImgSlot => ({ url: "", preview: "", uploading: false });
 
-// 2026-05-12:Box 必须定义在 component 外,否则每次 render 都生成新 function 引用,
-// React 看作新组件 → unmount + remount textarea → 输入法 composition 中断 + 失焦 + 页面滚顶
-function Box({ children, label }: { children: React.ReactNode; label: string }) {
+function UploadBox({
+  slot, label, required, onUpload, onRemove,
+}: {
+  slot: ImgSlot; label: string; required?: boolean;
+  onUpload: (f: File) => void; onRemove: () => void;
+}) {
   return (
-    <div style={{ background: "#fff", borderRadius: 14, padding: "1.2rem 1.4rem", marginBottom: "1.2rem", boxShadow: "0 2px 8px rgba(0,0,0,0.04)" }}>
-      <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.6rem", fontWeight: 500 }}>{label}</div>
-      {children}
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flex: "1 1 120px", maxWidth: 140 }}>
+      <div style={{ fontSize: "0.72rem", color: required ? "#0d0d0d" : "#888", fontWeight: required ? 600 : 400 }}>
+        {label}{required && <span style={{ color: "#e53e3e" }}>*</span>}
+      </div>
+      {slot.preview ? (
+        <div style={{ position: "relative", width: "100%", paddingTop: "100%" }}>
+          <img src={slot.preview} alt={label}
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", borderRadius: 10, border: "1px solid #e2e8f0" }} />
+          {slot.uploading && (
+            <div style={{ position: "absolute", inset: 0, background: "rgba(255,255,255,0.7)", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 10, fontSize: "0.75rem", color: "#555" }}>上传中…</div>
+          )}
+          {!slot.uploading && (
+            <button onClick={onRemove} style={{ position: "absolute", top: -8, right: -8, width: 22, height: 22, borderRadius: "50%", background: "#e53e3e", color: "#fff", border: "none", cursor: "pointer", fontSize: "0.8rem", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>×</button>
+          )}
+        </div>
+      ) : (
+        <label style={{ width: "100%", paddingTop: "100%", position: "relative", border: `2px dashed ${required ? "#a0aec0" : "#e2e8f0"}`, borderRadius: 10, cursor: "pointer", display: "block", background: "#fafafa" }}>
+          <input type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" style={{ display: "none" }}
+            onChange={e => { const f = e.target.files?.[0]; if (f) onUpload(f); e.target.value = ""; }} />
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4 }}>
+            <span style={{ fontSize: "1.4rem", color: "#cbd5e0" }}>+</span>
+            <span style={{ fontSize: "0.68rem", color: "#a0aec0" }}>上传图片</span>
+          </div>
+        </label>
+      )}
     </div>
   );
 }
 
-export default function VideoGeneralPage() {
-  const { t } = useLang();
-  const PRODUCT_SLOT_LABELS: Record<ProductSlot, string> = {
-    front: t("videoGeneral.productFront"),
-    back: t("videoGeneral.productBack"),
-    rear: t("videoGeneral.productRear"),
-  };
-  // 2026-05-11 P226:产品图分 3 槽(正面/反面/背面),按 PRODUCT_SLOT_ORDER 顺序拼成 product_image_urls 给 backend
-  const [productImagesBySlot, setProductImagesBySlot] = useState<Record<ProductSlot, string>>({ front: "", back: "", rear: "" });
-  const [productFilesBySlot, setProductFilesBySlot] = useState<Record<ProductSlot, File | null>>({ front: null, back: null, rear: null });
-  // 派生:把非空 slot 按顺序拼成 list 给 backend
-  const productImageUrls = PRODUCT_SLOT_ORDER.map((s) => productImagesBySlot[s]).filter(Boolean);
-  // 2026-05-11 P226:场景图(可选)
-  const [sceneImageUrl, setSceneImageUrl] = useState<string>("");
-  const [sceneImageFile, setSceneImageFile] = useState<File | null>(null);
-  const [modelSource, setModelSource] = useState<"auto" | "image" | "video">("auto");
-  const [modelImageUrl, setModelImageUrl] = useState<string>("");
-  const [modelVideoUrl, setModelVideoUrl] = useState<string>("");
-  const [modelImageFile, setModelImageFile] = useState<File | null>(null);
-  const [modelVideoFile, setModelVideoFile] = useState<File | null>(null);
-  const [duration, setDuration] = useState<number>(15);
-  const [region, setRegion] = useState<"CN" | "Global">("CN");
-  const [aspectRatio, setAspectRatio] = useState<string>("9:16");
-  // 2026-05-11:用户大概想法(可选)— 留空 AI 自动生成,填了 AI 纳入脚本
-  const [userBrief, setUserBrief] = useState<string>("");
-  // 2026-05-12:用户指定的搭配/场景描述 + 批量生成数量
-  const [userOutfit, setUserOutfit] = useState<string>("");
-  const [userScene, setUserScene] = useState<string>("");
-  const [batchCount, setBatchCount] = useState<number>(1);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [generating, setGenerating] = useState(false);
-  const [analyzeMsg, setAnalyzeMsg] = useState("");
-  const [generateMsg, setGenerateMsg] = useState("");
-  const [error, setError] = useState("");
-  const [analyzeResult, setAnalyzeResult] = useState<AnalyzeResult | null>(null);
-  const [resultVideoUrl, setResultVideoUrl] = useState<string>("");
-  const [resultVideoUrls, setResultVideoUrls] = useState<string[]>([]);
-  // 2026-05-12:N 段独立分镜视频(每条带 batch_idx / scene_idx / scene meta)
-  const [sceneVideos, setSceneVideos] = useState<Array<{batch_idx: number; scene_idx: number; url: string; scene: {narrative_role?: string; shot?: string; visual_prompt?: string; speech?: string; duration_sec?: number}}>>([]);
-  // 2026-05-11 P226:分镜板预览 + 角色表
-  const [storyboardLoading, setStoryboardLoading] = useState(false);
-  const [storyboardMsg, setStoryboardMsg] = useState("");
-  const [storyboardUrl, setStoryboardUrl] = useState<string>("");
-  const [characterSheetUrl, setCharacterSheetUrl] = useState<string>("");
-  const [storyboardModelUrl, setStoryboardModelUrl] = useState<string>("");
-  const [storyboardNPanels, setStoryboardNPanels] = useState<number>(0);
+// ─── 脚本格式化展示 ─────────────────────────────────────────────────────────
+function ScriptDisplay({ text }: { text: string }) {
+  // 预处理：修复模型输出格式不一致问题（多个镜头挤一行、字段不换行等）
+  const normalized = text
+    // 在 [镜头X] 前插入换行（前面没有换行时）
+    .replace(/([^\n])\s*(\[镜头)/g, "$1\n$2")
+    // 在常用字段标签前插入换行
+    .replace(/([^\n])\s*(\[(?:目标语言|情节|模特|产品描述|环境|音乐|分镜)\][：:])/g, "$1\n$2")
+    // 3个以上连续换行合并成2个
+    .replace(/\n{3,}/g, "\n\n");
 
-  const uploadProductSlot = async (slot: ProductSlot, f: File) => {
-    setError("");
-    setProductFilesBySlot((prev) => ({ ...prev, [slot]: f }));
-    try {
-      const fd = new FormData();
-      fd.append("file", f);
-      const r = await fetch(`${API_BASE}/api/video/general/upload/image`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token()}` },
-        body: fd,
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const d = await r.json();
-      setProductImagesBySlot((prev) => ({ ...prev, [slot]: d.image_url }));
-    } catch (e) {
-      setError(errMsg(e, `${PRODUCT_SLOT_LABELS[slot]} - upload failed`));
-      setProductFilesBySlot((prev) => ({ ...prev, [slot]: null }));
+  // 把 [xxx]：yyy 解析成结构
+  const lines = normalized.split("\n").map(l => l.trim()).filter(Boolean);
+  const sections: Array<{ key: string; value: string; isShot: boolean }> = [];
+  let shotAccum = "";
+
+  for (const line of lines) {
+    const m = line.match(/^[\[【](.+?)[\]】][：:]\s*(.*)$/);
+    if (m) {
+      if (shotAccum) { sections.push({ key: "shot", value: shotAccum, isShot: true }); shotAccum = ""; }
+      const key = m[1].trim();
+      const value = m[2].trim();
+      if (/^镜头/.test(key)) {
+        shotAccum = `[${key}]：${value}`;
+      } else {
+        sections.push({ key, value, isShot: false });
+      }
+    } else if (line !== "[分镜]：" && line !== "[分镜]:") {
+      if (shotAccum) shotAccum += "\n" + line;
+      else if (sections.length > 0) sections[sections.length - 1].value += "\n" + line;
     }
-  };
+  }
+  if (shotAccum) sections.push({ key: "shot", value: shotAccum, isShot: true });
 
-  const removeProductSlot = (slot: ProductSlot) => {
-    setProductImagesBySlot((prev) => ({ ...prev, [slot]: "" }));
-    setProductFilesBySlot((prev) => ({ ...prev, [slot]: null }));
-  };
-
-  const uploadSceneImage = async (f: File) => {
-    setError(""); setSceneImageFile(f);
-    try {
-      const fd = new FormData();
-      fd.append("file", f);
-      const r = await fetch(`${API_BASE}/api/video/general/upload/scene-image`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token()}` },
-        body: fd,
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const d = await r.json();
-      setSceneImageUrl(d.scene_image_url);
-    } catch (e) { setError(errMsg(e, t("videoGeneral.sceneUploadFailed"))); setSceneImageFile(null); }
-  };
-
-  const uploadModelImage = async (f: File) => {
-    setError(""); setModelImageFile(f);
-    try {
-      const fd = new FormData();
-      fd.append("file", f);
-      const r = await fetch(`${API_BASE}/api/video/general/upload/model-image`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token()}` },
-        body: fd,
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const d = await r.json();
-      setModelImageUrl(d.model_image_url);
-    } catch (e) { setError(errMsg(e, t("videoGeneral.modelUploadFailed"))); setModelImageFile(null); }
-  };
-
-  const uploadModelVideo = async (f: File) => {
-    setError(""); setModelVideoFile(f);
-    try {
-      const fd = new FormData();
-      fd.append("file", f);
-      const r = await fetch(`${API_BASE}/api/video/general/upload/video`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token()}` },
-        body: fd,
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const d = await r.json();
-      setModelVideoUrl(d.video_url);
-      setModelImageUrl(d.model_image_url);  // 视频中间帧自动作为模特图
-    } catch (e) { setError(errMsg(e, t("videoGeneral.modelVideoUploadFailed"))); setModelVideoFile(null); }
-  };
-
-  const analyze = async () => {
-    if (!productImageUrls.length) { setError(t("videoGeneral.pleaseUploadProduct")); return; }
-    setError(""); setAnalyzing(true); setAnalyzeMsg(t("videoGeneral.submitAnalyze"));
-    try {
-      const r = await fetch(`${API_BASE}/api/video/general/analyze`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
-        body: JSON.stringify({
-          product_image_urls: productImageUrls,
-          total_duration: duration,
-          region,
-          user_brief: userBrief.trim() || undefined,
-        }),
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const d = await r.json();
-      const aid = d.analyze_job_id;
-      adjustLocalUserCredits(-1);
-      setAnalyzeMsg(t("videoGeneral.analyzing"));
-      let elapsed = 0;
-      const interval = setInterval(async () => {
-        elapsed += 5;
-        try {
-          const sr = await fetch(`${API_BASE}/api/video/general/analyze/status/${aid}`, {
-            headers: { Authorization: `Bearer ${token()}` },
-          });
-          if (!sr.ok) return;
-          const sd = await sr.json();
-          if (sd.status === "completed") {
-            clearInterval(interval);
-            setAnalyzeResult({
-              category: sd.category,
-              target_user: sd.target_user || "",
-              selling_points: sd.selling_points || [],
-              creative_brief: sd.creative_brief || {},
-              product_specifics: sd.product_specifics || {},
-              scenes: sd.scenes || [],
-              total_duration: sd.total_duration || duration,
-            });
-            setAnalyzing(false); setAnalyzeMsg("");
-          } else if (sd.status === "failed") {
-            clearInterval(interval);
-            setError(sd.error || t("videoGeneral.analyzeFailed"));
-            setAnalyzing(false); setAnalyzeMsg("");
-          } else {
-            setAnalyzeMsg(`AI 分析中... 已 ${elapsed}s`);
-          }
-        } catch {}
-      }, 5000);
-    } catch (e) { setError(errMsg(e, t("videoGeneral.analyzeFailed"))); setAnalyzing(false); setAnalyzeMsg(""); }
-  };
-
-  const generateStoryboard = async () => {
-    if (!analyzeResult) return;
-    setError(""); setStoryboardLoading(true); setStoryboardMsg(t("videoGeneral.submitStoryboard"));
-    setStoryboardUrl(""); setCharacterSheetUrl(""); setStoryboardModelUrl(""); setStoryboardNPanels(0);
-    try {
-      const r = await fetch(`${API_BASE}/api/video/general/storyboard`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
-        body: JSON.stringify({
-          product_image_urls: productImageUrls,
-          scene_image_url: sceneImageUrl || null,
-          model_image_url: modelImageUrl || null,
-          model_video_url: modelVideoUrl || null,
-          category: analyzeResult.category,
-          target_user: analyzeResult.target_user || null,
-          creative_brief: analyzeResult.creative_brief || null,
-          product_specifics: analyzeResult.product_specifics || null,
-          scenes: analyzeResult.scenes,
-          region,
-          aspect_ratio: aspectRatio,
-          user_outfit: userOutfit || null,
-          user_scene: userScene || null,
-        }),
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const d = await r.json();
-      const sid = d.job_id;
-      adjustLocalUserCredits(-d.cost);
-      setStoryboardMsg(`AI 分镜板生成中(预计 3-5 分钟,job=${sid})...`);
-      let elapsed = 0;
-      const interval = setInterval(async () => {
-        elapsed += 5;
-        try {
-          const sr = await fetch(`${API_BASE}/api/video/general/storyboard/status/${sid}`, {
-            headers: { Authorization: `Bearer ${token()}` },
-          });
-          if (!sr.ok) return;
-          const sd = await sr.json();
-          if (sd.status === "completed") {
-            clearInterval(interval);
-            setStoryboardUrl(sd.storyboard_image_url || "");
-            setCharacterSheetUrl(sd.character_sheet_url || "");
-            setStoryboardModelUrl(sd.model_image_url || "");
-            setStoryboardNPanels(sd.n_panels || 0);
-            setStoryboardLoading(false); setStoryboardMsg("");
-            // 如果 AI 帮我们生成了模特图,自动填入 modelImageUrl(后续 generate 复用)
-            if (sd.model_image_url && !modelImageUrl) {
-              setModelImageUrl(sd.model_image_url);
-            }
-          } else if (sd.status === "failed") {
-            clearInterval(interval);
-            setError(sd.error || t("videoGeneral.storyboardFailed"));
-            setStoryboardLoading(false); setStoryboardMsg("");
-          } else {
-            setStoryboardMsg(`AI 分镜板生成中... 已 ${elapsed}s`);
-          }
-        } catch {}
-      }, 5000);
-    } catch (e) { setError(errMsg(e, t("videoGeneral.storyboardFailed"))); setStoryboardLoading(false); setStoryboardMsg(""); }
-  };
-
-  const updateScene = (idx: number, key: keyof Scene, val: string) => {
-    if (!analyzeResult) return;
-    const newScenes = analyzeResult.scenes.map((s, i) => i === idx ? { ...s, [key]: val } : s);
-    setAnalyzeResult({ ...analyzeResult, scenes: newScenes });
-  };
-
-  const generate = async () => {
-    if (!analyzeResult) return;
-    setError(""); setGenerating(true); setGenerateMsg(t("videoGeneral.submitGenerate"));
-    try {
-      const r = await fetch(`${API_BASE}/api/video/general/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
-        body: JSON.stringify({
-          product_image_urls: productImageUrls,
-          scene_image_url: sceneImageUrl || null,
-          model_image_url: modelImageUrl || null,
-          model_video_url: modelVideoUrl || null,
-          category: analyzeResult.category,
-          target_user: analyzeResult.target_user || null,
-          creative_brief: analyzeResult.creative_brief || null,
-          product_specifics: analyzeResult.product_specifics || null,
-          scenes: analyzeResult.scenes,
-          total_duration: analyzeResult.total_duration,
-          region,
-          aspect_ratio: aspectRatio,
-          user_outfit: userOutfit || null,
-          user_scene: userScene || null,
-          batch_count: batchCount,
-          storyboard_image_url: storyboardUrl || null,
-          storyboard_n_panels: storyboardNPanels || 0,
-          character_sheet_image_url: characterSheetUrl || null,
-        }),
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const d = await r.json();
-      const jid = d.job_id;
-      adjustLocalUserCredits(-d.cost);
-      setGenerateMsg(`视频生成中(预计 7-10 分钟,job=${jid})...`);
-      let elapsed = 0;
-      const interval = setInterval(async () => {
-        elapsed += 10;
-        try {
-          const sr = await fetch(`${API_BASE}/api/jobs/${jid}`, {
-            headers: { Authorization: `Bearer ${token()}` },
-          });
-          if (!sr.ok) return;
-          const sd = await sr.json();
-          if (sd.status === "completed") {
-            clearInterval(interval);
-            const urls: string[] = sd.result?.video_urls || (sd.result?.video_url ? [sd.result.video_url] : []);
-            const svideos = sd.result?.scene_videos || urls.map((u: string, i: number) => ({batch_idx: 0, scene_idx: i, url: u, scene: {}}));
-            setResultVideoUrls(urls);
-            setResultVideoUrl(urls[0] || "");
-            setSceneVideos(svideos);
-            setGenerating(false); setGenerateMsg("");
-          } else if (sd.status === "failed") {
-            clearInterval(interval);
-            setError(sd.error || t("videoGeneral.generateFailed"));
-            setGenerating(false); setGenerateMsg("");
-          } else {
-            setGenerateMsg(`生成中... 已 ${Math.floor(elapsed/60)}:${(elapsed%60).toString().padStart(2,"0")}`);
-          }
-        } catch {}
-      }, 10000);
-    } catch (e) { setError(errMsg(e, t("videoGeneral.generateFailed"))); setGenerating(false); setGenerateMsg(""); }
+  const META_STYLE: Record<string, { label: string; bg: string; color: string }> = {
+    "目标语言": { label: "🌍 目标语言", bg: "#ebf8ff", color: "#2b6cb0" },
+    "情节":     { label: "📖 情节概述", bg: "#faf5ff", color: "#6b46c1" },
+    "模特":     { label: "🧑 模特设定", bg: "#fff5f5", color: "#c53030" },
+    "产品描述": { label: "📦 产品描述", bg: "#f0fff4", color: "#276749" },
+    "环境":     { label: "🏠 拍摄环境", bg: "#fffff0", color: "#744210" },
+    "音乐":     { label: "🎵 背景音乐", bg: "#fff5f7", color: "#97266d" },
   };
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: "#edeae4", fontFamily: "-apple-system,BlinkMacSystemFont,sans-serif" }}>
-      <Sidebar />
-      <main style={{ flex: 1, padding: "2rem 2.5rem", overflowY: "auto", maxWidth: 1100, width: "100%", margin: "0 auto" }}>
-        <div style={{ marginBottom: "1.5rem", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
-          <div>
-            <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>AI 创作工具</div>
-            <h1 style={{ fontSize: "1.8rem", fontWeight: 400, margin: 0, fontFamily: "Georgia,serif" }}>{t("videoGeneral.titleMain")}<span style={{ fontStyle: "italic" }}> {t("videoGeneral.titleAccent")}</span></h1>
-            <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
-              食品 / 日用品 / 化妆品 / 3C / 服装 — 多张产品图 + 可选真人模特视频 → AI 自动判品类 + 出脚本 + 模特持/穿/用产品视频
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {sections.map((s, i) => {
+        if (s.isShot) {
+          const shotMatch = s.value.match(/^\[([^\]]+)\]：([\s\S]+)/);
+          const shotTitle = shotMatch ? shotMatch[1] : "镜头";
+          const shotBody = shotMatch ? shotMatch[2] : s.value;
+          // 解析台词
+          const speechMatch = shotBody.match(/模特说[：:]([\s\S]+)/);
+          const desc = speechMatch ? shotBody.slice(0, shotBody.indexOf(speechMatch[0])).trim() : shotBody;
+          const speech = speechMatch ? speechMatch[1].trim() : "";
+          return (
+            <div key={i} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, overflow: "hidden" }}>
+              <div style={{ background: "#2d3748", color: "#fff", padding: "0.45rem 0.8rem", fontSize: "0.78rem", fontWeight: 600 }}>
+                🎬 {shotTitle}
+              </div>
+              <div style={{ padding: "0.7rem 0.9rem" }}>
+                <div style={{ fontSize: "0.82rem", color: "#4a5568", lineHeight: 1.6 }}>{desc}</div>
+                {speech && (
+                  <div style={{ marginTop: 8, background: "#f7fafc", borderLeft: "3px solid #4299e1", padding: "0.5rem 0.7rem", borderRadius: "0 6px 6px 0", fontSize: "0.82rem", color: "#2b6cb0", fontStyle: "italic", lineHeight: 1.6 }}>
+                    💬 {speech}
+                  </div>
+                )}
+              </div>
             </div>
+          );
+        }
+        const meta = META_STYLE[s.key];
+        return (
+          <div key={i} style={{ background: meta?.bg || "#f7fafc", borderRadius: 8, padding: "0.55rem 0.85rem", display: "flex", gap: 10, alignItems: "flex-start" }}>
+            <span style={{ fontSize: "0.75rem", fontWeight: 600, color: meta?.color || "#4a5568", whiteSpace: "nowrap", minWidth: 80 }}>
+              {meta?.label || s.key}
+            </span>
+            <span style={{ fontSize: "0.82rem", color: "#1a202c", lineHeight: 1.6, flex: 1 }}>{s.value}</span>
           </div>
-          <button
-            onClick={() => window.open("/video/general", "_blank", "noopener")}
-            title="开新窗口并行批量生成"
-            style={{ background: "#fff", border: "1px solid #d1d5db", borderRadius: 8, padding: "0.55rem 0.95rem", fontSize: "0.85rem", fontWeight: 500, color: "#374151", cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0 }}
-          >
-            🆕 新建窗口(批量生成)
-          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── 主页面 ─────────────────────────────────────────────────────────────────
+type Tab = "replicate" | "ai_video";
+type ModelSrc = "auto" | "image" | "video";
+const MARKETS = ["欧美", "东南亚", "日韩", "中国"];
+
+export default function VideoGeneralPage() {
+  const [tab, setTab] = useState<Tab>("ai_video");
+
+  // Step 1 - product images
+  const [front, setFront]   = useState<ImgSlot>(emptySlot());
+  const [back,  setBack]    = useState<ImgSlot>(emptySlot());
+  const [rear,  setRear]    = useState<ImgSlot>(emptySlot());
+  const [scene, setScene]   = useState<ImgSlot>(emptySlot());
+
+  // Step 2 - model source
+  const [modelSrc, setModelSrc]     = useState<ModelSrc>("auto");
+  const [modelImg, setModelImg]     = useState<ImgSlot>(emptySlot());
+  const [modelVid, setModelVid]     = useState<{ file: File | null; uploading: boolean }>({ file: null, uploading: false });
+  const [modelVidUrl, setModelVidUrl] = useState("");
+
+  // Step 3 - params
+  const [scriptMode, setScriptMode] = useState<"story" | "direct">("story");
+  const [duration, setDuration]     = useState(15);
+  const [market, setMarket]         = useState("欧美");
+  const [userIdea, setUserIdea]     = useState("");
+
+  // Step 4 - script result
+  const [loading, setLoading]   = useState(false);
+  const [script, setScript]     = useState("");
+  const [error, setError]       = useState("");
+
+  // Step 5 - video generation
+  const [vidLoading, setVidLoading] = useState(false);
+  const [vidProgress, setVidProgress] = useState("");
+  const [vidUrl, setVidUrl]         = useState("");
+  const [vidCost, setVidCost]       = useState(0);
+
+  // ── upload helpers ─────────────────────────────────────────────────────────
+  const uploadImg = useCallback(async (
+    file: File,
+    endpoint: string,
+    resultKey: string,
+    setter: (fn: (s: ImgSlot) => ImgSlot) => void,
+  ) => {
+    if (file.size > 10 * 1024 * 1024) { setError("图片不能超过 10MB"); return; }
+    const preview = URL.createObjectURL(file);
+    setter(s => ({ ...s, preview, uploading: true }));
+    setError("");
+    try {
+      const fd = new FormData(); fd.append("file", file);
+      const r = await fetch(`${API_BASE}${endpoint}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${getToken()}` },
+        body: fd,
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      setter(s => ({ ...s, url: d[resultKey] || "", uploading: false }));
+    } catch (e) {
+      setter(s => ({ ...s, preview: "", url: "", uploading: false }));
+      setError((e as Error).message || "上传失败");
+    }
+  }, []);
+
+  const removeSlot = (setter: (s: ImgSlot) => void) => setter(emptySlot());
+
+  // ── generate script ────────────────────────────────────────────────────────
+  const generate = async () => {
+    if (!front.url) { setError("请先上传正面产品图"); return; }
+    setError(""); setScript(""); setLoading(true);
+    adjustLocalUserCredits(-35);
+    try {
+      const modelInfo = modelSrc === "auto"
+        ? (market === "中国" ? "AI 自动生成亚洲模特" : "AI 自动生成欧美模特")
+        : modelSrc === "image" ? "用户上传模特图" : "用户上传模特视频";
+
+      const r = await fetch(`${API_BASE}/api/video/general/script`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({
+          image_url: front.url,
+          market,
+          duration,
+          model_info: modelInfo,
+          user_idea: userIdea.trim(),
+          mode: scriptMode,
+        }),
+      });
+      if (!r.ok) {
+        adjustLocalUserCredits(35); // 退还（后端也退了，前端同步）
+        throw new Error((await r.json()).detail || await r.text());
+      }
+      const d = await r.json();
+      setScript(d.script || "");
+    } catch (e) {
+      setError((e as Error).message || "脚本生成失败，请重试");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── generate video from confirmed script ──────────────────────────────────
+  const generateVideo = async () => {
+    if (!front.url) { setError("请先上传正面产品图"); return; }
+    if (!script)    { setError("请先生成脚本"); return; }
+    setError(""); setVidUrl(""); setVidLoading(true); setVidProgress("提交视频生成任务…");
+
+    const productUrls = [front.url, back.url, rear.url].filter(Boolean);
+
+    try {
+      const r = await fetch(`${API_BASE}/api/video/general/script-to-video`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({
+          script,
+          product_image_urls: productUrls,
+          scene_image_url:  scene.url  || null,
+          model_image_url:  modelSrc === "image" ? modelImg.url || null : null,
+          model_video_url:  modelSrc === "video" ? modelVidUrl || null : null,
+          model_source:     modelSrc,
+          aspect_ratio:     "9:16",
+        }),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d.detail || await r.text());
+      }
+      const d = await r.json();
+      const jid: string = d.job_id;
+      const cost: number = d.cost ?? 0;
+      setVidCost(cost);
+      adjustLocalUserCredits(-cost);
+      setVidProgress(`Seedance 2.0 生成中，约 3-8 分钟（job=${jid}）…`);
+
+      // poll
+      let elapsed = 0;
+      const iv = setInterval(async () => {
+        elapsed += 10;
+        try {
+          const sr = await fetch(`${API_BASE}/api/jobs/${jid}`, {
+            headers: { Authorization: `Bearer ${getToken()}` },
+          });
+          if (!sr.ok) return;
+          const sd = await sr.json();
+          if (sd.status === "completed") {
+            clearInterval(iv);
+            setVidUrl(sd.result?.video_url || "");
+            setVidLoading(false); setVidProgress("");
+          } else if (sd.status === "failed") {
+            clearInterval(iv);
+            adjustLocalUserCredits(cost);  // 退还（后端也退了，前端同步）
+            setError(sd.error || "视频生成失败，积分已退还");
+            setVidLoading(false); setVidProgress("");
+          } else {
+            const mm = Math.floor(elapsed / 60), ss = elapsed % 60;
+            setVidProgress(`Seedance 2.0 生成中… 已 ${mm}:${String(ss).padStart(2,"0")}（job=${jid}）`);
+          }
+        } catch {}
+      }, 10000);
+    } catch (e) {
+      setError((e as Error).message || "视频生成失败，请重试");
+      setVidLoading(false); setVidProgress("");
+    }
+  };
+
+  // ── tabs ───────────────────────────────────────────────────────────────────
+  const TAB_STYLE = (active: boolean): React.CSSProperties => ({
+    padding: "0.55rem 1.4rem",
+    border: "none",
+    borderBottom: active ? "2px solid #0d0d0d" : "2px solid transparent",
+    background: "none",
+    color: active ? "#0d0d0d" : "#888",
+    fontWeight: active ? 600 : 400,
+    fontSize: "0.9rem",
+    cursor: "pointer",
+    transition: "all 0.15s",
+  });
+
+  const CARD: React.CSSProperties = {
+    background: "#fff",
+    borderRadius: 16,
+    padding: "1.4rem 1.6rem",
+    marginBottom: "1.2rem",
+    boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+    border: "1px solid rgba(0,0,0,0.05)",
+  };
+
+  const STEP_LABEL: React.CSSProperties = {
+    fontSize: "0.7rem",
+    fontWeight: 700,
+    color: "#0d0d0d",
+    background: "#f0ede6",
+    borderRadius: 6,
+    padding: "0.15rem 0.5rem",
+    marginRight: 8,
+    letterSpacing: "0.05em",
+  };
+
+  return (
+    <div style={{ display: "flex", minHeight: "100vh", background: "#edeae4", fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" }}>
+      <Sidebar />
+      <main style={{ flex: 1, overflowY: "auto", maxWidth: 760, width: "100%", margin: "0 auto", padding: "0 1.5rem 3rem" }}>
+
+        {/* ── 页面标题 ── */}
+        <div style={{ padding: "1.8rem 0 0.5rem" }}>
+          <div style={{ fontSize: "0.8rem", color: "#999", marginBottom: 4 }}>AI 创作工具</div>
+          <h1 style={{ margin: 0, fontSize: "1.5rem", fontWeight: 500, color: "#0d0d0d", fontFamily: "Georgia,serif" }}>
+            图片<span style={{ fontStyle: "italic" }}>复刻</span>
+          </h1>
         </div>
 
-        {error && (
-          <div style={{ background: "#fff3f3", border: "1px solid #fcc", color: "#c33", padding: "0.8rem 1rem", borderRadius: 10, marginBottom: "1rem", fontSize: "0.9rem", whiteSpace: "pre-wrap" }}>{error}</div>
+        {/* ── 标签页 ── */}
+        <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", marginBottom: "1.4rem" }}>
+          <button style={TAB_STYLE(tab === "replicate")} onClick={() => setTab("replicate")}>视频复刻</button>
+          <button style={TAB_STYLE(tab === "ai_video")}  onClick={() => setTab("ai_video")}>AI 爆款视频</button>
+        </div>
+
+        {/* ── 标签A：视频复刻（占位）── */}
+        {tab === "replicate" && (
+          <div style={{ ...CARD, textAlign: "center", padding: "3rem 2rem", color: "#888" }}>
+            <div style={{ fontSize: "2rem", marginBottom: 12 }}>🎬</div>
+            <div style={{ fontSize: "1.1rem", fontWeight: 500, color: "#555", marginBottom: 8 }}>视频复刻功能</div>
+            <div style={{ fontSize: "0.88rem" }}>功能开发中，敬请期待</div>
+          </div>
         )}
 
-        <Box label={t("videoGeneral.box1")}>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
-            {PRODUCT_SLOT_ORDER.map((slot) => {
-              const url = productImagesBySlot[slot];
-              return (
-                <div key={slot} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                  <div style={{ fontSize: "0.72rem", color: "#666", fontWeight: 500, height: 16 }}>{PRODUCT_SLOT_LABELS[slot]}</div>
-                  {url ? (
-                    <div style={{ position: "relative" }}>
-                      <img src={url} alt={slot} style={{ width: 96, height: 96, objectFit: "cover", borderRadius: 8, border: "1px solid #ddd" }} />
-                      <button onClick={() => removeProductSlot(slot)} style={{ position: "absolute", top: -6, right: -6, width: 22, height: 22, borderRadius: "50%", background: "#dc2626", color: "#fff", border: "none", cursor: "pointer", fontSize: "0.7rem" }}>×</button>
-                    </div>
-                  ) : (
-                    <label style={{ width: 96, height: 96, border: "2px dashed #ddd", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#999", fontSize: "0.8rem", textAlign: "center" }}>
-                      <input type="file" accept="image/*" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) uploadProductSlot(slot, f); e.target.value = ""; }} />
-                      + 上传
-                    </label>
-                  )}
-                </div>
-              );
-            })}
-            {/* 场景图 */}
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, borderLeft: "1px dashed #ddd", paddingLeft: 12, marginLeft: 4 }}>
-              <div style={{ fontSize: "0.72rem", color: "#666", fontWeight: 500, height: 16 }}>场景图(可选)</div>
-              {sceneImageUrl ? (
-                <div style={{ position: "relative" }}>
-                  <img src={sceneImageUrl} alt="scene" style={{ width: 96, height: 96, objectFit: "cover", borderRadius: 8, border: "1px solid #ddd" }} />
-                  <button onClick={() => { setSceneImageUrl(""); setSceneImageFile(null); }} style={{ position: "absolute", top: -6, right: -6, width: 22, height: 22, borderRadius: "50%", background: "#dc2626", color: "#fff", border: "none", cursor: "pointer", fontSize: "0.7rem" }}>×</button>
-                </div>
-              ) : (
-                <label style={{ width: 96, height: 96, border: "2px dashed #ddd", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#999", fontSize: "0.8rem", textAlign: "center" }}>
-                  <input type="file" accept="image/*" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) uploadSceneImage(f); e.target.value = ""; }} />
-                  + 上传
+        {/* ── 标签B：AI 爆款视频 ── */}
+        {tab === "ai_video" && (
+          <>
+            {error && (
+              <div style={{ background: "#fff5f5", border: "1px solid #fed7d7", color: "#c53030", padding: "0.8rem 1rem", borderRadius: 10, marginBottom: "1rem", fontSize: "0.88rem" }}>
+                {error}
+              </div>
+            )}
+
+            {/* ── Step 1：产品图 ── */}
+            <div style={CARD}>
+              <div style={{ display: "flex", alignItems: "center", marginBottom: "1rem" }}>
+                <span style={STEP_LABEL}>STEP 1</span>
+                <span style={{ fontSize: "0.92rem", fontWeight: 600, color: "#1a202c" }}>上传产品图</span>
+              </div>
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                <UploadBox slot={front} label="正面图" required
+                  onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setFront)}
+                  onRemove={() => removeSlot(setFront)} />
+                <UploadBox slot={back}  label="反面图"
+                  onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setBack)}
+                  onRemove={() => removeSlot(setBack)} />
+                <UploadBox slot={rear}  label="侧面图"
+                  onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setRear)}
+                  onRemove={() => removeSlot(setRear)} />
+                <UploadBox slot={scene} label="场景图"
+                  onUpload={f => uploadImg(f, "/api/video/general/upload/scene-image", "scene_image_url", setScene)}
+                  onRemove={() => removeSlot(setScene)} />
+              </div>
+              <div style={{ fontSize: "0.72rem", color: "#a0aec0", marginTop: 10 }}>正面图必传，其余可选 · 每张 ≤ 10MB · 支持 JPG / PNG / WebP</div>
+            </div>
+
+            {/* ── Step 2：模特来源 ── */}
+            <div style={CARD}>
+              <div style={{ display: "flex", alignItems: "center", marginBottom: "1rem" }}>
+                <span style={STEP_LABEL}>STEP 2</span>
+                <span style={{ fontSize: "0.92rem", fontWeight: 600, color: "#1a202c" }}>模特来源</span>
+              </div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+                {([
+                  { v: "auto",  label: "AI 自动出模特",  desc: "GPT-Image 2 生成亚洲/欧美面孔，按市场自动匹配" },
+                  { v: "image", label: "上传模特图",      desc: "上传真人照片，复刻模特形象" },
+                  { v: "video", label: "上传模特视频",    desc: "上传视频，自动提取中间帧" },
+                ] as { v: ModelSrc; label: string; desc: string }[]).map(o => (
+                  <label key={o.v} onClick={() => setModelSrc(o.v)}
+                    style={{ flex: "1 1 180px", minWidth: 160, border: `2px solid ${modelSrc === o.v ? "#0d0d0d" : "#e2e8f0"}`, borderRadius: 12, padding: "0.85rem", cursor: "pointer", background: modelSrc === o.v ? "#f7f7f5" : "#fff", transition: "all 0.15s" }}>
+                    <input type="radio" name="modelSrc" value={o.v} checked={modelSrc === o.v} onChange={() => setModelSrc(o.v)} style={{ marginRight: 7 }} />
+                    <strong style={{ fontSize: "0.88rem", color: "#1a202c" }}>{o.label}</strong>
+                    <div style={{ fontSize: "0.73rem", color: "#718096", marginTop: 5, lineHeight: 1.5 }}>{o.desc}</div>
+                  </label>
+                ))}
+              </div>
+              {modelSrc === "image" && (
+                <label style={{ display: "flex", alignItems: "center", gap: 10, border: "2px dashed #e2e8f0", borderRadius: 10, padding: "0.9rem 1rem", cursor: "pointer", background: "#fafafa" }}>
+                  <input type="file" accept="image/*" style={{ display: "none" }}
+                    onChange={e => { const f = e.target.files?.[0]; if (f) uploadImg(f, "/api/video/general/upload/model-image", "model_image_url", setModelImg); e.target.value = ""; }} />
+                  {modelImg.preview
+                    ? <><img src={modelImg.preview} alt="model" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 8 }} /><span style={{ fontSize: "0.85rem", color: "#4a5568" }}>已上传 {modelImg.uploading ? "（上传中…）" : "✓"}</span></>
+                    : <span style={{ fontSize: "0.85rem", color: "#a0aec0" }}>点击上传模特图片</span>
+                  }
+                </label>
+              )}
+              {modelSrc === "video" && (
+                <label style={{ display: "flex", alignItems: "center", gap: 10, border: "2px dashed #e2e8f0", borderRadius: 10, padding: "0.9rem 1rem", cursor: "pointer", background: "#fafafa" }}>
+                  <input type="file" accept="video/*" style={{ display: "none" }}
+                    onChange={async e => {
+                      const f = e.target.files?.[0]; if (!f) return;
+                      setModelVid({ file: f, uploading: true }); setError("");
+                      try {
+                        const fd = new FormData(); fd.append("file", f);
+                        const r = await fetch(`${API_BASE}/api/video/general/upload/video`, { method: "POST", headers: { Authorization: `Bearer ${getToken()}` }, body: fd });
+                        if (!r.ok) throw new Error(await r.text());
+                        const d = await r.json();
+                        setModelVidUrl(d.video_url || "");
+                        setModelVid({ file: f, uploading: false });
+                      } catch (err) { setError((err as Error).message || "视频上传失败"); setModelVid({ file: null, uploading: false }); }
+                      e.target.value = "";
+                    }} />
+                  <span style={{ fontSize: "0.85rem", color: modelVid.file ? "#4a5568" : "#a0aec0" }}>
+                    {modelVid.uploading ? "上传中…" : modelVid.file ? `已上传：${modelVid.file.name} ✓` : "点击上传模特视频（≤ 100MB）"}
+                  </span>
                 </label>
               )}
             </div>
-          </div>
-          <div style={{ fontSize: "0.78rem", color: "#999" }}>正面图必传,反面/背面/场景图可选。每张 ≤ 10MB。</div>
-        </Box>
 
-        <Box label={t("videoGeneral.box2")}>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
-            {[
-              { value: "auto", label: t("videoGeneral.modelAuto"), desc: t("videoGeneral.modelAutoDesc") },
-              { value: "image", label: t("videoGeneral.modelImage"), desc: t("videoGeneral.modelImageDesc") },
-              { value: "video", label: t("videoGeneral.modelVideo"), desc: t("videoGeneral.modelVideoDesc") },
-            ].map((o) => (
-              <label key={o.value} style={{ flex: 1, minWidth: 180, border: modelSource === o.value ? "2px solid #0d8a3e" : "1px solid #ddd", borderRadius: 10, padding: "0.7rem", cursor: "pointer", background: modelSource === o.value ? "#f0fdf4" : "#fff" }}>
-                <input type="radio" name="model" value={o.value} checked={modelSource === o.value} onChange={() => setModelSource(o.value as "auto" | "image" | "video")} style={{ marginRight: 6 }} />
-                <strong style={{ fontSize: "0.9rem" }}>{o.label}</strong>
-                <div style={{ fontSize: "0.75rem", color: "#666", marginTop: 4 }}>{o.desc}</div>
-              </label>
-            ))}
-          </div>
-          {modelSource === "image" && (
-            <label style={{ display: "block", border: "2px dashed #ddd", borderRadius: 10, padding: "0.8rem", textAlign: "center", cursor: "pointer", background: modelImageFile ? "#f9f7f2" : "#fff" }}>
-              <input type="file" accept="image/*" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) uploadModelImage(f); }} />
-              {modelImageFile ? `✓ ${modelImageFile.name}` : t("videoGeneral.uploadModelImage")}
-            </label>
-          )}
-          {modelSource === "video" && (
-            <label style={{ display: "block", border: "2px dashed #ddd", borderRadius: 10, padding: "0.8rem", textAlign: "center", cursor: "pointer", background: modelVideoFile ? "#f9f7f2" : "#fff" }}>
-              <input type="file" accept="video/*" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) uploadModelVideo(f); }} />
-              {modelVideoFile ? `✓ ${modelVideoFile.name}` : t("videoGeneral.uploadModelVideo")}
-            </label>
-          )}
-        </Box>
+            {/* ── Step 3：视频参数 ── */}
+            <div style={CARD}>
+              <div style={{ display: "flex", alignItems: "center", marginBottom: "1rem" }}>
+                <span style={STEP_LABEL}>STEP 3</span>
+                <span style={{ fontSize: "0.92rem", fontWeight: 600, color: "#1a202c" }}>视频参数</span>
+              </div>
 
-        <Box label={t("videoGeneral.box3")}>
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 14 }}>
-            <div>
-              <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: 4 }}>总时长</div>
-              <select value={duration} onChange={e => setDuration(parseInt(e.target.value))} style={{ padding: "0.4rem 0.6rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.9rem" }}>
-                <option value={5}>5 秒</option>
-                <option value={10}>10 秒</option>
-                <option value={15}>15 秒</option>
-                <option value={30}>30 秒</option>
-                <option value={60}>60 秒</option>
-              </select>
-              <div style={{ fontSize: "0.7rem", color: "#9ca3af", marginTop: 3 }}>AI 按叙事节奏自动拆段(短时长 1-2 段 / 长时长 5-8 段)</div>
-            </div>
-            <div>
-              <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: 4 }}>市场</div>
-              <select value={region} onChange={e => setRegion(e.target.value as "CN" | "Global")} style={{ padding: "0.4rem 0.6rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.9rem" }}>
-                <option value="CN">国内(中文,亚洲面孔)</option>
-                <option value="Global">海外(英文,Western)</option>
-              </select>
-            </div>
-            <div>
-              <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: 4 }}>比例</div>
-              <select value={aspectRatio} onChange={e => setAspectRatio(e.target.value)} style={{ padding: "0.4rem 0.6rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.9rem" }}>
-                <option value="9:16">9:16 竖版</option>
-                <option value="16:9">16:9 横版</option>
-                <option value="1:1">1:1 方形</option>
-              </select>
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: 4 }}>💡 你的想法(可选,500 字内 — 目标人群/卖点重点/风格/CTA 方向)</div>
-            <textarea
-              value={userBrief}
-              onChange={e => setUserBrief(e.target.value.slice(0, 500))}
-              rows={3}
-              placeholder="例:目标 30+ 精致妈妈,强调安全成分 + 7 天见效;复古日系小清新风格;结尾导向'立即领取试用装'。留空 AI 完全自动判。"
-              style={{ width: "100%", padding: "0.5rem 0.7rem", border: "1px solid #ddd", borderRadius: 8, fontSize: "0.85rem", lineHeight: 1.6, resize: "vertical", fontFamily: "inherit" }}
-            />
-            <div style={{ fontSize: "0.72rem", color: "#999", textAlign: "right", marginTop: 2 }}>{userBrief.length}/500</div>
-          </div>
-        </Box>
+              {/* 脚本模式选择 */}
+              <div style={{ marginBottom: 18 }}>
+                <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 8 }}>脚本模式</div>
+                <div style={{ display: "flex", gap: 10 }}>
+                  {([
+                    { v: "story",  icon: "🎬", label: "剧情模式",  desc: "有故事冲突，产品是救星（推荐）" },
+                    { v: "direct", icon: "📦", label: "直接带货",  desc: "博主展示+安利产品，无剧情" },
+                  ] as { v: "story" | "direct"; icon: string; label: string; desc: string }[]).map(o => (
+                    <button key={o.v} onClick={() => setScriptMode(o.v)}
+                      style={{
+                        flex: "1 1 140px", padding: "0.7rem 0.9rem", border: `2px solid ${scriptMode === o.v ? "#0d0d0d" : "#e2e8f0"}`,
+                        borderRadius: 10, background: scriptMode === o.v ? "#0d0d0d" : "#fff",
+                        color: scriptMode === o.v ? "#fff" : "#4a5568", cursor: "pointer",
+                        textAlign: "left", transition: "all 0.15s",
+                      }}>
+                      <div style={{ fontSize: "0.88rem", fontWeight: 600, marginBottom: 3 }}>{o.icon} {o.label}</div>
+                      <div style={{ fontSize: "0.7rem", opacity: scriptMode === o.v ? 0.75 : 0.7, lineHeight: 1.4 }}>{o.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-        {!analyzeResult && (
-          <button onClick={analyze} disabled={analyzing || !productImageUrls.length} style={{ background: "#0d0d0d", color: "#fff", border: "none", padding: "0.9rem 1.6rem", borderRadius: 10, fontSize: "0.95rem", cursor: analyzing ? "not-allowed" : "pointer", opacity: analyzing ? 0.6 : 1, marginBottom: "1rem" }}>
-            {analyzing ? analyzeMsg : "🔍 AI 分析产品 + 出脚本(消耗 5 积分)"}
-          </button>
-        )}
-
-        {analyzeResult && (
-          <>
-            <Box label={`④ AI 分析结果 · 品类:${analyzeResult.category}${analyzeResult.target_user ? ` · 目标用户:${analyzeResult.target_user}` : ""}`}>
-              {analyzeResult.product_specifics && (analyzeResult.product_specifics.subcategory || (analyzeResult.product_specifics.key_visual_features || []).length > 0) && (
-                <div style={{ background: "#fef9e7", border: "1px solid #fde68a", padding: "0.7rem 0.9rem", borderRadius: 8, marginBottom: 10 }}>
-                  <strong style={{ fontSize: "0.85rem", color: "#92400e" }}>🔒 AI 识别的产品(用于锁形态不变形):</strong>
-                  {analyzeResult.product_specifics.subcategory && (
-                    <div style={{ fontSize: "0.82rem", color: "#1f2937", marginTop: 4 }}>
-                      <b>子类:</b> {analyzeResult.product_specifics.subcategory}
-                    </div>
-                  )}
-                  {analyzeResult.product_specifics.form_constraint && (
-                    <div style={{ fontSize: "0.78rem", color: "#6b7280", marginTop: 2 }}>
-                      <b>形态约束:</b> {analyzeResult.product_specifics.form_constraint}
-                    </div>
-                  )}
-                  {(analyzeResult.product_specifics.key_visual_features || []).length > 0 && (
-                    <div style={{ fontSize: "0.78rem", color: "#6b7280", marginTop: 2 }}>
-                      <b>视觉特征:</b> {(analyzeResult.product_specifics.key_visual_features || []).join("、")}
-                    </div>
-                  )}
-                  <div style={{ fontSize: "0.7rem", color: "#9ca3af", marginTop: 4 }}>识别错了请重新 analyze(或上传更清晰的产品图)</div>
-                </div>
-              )}
-              {analyzeResult.selling_points.length > 0 && (
-                <div style={{ background: "#f0f7fb", padding: "0.6rem 0.8rem", borderRadius: 8, marginBottom: 10 }}>
-                  <strong style={{ fontSize: "0.85rem" }}>核心卖点:</strong>
-                  <ul style={{ margin: "0.4rem 0 0", paddingLeft: "1.2rem", fontSize: "0.85rem" }}>
-                    {analyzeResult.selling_points.map((p, i) => <li key={i}>{p}</li>)}
-                  </ul>
-                </div>
-              )}
-              {analyzeResult.creative_brief && Object.keys(analyzeResult.creative_brief).length > 0 && (
-                <div style={{ background: "#fafaf7", border: "1px solid #ecebe5", padding: "0.7rem 0.9rem", borderRadius: 8, marginBottom: 14 }}>
-                  <strong style={{ fontSize: "0.85rem", color: "#374151" }}>🎯 广告创意脑图(可复刻 7 元素)</strong>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "0.5rem 1rem", marginTop: 8 }}>
-                    {(Object.keys(BRIEF_LABELS) as (keyof CreativeBrief)[]).map((k) => {
-                      const v = analyzeResult.creative_brief?.[k];
-                      if (!v) return null;
-                      return (
-                        <div key={k} style={{ fontSize: "0.78rem", lineHeight: 1.5 }}>
-                          <div style={{ color: "#9ca3af", marginBottom: 2 }}>{BRIEF_LABELS[k]}</div>
-                          <div style={{ color: "#374151" }}>{v}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-              {analyzeResult.scenes.map((sc, idx) => {
-                const role = sc.narrative_role || "";
-                const meta = ROLE_META[role];
-                return (
-                <div key={sc.id || idx} style={{ borderTop: idx > 0 ? "1px solid #eee" : "none", paddingTop: idx > 0 ? "1rem" : 0, marginTop: idx > 0 ? "1rem" : 0 }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
-                    <strong style={{ fontSize: "0.9rem" }}>镜 {sc.id || idx + 1}</strong>
-                    {meta && (
-                      <span style={{ background: meta.bg, color: meta.fg, fontSize: "0.72rem", padding: "0.15rem 0.5rem", borderRadius: 4, fontWeight: 500 }}>
-                        {meta.label}
-                      </span>
-                    )}
-                    <span style={{ fontSize: "0.78rem", color: "#999" }}>{sc.time_range} · {sc.duration_sec}s · {sc.shot}</span>
-                  </div>
-                  <div style={{ marginBottom: 6 }}>
-                    <div style={{ fontSize: "0.75rem", color: "#666", marginBottom: 2 }}>动作:</div>
-                    <input value={sc.action || ""} onChange={e => updateScene(idx, "action", e.target.value)} style={{ width: "100%", padding: "0.4rem 0.6rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.82rem" }} />
-                  </div>
-                  <div style={{ marginBottom: 6 }}>
-                    <div style={{ fontSize: "0.75rem", color: "#666", marginBottom: 2 }}>画面 prompt:</div>
-                    <textarea value={sc.visual_prompt || ""} onChange={e => updateScene(idx, "visual_prompt", e.target.value)} rows={2} style={{ width: "100%", padding: "0.4rem 0.6rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.82rem", fontFamily: "monospace", resize: "vertical" }} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: "0.75rem", color: "#666", marginBottom: 2 }}>口播文字:</div>
-                    <textarea value={sc.speech || ""} onChange={e => updateScene(idx, "speech", e.target.value)} rows={2} placeholder="留空 → 该段纯画面无声" style={{ width: "100%", padding: "0.4rem 0.6rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.82rem", lineHeight: 1.5, resize: "vertical" }} />
-                  </div>
-                </div>
-                );
-              })}
-            </Box>
-
-            {/* 2026-05-12:用户指定的人物搭配 + 场景(可选,留空 AI 自动生成)*/}
-            {!resultVideoUrl && (
-              <Box label="④.3 模特搭配 & 场景(可选 · 留空让 AI 自动生成)">
-                <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: 10, lineHeight: 1.5 }}>
-                  填了就硬约束:模特除产品外的穿搭 + 整体场景 — AI 会严格按你写的来,不再自由发挥。
-                </div>
-                <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
-                  <div>
-                    <div style={{ fontSize: "0.78rem", color: "#374151", marginBottom: 4, fontWeight: 500 }}>👕 人物搭配(除产品外):</div>
-                    <textarea value={userOutfit} onChange={e => setUserOutfit(e.target.value)} rows={3} placeholder="例:白色 T 恤 + 牛仔裤 + 小白鞋(留空 AI 自配)" style={{ width: "100%", padding: "0.5rem 0.7rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.85rem", lineHeight: 1.5, resize: "vertical", fontFamily: "inherit" }} maxLength={500} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: "0.78rem", color: "#374151", marginBottom: 4, fontWeight: 500 }}>🏠 场景描述:</div>
-                    <textarea value={userScene} onChange={e => setUserScene(e.target.value)} rows={3} placeholder="例:明亮的客厅 / 落地窗 / 午后阳光(留空 AI 自配)" style={{ width: "100%", padding: "0.5rem 0.7rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.85rem", lineHeight: 1.5, resize: "vertical", fontFamily: "inherit" }} maxLength={500} />
-                  </div>
-                </div>
-              </Box>
-            )}
-
-            {/* 2026-05-11 P226:分镜板预览(2 积分,3-5 分钟,N≤4 宫格,可看着满意再生成视频)*/}
-            {!resultVideoUrl && (
-              <Box label={`④.5 分镜板预览(可选 · 20 积分 · ${analyzeResult.scenes.length >= 2 ? `最多 ${Math.min(4, analyzeResult.scenes.length)} 宫格` : "1 张首帧图"})`}>
-                <div style={{ fontSize: "0.82rem", color: "#666", marginBottom: 10, lineHeight: 1.5 }}>
-                  生成 1 张分镜板预览图(GPT-Image 2 出图,模特/产品/场景全锁同一 lookbook)。
-                  看着满意再生成完整视频,省时间省钱。
-                </div>
-                {!storyboardUrl && (
-                  <button onClick={generateStoryboard} disabled={storyboardLoading} style={{ background: "#7c3aed", color: "#fff", border: "none", padding: "0.7rem 1.2rem", borderRadius: 10, fontSize: "0.9rem", cursor: storyboardLoading ? "not-allowed" : "pointer", opacity: storyboardLoading ? 0.6 : 1 }}>
-                    {storyboardLoading ? storyboardMsg : "🎨 生成分镜板预览(消耗 20 积分)"}
-                  </button>
-                )}
-                {storyboardUrl && (
-                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
-                    {/* 角色表 — 脸部 + 全身 3 视图 */}
-                    {characterSheetUrl && characterSheetUrl !== storyboardUrl && (
-                      <div style={{ flex: "0 1 320px" }}>
-                        <div style={{ fontSize: "0.78rem", color: "#374151", fontWeight: 500, marginBottom: 4 }}>🎭 模特角色表(脸部 + 全身正/背/侧)</div>
-                        <img src={characterSheetUrl} alt="character sheet" style={{ width: "100%", maxWidth: 320, borderRadius: 10, border: "1px solid #ddd", display: "block" }} />
-                        <a href={characterSheetUrl} download style={{ fontSize: "0.72rem", color: "#7c3aed" }}>⬇ 下载</a>
-                      </div>
-                    )}
-                    {/* 分镜板 */}
-                    <div style={{ flex: "1 1 320px" }}>
-                      <div style={{ fontSize: "0.78rem", color: "#374151", fontWeight: 500, marginBottom: 4 }}>🎬 分镜板预览</div>
-                      <img src={storyboardUrl} alt="分镜板预览" style={{ width: "100%", maxWidth: 480, borderRadius: 10, border: "1px solid #ddd", display: "block" }} />
-                      <div style={{ fontSize: "0.78rem", color: "#666", marginTop: 8 }}>
-                        {storyboardNPanels >= 2 ? `${storyboardNPanels} 宫格(对应前 ${storyboardNPanels} 段 narrative_role)` : "单图预览"}
-                        {" · "}
-                        <a href={storyboardUrl} download style={{ color: "#7c3aed" }}>⬇ 下载</a>
-                        {" · "}
-                        <button onClick={() => { setStoryboardUrl(""); setCharacterSheetUrl(""); }} style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", padding: 0, fontSize: "0.78rem" }}>重出</button>
-                      </div>
-                      {storyboardModelUrl && (
-                        <div style={{ fontSize: "0.72rem", color: "#9ca3af", marginTop: 4 }}>
-                          ✓ 模特身份已锁定,生成视频时复用(省 2-3 分钟)
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </Box>
-            )}
-            {!resultVideoUrl && (
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: "1rem", flexWrap: "wrap" }}>
-                <div style={{ fontSize: "0.85rem", color: "#374151", display: "flex", alignItems: "center", gap: 6 }}>
-                  📦 批量生成:
-                  <select value={batchCount} onChange={e => setBatchCount(Number(e.target.value))} disabled={generating} style={{ padding: "0.4rem 0.6rem", border: "1px solid #ddd", borderRadius: 6, fontSize: "0.85rem", cursor: generating ? "not-allowed" : "pointer" }}>
-                    <option value={1}>1 个</option>
-                    <option value={2}>2 个</option>
-                    <option value={3}>3 个</option>
-                    <option value={4}>4 个</option>
-                    <option value={5}>5 个</option>
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
+                <div>
+                  <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>总时长</div>
+                  <select value={duration} onChange={e => setDuration(+e.target.value)}
+                    style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
+                    {[10, 15, 30].map(v => <option key={v} value={v}>{v} 秒</option>)}
                   </select>
                 </div>
-                <button onClick={generate} disabled={generating} style={{ background: "#dc2626", color: "#fff", border: "none", padding: "0.9rem 1.6rem", borderRadius: 10, fontSize: "0.95rem", cursor: generating ? "not-allowed" : "pointer", opacity: generating ? 0.6 : 1 }}>
-                  {generating ? generateMsg : `🎬 生成视频(55 积分/秒 · 约 ${analyzeResult.scenes.length * 5 * 55 * batchCount} 积分)`}
-                </button>
-                {batchCount > 1 && !generating && (
-                  <span style={{ fontSize: "0.78rem", color: "#9ca3af" }}>同 prompt 跑 {batchCount} 个独立版本,挑最佳</span>
-                )}
+                <div>
+                  <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>目标市场</div>
+                  <select value={market} onChange={e => setMarket(e.target.value)}
+                    style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
+                    {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
               </div>
-            )}
+              <div>
+                <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>你的想法（可选）</div>
+                <textarea
+                  value={userIdea}
+                  onChange={e => setUserIdea(e.target.value.slice(0, 500))}
+                  rows={3}
+                  placeholder="描述你想要的风格、场景等，留空 AI 自动决定"
+                  style={{ width: "100%", padding: "0.6rem 0.8rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", lineHeight: 1.6, resize: "vertical", fontFamily: "inherit", boxSizing: "border-box", color: "#1a202c" }}
+                />
+                <div style={{ fontSize: "0.7rem", color: "#cbd5e0", textAlign: "right", marginTop: 3 }}>{userIdea.length}/500</div>
+              </div>
+            </div>
+
+            {/* ── Step 4：生成按钮 ── */}
+            <div style={CARD}>
+              <div style={{ display: "flex", alignItems: "center", marginBottom: "1rem" }}>
+                <span style={STEP_LABEL}>STEP 4</span>
+                <span style={{ fontSize: "0.92rem", fontWeight: 600, color: "#1a202c" }}>生成创意脚本</span>
+              </div>
+
+              <button
+                onClick={generate}
+                disabled={loading || !front.url || front.uploading}
+                style={{
+                  width: "100%", padding: "0.9rem", borderRadius: 10, border: "none", fontSize: "0.95rem", fontWeight: 600,
+                  background: loading || !front.url ? "#e2e8f0" : "#0d0d0d",
+                  color: loading || !front.url ? "#a0aec0" : "#fff",
+                  cursor: loading || !front.url ? "not-allowed" : "pointer",
+                  transition: "all 0.15s",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                }}
+              >
+                {loading ? (
+                  <>
+                    <span style={{ display: "inline-block", width: 16, height: 16, border: "2px solid #a0aec0", borderTopColor: "#555", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+                    AI 正在分析产品并撰写爆款脚本…
+                  </>
+                ) : script ? "重新生成脚本（35 积分）" : "生成创意脚本（35 积分）"}
+              </button>
+              {!front.url && !loading && (
+                <div style={{ fontSize: "0.75rem", color: "#a0aec0", textAlign: "center", marginTop: 6 }}>请先上传正面产品图</div>
+              )}
+
+              {/* 脚本展示区 */}
+              {script && !loading && (
+                <div style={{ marginTop: "1.4rem" }}>
+                  <div style={{ fontSize: "0.8rem", color: "#718096", fontWeight: 600, marginBottom: 10, letterSpacing: "0.05em" }}>✨ 生成的创意脚本</div>
+                  <ScriptDisplay text={script} />
+
+                  {/* 行动按钮 */}
+                  <div style={{ display: "flex", gap: 10, marginTop: "1.2rem", flexWrap: "wrap" }}>
+                    <button
+                      onClick={generate}
+                      disabled={loading || vidLoading}
+                      style={{ flex: "1 1 200px", padding: "0.7rem 1rem", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#374151", fontSize: "0.88rem", cursor: (loading || vidLoading) ? "not-allowed" : "pointer", fontWeight: 500 }}
+                    >
+                      🔄 重新生成脚本（35 积分）
+                    </button>
+                    <button
+                      onClick={generateVideo}
+                      disabled={vidLoading || loading}
+                      style={{
+                        flex: "1 1 200px", padding: "0.7rem 1rem", borderRadius: 10, border: "none",
+                        background: vidLoading || loading ? "#e2e8f0" : "#16a34a",
+                        color: vidLoading || loading ? "#a0aec0" : "#fff",
+                        fontSize: "0.88rem", cursor: vidLoading || loading ? "not-allowed" : "pointer",
+                        fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                      }}
+                    >
+                      {vidLoading ? (
+                        <>
+                          <span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #a0aec0", borderTopColor: "#555", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+                          生成中…
+                        </>
+                      ) : "🎬 确认脚本，生成视频"}
+                    </button>
+                  </div>
+
+                  {/* 视频生成进度 */}
+                  {vidLoading && vidProgress && (
+                    <div style={{ marginTop: 12, padding: "0.7rem 0.9rem", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: "0.82rem", color: "#166534" }}>
+                      ⏳ {vidProgress}
+                    </div>
+                  )}
+
+                  {/* 视频结果 */}
+                  {vidUrl && !vidLoading && (
+                    <div style={{ marginTop: "1.2rem" }}>
+                      <div style={{ fontSize: "0.8rem", color: "#718096", fontWeight: 600, marginBottom: 10 }}>🎬 生成完成</div>
+                      <video src={vidUrl} controls style={{ width: "100%", maxWidth: 400, borderRadius: 10, display: "block" }} />
+                      <div style={{ marginTop: 8, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                        <a href={vidUrl} download style={{ fontSize: "0.85rem", color: "#16a34a", textDecoration: "none", fontWeight: 500 }}>⬇ 下载视频</a>
+                        <button onClick={() => { setVidUrl(""); setVidCost(0); }}
+                          style={{ background: "none", border: "none", color: "#888", fontSize: "0.82rem", cursor: "pointer" }}>
+                          重新生成视频
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </>
         )}
 
-        {resultVideoUrl && (
-          <Box label={sceneVideos.length > 0 ? `⑤ 独立分镜视频(${sceneVideos.length} 段)` : "⑤ 生成结果"}>
-            {sceneVideos.length > 0 ? (
-              <>
-                <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: 10, lineHeight: 1.5 }}>
-                  每段独立成片(不拼接),可单独下载使用。后期需要可自己 ffmpeg / 剪辑软件拼接。
-                </div>
-                <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
-                  {sceneVideos.map((sv, i) => (
-                    <div key={i}>
-                      <div style={{ fontSize: "0.78rem", color: "#374151", marginBottom: 4, fontWeight: 500 }}>
-                        分镜 {sv.scene_idx + 1}
-                        {sv.scene?.narrative_role ? ` · ${sv.scene.narrative_role}` : ""}
-                        {batchCount > 1 ? ` · 批次 ${sv.batch_idx + 1}` : ""}
-                      </div>
-                      <video src={sv.url} controls style={{ width: "100%", borderRadius: 10 }} />
-                      {sv.scene?.shot && (
-                        <div style={{ fontSize: "0.7rem", color: "#999", marginTop: 4 }}>{sv.scene.shot}{sv.scene.duration_sec ? ` · ${sv.scene.duration_sec}s` : ""}</div>
-                      )}
-                      <div style={{ marginTop: 4 }}>
-                        <a href={sv.url} download style={{ color: "#0d8a3e", fontSize: "0.82rem" }}>⬇ 下载分镜 {sv.scene_idx + 1}</a>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <>
-                <video src={resultVideoUrl} controls style={{ width: "100%", maxWidth: 480, borderRadius: 10 }} />
-                <div style={{ marginTop: 10 }}>
-                  <a href={resultVideoUrl} download style={{ color: "#0d8a3e", fontSize: "0.85rem" }}>⬇ 下载视频</a>
-                </div>
-              </>
-            )}
-          </Box>
-        )}
+        {/* spin keyframe */}
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </main>
     </div>
   );

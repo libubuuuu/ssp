@@ -98,6 +98,11 @@ class Settings(BaseSettings):
     WECHAT_PAY_PRIVATE_KEY_PATH: str = ""        # 商户 API 私钥 PEM 文件路径
     WECHAT_PAY_NOTIFY_URL: str = ""              # 异步回调 URL,如 https://ailixiao.com/api/wechat-pay/notify
 
+    # 灵梦 API(Gemini,OpenAI 兼容接口)
+    LINGMENG_BASE_URL: str = "https://1189.xin/v1"
+    LINGMENG_MODEL: str = "gpt-4o"
+    LINGMENG_API_KEY: str = ""
+
     class Config:
         env_file = str(_ENV_PATH)
         extra = "ignore"

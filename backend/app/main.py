@@ -58,6 +58,24 @@ async def lifespan(app: FastAPI):
             log_info(f"启动清理: {n} 个孤儿 job 标 failed + 退积分")
     except Exception as e:
         print(f"orphan cleanup failed at startup: {e}")
+    # 启动时跑一次超时订单取消，再启后台 10 分钟循环
+    try:
+        from app.services.order_gc import cancel_expired_pending_orders, order_gc_loop
+        m = cancel_expired_pending_orders()
+        if m:
+            log_info(f"启动清理: {m} 个超时 pending 订单已取消")
+        import asyncio as _asyncio
+        _asyncio.create_task(order_gc_loop())
+    except Exception as e:
+        print(f"order_gc startup failed: {e}")
+    # 启动时跑一次数据库备份 + 对账，再启后台 24 小时循环
+    try:
+        from app.services.db_backup import run_backup_and_reconcile, db_backup_loop
+        import asyncio as _asyncio
+        run_backup_and_reconcile()
+        _asyncio.create_task(db_backup_loop())
+    except Exception as e:
+        print(f"db_backup startup failed: {e}")
     yield
     # 关闭:等所有后台任务完成再退出（最多 10 分钟）
     log_info("AI 创意平台 正在关闭...")
@@ -114,6 +132,9 @@ app.include_router(video_clone.router, prefix="/api/video/clone", tags=["视频�
 app.include_router(video_clone_v2.router, prefix="/api/video/clone-v2", tags=["视频复刻 V2(Seedance r2v 双版本)"])
 app.include_router(video_frame_extract.router, prefix="/api/video/frame-extract", tags=["视频拆帧 storyboard"])
 app.include_router(admin.router, prefix="/api/admin", tags=["管理员"])
+
+from app.api import billing
+app.include_router(billing.router, prefix="/api/billing", tags=["积分流水"])
 
 @app.get("/")
 def root():

@@ -343,26 +343,25 @@ async def generate_submit(
         raise HTTPException(400, "产品图 / 人物图 / 场景图 至少上传 1 张")
 
     user_id = str(current_user["id"])
-    # 按合并后实际段数计费（跳过的不算，短于3s的合并后算一段）
+    # 计费:按"相同图片 + 总时长≤15s"分组后每组调一次 API,每次 max(3,ceil(组时长)) 秒
     active_scenes = [s for s in scenes if s.get("id") not in set(skipped_scene_ids)]
+    import math as _math
 
-    def _preview_merge(scs, min_dur=3.0):
-        result, i = [], 0
-        while i < len(scs):
-            sc = dict(scs[i])
-            while sc.get("duration_sec", 4) < min_dur and i + 1 < len(scs):
-                nxt = scs[i + 1]
-                if sc["duration_sec"] + nxt.get("duration_sec", 4) <= 15.0:
-                    sc["duration_sec"] += nxt.get("duration_sec", 4)
-                    i += 1
-                else:
-                    break
-            result.append(sc)
-            i += 1
-        return result
+    def _preview_group_tasks(scs, max_dur=15.0, min_dur=3):
+        tasks, cur_dur = [], 0.0
+        for s in scs:
+            dur = float(s.get("duration_sec") or 4)
+            if cur_dur + dur <= max_dur:
+                cur_dur += dur
+            else:
+                tasks.append(cur_dur)
+                cur_dur = dur
+        if cur_dur > 0:
+            tasks.append(cur_dur)
+        return [max(min_dur, _math.ceil(d)) for d in tasks]
 
-    merged_scenes = _preview_merge(active_scenes)
-    total_duration_sec = sum(max(4, int(round(float(s.get("duration_sec") or 4)))) for s in merged_scenes)
+    task_durs = _preview_group_tasks(active_scenes)
+    total_duration_sec = sum(task_durs)
     cost = max(65, total_duration_sec * 65)
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
@@ -386,6 +385,7 @@ async def generate_submit(
             "aspect_ratio": aspect_ratio,
             "original_video_url": original_video_url,  # P238 用于叠加音轨
             "_user_id": user_id,
+            "_user_email": current_user.get("email", ""),
         },
         "module": "video/frame-extract/generate",
         "cost": cost,

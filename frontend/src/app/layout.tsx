@@ -4,6 +4,7 @@ import JobPanel from "@/components/JobPanel";
 import AuthFetchInterceptor from "@/components/AuthFetchInterceptor";
 import CookieConsent from "@/components/CookieConsent";
 import SiteFooter from "@/components/SiteFooter";
+import WechatSupport from "@/components/WechatSupport";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
 
 // 2026-05-12:腾讯云无法访问 fonts.gstatic.com,build 时 next/font/google 卡死。
@@ -29,6 +30,7 @@ export default function RootLayout({
           <SiteFooter />
           <JobPanel />
           <CookieConsent />
+          <WechatSupport />
         </LanguageProvider>
       </body>
     </html>

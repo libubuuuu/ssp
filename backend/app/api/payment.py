@@ -183,19 +183,29 @@ async def admin_confirm_order(order_id: str, request: Request, current_user: dic
     """管理员确认订单入账（手动）"""
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="无权限，仅管理员可确认订单")
+    # 原子操作：UPDATE WHERE status='pending'，rowcount==1 才入账（跟微信回调写法对齐）
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id, amount, status FROM credit_orders WHERE id = ?", (order_id,))
-        row = cursor.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="订单不存在")
-        if row[2] == "paid":
-            raise HTTPException(status_code=400, detail="订单已确认过")
-        target_user_id = row[0]
-        credits_added = row[1]
-        cursor.execute("UPDATE credit_orders SET status='paid', paid_at=CURRENT_TIMESTAMP WHERE id=?", (order_id,))
-        cursor.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (credits_added, target_user_id))
+        cursor.execute(
+            "UPDATE credit_orders SET status='paid', paid_at=CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status = 'pending'",
+            (order_id,),
+        )
+        if cursor.rowcount != 1:
+            cursor.execute("SELECT status FROM credit_orders WHERE id = ?", (order_id,))
+            existing = cursor.fetchone()
+            conn.commit()
+            if not existing:
+                raise HTTPException(status_code=404, detail="订单不存在")
+            raise HTTPException(status_code=400, detail=f"订单状态非 pending（当前：{existing[0]}），无法重复入账")
+        cursor.execute("SELECT user_id, amount FROM credit_orders WHERE id = ?", (order_id,))
+        ord_row = cursor.fetchone()
         conn.commit()
+
+    target_user_id = ord_row[0]
+    credits_added = ord_row[1]
+    from app.services.billing import add_credits as _add_credits
+    _add_credits(target_user_id, credits_added, reason="recharge_manual", ref_id=order_id, module="payment/admin_confirm")
 
     # 审计:管理员手动入账等于"动钱",合规重点
     from app.services.audit import log_admin_action, ACTION_CONFIRM_ORDER

@@ -163,11 +163,10 @@ async def wechat_notify(request: Request):
             "SELECT user_id, amount FROM credit_orders WHERE id = ?", (out_trade_no,)
         )
         ord_row = cursor.fetchone()
-        cursor.execute(
-            "UPDATE users SET credits = credits + ? WHERE id = ?",
-            (ord_row[1], ord_row[0]),
-        )
         conn.commit()
+
+    from app.services.billing import add_credits as _add_credits
+    _add_credits(ord_row[0], ord_row[1], reason="recharge_wx", ref_id=out_trade_no, module="payment/wechat_notify")
 
     # 审计日志(系统自动入账,actor=system)
     log_admin_action(

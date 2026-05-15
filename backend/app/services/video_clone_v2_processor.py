@@ -1124,7 +1124,7 @@ async def _process_ultimate(
     """ultimate 多段路径:并发 fal → 失败段跳过+按段退款 → 拼接 → 双版本归档。
 
     并发策略:
-    - asyncio.Semaphore(3) 限制同时跑 fal 的段数(防 rate limit / 内存爆)
+    - asyncio.Semaphore(5) 限制同时跑 fal 的段数(防 rate limit / 内存爆)
     - original 段不占 semaphore(本地操作,瞬时完成)
 
     失败段策略:
@@ -1136,7 +1136,7 @@ async def _process_ultimate(
     aspect_ratio = "auto"  # 2026-05-11 对齐老板 fal playground 成功配方(playground 用 auto;fal 自动检测原视频比例)
 
     # 1. 并发跑所有段
-    sem = asyncio.Semaphore(3)
+    sem = asyncio.Semaphore(5)
 
     async def _run_seg_idx(i: int) -> Dict[str, Any]:
         plan_item = plan[i]

@@ -480,3 +480,183 @@ async def generate(
     create_tracked_task(_execute_job(job_id))
     log_info(f"video_general/generate submitted job={job_id} user={user_id} n_scenes={len(req.scenes)} category={req.category}")
     return {"job_id": job_id, "status": "pending", "cost": cost}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 入口B：爆款脚本生成（独立于 analyze/storyboard/generate，不影响现有流程）
+# POST /api/video/general/script
+# ──────────────────────────────────────────────────────────────────────────────
+
+class ScriptRequest(BaseModel):
+    """脚本生成请求体"""
+    # 产品图：二选一传入
+    image_base64: Optional[str] = Field(None, description="产品图 base64（支持带/不带 data URI 前缀）")
+    image_url: Optional[str] = Field(None, description="产品图 fal storage URL（与 image_base64 二选一）")
+    image_mime: str = Field("image/jpeg", description="图片 MIME 类型")
+    # 脚本参数
+    market: str = Field("海外", description="目标市场，如 '海外' / '国内' / '欧美' / '东南亚'")
+    duration: int = Field(15, ge=5, le=120, description="视频总时长（秒）")
+    model_info: str = Field("AI 自动生成模特", description="模特信息描述")
+    user_idea: str = Field("", description="用户额外想法（可为空）", max_length=500)
+    mode: str = Field("story", description="脚本模式：'story'（剧情）或 'direct'（直接带货）")
+
+
+@router.post("/script")
+async def script_generate(
+    body: ScriptRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """入口B第一步：产品图 → Gemini 生成爆款短视频脚本。
+
+    - 同步接口（Gemini 通常 10–30s 内返回）
+    - 扣 35 积分，失败全退
+    - 不影响 analyze / storyboard / generate 现有流程
+    """
+    from app.services.billing import add_credits
+    from app.services.video_general_script import generate_script
+    import httpx as _httpx
+    import base64 as _b64
+
+    if not body.image_base64 and not body.image_url:
+        raise HTTPException(400, "image_base64 和 image_url 至少传一个")
+
+    user_id = str(current_user["id"])
+    cost = 35
+    if not deduct_credits(user_id, cost):
+        raise HTTPException(402, f"积分不足，需 {cost} 积分")
+
+    try:
+        # 如果传的是 URL，先下载转成 base64
+        image_base64 = body.image_base64
+        image_mime = body.image_mime or "image/jpeg"
+
+        if not image_base64 and body.image_url:
+            try:
+                async with _httpx.AsyncClient(timeout=30, follow_redirects=True) as cli:
+                    r = await cli.get(body.image_url)
+                    r.raise_for_status()
+                    image_base64 = _b64.b64encode(r.content).decode("utf-8")
+                    ct = r.headers.get("content-type", "")
+                    if ct and ct.startswith("image/"):
+                        image_mime = ct.split(";")[0].strip()
+            except Exception as e:
+                add_credits(user_id, cost, reason="task_refund",
+                            ref_id="script_img_download_fail", module="video/general/script")
+                raise HTTPException(400, f"产品图下载失败: {str(e)[:200]}")
+
+        script = await generate_script(
+            image_base64=image_base64,
+            image_mime=image_mime,
+            market=body.market,
+            duration=body.duration,
+            model_info=body.model_info,
+            user_idea=body.user_idea,
+            mode=body.mode if body.mode in ("story", "direct") else "story",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        add_credits(user_id, cost, reason="task_refund",
+                    ref_id="script_gen_fail", module="video/general/script")
+        log_error(f"video_general/script 生成失败 user={user_id}: {e}")
+        raise HTTPException(500, f"脚本生成失败，积分已退还: {str(e)[:300]}")
+
+    log_info(f"video_general/script OK user={user_id} market={body.market} duration={body.duration}s script_len={len(script)}")
+    return {
+        "script": script,
+        "cost": cost,
+        "market": body.market,
+        "duration": body.duration,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 入口B第二步：脚本 → 视频生成
+# POST /api/video/general/script-to-video
+# ──────────────────────────────────────────────────────────────────────────────
+
+class ScriptToVideoRequest(BaseModel):
+    script: str = Field(..., description="Gemini 生成的脚本文字")
+    product_image_urls: List[str] = Field(..., description="产品图 URL 列表（正面必传）")
+    scene_image_url: Optional[str] = Field(None)
+    model_image_url: Optional[str] = Field(None)
+    model_video_url: Optional[str] = Field(None)
+    model_source: str = Field("auto", description="'auto' / 'image' / 'video'")
+    aspect_ratio: str = Field("9:16")
+
+
+@router.post("/script-to-video")
+async def script_to_video_submit(
+    body: ScriptToVideoRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """脚本确认后生成视频：解析分镜 → Seedance 2.0 批处理 → ffmpeg 拼接"""
+    import math as _math
+    from app.services.billing import add_credits
+    from app.services.video_general_script import parse_script
+
+    if not body.script.strip():
+        raise HTTPException(400, "script 必填")
+    if not body.product_image_urls:
+        raise HTTPException(400, "product_image_urls 必填")
+
+    # 解析脚本
+    scenes = parse_script(body.script)
+    if not scenes:
+        raise HTTPException(400, "脚本解析失败，未找到有效分镜。请确认脚本格式包含 [镜头X]：时间范围 |...")
+
+    # 按批处理分组估算积分（同 skill_generate 逻辑）
+    try:
+        from app.database import get_app_config
+        _batch_max = float(get_app_config("batch_max_duration", "8"))
+    except Exception:
+        _batch_max = 8.0
+
+    def _preview_cost(scs: list, max_dur: float = 8.0, min_dur: int = 4) -> int:
+        tasks, cur = [], 0.0
+        for s in scs:
+            d = float(s.get("duration_sec") or 4)
+            if cur + d <= max_dur:
+                cur += d
+            else:
+                tasks.append(cur)
+                cur = d
+        if cur > 0:
+            tasks.append(cur)
+        return sum(max(min_dur, _math.ceil(d)) for d in tasks)
+
+    billing_sec = _preview_cost(scenes, _batch_max)
+    cost = max(65, billing_sec * 65)
+
+    user_id = str(current_user["id"])
+    if not deduct_credits(user_id, cost):
+        raise HTTPException(402, f"积分不足，需 {cost} 积分（约 {len(scenes)} 个分镜）")
+
+    from app.api.jobs import JOBS, _save_jobs, _execute_job, create_tracked_task
+    job_id = str(uuid.uuid4())[:8]
+    JOBS[job_id] = {
+        "id": job_id,
+        "user_id": user_id,
+        "user_numeric_id": user_id,
+        "type": "script_to_video",
+        "title": f"脚本生成视频（{len(scenes)} 段）",
+        "params": {
+            "script": body.script,
+            "scenes": scenes,
+            "product_image_urls": body.product_image_urls,
+            "scene_image_url": body.scene_image_url or "",
+            "model_image_url": body.model_image_url or "",
+            "model_video_url": body.model_video_url or "",
+            "aspect_ratio": body.aspect_ratio,
+            "_user_id": user_id,
+        },
+        "module": "video/general/script-to-video",
+        "cost": cost,
+        "status": "pending",
+        "created_at": time.time(),
+    }
+    _save_jobs()
+    create_tracked_task(_execute_job(job_id))
+    log_info(f"script-to-video submitted job={job_id} user={user_id} scenes={len(scenes)} cost={cost}")
+    return {"job_id": job_id, "status": "pending", "cost": cost, "n_scenes": len(scenes)}

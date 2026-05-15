@@ -536,6 +536,24 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_vc2_disclaimer_user ON video_clone_v2_disclaimer_log(user_id, acknowledged_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_vc2_disclaimer_job ON video_clone_v2_disclaimer_log(job_id)")
 
+        # 运营配置表(key-value,运行时可改,重启不丢)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS app_config (
+            key        TEXT PRIMARY KEY,
+            value      TEXT NOT NULL,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+        # 默认值:仅 INSERT OR IGNORE,不覆盖已有配置
+        cursor.execute(
+            "INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)",
+            ("batch_max_duration", "8"),
+        )
+        cursor.execute(
+            "INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)",
+            ("batch_whitelist", '["lirunting1a@gmail.com"]'),
+        )
+
         # 创建索引优化查询性能
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
@@ -549,6 +567,26 @@ def init_db():
 
         conn.commit()
         print("Database initialized successfully!")
+
+
+def get_app_config(key: str, default: str = "") -> str:
+    """读取 app_config 表中的配置项;键不存在时返回 default。"""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT value FROM app_config WHERE key = ?", (key,)
+        ).fetchone()
+    return row["value"] if row else default
+
+
+def set_app_config(key: str, value: str) -> None:
+    """写入或更新 app_config 配置项。"""
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO app_config (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            (key, value),
+        )
+        conn.commit()
 
 
 if __name__ == "__main__":

@@ -12,19 +12,18 @@
 - polling 检测到 failed 时 try_refund(task_id):
     UPDATE pending_refunds SET refunded=1 WHERE task_id=? AND refunded=0
     rowcount==1(SQL 原子,UPDATE WHERE 是 atomic) → SELECT user_id, cost + add_credits
-    否则返 0(已退过 / 未注册 / TTL 过期都返 0)
+    否则返 0(已退过 / 未注册)
 - 多 tab 并发 polling、HTTP+WS 双轨触发都靠 SQL UPDATE 的原子性保证只退一次
 
 跟 v1 进程内存版差别:
 - ✅ backend 重启不丢退款记录(SQLite 持久化)
 - ✅ multi-worker 安全(SQL 层原子)
-- 限制:仍 30 分钟 TTL,过期 entries 不退(不假设 fal 任务超 30 分钟还在生成)
+- ✅ 无 TTL 限制:只要任务最终失败就退款,不论耗时多久
 """
 import time
 from typing import Optional
 
-_TTL_SECONDS = 30 * 60
-_GC_TRIGGER_PROB = 50  # 每 50 次 register 触发一次惰性 GC
+_GC_TRIGGER_PROB = 50  # 每 50 次 register 触发一次惰性 GC(只清已退款记录,不按时间删)
 
 
 def register(task_id: str, user_id: str, cost: int) -> None:
@@ -46,11 +45,10 @@ def register(task_id: str, user_id: str, cost: int) -> None:
             """,
             (task_id, str(user_id), int(cost), time.time()),
         )
-        # 惰性 GC:删 TTL 过期的 entries,触发概率 1/50 写入
+        # 惰性 GC:只清已完成退款(refunded=1)的历史记录,不按时间删未退款记录
         if cursor.lastrowid and cursor.lastrowid % _GC_TRIGGER_PROB == 0:
             cursor.execute(
-                "DELETE FROM pending_refunds WHERE registered_at < ?",
-                (time.time() - _TTL_SECONDS,),
+                "DELETE FROM pending_refunds WHERE refunded = 1"
             )
         conn.commit()
 
@@ -58,11 +56,12 @@ def register(task_id: str, user_id: str, cost: int) -> None:
 def try_refund(task_id: str) -> int:
     """polling 检测到 failed 时调。SQL 层原子 UPDATE 保证只退一次。
 
-    返回实退积分,0 表示:已退过 / 未注册 / TTL 过期。
+    返回实退积分,0 表示:已退过 / 未注册。
     多次调用幂等(第二次 UPDATE rowcount=0)。
+    无 TTL 限制:不论任务运行多久,只要最终失败都退款。
 
     步骤:
-    1. UPDATE pending_refunds SET refunded=1 WHERE task_id=? AND refunded=0 AND registered_at>=?
+    1. UPDATE pending_refunds SET refunded=1 WHERE task_id=? AND refunded=0
        SQL 层原子 — 两个并发 UPDATE 只有一个 rowcount==1
     2. 如果 rowcount==1:SELECT 拿 user_id+cost,add_credits 退款
     3. 否则返 0
@@ -70,16 +69,15 @@ def try_refund(task_id: str) -> int:
     if not task_id:
         return 0
     from ..database import get_db
-    cutoff = time.time() - _TTL_SECONDS
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute(
             """
             UPDATE pending_refunds
                SET refunded = 1
-             WHERE task_id = ? AND refunded = 0 AND registered_at >= ?
+             WHERE task_id = ? AND refunded = 0
             """,
-            (task_id, cutoff),
+            (task_id,),
         )
         if cursor.rowcount != 1:
             conn.commit()
@@ -100,20 +98,19 @@ def try_refund(task_id: str) -> int:
 
 def peek(task_id: str) -> Optional[tuple[str, int]]:
     """读但不退,测试 / 调试用。返回 (user_id, cost) 或 None。
-    refunded=1 / TTL 过期 都返 None(已不可退)。
+    refunded=1 返 None(已退过,不可重退)。
     """
     if not task_id:
         return None
     from ..database import get_db
-    cutoff = time.time() - _TTL_SECONDS
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute(
             """
             SELECT user_id, cost FROM pending_refunds
-             WHERE task_id = ? AND refunded = 0 AND registered_at >= ?
+             WHERE task_id = ? AND refunded = 0
             """,
-            (task_id, cutoff),
+            (task_id,),
         )
         row = cursor.fetchone()
     if not row:
