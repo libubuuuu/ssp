@@ -34,13 +34,29 @@ def _build_content(
     image_base64: Optional[str] = None,
     image_mime: str = "image/jpeg",
     video_url: Optional[str] = None,
+    image_urls: Optional[list] = None,
 ) -> list[dict]:
     """构造 messages[0].content 的多模态 parts 列表。"""
     parts: list[dict] = []
 
-    # 图片（base64）
+    # 视频 URL（先放，让模型先看视频再看图）
+    if video_url:
+        parts.append({
+            "type": "image_url",
+            "image_url": {"url": video_url},
+        })
+
+    # 多张图片 URL（按顺序）
+    if image_urls:
+        for url in image_urls:
+            if url:
+                parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": url},
+                })
+
+    # 单张图片（base64）
     if image_base64:
-        # 如果调用方传了带 data URI 前缀（data:image/jpeg;base64,...），只取逗号后面的部分
         if "," in image_base64:
             image_base64 = image_base64.split(",", 1)[1]
         parts.append({
@@ -50,16 +66,7 @@ def _build_content(
             },
         })
 
-    # 视频 URL（灵梦/Gemini 支持直接传视频 URL）
-    if video_url:
-        parts.append({
-            "type": "image_url",
-            "image_url": {
-                "url": video_url,
-            },
-        })
-
-    # 文字 prompt（放最后，模型读图/视频后再看指令）
+    # 文字 prompt（放最后）
     parts.append({"type": "text", "text": prompt})
 
     return parts
@@ -71,6 +78,7 @@ async def ask_gemini(
     image_base64: Optional[str] = None,
     image_mime: str = "image/jpeg",
     video_url: Optional[str] = None,
+    image_urls: Optional[list] = None,
     system_prompt: Optional[str] = None,
     max_tokens: int = 4096,
     temperature: float = 0.7,
@@ -79,9 +87,10 @@ async def ask_gemini(
 
     Args:
         prompt: 用户 prompt（必填）
-        image_base64: 图片 base64 字符串（可选，支持带/不带 data URI 前缀）
+        image_base64: 图片 base64（可选）
         image_mime: 图片 MIME 类型，默认 image/jpeg
-        video_url: 视频 URL（可选）
+        video_url: 视频 URL（可选，先于图片传入让模型先看视频）
+        image_urls: 多张图片 URL 列表（可选，按顺序传入）
         system_prompt: 系统 prompt（可选）
         max_tokens: 最大输出 token 数，默认 4096
         temperature: 温度，默认 0.7
@@ -112,16 +121,18 @@ async def ask_gemini(
         image_base64=image_base64,
         image_mime=image_mime,
         video_url=video_url,
+        image_urls=image_urls,
     )
-    # 纯文字时直接传字符串，多模态时传 list
+    is_multimodal = bool(image_base64 or video_url or image_urls)
     messages.append({
         "role": "user",
-        "content": content if (image_base64 or video_url) else prompt,
+        "content": content if is_multimodal else prompt,
     })
 
     log_info(
         f"gemini_client: model={settings.LINGMENG_MODEL} "
         f"has_image={bool(image_base64)} has_video={bool(video_url)} "
+        f"n_image_urls={len(image_urls or [])} "
         f"prompt_len={len(prompt)}"
     )
 

@@ -1,5 +1,5 @@
 "use client";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
 
@@ -139,8 +139,27 @@ type Tab = "replicate" | "ai_video";
 type ModelSrc = "auto" | "image" | "video";
 const MARKETS = ["欧美", "东南亚", "日韩", "中国"];
 
+const REPLICATE_WHITELIST = ["lirunting1a@gmail.com"];
+
 export default function VideoGeneralPage() {
   const [tab, setTab] = useState<Tab>("ai_video");
+
+  // 灰度：视频复刻入口A 白名单判断
+  const [isWhitelisted, setIsWhitelisted] = useState(false);
+  useEffect(() => {
+    const tk = localStorage.getItem("token");
+    if (!tk) return;
+    fetch(`${API_BASE}/api/auth/me`, { headers: { Authorization: `Bearer ${tk}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.email) setIsWhitelisted(REPLICATE_WHITELIST.includes(d.email)); })
+      .catch(() => {});
+  }, []);
+
+  // 入口A 专用：参考视频
+  const [refVid, setRefVid] = useState<{ file: File | null; uploading: boolean; url: string }>({ file: null, uploading: false, url: "" });
+  // 入口A 专用：脚本状态（与入口B script 独立）
+  const [scriptA, setScriptA]       = useState("");
+  const [loadingA, setLoadingA]     = useState(false);
 
   // Step 1 - product images
   const [front, setFront]   = useState<ImgSlot>(emptySlot());
@@ -235,10 +254,46 @@ export default function VideoGeneralPage() {
     }
   };
 
+  // ── 入口A：分析参考视频 ────────────────────────────────────────────────────
+  const analyzeVideo = async () => {
+    if (!refVid.url)  { setError("请先上传参考视频"); return; }
+    if (!front.url)   { setError("请先上传正面产品图"); return; }
+    setError(""); setScriptA(""); setLoadingA(true);
+    adjustLocalUserCredits(-35);
+    const modelInfo = modelSrc === "auto"
+      ? (market === "中国" ? "AI 自动生成亚洲模特" : "AI 自动生成欧美模特")
+      : modelSrc === "image" ? "用户上传模特图" : "用户上传模特视频";
+    const productUrls = [front.url, back.url, rear.url].filter(Boolean);
+    try {
+      const r = await fetch(`${API_BASE}/api/video/general/video-analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({
+          video_url: refVid.url,
+          product_image_urls: productUrls,
+          market, duration,
+          model_info: modelInfo,
+          user_idea: userIdea.trim(),
+        }),
+      });
+      if (!r.ok) {
+        adjustLocalUserCredits(35);
+        throw new Error((await r.json()).detail || await r.text());
+      }
+      const d = await r.json();
+      setScriptA(d.script || "");
+    } catch (e) {
+      setError((e as Error).message || "视频分析失败，请重试");
+    } finally {
+      setLoadingA(false);
+    }
+  };
+
   // ── generate video from confirmed script ──────────────────────────────────
-  const generateVideo = async () => {
-    if (!front.url) { setError("请先上传正面产品图"); return; }
-    if (!script)    { setError("请先生成脚本"); return; }
+  const generateVideo = async (scriptOverride?: string) => {
+    const useScript = scriptOverride ?? script;
+    if (!front.url)   { setError("请先上传正面产品图"); return; }
+    if (!useScript)   { setError("请先生成脚本"); return; }
     setError(""); setVidUrl(""); setVidLoading(true); setVidProgress("提交视频生成任务…");
 
     const productUrls = [front.url, back.url, rear.url].filter(Boolean);
@@ -248,7 +303,7 @@ export default function VideoGeneralPage() {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
         body: JSON.stringify({
-          script,
+          script: useScript,
           product_image_urls: productUrls,
           scene_image_url:  scene.url  || null,
           model_image_url:  modelSrc === "image" ? modelImg.url || null : null,
@@ -351,13 +406,185 @@ export default function VideoGeneralPage() {
           <button style={TAB_STYLE(tab === "ai_video")}  onClick={() => setTab("ai_video")}>AI 爆款视频</button>
         </div>
 
-        {/* ── 标签A：视频复刻（占位）── */}
-        {tab === "replicate" && (
+        {/* ── 标签A：视频复刻 ── */}
+        {tab === "replicate" && !isWhitelisted && (
           <div style={{ ...CARD, textAlign: "center", padding: "3rem 2rem", color: "#888" }}>
             <div style={{ fontSize: "2rem", marginBottom: 12 }}>🎬</div>
             <div style={{ fontSize: "1.1rem", fontWeight: 500, color: "#555", marginBottom: 8 }}>视频复刻功能</div>
             <div style={{ fontSize: "0.88rem" }}>功能开发中，敬请期待</div>
           </div>
+        )}
+
+        {tab === "replicate" && isWhitelisted && (
+          <>
+            {error && (
+              <div style={{ background: "#fff5f5", border: "1px solid #fed7d7", color: "#c53030", padding: "0.8rem 1rem", borderRadius: 10, marginBottom: "1rem", fontSize: "0.88rem" }}>{error}</div>
+            )}
+
+            {/* Step 1A：上传参考视频 */}
+            <div style={CARD}>
+              <div style={{ display: "flex", alignItems: "center", marginBottom: "1rem" }}>
+                <span style={STEP_LABEL}>STEP 1</span>
+                <span style={{ fontSize: "0.92rem", fontWeight: 600, color: "#1a202c" }}>上传参考视频</span>
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 12, border: `2px dashed ${refVid.url ? "#16a34a" : "#e2e8f0"}`, borderRadius: 12, padding: "1rem 1.2rem", cursor: "pointer", background: refVid.url ? "#f0fdf4" : "#fafafa", transition: "all 0.15s" }}>
+                <input type="file" accept="video/mp4,video/quicktime,video/webm" style={{ display: "none" }}
+                  onChange={async e => {
+                    const f = e.target.files?.[0]; if (!f) return;
+                    if (f.size > 100 * 1024 * 1024) { setError("视频不能超过 100MB"); return; }
+                    setRefVid({ file: f, uploading: true, url: "" }); setError("");
+                    try {
+                      const fd = new FormData(); fd.append("file", f);
+                      const r = await fetch(`${API_BASE}/api/video/general/upload/video`, {
+                        method: "POST", headers: { Authorization: `Bearer ${getToken()}` }, body: fd,
+                      });
+                      if (!r.ok) throw new Error(await r.text());
+                      const d = await r.json();
+                      setRefVid({ file: f, uploading: false, url: d.video_url || "" });
+                    } catch (err) {
+                      setError((err as Error).message || "视频上传失败");
+                      setRefVid({ file: null, uploading: false, url: "" });
+                    }
+                    e.target.value = "";
+                  }} />
+                <span style={{ fontSize: "1.4rem" }}>{refVid.uploading ? "⏳" : refVid.url ? "✅" : "🎬"}</span>
+                <div>
+                  <div style={{ fontSize: "0.9rem", fontWeight: 500, color: "#1a202c" }}>
+                    {refVid.uploading ? "上传中…" : refVid.url ? `已上传：${refVid.file?.name}` : "点击上传参考视频"}
+                  </div>
+                  <div style={{ fontSize: "0.72rem", color: "#a0aec0", marginTop: 3 }}>MP4 / MOV / WebM · ≤ 100MB</div>
+                </div>
+              </label>
+            </div>
+
+            {/* Step 2A：产品图（复用入口B组件） */}
+            <div style={CARD}>
+              <div style={{ display: "flex", alignItems: "center", marginBottom: "1rem" }}>
+                <span style={STEP_LABEL}>STEP 2</span>
+                <span style={{ fontSize: "0.92rem", fontWeight: 600, color: "#1a202c" }}>上传产品白底图</span>
+              </div>
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                <UploadBox slot={front} label="正面图" required
+                  onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setFront)}
+                  onRemove={() => removeSlot(setFront)} />
+                <UploadBox slot={back}  label="反面图"
+                  onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setBack)}
+                  onRemove={() => removeSlot(setBack)} />
+                <UploadBox slot={rear}  label="侧面图"
+                  onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setRear)}
+                  onRemove={() => removeSlot(setRear)} />
+                <UploadBox slot={scene} label="场景图"
+                  onUpload={f => uploadImg(f, "/api/video/general/upload/scene-image", "scene_image_url", setScene)}
+                  onRemove={() => removeSlot(setScene)} />
+              </div>
+              <div style={{ fontSize: "0.72rem", color: "#a0aec0", marginTop: 10 }}>正面图必传，其余可选 · 每张 ≤ 10MB</div>
+            </div>
+
+            {/* Step 3A：模特来源（复用） */}
+            <div style={CARD}>
+              <div style={{ display: "flex", alignItems: "center", marginBottom: "1rem" }}>
+                <span style={STEP_LABEL}>STEP 3</span>
+                <span style={{ fontSize: "0.92rem", fontWeight: 600, color: "#1a202c" }}>模特来源</span>
+              </div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+                {([
+                  { v: "auto",  label: "AI 自动出模特",  desc: "GPT-Image 2 生成，按市场自动匹配" },
+                  { v: "image", label: "上传模特图",      desc: "上传真人照片，复刻模特形象" },
+                  { v: "video", label: "上传模特视频",    desc: "上传视频，自动提取中间帧" },
+                ] as { v: ModelSrc; label: string; desc: string }[]).map(o => (
+                  <label key={o.v} onClick={() => setModelSrc(o.v)}
+                    style={{ flex: "1 1 160px", minWidth: 140, border: `2px solid ${modelSrc === o.v ? "#0d0d0d" : "#e2e8f0"}`, borderRadius: 12, padding: "0.85rem", cursor: "pointer", background: modelSrc === o.v ? "#f7f7f5" : "#fff", transition: "all 0.15s" }}>
+                    <input type="radio" name="modelSrcA" value={o.v} checked={modelSrc === o.v} onChange={() => setModelSrc(o.v)} style={{ marginRight: 7 }} />
+                    <strong style={{ fontSize: "0.88rem" }}>{o.label}</strong>
+                    <div style={{ fontSize: "0.73rem", color: "#718096", marginTop: 4, lineHeight: 1.4 }}>{o.desc}</div>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Step 4A：视频参数（复用） */}
+            <div style={CARD}>
+              <div style={{ display: "flex", alignItems: "center", marginBottom: "1rem" }}>
+                <span style={STEP_LABEL}>STEP 4</span>
+                <span style={{ fontSize: "0.92rem", fontWeight: 600, color: "#1a202c" }}>视频参数</span>
+              </div>
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                <div>
+                  <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>总时长</div>
+                  <select value={duration} onChange={e => setDuration(+e.target.value)}
+                    style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
+                    {[10, 15, 30].map(v => <option key={v} value={v}>{v} 秒</option>)}
+                  </select>
+                </div>
+                <div>
+                  <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>目标市场</div>
+                  <select value={market} onChange={e => setMarket(e.target.value)}
+                    style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
+                    {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Step 5A：分析按钮 + 脚本 + 生成视频 */}
+            <div style={CARD}>
+              <div style={{ display: "flex", alignItems: "center", marginBottom: "1rem" }}>
+                <span style={STEP_LABEL}>STEP 5</span>
+                <span style={{ fontSize: "0.92rem", fontWeight: 600, color: "#1a202c" }}>分析视频并生成脚本</span>
+              </div>
+
+              <button onClick={analyzeVideo} disabled={loadingA || vidLoading || !refVid.url || !front.url}
+                style={{
+                  width: "100%", padding: "0.9rem", borderRadius: 10, border: "none", fontSize: "0.95rem", fontWeight: 600,
+                  background: loadingA || !refVid.url || !front.url ? "#e2e8f0" : "#7c3aed",
+                  color: loadingA || !refVid.url || !front.url ? "#a0aec0" : "#fff",
+                  cursor: loadingA || !refVid.url || !front.url ? "not-allowed" : "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                }}>
+                {loadingA ? (
+                  <><span style={{ display: "inline-block", width: 16, height: 16, border: "2px solid #a0aec0", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />AI 正在分析视频…</>
+                ) : scriptA ? "重新分析视频（35 积分）" : "分析视频并生成脚本（35 积分）"}
+              </button>
+              {(!refVid.url || !front.url) && !loadingA && (
+                <div style={{ fontSize: "0.75rem", color: "#a0aec0", textAlign: "center", marginTop: 6 }}>
+                  {!refVid.url ? "请先上传参考视频" : "请先上传正面产品图"}
+                </div>
+              )}
+
+              {scriptA && !loadingA && (
+                <div style={{ marginTop: "1.4rem" }}>
+                  <div style={{ fontSize: "0.8rem", color: "#718096", fontWeight: 600, marginBottom: 10 }}>✨ 视频分析结果（可复刻脚本）</div>
+                  <ScriptDisplay text={scriptA} />
+                  <div style={{ display: "flex", gap: 10, marginTop: "1.2rem", flexWrap: "wrap" }}>
+                    <button onClick={analyzeVideo} disabled={loadingA || vidLoading}
+                      style={{ flex: "1 1 200px", padding: "0.7rem 1rem", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#374151", fontSize: "0.88rem", cursor: "pointer", fontWeight: 500 }}>
+                      🔄 重新分析（35 积分）
+                    </button>
+                    <button onClick={() => generateVideo(scriptA)} disabled={vidLoading || loadingA}
+                      style={{
+                        flex: "1 1 200px", padding: "0.7rem 1rem", borderRadius: 10, border: "none",
+                        background: vidLoading || loadingA ? "#e2e8f0" : "#16a34a",
+                        color: vidLoading || loadingA ? "#a0aec0" : "#fff",
+                        fontSize: "0.88rem", cursor: vidLoading || loadingA ? "not-allowed" : "pointer",
+                        fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                      }}>
+                      {vidLoading ? <><span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #a0aec0", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />生成中…</> : "🎬 确认脚本，生成视频"}
+                    </button>
+                  </div>
+                  {vidLoading && vidProgress && (
+                    <div style={{ marginTop: 12, padding: "0.7rem 0.9rem", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: "0.82rem", color: "#166534" }}>⏳ {vidProgress}</div>
+                  )}
+                  {vidUrl && !vidLoading && (
+                    <div style={{ marginTop: "1.2rem" }}>
+                      <div style={{ fontSize: "0.8rem", color: "#718096", fontWeight: 600, marginBottom: 10 }}>🎬 生成完成</div>
+                      <video src={vidUrl} controls style={{ width: "100%", maxWidth: 400, borderRadius: 10, display: "block" }} />
+                      <a href={vidUrl} download style={{ display: "inline-block", marginTop: 8, fontSize: "0.85rem", color: "#16a34a", textDecoration: "none", fontWeight: 500 }}>⬇ 下载视频</a>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </>
         )}
 
         {/* ── 标签B：AI 爆款视频 ── */}
@@ -549,7 +776,7 @@ export default function VideoGeneralPage() {
                       🔄 重新生成脚本（35 积分）
                     </button>
                     <button
-                      onClick={generateVideo}
+                      onClick={() => generateVideo()}
                       disabled={vidLoading || loading}
                       style={{
                         flex: "1 1 200px", padding: "0.7rem 1rem", borderRadius: 10, border: "none",

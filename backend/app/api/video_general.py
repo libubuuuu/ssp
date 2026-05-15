@@ -660,3 +660,55 @@ async def script_to_video_submit(
     create_tracked_task(_execute_job(job_id))
     log_info(f"script-to-video submitted job={job_id} user={user_id} scenes={len(scenes)} cost={cost}")
     return {"job_id": job_id, "status": "pending", "cost": cost, "n_scenes": len(scenes)}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 入口A：视频复刻分析
+# POST /api/video/general/video-analyze
+# ──────────────────────────────────────────────────────────────────────────────
+
+class VideoAnalyzeRequest(BaseModel):
+    video_url: str = Field(..., description="参考视频 URL（通过 /upload/video 上传得到）")
+    product_image_urls: List[str] = Field(..., description="产品图 URL 列表（正面必传）")
+    model_info: str = Field("AI 自动生成模特")
+    market: str = Field("海外")
+    duration: int = Field(15, ge=5, le=120)
+    user_idea: str = Field("", max_length=500)
+
+
+@router.post("/video-analyze")
+async def video_analyze_submit(
+    body: VideoAnalyzeRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """入口A第一步：上传参考视频 → Gemini 分析拆镜 → 替换产品 → 返回脚本。"""
+    from app.services.billing import add_credits
+    from app.services.video_general_script import analyze_video
+
+    if not body.video_url.strip():
+        raise HTTPException(400, "video_url 必填")
+    if not body.product_image_urls:
+        raise HTTPException(400, "product_image_urls 必填")
+
+    user_id = str(current_user["id"])
+    cost = 35
+    if not deduct_credits(user_id, cost):
+        raise HTTPException(402, f"积分不足，需 {cost} 积分")
+
+    try:
+        script = await analyze_video(
+            video_url=body.video_url,
+            product_image_urls=body.product_image_urls,
+            market=body.market,
+            duration=body.duration,
+            model_info=body.model_info,
+            user_idea=body.user_idea,
+        )
+    except Exception as e:
+        add_credits(user_id, cost, reason="task_refund",
+                    ref_id="video_analyze_fail", module="video/general/video-analyze")
+        log_error(f"video-analyze 失败 user={user_id}: {e}")
+        raise HTTPException(500, f"视频分析失败，积分已退还: {str(e)[:300]}")
+
+    log_info(f"video-analyze OK user={user_id} market={body.market} script_len={len(script)}")
+    return {"script": script, "cost": cost}

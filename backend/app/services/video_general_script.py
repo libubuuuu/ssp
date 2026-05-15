@@ -297,6 +297,81 @@ _PROMPT_STORY = """你是一个顶级的TikTok/短视频爆款剧情带货脚本
 
 """ + _COMMON_RULES
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 入口A：视频复刻 prompt（看参考视频→拆解分镜→替换产品→输出脚本）
+# ─────────────────────────────────────────────────────────────────────────────
+_PROMPT_VIDEO_ANALYZE = """你是一个专业的短视频拆解专家和广告创意策划。用户上传了一个参考视频和产品图片。
+
+你的任务：
+1. 仔细观看这个视频，逐帧拆解出每个分镜的：时长、景别、动作描述、说话内容、镜头运动方式、拍摄环境
+2. 将拆解结果写成一份完整的短视频脚本
+3. 关键：把视频中出现的原始产品/人物，替换成用户上传的产品图中的产品（保留场景结构和节奏，但产品换成新的）
+4. 台词也要根据新产品调整，保持同样的口语化风格和语气
+
+用户参数：
+- 目标市场：{market}
+- 目标时长：{duration}秒（按参考视频实际分镜节奏拆解，总时长尽量接近此值）
+- 模特信息：{model_info}
+- 额外要求：{user_idea}
+
+拆解要求：
+- 每个分镜必须有明确的起止时间（如 0-3s、3-7s）
+- 景别必须明确（特写/近景/中景/全景等）
+- 动作描述具体到手势、眼神、身体姿态
+- 台词用目标语言写，口语化自然，像真人博主说话
+- 皮肤质感要写（毛孔、次表面散射、高保真纹理）
+- 如果原视频没有台词，可以根据新产品自行创作合适的台词
+
+""" + _COMMON_RULES
+
+
+async def analyze_video(
+    *,
+    video_url: str,
+    product_image_urls: list,
+    market: str = "海外",
+    duration: int = 15,
+    model_info: str = "AI 自动生成模特",
+    user_idea: str = "",
+) -> str:
+    """分析参考视频，拆解分镜后替换产品生成新脚本。
+
+    Args:
+        video_url: 参考视频 URL（fal storage）
+        product_image_urls: 产品图 URL 列表（正面必传）
+        market: 目标市场
+        duration: 目标时长（秒）
+        model_info: 模特信息
+        user_idea: 用户额外要求
+
+    Returns:
+        结构化脚本文字字符串
+    """
+    from app.services.gemini_client import ask_gemini
+    from app.services.logger import log_info
+
+    prompt = _PROMPT_VIDEO_ANALYZE \
+        .replace("{market}", market) \
+        .replace("{duration}", str(duration)) \
+        .replace("{model_info}", model_info or "AI 自动生成模特") \
+        .replace("{user_idea}", user_idea or "无")
+
+    log_info(
+        f"video_analyze: market={market} duration={duration}s "
+        f"n_product_imgs={len(product_image_urls)} video={video_url[:60]}"
+    )
+
+    script = await ask_gemini(
+        prompt=prompt,
+        video_url=video_url,
+        image_urls=product_image_urls[:4],  # 最多传4张产品图
+        max_tokens=8192,
+        temperature=0.7,
+    )
+
+    log_info(f"video_analyze: 脚本生成完成 output_len={len(script)}")
+    return script.strip()
+
 
 def parse_script(text: str) -> list[dict]:
     """把 Gemini 生成的脚本文字解析为分镜列表。
