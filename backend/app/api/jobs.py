@@ -5236,7 +5236,7 @@ async def _run_script_to_video_job(params: dict) -> dict:
                     ),
                     "image_size": "square_hd",
                     "num_images": 1,
-                    "quality": "standard",
+                    "quality": "auto",
                 },
             )
             portrait_img_url = (result.get("images") or [{}])[0].get("url", "")
@@ -5403,6 +5403,7 @@ async def _run_script_to_video_job(params: dict) -> dict:
                 f"n_scenes={len(task['scenes'])} req_dur={req_dur}s "
                 f"n_imgs={len(task_imgs)} ref_video={bool(ref_video_url)}"
             )
+            log_info(f"script_to_video Task {ti+1} image_urls={[u[:80] for u in task_imgs]}")
 
             # 商业语境前缀（随敏感内容重试逐级加强）
             _SENS_PREFIXES = [

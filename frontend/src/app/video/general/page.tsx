@@ -199,6 +199,9 @@ export default function VideoGeneralPage() {
   const [chatSelections, setChatSelections]       = useState<Record<number, string>>({});  // key=msgIdx*10+qi → selected option
   const [chatPendingImages, setChatPendingImages] = useState<string[]>([]);  // 待发送图片URL列表
   const [chatImgUploading, setChatImgUploading]   = useState(false);
+  const [chatShowParams, setChatShowParams]       = useState(false);  // 确认脚本后显示参数面板
+  const [chatResolution, setChatResolution]       = useState("480p");
+  const [chatEnableVoice, setChatEnableVoice]     = useState(true);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Step 5 - video generation
@@ -821,44 +824,48 @@ export default function VideoGeneralPage() {
                 </div>
               </div>
 
-              <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
-                <div>
-                  <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>总时长</div>
-                  <select value={duration} onChange={e => setDuration(+e.target.value)}
-                    style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
-                    {[10, 15, 30].map(v => <option key={v} value={v}>{v} 秒</option>)}
-                  </select>
-                </div>
-                <div>
-                  <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>目标市场</div>
-                  <select value={market} onChange={e => setMarket(e.target.value)}
-                    style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
-                    {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>分辨率</div>
-                  <select value={resolution} onChange={e => setResolution(e.target.value)}
-                    style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
-                    <option value="480p">480p（标准）不加价</option>
-                    <option value="1080p">1080p（高清）+10积分</option>
-                    <option value="4k">4K（超清）+50积分</option>
-                  </select>
-                </div>
-              </div>
-              {/* 声音开关 */}
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 8 }}>声音</div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  {([{ v: true, icon: "🔊", label: "有声音", desc: "TTS 配音 + 对口型" }, { v: false, icon: "🔇", label: "无声音", desc: "纯视觉，无配音" }] as { v: boolean; icon: string; label: string; desc: string }[]).map(o => (
-                    <button key={String(o.v)} onClick={() => setEnableVoice(o.v)}
-                      style={{ flex: "1 1 120px", padding: "0.6rem 0.8rem", border: `2px solid ${enableVoice === o.v ? "#0d0d0d" : "#e2e8f0"}`, borderRadius: 10, background: enableVoice === o.v ? "#0d0d0d" : "#fff", color: enableVoice === o.v ? "#fff" : "#4a5568", cursor: "pointer", textAlign: "left", transition: "all 0.15s" }}>
-                      <div style={{ fontSize: "0.85rem", fontWeight: 600, marginBottom: 2 }}>{o.icon} {o.label}</div>
-                      <div style={{ fontSize: "0.68rem", opacity: 0.7 }}>{o.desc}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
+              {scriptMode !== "chat" && (
+                <>
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
+                    <div>
+                      <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>总时长</div>
+                      <select value={duration} onChange={e => setDuration(+e.target.value)}
+                        style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
+                        {[10, 15, 30].map(v => <option key={v} value={v}>{v} 秒</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>目标市场</div>
+                      <select value={market} onChange={e => setMarket(e.target.value)}
+                        style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
+                        {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>分辨率</div>
+                      <select value={resolution} onChange={e => setResolution(e.target.value)}
+                        style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
+                        <option value="480p">480p（标准）不加价</option>
+                        <option value="1080p">1080p（高清）+10积分</option>
+                        <option value="4k">4K（超清）+50积分</option>
+                      </select>
+                    </div>
+                  </div>
+                  {/* 声音开关 */}
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 8 }}>声音</div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {([{ v: true, icon: "🔊", label: "有声音", desc: "TTS 配音 + 对口型" }, { v: false, icon: "🔇", label: "无声音", desc: "纯视觉，无配音" }] as { v: boolean; icon: string; label: string; desc: string }[]).map(o => (
+                        <button key={String(o.v)} onClick={() => setEnableVoice(o.v)}
+                          style={{ flex: "1 1 120px", padding: "0.6rem 0.8rem", border: `2px solid ${enableVoice === o.v ? "#0d0d0d" : "#e2e8f0"}`, borderRadius: 10, background: enableVoice === o.v ? "#0d0d0d" : "#fff", color: enableVoice === o.v ? "#fff" : "#4a5568", cursor: "pointer", textAlign: "left", transition: "all 0.15s" }}>
+                          <div style={{ fontSize: "0.85rem", fontWeight: 600, marginBottom: 2 }}>{o.icon} {o.label}</div>
+                          <div style={{ fontSize: "0.68rem", opacity: 0.7 }}>{o.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
 
               <div>
                 <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>你的想法（可选）</div>
@@ -1032,13 +1039,63 @@ export default function VideoGeneralPage() {
                       <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#718096", marginBottom: 8 }}>✨ AI导师生成的脚本</div>
                       <ScriptDisplay text={chatScript} />
                       <ContrastUploadHint scriptText={chatScript} />
-                      <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-                        <button onClick={() => generateVideo(chatScript)}
-                          disabled={vidLoading}
-                          style={{ flex: "1 1 200px", padding: "0.7rem 1rem", borderRadius: 10, border: "none", background: vidLoading ? "#e2e8f0" : "#16a34a", color: vidLoading ? "#a0aec0" : "#fff", fontSize: "0.88rem", fontWeight: 600, cursor: vidLoading ? "not-allowed" : "pointer" }}>
+
+                      {!chatShowParams ? (
+                        <button onClick={() => setChatShowParams(true)} disabled={vidLoading}
+                          style={{ width: "100%", marginTop: 10, padding: "0.7rem 1rem", borderRadius: 10, border: "none", background: vidLoading ? "#e2e8f0" : "#16a34a", color: vidLoading ? "#a0aec0" : "#fff", fontSize: "0.88rem", fontWeight: 600, cursor: vidLoading ? "not-allowed" : "pointer" }}>
                           🎬 确认脚本，生成视频
                         </button>
-                      </div>
+                      ) : (
+                        <div style={{ marginTop: 12, padding: "1rem", background: "#f8f9fa", border: "1px solid #e2e8f0", borderRadius: 12 }}>
+                          <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "#1a202c", marginBottom: 12 }}>选择生成参数</div>
+
+                          {/* 声音 */}
+                          <div style={{ marginBottom: 12 }}>
+                            <div style={{ fontSize: "0.73rem", color: "#718096", marginBottom: 6 }}>声音</div>
+                            <div style={{ display: "flex", gap: 8 }}>
+                              {([{ v: true, icon: "🔊", label: "有声音" }, { v: false, icon: "🔇", label: "无声音" }] as {v:boolean;icon:string;label:string}[]).map(o => (
+                                <button key={String(o.v)} onClick={() => setChatEnableVoice(o.v)}
+                                  style={{ flex: 1, padding: "0.5rem 0.7rem", borderRadius: 8, border: `2px solid ${chatEnableVoice === o.v ? "#0d0d0d" : "#e2e8f0"}`, background: chatEnableVoice === o.v ? "#0d0d0d" : "#fff", color: chatEnableVoice === o.v ? "#fff" : "#4a5568", fontSize: "0.82rem", fontWeight: 600, cursor: "pointer", transition: "all 0.15s" }}>
+                                  {o.icon} {o.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* 分辨率 */}
+                          <div style={{ marginBottom: 14 }}>
+                            <div style={{ fontSize: "0.73rem", color: "#718096", marginBottom: 6 }}>分辨率</div>
+                            <select value={chatResolution} onChange={e => setChatResolution(e.target.value)}
+                              style={{ width: "100%", padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
+                              <option value="480p">480p（标准）不加价</option>
+                              <option value="1080p">1080p（高清）+10积分</option>
+                              <option value="4k">4K（超清）+50积分</option>
+                            </select>
+                          </div>
+
+                          {/* 生成按钮 */}
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button onClick={() => setChatShowParams(false)}
+                              style={{ padding: "0.6rem 1rem", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#4a5568", fontSize: "0.82rem", cursor: "pointer" }}>
+                              ← 返回
+                            </button>
+                            <button onClick={() => {
+                              // 用 chat 专属参数覆盖 resolution 和 enableVoice 后生成
+                              const origRes = resolution; const origVoice = enableVoice;
+                              setResolution(chatResolution); setEnableVoice(chatEnableVoice);
+                              // React 批量更新异步，用 setTimeout 确保 state 已更新再调
+                              setTimeout(() => {
+                                generateVideo(chatScript);
+                                setResolution(origRes); setEnableVoice(origVoice);
+                              }, 0);
+                              setChatShowParams(false);
+                            }} disabled={vidLoading}
+                              style={{ flex: 1, padding: "0.6rem 1rem", borderRadius: 8, border: "none", background: vidLoading ? "#e2e8f0" : "#16a34a", color: vidLoading ? "#a0aec0" : "#fff", fontSize: "0.88rem", fontWeight: 600, cursor: vidLoading ? "not-allowed" : "pointer" }}>
+                              🎬 开始生成视频
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
