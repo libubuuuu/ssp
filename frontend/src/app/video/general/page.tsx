@@ -197,6 +197,8 @@ export default function VideoGeneralPage() {
   const [chatNeedsContrast, setChatNeedsContrast] = useState(false);
   const [chatCustomInputs, setChatCustomInputs]   = useState<Record<number, string>>({});  // key=msgIdx*10+qi → customText
   const [chatSelections, setChatSelections]       = useState<Record<number, string>>({});  // key=msgIdx*10+qi → selected option
+  const [chatPendingImages, setChatPendingImages] = useState<string[]>([]);  // 待发送图片URL列表
+  const [chatImgUploading, setChatImgUploading]   = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Step 5 - video generation
@@ -307,9 +309,11 @@ export default function VideoGeneralPage() {
   // ── AI导师对话发送 ─────────────────────────────────────────────────────────
   const sendChatMessage = useCallback(async (msgText?: string, msgImages?: string[]) => {
     const text = (msgText ?? chatInput).trim();
-    if (!text && !msgImages?.length) return;
-    const newMsg: ChatMsg = { role: "user", content: text, images: msgImages };
+    const images = msgImages ?? (chatPendingImages.length ? [...chatPendingImages] : undefined);
+    if (!text && !images?.length) return;
+    const newMsg: ChatMsg = { role: "user", content: text, images };
     const updatedMsgs = [...chatMsgs, newMsg];
+    setChatPendingImages([]);  // 清空待发图片
     setChatMsgs(updatedMsgs);
     setChatInput("");
     setChatLoading(true);
@@ -341,7 +345,7 @@ export default function VideoGeneralPage() {
     } finally {
       setChatLoading(false);
     }
-  }, [chatInput, chatMsgs, front.url, back.url, rear.url, market, duration]);
+  }, [chatInput, chatMsgs, chatPendingImages, front.url, back.url, rear.url, market, duration]);
 
   // ── 检测脚本里是否含对比关键词（决定是否显示对比图上传）──────────────────
   const _CONTRAST_KW = ["旧", "老款", "之前", "原来", "以前", "对比", "竞品", "old", "previous", "used to", "regular", "normal", "换上", "换了", "before", "instead"];
@@ -899,6 +903,14 @@ export default function VideoGeneralPage() {
                     )}
                     {chatMsgs.map((m, msgIdx) => (
                       <div key={msgIdx} style={{ marginBottom: 14, display: "flex", flexDirection: "column", alignItems: m.role === "user" ? "flex-end" : "flex-start" }}>
+                        {/* 用户消息图片缩略图 */}
+                        {m.role === "user" && m.images?.length ? (
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: m.content ? 4 : 0, justifyContent: "flex-end" }}>
+                            {m.images.map((url, ii) => (
+                              <img key={ii} src={url} alt="附图" style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 8, border: "1px solid #e2e8f0" }} />
+                            ))}
+                          </div>
+                        ) : null}
                         {/* 气泡文字 */}
                         {m.content && (
                           <div style={{
@@ -1030,14 +1042,46 @@ export default function VideoGeneralPage() {
                     </div>
                   )}
 
+                  {/* 对比图上传提示（AI要求时显示） */}
                   {chatNeedsContrast && (
-                    <div style={{ marginBottom: 10, padding: "0.7rem 0.9rem", background: "#fefce8", border: "1px solid #fde68a", borderRadius: 8, fontSize: "0.8rem", color: "#92400e" }}>
-                      💡 AI导师建议上传对比图（旧款/竞品），效果更真实。
+                    <div style={{ marginBottom: 10, padding: "0.85rem 1rem", background: "#fefce8", border: "1px solid #fde68a", borderRadius: 10 }}>
+                      <div style={{ fontWeight: 600, fontSize: "0.82rem", color: "#92400e", marginBottom: 6 }}>📸 AI导师建议上传对比图</div>
+                      <div style={{ fontSize: "0.75rem", color: "#78350f", marginBottom: 10 }}>上传一张旧款/竞品图片，视频对比效果更真实。上传后会自动附在你的下一条消息里。</div>
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "0.4rem 0.8rem", background: "#f59e0b", color: "#fff", borderRadius: 6, fontSize: "0.8rem", fontWeight: 600, cursor: chatImgUploading ? "not-allowed" : "pointer" }}>
+                        <input type="file" accept="image/*" style={{ display: "none" }} disabled={chatImgUploading}
+                          onChange={async e => {
+                            const f = e.target.files?.[0]; if (!f) return;
+                            setChatImgUploading(true);
+                            try {
+                              const fd = new FormData(); fd.append("file", f);
+                              const r = await fetch(`${API_BASE}/api/video/general/upload/image`, { method: "POST", headers: { Authorization: `Bearer ${getToken()}` }, body: fd });
+                              if (!r.ok) throw new Error(await r.text());
+                              const d = await r.json();
+                              if (d.image_url) setChatPendingImages(prev => [...prev, d.image_url]);
+                            } catch (err) { setError((err as Error).message || "图片上传失败"); }
+                            finally { setChatImgUploading(false); }
+                            e.target.value = "";
+                          }} />
+                        {chatImgUploading ? "上传中…" : "📎 上传对比图"}
+                      </label>
+                    </div>
+                  )}
+
+                  {/* 待发图片缩略图预览 */}
+                  {chatPendingImages.length > 0 && (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                      {chatPendingImages.map((url, i) => (
+                        <div key={i} style={{ position: "relative" }}>
+                          <img src={url} alt="待发图" style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 8, border: "1px solid #e2e8f0" }} />
+                          <button onClick={() => setChatPendingImages(prev => prev.filter((_, j) => j !== i))}
+                            style={{ position: "absolute", top: -6, right: -6, width: 18, height: 18, borderRadius: "50%", background: "#e53e3e", color: "#fff", border: "none", cursor: "pointer", fontSize: "0.7rem", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>×</button>
+                        </div>
+                      ))}
                     </div>
                   )}
 
                   {/* 输入区 */}
-                  <div style={{ display: "flex", gap: 8 }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     {chatMsgs.length === 0 ? (
                       <button
                         onClick={() => sendChatMessage("请帮我分析这个产品，开始创作！")}
@@ -1047,6 +1091,24 @@ export default function VideoGeneralPage() {
                       </button>
                     ) : (
                       <>
+                        {/* 📎 图片上传按钮 */}
+                        <label style={{ width: 36, height: 36, borderRadius: 8, border: "1px solid #e2e8f0", background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "center", cursor: chatImgUploading ? "not-allowed" : "pointer", flexShrink: 0, fontSize: "1rem" }}>
+                          <input type="file" accept="image/*" style={{ display: "none" }} disabled={chatImgUploading}
+                            onChange={async e => {
+                              const f = e.target.files?.[0]; if (!f) return;
+                              setChatImgUploading(true);
+                              try {
+                                const fd = new FormData(); fd.append("file", f);
+                                const r = await fetch(`${API_BASE}/api/video/general/upload/image`, { method: "POST", headers: { Authorization: `Bearer ${getToken()}` }, body: fd });
+                                if (!r.ok) throw new Error(await r.text());
+                                const d = await r.json();
+                                if (d.image_url) setChatPendingImages(prev => [...prev, d.image_url]);
+                              } catch (err) { setError((err as Error).message || "图片上传失败"); }
+                              finally { setChatImgUploading(false); }
+                              e.target.value = "";
+                            }} />
+                          {chatImgUploading ? "⏳" : "📎"}
+                        </label>
                         <input
                           value={chatInput}
                           onChange={e => setChatInput(e.target.value)}
@@ -1056,8 +1118,8 @@ export default function VideoGeneralPage() {
                         />
                         <button
                           onClick={() => sendChatMessage()}
-                          disabled={chatLoading || !chatInput.trim()}
-                          style={{ padding: "0.6rem 1rem", borderRadius: 8, border: "none", background: chatLoading || !chatInput.trim() ? "#e2e8f0" : "#0d0d0d", color: chatLoading || !chatInput.trim() ? "#a0aec0" : "#fff", cursor: chatLoading || !chatInput.trim() ? "not-allowed" : "pointer", fontWeight: 600 }}>
+                          disabled={chatLoading || (!chatInput.trim() && !chatPendingImages.length)}
+                          style={{ padding: "0.6rem 1rem", borderRadius: 8, border: "none", background: chatLoading || (!chatInput.trim() && !chatPendingImages.length) ? "#e2e8f0" : "#0d0d0d", color: chatLoading || (!chatInput.trim() && !chatPendingImages.length) ? "#a0aec0" : "#fff", cursor: chatLoading || (!chatInput.trim() && !chatPendingImages.length) ? "not-allowed" : "pointer", fontWeight: 600 }}>
                           发送
                         </button>
                       </>
