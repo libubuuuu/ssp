@@ -178,6 +178,9 @@ export default function VideoGeneralPage() {
   const [duration, setDuration]     = useState(15);
   const [market, setMarket]         = useState("欧美");
   const [userIdea, setUserIdea]     = useState("");
+  const [resolution, setResolution]       = useState("480p");
+  const [contrastImg, setContrastImg]     = useState<ImgSlot>(emptySlot());
+  const [enableVoice, setEnableVoice]     = useState(true);
 
   // Step 4 - script result
   const [loading, setLoading]   = useState(false);
@@ -290,7 +293,7 @@ export default function VideoGeneralPage() {
   };
 
   // ── generate video from confirmed script ──────────────────────────────────
-  const generateVideo = async (scriptOverride?: string) => {
+  const generateVideo = async (scriptOverride?: string, refVideoOverride?: string) => {
     const useScript = scriptOverride ?? script;
     if (!front.url)   { setError("请先上传正面产品图"); return; }
     if (!useScript)   { setError("请先生成脚本"); return; }
@@ -310,6 +313,11 @@ export default function VideoGeneralPage() {
           model_video_url:  modelSrc === "video" ? modelVidUrl || null : null,
           model_source:     modelSrc,
           aspect_ratio:     "9:16",
+          ref_video_url:    refVideoOverride || null,
+          resolution:           resolution,
+          contrast_image_url:   contrastImg.url || null,
+          enable_voice:         enableVoice,
+          target_duration:      duration,
         }),
       });
       if (!r.ok) {
@@ -340,7 +348,11 @@ export default function VideoGeneralPage() {
           } else if (sd.status === "failed") {
             clearInterval(iv);
             adjustLocalUserCredits(cost);  // 退还（后端也退了，前端同步）
-            setError(sd.error || "视频生成失败，积分已退还");
+            const rawErr: string = sd.error || "";
+            const friendlyErr = rawErr.includes("超时") || rawErr.includes("timeout") || rawErr.includes("Timeout")
+              ? "视频生成超时，请稍后重试。积分已退还。"
+              : rawErr || "视频生成失败，积分已退还。";
+            setError(friendlyErr);
             setVidLoading(false); setVidProgress("");
           } else {
             const mm = Math.floor(elapsed / 60), ss = elapsed % 60;
@@ -478,6 +490,17 @@ export default function VideoGeneralPage() {
                   onRemove={() => removeSlot(setScene)} />
               </div>
               <div style={{ fontSize: "0.72rem", color: "#a0aec0", marginTop: 10 }}>正面图必传，其余可选 · 每张 ≤ 10MB</div>
+
+              {/* 对比产品图（可选） */}
+              <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px dashed #e2e8f0" }}>
+                <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#718096", marginBottom: 6 }}>对比产品图（可选）</div>
+                <div style={{ fontSize: "0.72rem", color: "#a0aec0", marginBottom: 10 }}>上传一张旧款/竞品图片，用于剧情中与你的新产品做对比。不上传则 AI 自动处理。</div>
+                <div style={{ display: "flex", gap: 14 }}>
+                  <UploadBox slot={contrastImg} label="对比图"
+                    onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setContrastImg)}
+                    onRemove={() => removeSlot(setContrastImg)} />
+                </div>
+              </div>
             </div>
 
             {/* Step 3A：模特来源（复用） */}
@@ -523,6 +546,29 @@ export default function VideoGeneralPage() {
                     {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
                 </div>
+                <div>
+                  <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>分辨率</div>
+                  <select value={resolution} onChange={e => setResolution(e.target.value)}
+                    style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
+                    <option value="480p">480p（标准）不加价</option>
+                    <option value="1080p">1080p（高清）+10积分</option>
+                    <option value="4k">4K（超清）+50积分</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* 声音开关（入口A） */}
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 8 }}>声音</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {([{ v: true, icon: "🔊", label: "有声音", desc: "TTS 配音 + 对口型" }, { v: false, icon: "🔇", label: "无声音", desc: "纯视觉，无配音" }] as { v: boolean; icon: string; label: string; desc: string }[]).map(o => (
+                    <button key={String(o.v)} onClick={() => setEnableVoice(o.v)}
+                      style={{ flex: "1 1 120px", padding: "0.6rem 0.8rem", border: `2px solid ${enableVoice === o.v ? "#0d0d0d" : "#e2e8f0"}`, borderRadius: 10, background: enableVoice === o.v ? "#0d0d0d" : "#fff", color: enableVoice === o.v ? "#fff" : "#4a5568", cursor: "pointer", textAlign: "left", transition: "all 0.15s" }}>
+                      <div style={{ fontSize: "0.85rem", fontWeight: 600, marginBottom: 2 }}>{o.icon} {o.label}</div>
+                      <div style={{ fontSize: "0.68rem", opacity: 0.7 }}>{o.desc}</div>
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -560,7 +606,7 @@ export default function VideoGeneralPage() {
                       style={{ flex: "1 1 200px", padding: "0.7rem 1rem", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#374151", fontSize: "0.88rem", cursor: "pointer", fontWeight: 500 }}>
                       🔄 重新分析（35 积分）
                     </button>
-                    <button onClick={() => generateVideo(scriptA)} disabled={vidLoading || loadingA}
+                    <button onClick={() => generateVideo(scriptA, refVid.url || undefined)} disabled={vidLoading || loadingA}
                       style={{
                         flex: "1 1 200px", padding: "0.7rem 1rem", borderRadius: 10, border: "none",
                         background: vidLoading || loadingA ? "#e2e8f0" : "#16a34a",
@@ -571,8 +617,13 @@ export default function VideoGeneralPage() {
                       {vidLoading ? <><span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #a0aec0", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />生成中…</> : "🎬 确认脚本，生成视频"}
                     </button>
                   </div>
+                  {vidLoading && (
+                    <div style={{ marginTop: 12, background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "0.65rem 0.9rem", fontSize: "0.8rem", color: "#1e40af", marginBottom: 6 }}>
+                      ✅ 任务已提交，预计3-8分钟完成。你可以关闭此页面去做其他事，生成完成后在右上角「我的任务」查看结果。
+                    </div>
+                  )}
                   {vidLoading && vidProgress && (
-                    <div style={{ marginTop: 12, padding: "0.7rem 0.9rem", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: "0.82rem", color: "#166534" }}>⏳ {vidProgress}</div>
+                    <div style={{ padding: "0.7rem 0.9rem", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: "0.82rem", color: "#166534" }}>⏳ {vidProgress}</div>
                   )}
                   {vidUrl && !vidLoading && (
                     <div style={{ marginTop: "1.2rem" }}>
@@ -617,6 +668,17 @@ export default function VideoGeneralPage() {
                   onRemove={() => removeSlot(setScene)} />
               </div>
               <div style={{ fontSize: "0.72rem", color: "#a0aec0", marginTop: 10 }}>正面图必传，其余可选 · 每张 ≤ 10MB · 支持 JPG / PNG / WebP</div>
+
+              {/* 对比产品图（可选） */}
+              <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px dashed #e2e8f0" }}>
+                <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#718096", marginBottom: 6 }}>对比产品图（可选）</div>
+                <div style={{ fontSize: "0.72rem", color: "#a0aec0", marginBottom: 10 }}>上传一张旧款/竞品图片，用于剧情中与你的新产品做对比。不上传则 AI 自动处理。</div>
+                <div style={{ display: "flex", gap: 14 }}>
+                  <UploadBox slot={contrastImg} label="对比图"
+                    onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setContrastImg)}
+                    onRemove={() => removeSlot(setContrastImg)} />
+                </div>
+              </div>
             </div>
 
             {/* ── Step 2：模特来源 ── */}
@@ -716,7 +778,30 @@ export default function VideoGeneralPage() {
                     {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
                 </div>
+                <div>
+                  <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>分辨率</div>
+                  <select value={resolution} onChange={e => setResolution(e.target.value)}
+                    style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
+                    <option value="480p">480p（标准）不加价</option>
+                    <option value="1080p">1080p（高清）+10积分</option>
+                    <option value="4k">4K（超清）+50积分</option>
+                  </select>
+                </div>
               </div>
+              {/* 声音开关 */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 8 }}>声音</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {([{ v: true, icon: "🔊", label: "有声音", desc: "TTS 配音 + 对口型" }, { v: false, icon: "🔇", label: "无声音", desc: "纯视觉，无配音" }] as { v: boolean; icon: string; label: string; desc: string }[]).map(o => (
+                    <button key={String(o.v)} onClick={() => setEnableVoice(o.v)}
+                      style={{ flex: "1 1 120px", padding: "0.6rem 0.8rem", border: `2px solid ${enableVoice === o.v ? "#0d0d0d" : "#e2e8f0"}`, borderRadius: 10, background: enableVoice === o.v ? "#0d0d0d" : "#fff", color: enableVoice === o.v ? "#fff" : "#4a5568", cursor: "pointer", textAlign: "left", transition: "all 0.15s" }}>
+                      <div style={{ fontSize: "0.85rem", fontWeight: 600, marginBottom: 2 }}>{o.icon} {o.label}</div>
+                      <div style={{ fontSize: "0.68rem", opacity: 0.7 }}>{o.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div>
                 <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>你的想法（可选）</div>
                 <textarea

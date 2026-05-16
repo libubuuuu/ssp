@@ -183,6 +183,11 @@ export default function VideoPage() {
               </div>
 
               {/* 状态/结果 */}
+              {(c.status === "pending" || c.status === "running") && (
+                <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "0.6rem 0.8rem", fontSize: "0.78rem", color: "#1e40af", marginBottom: "0.5rem" }}>
+                  ✅ 任务已提交，预计3-8分钟完成。你可以关闭此页面去做其他事，生成完成后在右上角「我的任务」查看结果。
+                </div>
+              )}
               {c.progress && <div style={{ fontSize: "0.8rem", color: "#f80", marginBottom: "0.5rem" }}>⏳ {c.progress}</div>}
               {c.error && <div style={{ fontSize: "0.8rem", color: "#c00", background: "#ffeaea", padding: "0.5rem", borderRadius: 6, marginBottom: "0.5rem" }}>{c.error}</div>}
               {c.resultUrl && (

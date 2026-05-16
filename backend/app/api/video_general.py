@@ -584,6 +584,11 @@ class ScriptToVideoRequest(BaseModel):
     model_video_url: Optional[str] = Field(None)
     model_source: str = Field("auto", description="'auto' / 'image' / 'video'")
     aspect_ratio: str = Field("9:16")
+    ref_video_url: Optional[str] = Field(None, description="入口A参考视频URL（可选，Seedance 60% 折扣）")
+    resolution: str = Field("480p", description="输出分辨率：'480p' / '1080p' / '4k'")
+    contrast_image_url: Optional[str] = Field(None, description="对比产品图URL（起/承阶段用，可选）")
+    enable_voice: bool = Field(True, description="是否开启TTS+Lipsync")
+    target_duration: int = Field(15, ge=5, le=120, description="目标视频总时长（秒），用于校准分镜时长")
 
 
 @router.post("/script-to-video")
@@ -629,6 +634,10 @@ async def script_to_video_submit(
     billing_sec = _preview_cost(scenes, _batch_max)
     cost = max(65, billing_sec * 65)
 
+    # 分辨率附加费
+    _RESOLUTION_SURCHARGE = {"480p": 0, "1080p": 10, "4k": 50}
+    cost += _RESOLUTION_SURCHARGE.get(body.resolution, 0)
+
     user_id = str(current_user["id"])
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足，需 {cost} 积分（约 {len(scenes)} 个分镜）")
@@ -649,6 +658,11 @@ async def script_to_video_submit(
             "model_image_url": body.model_image_url or "",
             "model_video_url": body.model_video_url or "",
             "aspect_ratio": body.aspect_ratio,
+            "ref_video_url": body.ref_video_url or "",
+            "resolution": body.resolution,
+            "contrast_image_url": body.contrast_image_url or "",
+            "enable_voice": body.enable_voice,
+            "target_duration": body.target_duration,
             "_user_id": user_id,
         },
         "module": "video/general/script-to-video",

@@ -878,6 +878,9 @@ export default function VideoCloneV2Page() {
           };
           return (
             <Section title="6. 生成中">
+              <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "0.65rem 0.9rem", fontSize: "0.8rem", color: "#1e40af", marginBottom: 12 }}>
+                ✅ 任务已提交，预计3-8分钟完成。你可以关闭此页面去做其他事，生成完成后在右上角「我的任务」查看结果。
+              </div>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.85rem", color: "#555", marginBottom: 6 }}>
                 <span>已完成 {completedSegs} / {totalSegs} 段</span>
                 <span style={{ color: "#999" }}>

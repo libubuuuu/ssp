@@ -1447,8 +1447,17 @@ async def poll_seedance_fast_r2v_status(task_id: str) -> dict:
             return {"status": "completed", "video_url": video_url}
 
         if "Failed" in status_type or "Failed" in status_str:
-            return {"status": "failed", "error": "Seedance r2v 任务失败"}
+            # 透传 fal 原始状态信息，方便上层判断错误类型（如 sensitive content）
+            return {"status": "failed", "error": f"Seedance r2v 任务失败: {status_str}"}
 
         return {"status": "processing"}
     except Exception as e:
-        return {"status": "processing", "error": str(e)[:200]}
+        err_str = str(e)
+        # fal_client 在 HTTP 错误时抛 FalClientError，str(e) 含真实 fal 错误信息
+        # （如 "sensitive content"、"content policy" 等）
+        # ValueError("Unknown status: ...") 说明 fal 返回了非标准状态，也属于任务失败
+        # 两者透传给上层的 _is_sensitive() 判断，触发商业语境重试
+        is_permanent = ("Unknown status:" in err_str or "FalClientError" in type(e).__name__)
+        if is_permanent:
+            return {"status": "failed", "error": f"Seedance r2v 任务失败: {err_str[:300]}"}
+        return {"status": "processing", "error": err_str[:200]}

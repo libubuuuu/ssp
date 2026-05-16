@@ -613,10 +613,17 @@ export default function VideoFrameExtractPage() {
         )}
 
         {replacedGridUrls.length > 0 && !videoOutputUrl && scenes && (
-          <button onClick={doGenerate} disabled={loading}
-            style={{ background: "#0d8a3e", color: "#fff", border: "none", padding: "1rem 1.8rem", borderRadius: 10, fontSize: "1rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1, marginBottom: "1rem", fontWeight: 600 }}>
-            {loading ? loadingMsg || "生成中..." : `🎬 生成完整视频(65 积分/秒 · ${scenes.length} 段并发 ~3-5 分钟)`}
-          </button>
+          <>
+            <button onClick={doGenerate} disabled={loading}
+              style={{ background: "#0d8a3e", color: "#fff", border: "none", padding: "1rem 1.8rem", borderRadius: 10, fontSize: "1rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1, marginBottom: "0.75rem", fontWeight: 600 }}>
+              {loading ? loadingMsg || "生成中..." : `🎬 生成完整视频(65 积分/秒 · ${scenes.length} 段并发 ~3-5 分钟)`}
+            </button>
+            {loading && (
+              <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "0.65rem 0.9rem", fontSize: "0.8rem", color: "#1e40af", marginBottom: "1rem" }}>
+                ✅ 任务已提交，预计3-8分钟完成。你可以关闭此页面去做其他事，生成完成后在右上角「我的任务」查看结果。
+              </div>
+            )}
+          </>
         )}
 
         {videoOutputUrl && (

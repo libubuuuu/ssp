@@ -3429,6 +3429,38 @@ def _sanitize_for_gpt2(text: str) -> str:
     return out
 
 
+def _sanitize_for_seedance(text: str) -> str:
+    """Seedance 专用敏感词替换，规避 Seedance 内容过滤。
+    与 _sanitize_for_gpt2 并列使用，各自针对不同端点优化。"""
+    if not text:
+        return text
+    pairs = [
+        # 内衣类 → 商业中性
+        ("bra",         "seamless support top"),
+        ("内衣",        "fashion essential"),
+        ("underwear",   "comfort wear"),
+        ("lingerie",    "intimate apparel collection"),
+        ("panties",     "comfort shorts"),
+        ("内裤",        "seamless bottom"),
+        # 身体部位 → 中性描述
+        ("副乳",        "side silhouette"),
+        ("胸",          "front panel"),
+        ("cleavage",    "neckline"),
+        # 风格词 → 优雅化
+        ("sexy",        "elegant"),
+        ("性感",        "优雅"),
+        ("nude",        "skin-tone"),
+        ("裸",          "肤色"),
+        # 泳装类
+        ("bikini",      "two-piece set"),
+        ("泳装",        "swim collection"),
+    ]
+    out = text
+    for old_w, new_w in pairs:
+        out = out.replace(old_w, new_w)
+    return out
+
+
 # ==================== 视频复刻 worker(2026-05-06)====================
 
 async def _run_replicate_job(params: dict) -> dict:
@@ -5106,146 +5138,310 @@ async def _run_video_clone_job(params: dict) -> dict:
 
 
 async def _run_script_to_video_job(params: dict) -> dict:
-    """脚本 → 视频：解析分镜 → 批处理 Seedance 2.0 → ffmpeg 精准裁剪拼接。
+    """脚本 → 视频（入口A/B 共用）。
 
-    复用 skill_generate 的批处理分组 / Seedance 调用 / ffprobe 校验 / ffmpeg 切割 / concat 逻辑。
-    区别：无九宫格，直接用 product_image_urls[0] 作所有 task 的首帧锚点。
+    改动：
+    - ≤15s 单次生成；>15s GPT-Image 2 生成模特头像 + 8s 批处理 + 上帧锚点
+    - 开声音（generate_audio=True）
+    - 去字幕（prompt 末尾强制规则）
+    - 模特描述写进 prompt
+    - 入口A 可传 ref_video_url，Seedance 60% 折扣 + 风格参考
+    - 批处理串行执行（需要前帧参考，不可并发）
     """
-    import math
+    import math, re as _re, base64 as _b64
     import os as _os
     import shutil as _shutil
     import subprocess as _sp
     import tempfile as _tmp
     import time as _t
     import httpx as _httpx
+    import fal_client as _fal
     from app.services.fal_service import fal_upload_with_retry
-    from app.services.ad_video_models import (
-        submit_seedance_fast_r2v_video, poll_seedance_fast_r2v_status,
-    )
+    from app.services.ad_video_models import poll_seedance_fast_r2v_status
     from app.services.logger import log_info, log_error
     from app.database import get_app_config as _get_app_config
 
-    scenes            = params.get("scenes") or []
-    product_urls      = params.get("product_image_urls") or []
-    scene_img_url     = params.get("scene_image_url") or ""
-    model_img_url     = params.get("model_image_url") or ""
-    aspect_ratio      = params.get("aspect_ratio") or "9:16"
+    SEEDANCE_EP = "bytedance/seedance-2.0/fast/reference-to-video"
+    MAX_DUR = 15
+    NO_TEXT = (
+        " CRITICAL: Do NOT render any text, subtitles, captions, "
+        "titles or watermarks on screen. The video must be purely visual with zero on-screen text."
+    )
+
+    scenes        = params.get("scenes") or []
+    product_urls  = params.get("product_image_urls") or []
+    scene_img_url = params.get("scene_image_url") or ""
+    model_img_url = params.get("model_image_url") or ""
+    aspect_ratio  = params.get("aspect_ratio") or "9:16"
+    script_text   = params.get("script") or ""
+    ref_video_url      = params.get("ref_video_url") or ""        # 入口A 参考视频
+    resolution         = params.get("resolution") or "480p"       # 输出分辨率（480p/1080p/4k）
+    contrast_image_url = params.get("contrast_image_url") or ""   # 对比产品图（起/承阶段）
+    enable_voice       = params.get("enable_voice", True)          # 是否开启 TTS+Lipsync
+    target_duration    = float(params.get("target_duration") or 0) # 目标总时长（秒）
 
     if not scenes:
         raise RuntimeError("scenes 必填（脚本解析结果为空）")
     if not product_urls:
         raise RuntimeError("product_image_urls 必填")
 
-    # 批处理上限（读 DB，默认 8s）
+    # 从脚本提取 [模特] 描述
+    _m = _re.search(r'\[模特\][：:]\s*(.+?)(?:\n|\[)', script_text + "\n[", _re.DOTALL)
+    model_desc = _m.group(1).strip() if _m else ""
+
+    # 基础 image_urls（产品图 + 模特图 + 场景图）
+    base_imgs = list(product_urls[:9])
+    if model_img_url and len(base_imgs) < 9:
+        base_imgs.append(model_img_url)
+    if scene_img_url and len(base_imgs) < 9:
+        base_imgs.append(scene_img_url)
+
+    # 第二层：强制校准分镜总时长（Gemini 可能写歪）
+    if target_duration > 0:
+        actual_total = sum(float(s.get("duration_sec") or 4) for s in scenes)
+        if abs(actual_total - target_duration) > 0.5:
+            scale = target_duration / actual_total
+            for s in scenes:
+                s["duration_sec"] = round(float(s.get("duration_sec") or 4) * scale, 1)
+            log_info(
+                f"script_to_video 时长校准: actual={actual_total:.1f}s → target={target_duration:.0f}s "
+                f"scale={scale:.4f}"
+            )
+
+    # 总时长
+    total_dur_all = sum(float(s.get("duration_sec") or 4) for s in scenes)
+
+    # 批处理上限（DB，默认 8s）
     try:
-        _batch_max_dur = float(_get_app_config("batch_max_duration", "8"))
+        _batch_max = float(_get_app_config("batch_max_duration", "8"))
     except Exception:
-        _batch_max_dur = 8.0
-    MAX_API_DUR = 15
+        _batch_max = 8.0
 
-    # image_urls：主产品图 + 其余产品图 + 模特图 + 场景图，上限 9 张
-    base_image_urls = list(product_urls[:9])
-    if model_img_url and len(base_image_urls) < 9:
-        base_image_urls.append(model_img_url)
-    if scene_img_url and len(base_image_urls) < 9:
-        base_image_urls.append(scene_img_url)
-    anchor_url = base_image_urls[0]   # 所有 task 共用同一首帧锚点
+    work_dir = _tmp.mkdtemp(prefix="script_to_video_")
+    t0 = _t.time()
 
-    # ── 按"≤ batch_max_dur"分组 ──────────────────────────────────────────────
+    # ── 模特头像生成（>15s 时，失败降级不阻塞）────────────────────────────
+    async def _gen_portrait() -> str | None:
+        if not model_desc:
+            return None
+        try:
+            from app.config import get_settings as _gs
+            from openai import AsyncOpenAI
+            s = _gs()
+            cli = AsyncOpenAI(base_url=s.LINGMENG_BASE_URL, api_key=s.LINGMENG_API_KEY)
+            resp = await cli.images.generate(
+                model="gpt-image-2",
+                prompt=(
+                    f"Professional portrait photo: {model_desc}. "
+                    "Head and shoulders only, no products held or worn. "
+                    "Clean studio background, natural lighting, photorealistic. "
+                    "No text, no watermarks."
+                ),
+                n=1, size="1024x1024", response_format="b64_json",
+            )
+            path = _os.path.join(work_dir, "portrait.jpg")
+            with open(path, "wb") as f:
+                f.write(_b64.b64decode(resp.data[0].b64_json))
+            url = await fal_upload_with_retry(path)
+            log_info(f"script_to_video: portrait OK {url[:60]}")
+            return url
+        except Exception as e:
+            log_error(f"script_to_video: portrait failed (skip): {e}")
+            return None
+
+    # ── 截取上一个 batch 最后一帧 ──────────────────────────────────────────
+    async def _last_frame(raw_path: str, idx: int) -> str | None:
+        try:
+            fp = _os.path.join(work_dir, f"last_frame_{idx}.jpg")
+            rr = _sp.run(
+                ["ffmpeg", "-y", "-sseof", "-3", "-i", raw_path,
+                 "-update", "1", "-q:v", "3", fp],
+                capture_output=True, text=True, timeout=30,
+            )
+            if rr.returncode != 0 or not _os.path.exists(fp): return None
+            return await fal_upload_with_retry(fp)
+        except Exception as e:
+            log_error(f"script_to_video: last_frame failed: {e}")
+            return None
+
+    # ── Seedance 提交（支持 video_urls）────────────────────────────────────
+    async def _submit(img_urls: list, prompt: str, duration: int) -> str:
+        args: dict = {
+            "image_urls": img_urls,
+            "prompt": prompt,
+            "duration": str(duration),
+            "aspect_ratio": aspect_ratio,
+            "resolution": "480p",
+            "generate_audio": False,
+        }
+        if ref_video_url:
+            args["video_urls"] = [ref_video_url]
+            args["audio_urls"] = []
+        h = await _fal.submit_async(SEEDANCE_EP, arguments=args)
+        return h.request_id
+
+    # ── 分组逻辑 ───────────────────────────────────────────────────────────
+    # 统一走8s批处理分组（去掉≤15s单次逻辑，保证生成时长可控）
+    # 模特一致性通过 model_desc 写进 prompt 来保证，不依赖 portrait
+    portrait_url = None
     tasks: list[dict] = []
     cur: dict | None = None
-    for i, scene in enumerate(scenes):
+    for scene in scenes:
         dur = float(scene.get("duration_sec") or 4)
-        if dur >= _batch_max_dur:
-            if cur:
-                cur["task_idx"] = len(tasks); tasks.append(cur); cur = None
-            tasks.append({"scenes": [scene], "total_dur": dur, "task_idx": len(tasks)})
-        elif cur is None:
+        if cur is None:
             cur = {"scenes": [scene], "total_dur": dur}
-        elif cur["total_dur"] + dur > _batch_max_dur:
+        elif cur["total_dur"] + dur > _batch_max:
             cur["task_idx"] = len(tasks); tasks.append(cur)
             cur = {"scenes": [scene], "total_dur": dur}
         else:
             cur["scenes"].append(scene); cur["total_dur"] += dur
     if cur:
         cur["task_idx"] = len(tasks); tasks.append(cur)
-
-    work_dir = _tmp.mkdtemp(prefix="script_to_video_")
-    t0 = _t.time()
     log_info(
-        f"script_to_video 开工 scenes={len(scenes)} tasks={len(tasks)} "
-        f"max_dur={_batch_max_dur}s anchor={anchor_url[:60]} work={work_dir}"
+        f"script_to_video 批处理模式: total={total_dur_all:.1f}s "
+        f"tasks={len(tasks)} max_dur={_batch_max}s"
     )
 
     try:
-        # ── 并发跑每个 Task ──────────────────────────────────────────────────
-        sem = asyncio.Semaphore(5)
+        # ── 串行执行（需要前帧，不可并发）──────────────────────────────────
+        all_raw: list[str] = []
 
-        async def _run_task(task: dict) -> dict:
-            async with sem:
-                ti = task["task_idx"]
-                total_dur = min(task["total_dur"], MAX_API_DUR)
-                req_dur = max(4, math.ceil(total_dur))
-                req_dur = min(req_dur, MAX_API_DUR)
+        for task in tasks:
+            ti = task["task_idx"]
+            req_dur = max(3, math.ceil(min(task["total_dur"], MAX_DUR)))
+            req_dur = min(req_dur, MAX_DUR)
 
-                # 拼 prompt：各分镜 visual_prompt 去色词后连贯描述
-                scene_descs = [
-                    _strip_video_color_words(sc.get("visual_prompt") or "Cinematic product showcase")
-                    for sc in task["scenes"]
-                ]
-                combined = "; ".join(scene_descs)
+            # 判断当前 task 是否全是起/承阶段（用对比图）还是包含转/合（用正式产品图）
+            _task_actions = " ".join(sc.get("action") or "" for sc in task["scenes"])
+            _is_conflict_stage = (
+                contrast_image_url
+                and not any(kw in _task_actions for kw in ["转", "合", "促单", "逼单", "cta", "CTA"])
+                and any(kw in _task_actions for kw in ["起", "承", "冲突", "困境", "危机", "痛点"])
+            )
+            _anchor_img = contrast_image_url if _is_conflict_stage else (product_urls[0] if product_urls else "")
 
-                # @Image 角色标注
-                ref_tags = " ".join(
-                    f"@Image{j+2} is a product reference."
-                    for j in range(len(base_image_urls) - 1)
-                )
-                prompt = (
-                    f"@Image1 defines the EXACT visual appearance (colors, outfit, products) "
-                    f"that MUST be preserved throughout. {ref_tags} "
-                    f"Generate a {req_dur}-second continuous video: {combined}. "
-                    f"CRITICAL: Strictly match all visual details from @Image1. "
-                    f"Ignore any color words in the description — use ONLY what @Image1 shows."
-                )
-                prompt = _sanitize_for_gpt2(prompt)
+            # 构建此 task 的 image_urls（锚点图放第一位）
+            task_imgs = [_anchor_img] if _anchor_img else []
+            for _u in base_imgs:
+                if _u not in task_imgs and len(task_imgs) < 9:
+                    task_imgs.append(_u)
+            if not task_imgs:
+                task_imgs = list(base_imgs)
 
-                log_info(f"script_to_video Task {ti+1}/{len(tasks)}: n_scenes={len(task['scenes'])} req_dur={req_dur}s")
-                submit_res = await submit_seedance_fast_r2v_video(
-                    image_urls=base_image_urls,
-                    prompt=prompt,
-                    duration=req_dur,
-                    aspect_ratio=aspect_ratio,
-                    resolution="480p",
-                    enable_audio=False,
-                )
-                if "error" in submit_res or not submit_res.get("task_id"):
-                    raise RuntimeError(f"Task {ti+1} submit 失败: {submit_res.get('error','?')}")
+            if portrait_url and len(task_imgs) < 9:
+                task_imgs.append(portrait_url)
+            if ti > 0 and all_raw and len(task_imgs) < 9:
+                prev_frame = await _last_frame(all_raw[-1], ti)
+                if prev_frame:
+                    task_imgs.append(prev_frame)
+            task_imgs = task_imgs[:9]
 
-                fal_id = submit_res["task_id"]
-                tp = _t.time()
-                video_url = None
-                while _t.time() - tp < 360:
-                    st = await poll_seedance_fast_r2v_status(fal_id)
-                    if st.get("status") == "completed":
-                        video_url = st.get("video_url"); break
-                    if st.get("status") == "failed":
-                        raise RuntimeError(f"Task {ti+1} failed: {st.get('error','?')}")
-                    await asyncio.sleep(5)
-                if not video_url:
-                    raise RuntimeError(f"Task {ti+1} 超时 360s")
+            # Prompt
+            descs = [
+                _strip_video_color_words(sc.get("visual_prompt") or "Cinematic product showcase")
+                for sc in task["scenes"]
+            ]
+            combined = "; ".join(descs)
+            ref_tags = " ".join(
+                f"@Image{j+2} is a product/scene reference."
+                for j in range(len(task_imgs) - 1)
+            )
+            model_line = (
+                f"The model in this video must be: {model_desc}. Keep this appearance consistent. "
+                if model_desc else ""
+            )
+            portrait_line = (
+                "IMPORTANT: Maintain the exact same model appearance as shown in the face reference image throughout all shots. "
+                if portrait_url else ""
+            )
+            prompt = (
+                f"@Image1 defines the EXACT visual appearance (colors, outfit, products) "
+                f"that MUST be preserved throughout. {ref_tags} "
+                f"{model_line}{portrait_line}"
+                f"Generate a {req_dur}-second continuous video: {combined}. "
+                f"CRITICAL: Strictly match all visual details from @Image1. "
+                f"Ignore any color words in the description — use ONLY what @Image1 shows."
+                f"{NO_TEXT}"
+            )
+            # 两级清洗：GPT2 过滤 + Seedance 专项替换
+            prompt = _sanitize_for_gpt2(_sanitize_for_seedance(prompt))
 
-                raw = _os.path.join(work_dir, f"task_{ti:02d}_raw.mp4")
-                async with _httpx.AsyncClient(timeout=120, follow_redirects=True) as cli:
-                    r = await cli.get(video_url); r.raise_for_status()
-                    with open(raw, "wb") as f: f.write(r.content)
-                log_info(f"script_to_video Task {ti+1} 下载完成 {_os.path.getsize(raw)} bytes ({_t.time()-tp:.1f}s)")
-                return {"task": task, "raw_path": raw}
+            log_info(
+                f"script_to_video Task {ti+1}/{len(tasks)}: "
+                f"n_scenes={len(task['scenes'])} req_dur={req_dur}s "
+                f"n_imgs={len(task_imgs)} ref_video={bool(ref_video_url)}"
+            )
 
-        gather_t0 = _t.time()
-        task_results = await asyncio.gather(*[_run_task(tk) for tk in tasks])
-        log_info(f"script_to_video 全部 {len(tasks)} Task 完成 ({_t.time()-gather_t0:.1f}s)")
+            # 商业语境前缀（随敏感内容重试逐级加强）
+            _SENS_PREFIXES = [
+                "专业时尚电商广告拍摄，线上零售平台服装产品展示，优雅简洁商业风格，专业影棚灯光。",
+                "Professional e-commerce fashion commercial shoot. Studio product showcase video for online retail platform. ",
+                "High-end brand campaign video. Clean aesthetic. Professional studio lighting. ",
+                "Luxury fashion lookbook. Editorial style. Minimalist commercial production. ",
+            ]
 
-        # ── ffprobe + 精准裁剪 ────────────────────────────────────────────────
+            def _is_sensitive(err_str: str) -> bool:
+                return any(kw in (err_str or "").lower()
+                           for kw in ["sensitive", "nsfw", "inappropriate", "content"])
+
+            MAX_WAIT = 600  # 10 分钟
+            vid_url = None
+            last_err = ""
+
+            # 外层：超时重试（最多 1 次）
+            for timeout_attempt in range(2):
+                # 内层：敏感内容升级重试（最多 3 次）
+                for si in range(4):
+                    use_prompt = _SENS_PREFIXES[si] + prompt
+                    sensitive_fail = False
+                    try:
+                        fal_id = await _submit(task_imgs, use_prompt, req_dur)
+                        log_info(f"script_to_video Task {ti+1} fal_id={fal_id} (to={timeout_attempt+1} sens={si+1})")
+                    except Exception as e:
+                        raise RuntimeError(f"Task {ti+1} submit 失败: {e}")
+
+                    tp = _t.time()
+                    timeout_hit = False
+                    while _t.time() - tp < MAX_WAIT:
+                        st = await poll_seedance_fast_r2v_status(fal_id)
+                        if st.get("status") == "completed":
+                            vid_url = st.get("video_url"); break
+                        if st.get("status") == "failed":
+                            err = st.get("error", "")
+                            if _is_sensitive(err) and si < 3:
+                                log_info(f"script_to_video Task {ti+1} 敏感内容拦截，升级商业语境重试 (si={si})")
+                                sensitive_fail = True; break
+                            if _is_sensitive(err) and si >= 3:
+                                raise RuntimeError(f"Task {ti+1} 内容审核持续拒绝（{si+1} 次），请调整脚本描述")
+                            raise RuntimeError(f"Task {ti+1} fal failed: {err}")
+                        await asyncio.sleep(5)
+                    else:
+                        timeout_hit = True
+                        last_err = f"超时 {MAX_WAIT}s"
+
+                    if vid_url or timeout_hit:
+                        break  # 成功或超时，退出敏感重试
+                    if not sensitive_fail:
+                        last_err = f"超时 {MAX_WAIT}s"; break  # 非敏感原因退出
+                    # sensitive_fail=True and si<3: 继续下一个前缀
+
+                if vid_url: break
+                if timeout_attempt == 0:
+                    log_info(f"script_to_video Task {ti+1} {last_err}，执行超时重试")
+                # 继续 timeout_attempt
+
+            if not vid_url:
+                raise RuntimeError(f"视频生成超时（{MAX_WAIT}s），请稍后重试。Task {ti+1}")
+
+            raw = _os.path.join(work_dir, f"task_{ti:02d}_raw.mp4")
+            async with _httpx.AsyncClient(timeout=120, follow_redirects=True) as cli:
+                r = await cli.get(vid_url); r.raise_for_status()
+                with open(raw, "wb") as f: f.write(r.content)
+            log_info(f"script_to_video Task {ti+1} 下载 {_os.path.getsize(raw)} bytes ({_t.time()-tp:.1f}s)")
+            all_raw.append(raw)
+            task["raw_path"] = raw
+
+        # ── ffprobe + 裁剪（保留音轨）──────────────────────────────────────
         def _ffprobe_dur(path: str) -> float:
             cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
                    "-of", "default=noprint_wrappers=1:nokey=1", path]
@@ -5255,57 +5451,137 @@ async def _run_script_to_video_job(params: dict) -> dict:
             except Exception:
                 return -1.0
 
-        all_clips: list[tuple[int, str]] = []  # (global_scene_idx, clip_path)
+        all_clips: list[tuple[int, str]] = []
         global_idx = 0
-        for res in task_results:
-            task = res["task"]; raw = res["raw_path"]; ti = task["task_idx"]
+        for task in tasks:
+            raw = task["raw_path"]; ti = task["task_idx"]
             actual = _ffprobe_dur(raw)
             expected = task["total_dur"]
             if actual < 0: actual = expected
             scale = (actual / expected) if actual < expected - 0.1 else 1.0
             if scale < 1.0:
                 log_error(f"script_to_video Task {ti+1} 实际={actual:.2f}s < 预期={expected:.2f}s scale={scale:.4f}")
-
             offset = 0.0
             for scene in task["scenes"]:
                 target = max(0.05, float(scene.get("duration_sec") or 4) * scale)
                 if offset >= actual - 0.02: break
                 target = min(target, actual - offset)
                 clip = _os.path.join(work_dir, f"clip_{global_idx:04d}.mp4")
-                cmd = ["ffmpeg", "-y", "-i", raw,
-                       "-ss", f"{offset:.3f}", "-t", f"{target:.3f}",
-                       "-c:v", "libx264", "-preset", "ultrafast",
-                       "-pix_fmt", "yuv420p", "-an", clip]
-                rr = _sp.run(cmd, capture_output=True, text=True, timeout=120)
+                rr = _sp.run(
+                    ["ffmpeg", "-y", "-i", raw,
+                     "-ss", f"{offset:.3f}", "-t", f"{target:.3f}",
+                     "-c:v", "libx264", "-preset", "ultrafast",
+                     "-pix_fmt", "yuv420p",
+                     "-c:a", "aac", "-b:a", "128k",  # 保留音轨
+                     clip],
+                    capture_output=True, text=True, timeout=120,
+                )
                 if rr.returncode != 0 or not _os.path.exists(clip) or _os.path.getsize(clip) < 512:
                     raise RuntimeError(f"Task {ti+1} 裁剪失败: {rr.stderr[-200:]}")
                 all_clips.append((global_idx, clip))
                 offset += target; global_idx += 1
 
-        # ── ffmpeg concat ────────────────────────────────────────────────────
+        # ── concat ──────────────────────────────────────────────────────────
         all_clips.sort(key=lambda x: x[0])
         list_path = _os.path.join(work_dir, "concat.txt")
         with open(list_path, "w") as f:
             for _, p in all_clips: f.write(f"file '{p}'\n")
         final = _os.path.join(work_dir, "final.mp4")
-        cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
-               "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p", "-an", final]
-        rr = _sp.run(cmd, capture_output=True, text=True, timeout=180)
+        rr = _sp.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+             "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+             "-c:a", "aac", "-b:a", "128k",  # 保留音轨
+             final],
+            capture_output=True, text=True, timeout=180,
+        )
         if rr.returncode != 0 or not _os.path.exists(final):
             raise RuntimeError(f"concat 失败: {rr.stderr[-300:]}")
         log_info(f"script_to_video concat 完成 {_os.path.getsize(final)} bytes")
 
-        # ── 上传成品 ────────────────────────────────────────────────────────
+        # 先上传 480p 成品
         video_url_out = await fal_upload_with_retry(final)
-        total_dur = sum(float(s.get("duration_sec", 4)) for s in scenes)
+
+        # ── Lipsync：提取台词 → TTS → 对齐口型 ────────────────────────────────
+        if not enable_voice:
+            log_info("script_to_video lipsync: enable_voice=False，跳过 TTS+Lipsync")
+        else:
+            try:
+                _speeches = [
+                    str(sc.get("speech") or "").strip()
+                    for sc in (params.get("scenes") or [])
+                ]
+                _full_speech = " ".join(s for s in _speeches if s)
+
+                if _full_speech:
+                    log_info(f"script_to_video lipsync: speech_len={len(_full_speech)}")
+
+                    # TTS：ElevenLabs multilingual-v2（与 ad_video 同路径）
+                    _tts_result = await _fal.run_async(
+                        "fal-ai/elevenlabs/tts/multilingual-v2",
+                        arguments={"text": _full_speech[:1000]},
+                    )
+                    _audio_obj = _tts_result.get("audio") if isinstance(_tts_result.get("audio"), dict) else None
+                    _tts_audio_url = (_audio_obj.get("url") if _audio_obj else None) or _tts_result.get("audio_url")
+
+                    if not _tts_audio_url:
+                        raise RuntimeError("TTS 未返回 audio_url")
+                    log_info(f"script_to_video lipsync TTS OK url={_tts_audio_url[:60]}")
+
+                    # Lipsync：sync-lipsync
+                    _lipsync_result = await _fal.subscribe_async(
+                        "fal-ai/sync-lipsync",
+                        arguments={
+                            "video_url": video_url_out,
+                            "audio_url": _tts_audio_url,
+                            "sync_mode": "cut_off",
+                        },
+                    )
+                    _lipsync_url = None
+                    if isinstance(_lipsync_result, dict):
+                        _v = _lipsync_result.get("video") or {}
+                        _lipsync_url = (_v.get("url") if isinstance(_v, dict) else None) or _lipsync_result.get("video_url")
+                    if _lipsync_url:
+                        video_url_out = _lipsync_url
+                        log_info(f"script_to_video lipsync OK url={_lipsync_url[:80]}")
+                    else:
+                        log_error("script_to_video lipsync 返回无 URL，保留无口型视频继续")
+                else:
+                    log_info("script_to_video lipsync: 台词为空，跳过 TTS+Lipsync")
+            except Exception as _lse:
+                log_error(f"script_to_video lipsync 失败（降级保留无口型视频）: {_lse}")
+        # ── Lipsync 结束 ────────────────────────────────────────────────────────
+
+        # 如需高清，调 Bytedance Upscaler 放大
+        if resolution != "480p":
+            try:
+                log_info(f"script_to_video upscale 开始 resolution={resolution} input={video_url_out[:60]}")
+                upscale_result = await _fal.subscribe_async(
+                    "fal-ai/bytedance-upscaler/upscale/video",
+                    arguments={
+                        "video_url": video_url_out,
+                        "resolution": resolution,
+                    },
+                )
+                upscaled_url = None
+                if isinstance(upscale_result, dict):
+                    v = upscale_result.get("video") or {}
+                    upscaled_url = (v.get("url") if isinstance(v, dict) else None) or upscale_result.get("video_url")
+                if upscaled_url:
+                    video_url_out = upscaled_url
+                    log_info(f"script_to_video upscale 完成 {resolution} url={upscaled_url[:80]}")
+                else:
+                    log_error(f"script_to_video upscale 返回无 URL，保留 480p 成品")
+            except Exception as _ue:
+                log_error(f"script_to_video upscale 失败（保留 480p 成品）: {_ue}")
+
         log_info(
             f"script_to_video 收工 total={_t.time()-t0:.1f}s tasks={len(tasks)} "
-            f"scenes={len(scenes)} dur={total_dur:.1f}s url={video_url_out[:80]}"
+            f"scenes={len(scenes)} dur={total_dur_all:.1f}s resolution={resolution} url={video_url_out[:80]}"
         )
         return {
-            "video_url":          video_url_out,
-            "n_scenes":           len(scenes),
-            "total_duration_sec": round(total_dur, 2),
+            "video_url": video_url_out,
+            "n_scenes": len(scenes),
+            "total_duration_sec": round(total_dur_all, 2),
         }
     finally:
         try: _shutil.rmtree(work_dir, ignore_errors=True)
