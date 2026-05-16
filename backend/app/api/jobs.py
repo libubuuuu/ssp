@@ -5266,10 +5266,11 @@ async def _run_script_to_video_job(params: dict) -> dict:
 
     # ── Seedance 提交（支持 video_urls）────────────────────────────────────
     async def _submit(img_urls: list, prompt: str, duration: int) -> str:
+        safe_dur = max(4, min(15, int(duration)))  # Seedance Fast r2v 实测 4-15s
         args: dict = {
             "image_urls": img_urls,
             "prompt": prompt,
-            "duration": str(duration),
+            "duration": str(safe_dur),
             "aspect_ratio": aspect_ratio,
             "resolution": "480p",
             "generate_audio": False,
@@ -5283,7 +5284,9 @@ async def _run_script_to_video_job(params: dict) -> dict:
     # ── 分组逻辑 ───────────────────────────────────────────────────────────
     # 统一走8s批处理分组（去掉≤15s单次逻辑，保证生成时长可控）
     # 模特一致性通过 model_desc 写进 prompt 来保证，不依赖 portrait
-    portrait_url = None
+    # 改动3：所有视频都生成模特头像，保证人脸一致性
+    portrait_url = await _gen_portrait() if model_desc else None
+
     tasks: list[dict] = []
     cur: dict | None = None
     for scene in scenes:
@@ -5303,21 +5306,51 @@ async def _run_script_to_video_job(params: dict) -> dict:
     )
 
     try:
+        # ── 改动4：TTS 提前启动，与 Seedance 并行（TTS 只需台词，不依赖视频）──
+        _tts_concurrent_task = None
+        _concurrent_audio_url: str | None = None
+        if enable_voice:
+            _pre_speeches = [str(sc.get("speech") or "").strip() for sc in scenes]
+            _pre_speech_text = " ".join(s for s in _pre_speeches if s)
+            if _pre_speech_text:
+                async def _concurrent_tts():
+                    try:
+                        _r = await _fal.run_async(
+                            "fal-ai/elevenlabs/tts/multilingual-v2",
+                            arguments={"text": _pre_speech_text[:1000]},
+                        )
+                        _ao = _r.get("audio") if isinstance(_r.get("audio"), dict) else None
+                        return (_ao.get("url") if _ao else None) or _r.get("audio_url")
+                    except Exception as _te:
+                        log_error(f"script_to_video 并行TTS失败: {_te}")
+                        return None
+                _tts_concurrent_task = asyncio.create_task(_concurrent_tts())
+                log_info(f"script_to_video TTS 已并行启动 speech_len={len(_pre_speech_text)}")
+
         # ── 串行执行（需要前帧，不可并发）──────────────────────────────────
         all_raw: list[str] = []
 
         for task in tasks:
             ti = task["task_idx"]
-            req_dur = max(3, math.ceil(min(task["total_dur"], MAX_DUR)))
+            req_dur = max(4, math.ceil(min(task["total_dur"], MAX_DUR)))  # Seedance 最低 4s
             req_dur = min(req_dur, MAX_DUR)
 
-            # 判断当前 task 是否全是起/承阶段（用对比图）还是包含转/合（用正式产品图）
-            _task_actions = " ".join(sc.get("action") or "" for sc in task["scenes"])
-            _is_conflict_stage = (
-                contrast_image_url
-                and not any(kw in _task_actions for kw in ["转", "合", "促单", "逼单", "cta", "CTA"])
-                and any(kw in _task_actions for kw in ["起", "承", "冲突", "困境", "危机", "痛点"])
-            )
+            # 改动2：按 stage 标签判断是否用对比图（起/承用对比图，转/合用正式产品图）
+            _task_stages = [sc.get("stage", "") for sc in task["scenes"]]
+            if contrast_image_url:
+                _has_early = any(s in ("起", "承") for s in _task_stages)
+                _has_late  = any(s in ("转", "合") for s in _task_stages)
+                if _has_early and not _has_late:
+                    _is_conflict_stage = True
+                elif not any(_task_stages):
+                    # 没有 stage 标签，按位置兜底：前半用对比图
+                    _mid = len(scenes) // 2
+                    _scene_ids = [sc["id"] for sc in task["scenes"]]
+                    _is_conflict_stage = all(sid <= _mid for sid in _scene_ids)
+                else:
+                    _is_conflict_stage = False
+            else:
+                _is_conflict_stage = False
             _anchor_img = contrast_image_url if _is_conflict_stage else (product_urls[0] if product_urls else "")
 
             # 构建此 task 的 image_urls（锚点图放第一位）
@@ -5501,39 +5534,28 @@ async def _run_script_to_video_job(params: dict) -> dict:
         # 先上传 480p 成品
         video_url_out = await fal_upload_with_retry(final)
 
-        # ── Lipsync：提取台词 → TTS → 对齐口型 ────────────────────────────────
+        # ── Lipsync：await 并行TTS结果 → 对齐口型 ───────────────────────────────
         if not enable_voice:
             log_info("script_to_video lipsync: enable_voice=False，跳过 TTS+Lipsync")
+            if _tts_concurrent_task and not _tts_concurrent_task.done():
+                _tts_concurrent_task.cancel()
         else:
             try:
-                _speeches = [
-                    str(sc.get("speech") or "").strip()
-                    for sc in (params.get("scenes") or [])
-                ]
-                _full_speech = " ".join(s for s in _speeches if s)
+                # await 并行已启动的 TTS（与 Seedance 并行执行，此处只是等结果）
+                _tts_audio_url = None
+                if _tts_concurrent_task is not None:
+                    _tts_audio_url = await _tts_concurrent_task
+                    if _tts_audio_url:
+                        log_info(f"script_to_video lipsync TTS 并行完成 url={_tts_audio_url[:60]}")
+                    else:
+                        log_error("script_to_video 并行TTS无返回，跳过Lipsync")
 
-                if _full_speech:
-                    log_info(f"script_to_video lipsync: speech_len={len(_full_speech)}")
-
-                    # TTS：ElevenLabs multilingual-v2（与 ad_video 同路径）
-                    _tts_result = await _fal.run_async(
-                        "fal-ai/elevenlabs/tts/multilingual-v2",
-                        arguments={"text": _full_speech[:1000]},
-                    )
-                    _audio_obj = _tts_result.get("audio") if isinstance(_tts_result.get("audio"), dict) else None
-                    _tts_audio_url = (_audio_obj.get("url") if _audio_obj else None) or _tts_result.get("audio_url")
-
-                    if not _tts_audio_url:
-                        raise RuntimeError("TTS 未返回 audio_url")
-                    log_info(f"script_to_video lipsync TTS OK url={_tts_audio_url[:60]}")
-
-                    # Lipsync：sync-lipsync
+                if _tts_audio_url:
                     _lipsync_result = await _fal.subscribe_async(
-                        "fal-ai/sync-lipsync",
+                        "fal-ai/musetalk",
                         arguments={
-                            "video_url": video_url_out,
+                            "source_video_url": video_url_out,  # MuseTalk 字段名
                             "audio_url": _tts_audio_url,
-                            "sync_mode": "cut_off",
                         },
                     )
                     _lipsync_url = None
@@ -5546,7 +5568,7 @@ async def _run_script_to_video_job(params: dict) -> dict:
                     else:
                         log_error("script_to_video lipsync 返回无 URL，保留无口型视频继续")
                 else:
-                    log_info("script_to_video lipsync: 台词为空，跳过 TTS+Lipsync")
+                    log_info("script_to_video lipsync: 台词为空或TTS失败，跳过Lipsync")
             except Exception as _lse:
                 log_error(f"script_to_video lipsync 失败（降级保留无口型视频）: {_lse}")
         # ── Lipsync 结束 ────────────────────────────────────────────────────────

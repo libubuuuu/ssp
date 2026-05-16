@@ -292,6 +292,26 @@ export default function VideoGeneralPage() {
     }
   };
 
+  // ── 检测脚本里是否含对比关键词（决定是否显示对比图上传）──────────────────
+  const _CONTRAST_KW = ["旧", "老款", "之前", "原来", "以前", "对比", "竞品", "old", "previous", "used to", "regular", "normal", "换上", "换了", "before", "instead"];
+  const hasContrastHint = (text: string) => _CONTRAST_KW.some(kw => text.toLowerCase().includes(kw.toLowerCase()));
+
+  // ── 对比图上传区 JSX（脚本展示后、生成按钮前复用）──────────────────────────
+  const ContrastUploadHint = ({ scriptText }: { scriptText: string }) => {
+    if (!hasContrastHint(scriptText)) return null;
+    return (
+      <div style={{ margin: "1rem 0", padding: "0.9rem 1rem", background: "#fefce8", border: "1px solid #fde68a", borderRadius: 10 }}>
+        <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "#92400e", marginBottom: 6 }}>💡 脚本中有产品对比环节</div>
+        <div style={{ fontSize: "0.75rem", color: "#78350f", marginBottom: 10 }}>
+          上传一张旧款/竞品图片，视频中的对比效果更真实。不上传也可以，AI 会自动处理。
+        </div>
+        <UploadBox slot={contrastImg} label="对比图"
+          onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setContrastImg)}
+          onRemove={() => removeSlot(setContrastImg)} />
+      </div>
+    );
+  };
+
   // ── generate video from confirmed script ──────────────────────────────────
   const generateVideo = async (scriptOverride?: string, refVideoOverride?: string) => {
     const useScript = scriptOverride ?? script;
@@ -343,7 +363,10 @@ export default function VideoGeneralPage() {
           const sd = await sr.json();
           if (sd.status === "completed") {
             clearInterval(iv);
-            setVidUrl(sd.result?.video_url || "");
+            // 兼容多种字段路径：result.video_url（直接）或 result 本身就是 URL
+            const _vidUrl = sd.result?.video_url || sd.result?.url || (typeof sd.result === "string" ? sd.result : "") || "";
+            console.log("[script-to-video] job result:", JSON.stringify(sd.result));
+            setVidUrl(_vidUrl);
             setVidLoading(false); setVidProgress("");
           } else if (sd.status === "failed") {
             clearInterval(iv);
@@ -490,17 +513,6 @@ export default function VideoGeneralPage() {
                   onRemove={() => removeSlot(setScene)} />
               </div>
               <div style={{ fontSize: "0.72rem", color: "#a0aec0", marginTop: 10 }}>正面图必传，其余可选 · 每张 ≤ 10MB</div>
-
-              {/* 对比产品图（可选） */}
-              <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px dashed #e2e8f0" }}>
-                <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#718096", marginBottom: 6 }}>对比产品图（可选）</div>
-                <div style={{ fontSize: "0.72rem", color: "#a0aec0", marginBottom: 10 }}>上传一张旧款/竞品图片，用于剧情中与你的新产品做对比。不上传则 AI 自动处理。</div>
-                <div style={{ display: "flex", gap: 14 }}>
-                  <UploadBox slot={contrastImg} label="对比图"
-                    onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setContrastImg)}
-                    onRemove={() => removeSlot(setContrastImg)} />
-                </div>
-              </div>
             </div>
 
             {/* Step 3A：模特来源（复用） */}
@@ -601,6 +613,7 @@ export default function VideoGeneralPage() {
                 <div style={{ marginTop: "1.4rem" }}>
                   <div style={{ fontSize: "0.8rem", color: "#718096", fontWeight: 600, marginBottom: 10 }}>✨ 视频分析结果（可复刻脚本）</div>
                   <ScriptDisplay text={scriptA} />
+                  <ContrastUploadHint scriptText={scriptA} />
                   <div style={{ display: "flex", gap: 10, marginTop: "1.2rem", flexWrap: "wrap" }}>
                     <button onClick={analyzeVideo} disabled={loadingA || vidLoading}
                       style={{ flex: "1 1 200px", padding: "0.7rem 1rem", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#374151", fontSize: "0.88rem", cursor: "pointer", fontWeight: 500 }}>
@@ -668,17 +681,6 @@ export default function VideoGeneralPage() {
                   onRemove={() => removeSlot(setScene)} />
               </div>
               <div style={{ fontSize: "0.72rem", color: "#a0aec0", marginTop: 10 }}>正面图必传，其余可选 · 每张 ≤ 10MB · 支持 JPG / PNG / WebP</div>
-
-              {/* 对比产品图（可选） */}
-              <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px dashed #e2e8f0" }}>
-                <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#718096", marginBottom: 6 }}>对比产品图（可选）</div>
-                <div style={{ fontSize: "0.72rem", color: "#a0aec0", marginBottom: 10 }}>上传一张旧款/竞品图片，用于剧情中与你的新产品做对比。不上传则 AI 自动处理。</div>
-                <div style={{ display: "flex", gap: 14 }}>
-                  <UploadBox slot={contrastImg} label="对比图"
-                    onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setContrastImg)}
-                    onRemove={() => removeSlot(setContrastImg)} />
-                </div>
-              </div>
             </div>
 
             {/* ── Step 2：模特来源 ── */}
@@ -850,6 +852,7 @@ export default function VideoGeneralPage() {
                 <div style={{ marginTop: "1.4rem" }}>
                   <div style={{ fontSize: "0.8rem", color: "#718096", fontWeight: 600, marginBottom: 10, letterSpacing: "0.05em" }}>✨ 生成的创意脚本</div>
                   <ScriptDisplay text={script} />
+                  <ContrastUploadHint scriptText={script} />
 
                   {/* 行动按钮 */}
                   <div style={{ display: "flex", gap: 10, marginTop: "1.2rem", flexWrap: "wrap" }}>
