@@ -5220,31 +5220,30 @@ async def _run_script_to_video_job(params: dict) -> dict:
     work_dir = _tmp.mkdtemp(prefix="script_to_video_")
     t0 = _t.time()
 
-    # ── 模特头像生成（>15s 时，失败降级不阻塞）────────────────────────────
+    # ── 模特头像生成（fal-ai/gpt-image-2，失败降级不阻塞）──────────────────
     async def _gen_portrait() -> str | None:
         if not model_desc:
             return None
         try:
-            from app.config import get_settings as _gs
-            from openai import AsyncOpenAI
-            s = _gs()
-            cli = AsyncOpenAI(base_url=s.LINGMENG_BASE_URL, api_key=s.LINGMENG_API_KEY)
-            resp = await cli.images.generate(
-                model="gpt-image-2",
-                prompt=(
-                    f"Professional portrait photo: {model_desc}. "
-                    "Head and shoulders only, no products held or worn. "
-                    "Clean studio background, natural lighting, photorealistic. "
-                    "No text, no watermarks."
-                ),
-                n=1, size="1024x1024", response_format="b64_json",
+            result = await _fal.run_async(
+                "fal-ai/gpt-image-2",
+                arguments={
+                    "prompt": (
+                        f"Professional portrait photo: {model_desc}. "
+                        "Head and shoulders only, no products held or worn. "
+                        "Clean studio background, natural lighting, photorealistic. "
+                        "No text, no watermarks."
+                    ),
+                    "image_size": "square_hd",
+                    "num_images": 1,
+                    "quality": "standard",
+                },
             )
-            path = _os.path.join(work_dir, "portrait.jpg")
-            with open(path, "wb") as f:
-                f.write(_b64.b64decode(resp.data[0].b64_json))
-            url = await fal_upload_with_retry(path)
-            log_info(f"script_to_video: portrait OK {url[:60]}")
-            return url
+            portrait_img_url = (result.get("images") or [{}])[0].get("url", "")
+            if not portrait_img_url:
+                raise RuntimeError("gpt-image-2 返回无图片 URL")
+            log_info(f"script_to_video: portrait OK {portrait_img_url[:60]}")
+            return portrait_img_url
         except Exception as e:
             log_error(f"script_to_video: portrait failed (skip): {e}")
             return None
@@ -5534,7 +5533,27 @@ async def _run_script_to_video_job(params: dict) -> dict:
         # 先上传 480p 成品
         video_url_out = await fal_upload_with_retry(final)
 
-        # ── Lipsync：await 并行TTS结果 → 对齐口型 ───────────────────────────────
+        # ── Upscale 先做（静音视频放大，不会丢音轨）──────────────────────────────
+        if resolution != "480p":
+            try:
+                log_info(f"script_to_video upscale 开始 resolution={resolution} input={video_url_out[:60]}")
+                upscale_result = await _fal.subscribe_async(
+                    "fal-ai/bytedance-upscaler/upscale/video",
+                    arguments={"video_url": video_url_out, "resolution": resolution},
+                )
+                upscaled_url = None
+                if isinstance(upscale_result, dict):
+                    _v2 = upscale_result.get("video") or {}
+                    upscaled_url = (_v2.get("url") if isinstance(_v2, dict) else None) or upscale_result.get("video_url")
+                if upscaled_url:
+                    video_url_out = upscaled_url
+                    log_info(f"script_to_video upscale 完成 {resolution} url={upscaled_url[:80]}")
+                else:
+                    log_error("script_to_video upscale 返回无 URL，保留 480p 成品")
+            except Exception as _ue:
+                log_error(f"script_to_video upscale 失败（保留 480p）: {_ue}")
+
+        # ── Lipsync：await 并行TTS结果 → 对齐口型（音频加在放大后的视频上）──────
         if not enable_voice:
             log_info("script_to_video lipsync: enable_voice=False，跳过 TTS+Lipsync")
             if _tts_concurrent_task and not _tts_concurrent_task.done():
@@ -5572,29 +5591,6 @@ async def _run_script_to_video_job(params: dict) -> dict:
             except Exception as _lse:
                 log_error(f"script_to_video lipsync 失败（降级保留无口型视频）: {_lse}")
         # ── Lipsync 结束 ────────────────────────────────────────────────────────
-
-        # 如需高清，调 Bytedance Upscaler 放大
-        if resolution != "480p":
-            try:
-                log_info(f"script_to_video upscale 开始 resolution={resolution} input={video_url_out[:60]}")
-                upscale_result = await _fal.subscribe_async(
-                    "fal-ai/bytedance-upscaler/upscale/video",
-                    arguments={
-                        "video_url": video_url_out,
-                        "resolution": resolution,
-                    },
-                )
-                upscaled_url = None
-                if isinstance(upscale_result, dict):
-                    v = upscale_result.get("video") or {}
-                    upscaled_url = (v.get("url") if isinstance(v, dict) else None) or upscale_result.get("video_url")
-                if upscaled_url:
-                    video_url_out = upscaled_url
-                    log_info(f"script_to_video upscale 完成 {resolution} url={upscaled_url[:80]}")
-                else:
-                    log_error(f"script_to_video upscale 返回无 URL，保留 480p 成品")
-            except Exception as _ue:
-                log_error(f"script_to_video upscale 失败（保留 480p 成品）: {_ue}")
 
         log_info(
             f"script_to_video 收工 total={_t.time()-t0:.1f}s tasks={len(tasks)} "

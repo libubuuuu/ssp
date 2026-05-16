@@ -726,3 +726,209 @@ async def video_analyze_submit(
 
     log_info(f"video-analyze OK user={user_id} market={body.market} script_len={len(script)}")
     return {"script": script, "cost": cost}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# AI脚本导师对话接口
+# POST /api/video/general/chat
+# ──────────────────────────────────────────────────────────────────────────────
+
+_CHAT_SYSTEM_PROMPT = """你是一个顶级的短视频带货脚本策划导师。你的工作是通过对话帮助用户创作出最适合他们产品的爆款短视频脚本。
+
+你的工作流程：
+1. 先看用户上传的产品图，分析产品品类、卖点、目标人群
+2. 主动向用户打招呼，简要说出你对产品的理解，问用户想要什么风格
+3. 根据用户的回答，深入提问（目标客户？想突出的卖点？喜欢的风格？）
+4. 如果用户说不清楚，给出2-3个方向让用户选
+5. 聊2-3轮后，输出一份完整脚本
+6. 用户可以继续提修改意见，你修改后重新输出
+
+你的专业能力：
+- 精通TikTok/短视频的爆款套路（起承转合、痛点共鸣、视觉钩子）
+- 能根据产品品类推荐最合适的视频风格
+- 主动想到细节（颜色搭配、场景合理性、对比产品等）
+- 如果脚本需要"对比旧产品"的环节，主动告诉用户需要上传一张旧款/竞品图片
+
+对话风格：
+- 像一个经验丰富的朋友在帮忙，不要太正式
+- 简洁有力，不啰嗦
+- 给建议时说清楚为什么这样做更好
+
+当你需要向用户提问时，用以下JSON格式输出问题（嵌在你的回复文字中）：
+
+===QUESTIONS_START===
+[
+  {{
+    "question": "问题文字",
+    "description": "简短说明为什么问这个",
+    "options": ["选项1", "选项2", "选项3"],
+    "allow_custom": true
+  }}
+]
+===QUESTIONS_END===
+
+提问规则：
+- 每次最多问3个问题，合并成一个 QUESTIONS 块
+- 每个问题给2-4个预设选项，选项要根据产品品类动态生成（内衣类给内衣相关选项，食品类给食品相关选项）
+- allow_custom为true表示用户可以自定义回答
+- 第一次对话必须问：风格偏好、目标客户、想突出的卖点
+- 问完就可以直接根据用户回答生成脚本，不要反复追问
+
+当你准备好输出完整脚本时，用以下格式输出（格式必须严格遵守）：
+===SCRIPT_START===
+[目标语言]：...
+[情节]：...
+[模特]：...
+[产品描述]：...
+[环境]：...
+[音乐]：...
+[分镜]：
+[镜头一]：...
+[镜头二]：...
+...
+===SCRIPT_END===
+
+如果你判断脚本需要对比旧产品，在脚本前加上：
+===NEED_CONTRAST_IMAGE===
+
+用户参数：
+- 目标市场：{market}
+- 视频时长：{duration}秒
+- 已上传产品图：{n_images}张"""
+
+_CHAT_VIDEO_INSTRUCTION = """
+另外，用户还上传了一段参考视频（{video_url}）。
+请先分析这个视频的结构：有几个镜头，用了什么叙事结构，节奏如何。
+在第一条回复中告诉用户你观察到的视频结构，并说明你会按同样的结构帮他翻拍新产品视频。"""
+
+
+class ChatRequest(BaseModel):
+    messages: List[dict] = Field(..., description="聊天历史，每条有role和content")
+    product_image_urls: List[str] = Field(default=[], description="已上传产品图URL")
+    market: str = Field("欧美")
+    duration: int = Field(15)
+    video_url: Optional[str] = Field(None, description="入口A的参考视频URL")
+
+
+@router.post("/chat")
+async def chat_with_mentor(
+    body: ChatRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """AI脚本导师对话（免费，不扣积分）"""
+    import re as _re
+    from app.services.gemini_client import ask_gemini
+
+    user_id = str(current_user["id"])
+
+    # 构建 system prompt
+    sys_prompt = _CHAT_SYSTEM_PROMPT.format(
+        market=body.market,
+        duration=body.duration,
+        n_images=len(body.product_image_urls),
+    )
+    if body.video_url:
+        sys_prompt += _CHAT_VIDEO_INSTRUCTION.format(video_url=body.video_url)
+
+    # 构建多轮对话消息
+    openai_messages = [{"role": "system", "content": sys_prompt}]
+
+    # 产品图始终作为第一条 user 消息附件，保证 AI 任何时候都能看到产品
+    if body.product_image_urls:
+        img_content: list = [
+            {"type": "image_url", "image_url": {"url": url}}
+            for url in body.product_image_urls[:4]
+        ]
+        if not body.messages:
+            img_content.append({"type": "text", "text": "请帮我分析这些产品图，开始我们的创作对话。"})
+            openai_messages.append({"role": "user", "content": img_content})
+            openai_messages.append({"role": "assistant", "content": "[好的，我来分析你的产品]"})
+        else:
+            # 有历史消息时：把产品图插入第一条历史 user 消息里
+            first_user = next((m for m in body.messages if m.get("role") == "user"), None)
+            if first_user:
+                first_user_content = first_user.get("content", "")
+                img_content.append({"type": "text", "text": first_user_content or "（产品图）"})
+                openai_messages.append({"role": "user", "content": img_content})
+                # 把第一条 user 消息之后的历史消息依次追加
+                past_first = False
+                for msg in body.messages:
+                    if not past_first and msg.get("role") == "user" and msg.get("content") == first_user_content:
+                        past_first = True
+                        continue  # 第一条 user 已经上面加过了，跳过
+                    role = msg.get("role", "user")
+                    content = msg.get("content", "")
+                    images = msg.get("images") or []
+                    if images and role == "user":
+                        parts = [{"type": "image_url", "image_url": {"url": u}} for u in images[:4]]
+                        parts.append({"type": "text", "text": content})
+                        openai_messages.append({"role": role, "content": parts})
+                    else:
+                        openai_messages.append({"role": role, "content": content})
+            else:
+                # 没有 user 消息（全是 assistant），正常追加历史
+                for msg in body.messages:
+                    openai_messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
+    else:
+        # 没有产品图，直接追加历史消息
+        for msg in body.messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            images = msg.get("images") or []
+            if images and role == "user":
+                parts = [{"type": "image_url", "image_url": {"url": u}} for u in images[:4]]
+                parts.append({"type": "text", "text": content})
+                openai_messages.append({"role": role, "content": parts})
+            else:
+                openai_messages.append({"role": role, "content": content})
+
+    # 调灵梦 gpt-4o
+    try:
+        from app.config import get_settings
+        from openai import AsyncOpenAI
+        s = get_settings()
+        client = AsyncOpenAI(base_url=s.LINGMENG_BASE_URL, api_key=s.LINGMENG_API_KEY)
+        resp = await client.chat.completions.create(
+            model=s.LINGMENG_MODEL,
+            messages=openai_messages,
+            max_tokens=4096,
+            temperature=0.8,
+        )
+        reply_text = resp.choices[0].message.content or ""
+    except Exception as e:
+        log_error(f"chat 调用失败 user={user_id}: {e}")
+        raise HTTPException(500, f"AI导师暂时不可用: {str(e)[:200]}")
+
+    import json as _json_chat
+
+    # 提取脚本
+    script = ""
+    script_match = _re.search(r"===SCRIPT_START===\s*([\s\S]+?)\s*===SCRIPT_END===", reply_text)
+    if script_match:
+        script = script_match.group(1).strip()
+
+    # 提取结构化问题
+    questions = []
+    q_match = _re.search(r"===QUESTIONS_START===\s*([\s\S]+?)\s*===QUESTIONS_END===", reply_text)
+    if q_match:
+        try:
+            questions = _json_chat.loads(q_match.group(1).strip())
+        except Exception:
+            pass
+
+    # 判断是否需要对比图
+    need_contrast = "===NEED_CONTRAST_IMAGE===" in reply_text
+
+    # 清理回复文字（去掉所有标记块）
+    clean_reply = reply_text
+    clean_reply = _re.sub(r"===SCRIPT_START===[\s\S]*?===SCRIPT_END===", "[脚本已生成，见下方]", clean_reply)
+    clean_reply = _re.sub(r"===QUESTIONS_START===[\s\S]*?===QUESTIONS_END===", "", clean_reply)
+    clean_reply = clean_reply.replace("===NEED_CONTRAST_IMAGE===", "").strip()
+
+    log_info(f"chat OK user={user_id} reply_len={len(reply_text)} has_script={bool(script)} n_questions={len(questions)}")
+    return {
+        "reply": clean_reply,
+        "script": script,
+        "need_contrast_image": need_contrast,
+        "questions": questions,
+    }

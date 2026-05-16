@@ -1,5 +1,5 @@
 "use client";
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
 
@@ -174,7 +174,7 @@ export default function VideoGeneralPage() {
   const [modelVidUrl, setModelVidUrl] = useState("");
 
   // Step 3 - params
-  const [scriptMode, setScriptMode] = useState<"story" | "direct">("story");
+  const [scriptMode, setScriptMode] = useState<"story" | "direct" | "chat">("story");
   const [duration, setDuration]     = useState(15);
   const [market, setMarket]         = useState("欧美");
   const [userIdea, setUserIdea]     = useState("");
@@ -186,6 +186,18 @@ export default function VideoGeneralPage() {
   const [loading, setLoading]   = useState(false);
   const [script, setScript]     = useState("");
   const [error, setError]       = useState("");
+
+  // Chat mode state
+  type ChatQuestion = { question: string; description: string; options: string[]; allow_custom: boolean };
+  type ChatMsg = { role: "user" | "assistant"; content: string; images?: string[]; questions?: ChatQuestion[] };
+  const [chatMsgs, setChatMsgs]           = useState<ChatMsg[]>([]);
+  const [chatInput, setChatInput]         = useState("");
+  const [chatLoading, setChatLoading]     = useState(false);
+  const [chatScript, setChatScript]       = useState("");
+  const [chatNeedsContrast, setChatNeedsContrast] = useState(false);
+  const [chatCustomInputs, setChatCustomInputs]   = useState<Record<number, string>>({});  // key=msgIdx*10+qi → customText
+  const [chatSelections, setChatSelections]       = useState<Record<number, string>>({});  // key=msgIdx*10+qi → selected option
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Step 5 - video generation
   const [vidLoading, setVidLoading] = useState(false);
@@ -291,6 +303,45 @@ export default function VideoGeneralPage() {
       setLoadingA(false);
     }
   };
+
+  // ── AI导师对话发送 ─────────────────────────────────────────────────────────
+  const sendChatMessage = useCallback(async (msgText?: string, msgImages?: string[]) => {
+    const text = (msgText ?? chatInput).trim();
+    if (!text && !msgImages?.length) return;
+    const newMsg: ChatMsg = { role: "user", content: text, images: msgImages };
+    const updatedMsgs = [...chatMsgs, newMsg];
+    setChatMsgs(updatedMsgs);
+    setChatInput("");
+    setChatLoading(true);
+    setError("");
+    try {
+      const r = await fetch(`${API_BASE}/api/video/general/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({
+          messages: updatedMsgs,
+          product_image_urls: [front.url, back.url, rear.url].filter(Boolean),
+          market, duration,
+          video_url: null,
+        }),
+      });
+      if (!r.ok) throw new Error((await r.json()).detail || await r.text());
+      const d = await r.json();
+      const assistantMsg: ChatMsg = {
+        role: "assistant",
+        content: d.reply || "",
+        questions: d.questions?.length ? d.questions : undefined,
+      };
+      setChatMsgs(prev => [...prev, assistantMsg]);
+      if (d.script) setChatScript(d.script);
+      if (d.need_contrast_image) setChatNeedsContrast(true);
+      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+    } catch (e) {
+      setError((e as Error).message || "对话失败，请重试");
+    } finally {
+      setChatLoading(false);
+    }
+  }, [chatInput, chatMsgs, front.url, back.url, rear.url, market, duration]);
 
   // ── 检测脚本里是否含对比关键词（决定是否显示对比图上传）──────────────────
   const _CONTRAST_KW = ["旧", "老款", "之前", "原来", "以前", "对比", "竞品", "old", "previous", "used to", "regular", "normal", "换上", "换了", "before", "instead"];
@@ -750,16 +801,17 @@ export default function VideoGeneralPage() {
                   {([
                     { v: "story",  icon: "🎬", label: "剧情模式",  desc: "有故事冲突，产品是救星（推荐）" },
                     { v: "direct", icon: "📦", label: "直接带货",  desc: "博主展示+安利产品，无剧情" },
-                  ] as { v: "story" | "direct"; icon: string; label: string; desc: string }[]).map(o => (
+                    { v: "chat",   icon: "💬", label: "AI导师对话", desc: "跟AI对话，共同策划专属脚本" },
+                  ] as { v: "story" | "direct" | "chat"; icon: string; label: string; desc: string }[]).map(o => (
                     <button key={o.v} onClick={() => setScriptMode(o.v)}
                       style={{
-                        flex: "1 1 140px", padding: "0.7rem 0.9rem", border: `2px solid ${scriptMode === o.v ? "#0d0d0d" : "#e2e8f0"}`,
+                        flex: "1 1 120px", padding: "0.7rem 0.9rem", border: `2px solid ${scriptMode === o.v ? "#0d0d0d" : "#e2e8f0"}`,
                         borderRadius: 10, background: scriptMode === o.v ? "#0d0d0d" : "#fff",
                         color: scriptMode === o.v ? "#fff" : "#4a5568", cursor: "pointer",
                         textAlign: "left", transition: "all 0.15s",
                       }}>
-                      <div style={{ fontSize: "0.88rem", fontWeight: 600, marginBottom: 3 }}>{o.icon} {o.label}</div>
-                      <div style={{ fontSize: "0.7rem", opacity: scriptMode === o.v ? 0.75 : 0.7, lineHeight: 1.4 }}>{o.desc}</div>
+                      <div style={{ fontSize: "0.85rem", fontWeight: 600, marginBottom: 3 }}>{o.icon} {o.label}</div>
+                      <div style={{ fontSize: "0.68rem", opacity: scriptMode === o.v ? 0.75 : 0.7, lineHeight: 1.4 }}>{o.desc}</div>
                     </button>
                   ))}
                 </div>
@@ -817,14 +869,205 @@ export default function VideoGeneralPage() {
               </div>
             </div>
 
-            {/* ── Step 4：生成按钮 ── */}
+            {/* ── Step 4：生成脚本 / AI导师对话 ── */}
             <div style={CARD}>
               <div style={{ display: "flex", alignItems: "center", marginBottom: "1rem" }}>
                 <span style={STEP_LABEL}>STEP 4</span>
-                <span style={{ fontSize: "0.92rem", fontWeight: 600, color: "#1a202c" }}>生成创意脚本</span>
+                <span style={{ fontSize: "0.92rem", fontWeight: 600, color: "#1a202c" }}>
+                  {scriptMode === "chat" ? "AI导师对话" : "生成创意脚本"}
+                </span>
               </div>
 
-              <button
+              {/* ── Chat 模式 ── */}
+              {scriptMode === "chat" && (
+                <div>
+                  <div style={{ fontSize: "0.78rem", color: "#6b7280", marginBottom: 12, padding: "0.6rem 0.8rem", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 8 }}>
+                    💡 AI导师会帮你策划最适合你产品的爆款脚本
+                  </div>
+
+                  {/* 消息列表 */}
+                  <div style={{ height: 320, overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: 10, padding: "0.8rem", marginBottom: 10, background: "#fafafa" }}>
+                    {chatMsgs.length === 0 && !front.url && (
+                      <div style={{ color: "#a0aec0", fontSize: "0.85rem", textAlign: "center", paddingTop: 80 }}>
+                        请先上传产品图，然后点击"开始对话"
+                      </div>
+                    )}
+                    {chatMsgs.length === 0 && front.url && (
+                      <div style={{ color: "#a0aec0", fontSize: "0.85rem", textAlign: "center", paddingTop: 80 }}>
+                        点击"开始对话"，AI导师将分析你的产品
+                      </div>
+                    )}
+                    {chatMsgs.map((m, msgIdx) => (
+                      <div key={msgIdx} style={{ marginBottom: 14, display: "flex", flexDirection: "column", alignItems: m.role === "user" ? "flex-end" : "flex-start" }}>
+                        {/* 气泡文字 */}
+                        {m.content && (
+                          <div style={{
+                            maxWidth: "90%", padding: "0.6rem 0.85rem", borderRadius: 12,
+                            background: m.role === "user" ? "#0d0d0d" : "#fff",
+                            color: m.role === "user" ? "#fff" : "#1a202c",
+                            fontSize: "0.85rem", lineHeight: 1.6,
+                            border: m.role === "assistant" ? "1px solid #e2e8f0" : "none",
+                            whiteSpace: "pre-wrap", marginBottom: m.questions?.length ? 8 : 0,
+                          }}>
+                            {m.content}
+                          </div>
+                        )}
+                        {/* 结构化问题卡片 */}
+                        {m.role === "assistant" && m.questions && m.questions.length > 0 && (() => {
+                          const qs = m.questions!;
+                          // 提交所有问题的答案
+                          const submitAll = () => {
+                            const parts: string[] = [];
+                            qs.forEach((q, qi) => {
+                              const key = msgIdx * 10 + qi;
+                              const sel = chatSelections[key]?.trim();
+                              const custom = chatCustomInputs[key]?.trim();
+                              const ans = custom || sel;
+                              if (ans) parts.push(`${qi + 1}. ${q.question}：${ans}`);
+                            });
+                            if (parts.length === 0) return;
+                            sendChatMessage(parts.join("\n"));
+                            // 清除选中 & 自定义输入
+                            setChatSelections(prev => {
+                              const next = { ...prev };
+                              qs.forEach((_, qi) => delete next[msgIdx * 10 + qi]);
+                              return next;
+                            });
+                            setChatCustomInputs(prev => {
+                              const next = { ...prev };
+                              qs.forEach((_, qi) => delete next[msgIdx * 10 + qi]);
+                              return next;
+                            });
+                          };
+                          return (
+                            <div style={{ maxWidth: "95%", width: "100%" }}>
+                              {qs.map((q, qi) => {
+                                const key = msgIdx * 10 + qi;
+                                const selected = chatSelections[key];
+                                return (
+                                  <div key={qi} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "0.85rem 1rem", marginBottom: 8 }}>
+                                    <div style={{ fontWeight: 600, fontSize: "0.88rem", color: "#1a202c", marginBottom: 4 }}>{q.question}</div>
+                                    {q.description && <div style={{ fontSize: "0.72rem", color: "#9ca3af", marginBottom: 10 }}>{q.description}</div>}
+                                    {/* 选项按钮 — 点击高亮，不发送 */}
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: q.allow_custom ? 8 : 0 }}>
+                                      {q.options.map((opt, oi) => {
+                                        const isSelected = selected === opt;
+                                        return (
+                                          <button key={oi}
+                                            onClick={() => {
+                                              setChatSelections(prev => ({ ...prev, [key]: isSelected ? "" : opt }));
+                                              // 选了预设选项就清空自定义输入
+                                              if (!isSelected) setChatCustomInputs(prev => ({ ...prev, [key]: "" }));
+                                            }}
+                                            disabled={chatLoading}
+                                            style={{
+                                              padding: "0.35rem 0.8rem", borderRadius: 999, fontSize: "0.8rem",
+                                              cursor: chatLoading ? "not-allowed" : "pointer", transition: "all 0.15s",
+                                              border: isSelected ? "1px solid #0d0d0d" : "1px solid #d1d5db",
+                                              background: isSelected ? "#0d0d0d" : "#f9fafb",
+                                              color: isSelected ? "#fff" : "#374151",
+                                            }}
+                                          >{opt}</button>
+                                        );
+                                      })}
+                                    </div>
+                                    {/* 自定义输入 */}
+                                    {q.allow_custom && (
+                                      <input
+                                        placeholder="或自定义回答…"
+                                        value={chatCustomInputs[key] || ""}
+                                        onChange={e => {
+                                          setChatCustomInputs(prev => ({ ...prev, [key]: e.target.value }));
+                                          // 打了自定义就取消预设选中
+                                          if (e.target.value) setChatSelections(prev => ({ ...prev, [key]: "" }));
+                                        }}
+                                        style={{ width: "100%", padding: "0.35rem 0.6rem", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: "0.8rem", boxSizing: "border-box" }}
+                                      />
+                                    )}
+                                  </div>
+                                );
+                              })}
+                              {/* 提交按钮 */}
+                              <button
+                                onClick={submitAll}
+                                disabled={chatLoading}
+                                style={{
+                                  width: "100%", padding: "0.65rem", borderRadius: 10, border: "none",
+                                  background: chatLoading ? "#e2e8f0" : "#7c3aed",
+                                  color: chatLoading ? "#a0aec0" : "#fff",
+                                  fontSize: "0.88rem", fontWeight: 600,
+                                  cursor: chatLoading ? "not-allowed" : "pointer",
+                                }}>
+                                提交回答
+                              </button>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    ))}
+                    {chatLoading && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#6b7280", fontSize: "0.82rem" }}>
+                        <span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #cbd5e0", borderTopColor: "#0d0d0d", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+                        AI导师正在思考…
+                      </div>
+                    )}
+                    <div ref={chatEndRef} />
+                  </div>
+
+                  {/* 脚本展示 */}
+                  {chatScript && (
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#718096", marginBottom: 8 }}>✨ AI导师生成的脚本</div>
+                      <ScriptDisplay text={chatScript} />
+                      <ContrastUploadHint scriptText={chatScript} />
+                      <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+                        <button onClick={() => generateVideo(chatScript)}
+                          disabled={vidLoading}
+                          style={{ flex: "1 1 200px", padding: "0.7rem 1rem", borderRadius: 10, border: "none", background: vidLoading ? "#e2e8f0" : "#16a34a", color: vidLoading ? "#a0aec0" : "#fff", fontSize: "0.88rem", fontWeight: 600, cursor: vidLoading ? "not-allowed" : "pointer" }}>
+                          🎬 确认脚本，生成视频
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {chatNeedsContrast && (
+                    <div style={{ marginBottom: 10, padding: "0.7rem 0.9rem", background: "#fefce8", border: "1px solid #fde68a", borderRadius: 8, fontSize: "0.8rem", color: "#92400e" }}>
+                      💡 AI导师建议上传对比图（旧款/竞品），效果更真实。
+                    </div>
+                  )}
+
+                  {/* 输入区 */}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {chatMsgs.length === 0 ? (
+                      <button
+                        onClick={() => sendChatMessage("请帮我分析这个产品，开始创作！")}
+                        disabled={chatLoading || !front.url}
+                        style={{ flex: 1, padding: "0.7rem", borderRadius: 10, border: "none", background: !front.url ? "#e2e8f0" : "#7c3aed", color: !front.url ? "#a0aec0" : "#fff", fontSize: "0.9rem", fontWeight: 600, cursor: !front.url ? "not-allowed" : "pointer" }}>
+                        💬 开始对话
+                      </button>
+                    ) : (
+                      <>
+                        <input
+                          value={chatInput}
+                          onChange={e => setChatInput(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChatMessage(); } }}
+                          placeholder="输入修改意见或问题…"
+                          style={{ flex: 1, padding: "0.6rem 0.8rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem" }}
+                        />
+                        <button
+                          onClick={() => sendChatMessage()}
+                          disabled={chatLoading || !chatInput.trim()}
+                          style={{ padding: "0.6rem 1rem", borderRadius: 8, border: "none", background: chatLoading || !chatInput.trim() ? "#e2e8f0" : "#0d0d0d", color: chatLoading || !chatInput.trim() ? "#a0aec0" : "#fff", cursor: chatLoading || !chatInput.trim() ? "not-allowed" : "pointer", fontWeight: 600 }}>
+                          发送
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ── 普通模式生成按钮 ── */}
+              {scriptMode !== "chat" && <button
                 onClick={generate}
                 disabled={loading || !front.url || front.uploading}
                 style={{
@@ -842,8 +1085,8 @@ export default function VideoGeneralPage() {
                     AI 正在分析产品并撰写爆款脚本…
                   </>
                 ) : script ? "重新生成脚本（35 积分）" : "生成创意脚本（35 积分）"}
-              </button>
-              {!front.url && !loading && (
+              </button>}
+              {scriptMode !== "chat" && !front.url && !loading && (
                 <div style={{ fontSize: "0.75rem", color: "#a0aec0", textAlign: "center", marginTop: 6 }}>请先上传正面产品图</div>
               )}
 
@@ -890,20 +1133,21 @@ export default function VideoGeneralPage() {
                     </div>
                   )}
 
-                  {/* 视频结果 */}
-                  {vidUrl && !vidLoading && (
-                    <div style={{ marginTop: "1.2rem" }}>
-                      <div style={{ fontSize: "0.8rem", color: "#718096", fontWeight: 600, marginBottom: 10 }}>🎬 生成完成</div>
-                      <video src={vidUrl} controls style={{ width: "100%", maxWidth: 400, borderRadius: 10, display: "block" }} />
-                      <div style={{ marginTop: 8, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                        <a href={vidUrl} download style={{ fontSize: "0.85rem", color: "#16a34a", textDecoration: "none", fontWeight: 500 }}>⬇ 下载视频</a>
-                        <button onClick={() => { setVidUrl(""); setVidCost(0); }}
-                          style={{ background: "none", border: "none", color: "#888", fontSize: "0.82rem", cursor: "pointer" }}>
-                          重新生成视频
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                </div>
+              )}
+
+              {/* 视频结果（独立于脚本区块，避免被 loading 条件隐藏） */}
+              {vidUrl && !vidLoading && (
+                <div style={{ marginTop: "1.2rem" }}>
+                  <div style={{ fontSize: "0.8rem", color: "#718096", fontWeight: 600, marginBottom: 10 }}>🎬 生成完成</div>
+                  <video src={vidUrl} controls style={{ width: "100%", maxWidth: 400, borderRadius: 10, display: "block" }} />
+                  <div style={{ marginTop: 8, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <a href={vidUrl} download style={{ fontSize: "0.85rem", color: "#16a34a", textDecoration: "none", fontWeight: 500 }}>⬇ 下载视频</a>
+                    <button onClick={() => { setVidUrl(""); setVidCost(0); }}
+                      style={{ background: "none", border: "none", color: "#888", fontSize: "0.82rem", cursor: "pointer" }}>
+                      重新生成视频
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
