@@ -479,7 +479,46 @@ def parse_script(text: str) -> list[dict]:
     )
     shot_keywords = ['大特写', '极近景', '特写', '近景', '中近景', '中景', '全景', '远景', '俯拍', '仰拍']
 
-    for m in pattern.finditer(text):
+    matches = list(pattern.finditer(text))
+
+    # 容错：如果严格模式解析到 0 个分镜，尝试不带时间的宽松模式
+    if not matches:
+        fallback = re.compile(
+            r'\[镜头[一二三四五六七八九十百\d]+\][：:]\s*([^\n]+)',
+            re.UNICODE,
+        )
+        fb_matches = list(fallback.finditer(text))
+        if fb_matches:
+            # 按 duration 均分时长
+            n = len(fb_matches)
+            per_sec = 4.0  # 默认每镜头 4s
+            t = 0.0
+            for i, fm in enumerate(fb_matches):
+                rest_fb = fm.group(1).strip()
+                sp_fb = re.search(r'模特说[：:]\s*(.+)$', rest_fb, re.DOTALL)
+                sp_text = ""
+                if sp_fb:
+                    sp_text = sp_fb.group(1).strip().strip('"').strip("'")
+                    rest_fb = rest_fb[:sp_fb.start()].strip().rstrip('，,').strip()
+                shot_fb = "中景"
+                for kw in shot_keywords:
+                    if kw in rest_fb:
+                        shot_fb = kw; break
+                parts_fb = re.split(r'[，,]', rest_fb, maxsplit=1)
+                action_fb = parts_fb[0].strip() if parts_fb else ""
+                vp_fb = parts_fb[1].strip() if len(parts_fb) > 1 else rest_fb
+                end_t = t + per_sec
+                scenes.append({
+                    "id": i + 1,
+                    "time_range": f"{t:.1f}-{end_t:.1f}s",
+                    "duration_sec": per_sec,
+                    "shot": shot_fb, "action": action_fb,
+                    "visual_prompt": vp_fb, "speech": sp_text, "stage": "",
+                })
+                t = end_t
+            return scenes
+
+    for m in matches:
         start    = float(m.group(1))
         end      = float(m.group(2))
         rest     = m.group(3).strip()
