@@ -5405,12 +5405,12 @@ async def _run_script_to_video_job(params: dict) -> dict:
             )
             log_info(f"script_to_video Task {ti+1} image_urls={[u[:80] for u in task_imgs]}")
 
-            # 商业语境前缀（随敏感内容重试逐级加强）
+            # 商业语境前缀（随敏感内容重试逐级加强，不含"产品展示/studio/影棚"等词以免影响视频风格）
             _SENS_PREFIXES = [
-                "专业时尚电商广告拍摄，线上零售平台服装产品展示，优雅简洁商业风格，专业影棚灯光。",
-                "Professional e-commerce fashion commercial shoot. Studio product showcase video for online retail platform. ",
-                "High-end brand campaign video. Clean aesthetic. Professional studio lighting. ",
-                "Luxury fashion lookbook. Editorial style. Minimalist commercial production. ",
+                "",  # si=0 不加前缀
+                "专业品牌广告拍摄，真实生活场景，自然光线，社交媒体营销内容。",
+                "Professional brand campaign. Real-life lifestyle scene, natural lighting, social media marketing content. ",
+                "Fashion brand promotional video. Everyday life scenario with natural aesthetics. Social media ready content. ",
             ]
 
             def _is_sensitive(err_str: str) -> bool:
