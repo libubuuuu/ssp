@@ -1518,8 +1518,8 @@ export default function VideoGeneralPage() {
                   ))}
                 </div>
               )}
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <label style={{ width: 36, height: 36, borderRadius: 8, border: "1px solid #e2e8f0", background: flowStep >= 4 && scriptMode === "chat" ? "#fafafa" : "#f4f4f4", display: "flex", alignItems: "center", justifyContent: "center", cursor: flowStep >= 4 && scriptMode === "chat" && !chatImgUploading ? "pointer" : "not-allowed", flexShrink: 0, fontSize: "1rem", opacity: flowStep >= 4 && scriptMode === "chat" ? 1 : 0.4 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+                <label style={{ width: 44, borderRadius: 12, border: "1px solid #d1d5db", background: flowStep >= 4 && scriptMode === "chat" ? "#fafafa" : "#f4f4f4", display: "flex", alignItems: "center", justifyContent: "center", cursor: flowStep >= 4 && scriptMode === "chat" && !chatImgUploading ? "pointer" : "not-allowed", flexShrink: 0, fontSize: "1.1rem", opacity: flowStep >= 4 && scriptMode === "chat" ? 1 : 0.4 }}>
                   <input type="file" accept="image/*" style={{ display: "none" }} disabled={!(flowStep >= 4 && scriptMode === "chat") || chatImgUploading}
                     onChange={async e => { const f = e.target.files?.[0]; if (!f) return; setChatImgUploading(true); try { const fd = new FormData(); fd.append("file", f); const r = await fetch(`${API_BASE}/api/video/general/upload/image`, { method: "POST", headers: { Authorization: `Bearer ${getToken()}` }, body: fd }); if (!r.ok) throw new Error(await r.text()); const d = await r.json(); if (d.image_url) setChatPendingImages(prev => [...prev, d.image_url]); } catch (err) { setError((err as Error).message || "图片上传失败"); } finally { setChatImgUploading(false); } e.target.value = ""; }} />
                   {chatImgUploading ? "⏳" : "📎"}
@@ -1530,10 +1530,10 @@ export default function VideoGeneralPage() {
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && flowStep >= 4 && scriptMode === "chat") { e.preventDefault(); sendChatMessage(); } }}
                   placeholder={flowStep >= 4 && scriptMode === "chat" ? "输入你的想法或修改意见…" : "请先完成上方步骤…"}
                   disabled={!(flowStep >= 4 && scriptMode === "chat")}
-                  style={{ flex: 1, padding: "0.6rem 0.9rem", border: "1px solid #e2e8f0", borderRadius: 10, fontSize: "0.85rem", background: flowStep >= 4 && scriptMode === "chat" ? "#fff" : "#f4f4f4", color: flowStep >= 4 && scriptMode === "chat" ? "#1a202c" : "#a0aec0" }}
+                  style={{ flex: 1, padding: "0.8rem 1rem", border: "1px solid #d1d5db", borderRadius: 12, fontSize: "0.95rem", background: flowStep >= 4 && scriptMode === "chat" ? "#fff" : "#f4f4f4", color: flowStep >= 4 && scriptMode === "chat" ? "#1a202c" : "#a0aec0", minHeight: 44 }}
                 />
                 <button onClick={() => sendChatMessage()} disabled={!(flowStep >= 4 && scriptMode === "chat") || chatLoading || (!chatInput.trim() && !chatPendingImages.length)}
-                  style={{ padding: "0.6rem 1.1rem", borderRadius: 10, border: "none", background: flowStep >= 4 && scriptMode === "chat" && !chatLoading && (chatInput.trim() || chatPendingImages.length) ? "#0d0d0d" : "#e2e8f0", color: flowStep >= 4 && scriptMode === "chat" && !chatLoading && (chatInput.trim() || chatPendingImages.length) ? "#fff" : "#a0aec0", cursor: flowStep >= 4 && scriptMode === "chat" && !chatLoading && (chatInput.trim() || chatPendingImages.length) ? "pointer" : "not-allowed", fontWeight: 600, fontSize: "0.85rem" }}>
+                  style={{ padding: "0.8rem 1.3rem", borderRadius: 12, border: "none", background: flowStep >= 4 && scriptMode === "chat" && !chatLoading && (chatInput.trim() || chatPendingImages.length) ? "#0d0d0d" : "#e2e8f0", color: flowStep >= 4 && scriptMode === "chat" && !chatLoading && (chatInput.trim() || chatPendingImages.length) ? "#fff" : "#a0aec0", cursor: flowStep >= 4 && scriptMode === "chat" && !chatLoading && (chatInput.trim() || chatPendingImages.length) ? "pointer" : "not-allowed", fontWeight: 600, fontSize: "0.9rem", flexShrink: 0 }}>
                   发送
                 </button>
               </div>
