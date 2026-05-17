@@ -5425,7 +5425,7 @@ async def _run_script_to_video_job(params: dict) -> dict:
             for timeout_attempt in range(2):
                 # 内层：敏感内容升级重试（最多 3 次）
                 for si in range(4):
-                    use_prompt = _SENS_PREFIXES[si] + prompt
+                    use_prompt = (prompt + " " + _SENS_PREFIXES[si]).strip()
                     sensitive_fail = False
                     log_info(f"script_to_video Task {ti+1} prompt(si={si})={use_prompt[:200]}")
                     try:
