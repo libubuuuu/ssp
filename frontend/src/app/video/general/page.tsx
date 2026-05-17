@@ -1152,6 +1152,20 @@ export default function VideoGeneralPage() {
                           <div style={{ fontSize: "0.78rem", color: "#7c3aed", background: "#faf5ff", borderRadius: 8, padding: "0.6rem 0.8rem" }}>✅ 抖音内容将使用中文，面向中国市场</div>
                         )}
                       </div>
+                      {/* 视频时长选择（chat模式在此选，非chat模式在参数区选） */}
+                      {scriptMode === "chat" && (
+                        <div style={{ borderTop: "1px solid #f0f0f0", paddingTop: 14, marginBottom: 14 }}>
+                          <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 8 }}>视频时长</div>
+                          <div style={{ display: "flex", gap: 10 }}>
+                            {[5, 10, 15, 30, 60].map(v => (
+                              <button key={v} onClick={() => setDuration(v)}
+                                style={{ flex: 1, padding: "0.6rem 0", borderRadius: 10, border: `2px solid ${duration === v ? "#7c3aed" : "#e2e8f0"}`, background: duration === v ? "#7c3aed" : "#fff", color: duration === v ? "#fff" : "#374151", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer", transition: "all 0.12s" }}>
+                                {v}秒{v === 10 ? "（推荐）" : ""}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       {flowStep === 3 && <FlowNextBtn label={scriptMode === "chat" ? "开始AI对话" : "生成脚本"} onClick={() => setFlowStep(4)} />}
                     </FlowStepCard>
                   </AgentRow>
