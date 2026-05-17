@@ -134,6 +134,63 @@ function ScriptDisplay({ text }: { text: string }) {
   );
 }
 
+// ─── 多角色对话流辅助组件 ────────────────────────────────────────────────────
+const AGENT_CFG: Record<string, { char: string; bg: string; label: string; lc: string }> = {
+  system:     { char: "AI",  bg: "#6366f1", label: "AI助手",         lc: "#6366f1" },
+  xiaoli:     { char: "李",  bg: "#3b82f6", label: "小李·趋势研究员", lc: "#3b82f6" },
+  linjiu:     { char: "久",  bg: "#7c3aed", label: "林久·创意导师",   lc: "#7c3aed" },
+  reviewer:   { char: "审",  bg: "#16a34a", label: "审稿专家",        lc: "#16a34a" },
+  copywriter: { char: "文",  bg: "#ea580c", label: "文案师",          lc: "#ea580c" },
+};
+function AgentRow({ sender, children }: { sender: string; children: React.ReactNode }) {
+  const cfg = AGENT_CFG[sender] || AGENT_CFG.system;
+  return (
+    <div style={{ display: "flex", gap: 10, marginBottom: 18, alignItems: "flex-start" }}>
+      <div style={{ flexShrink: 0, width: 34, height: 34, borderRadius: "50%", background: cfg.bg, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.78rem", fontWeight: 700, marginTop: 2 }}>{cfg.char}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: "0.67rem", color: cfg.lc, fontWeight: 700, marginBottom: 5, letterSpacing: "0.04em", textTransform: "uppercase" }}>{cfg.label}</div>
+        {children}
+      </div>
+    </div>
+  );
+}
+function UserRow({ content, images }: { content: string; images?: string[] }) {
+  return (
+    <div style={{ display: "flex", gap: 10, marginBottom: 18, alignItems: "flex-start", flexDirection: "row-reverse" }}>
+      <div style={{ flexShrink: 0, width: 34, height: 34, borderRadius: "50%", background: "#0d0d0d", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.78rem", fontWeight: 700, marginTop: 2 }}>我</div>
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+        {images?.length ? (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            {images.map((url, ii) => <img key={ii} src={url} alt="附图" style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 8, border: "1px solid #444" }} />)}
+          </div>
+        ) : null}
+        {content && <div style={{ maxWidth: "85%", padding: "0.6rem 0.9rem", borderRadius: 14, background: "#0d0d0d", color: "#fff", fontSize: "0.85rem", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{content}</div>}
+      </div>
+    </div>
+  );
+}
+function FlowBubble({ children, style: s }: { children: React.ReactNode; style?: React.CSSProperties }) {
+  return <div style={{ padding: "0.65rem 0.9rem", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, fontSize: "0.85rem", lineHeight: 1.6, color: "#1a202c", ...s }}>{children}</div>;
+}
+function FlowStepCard({ step, title, children }: { step: number; title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, overflow: "hidden" }}>
+      <div style={{ padding: "0.65rem 1rem", borderBottom: "1px solid #f0f0f0", display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: "0.63rem", fontWeight: 700, color: "#3b82f6", background: "#eff6ff", borderRadius: 5, padding: "0.15rem 0.45rem", letterSpacing: "0.06em" }}>STEP {step}</span>
+        <span style={{ fontSize: "0.88rem", fontWeight: 600, color: "#1a202c" }}>{title}</span>
+      </div>
+      <div style={{ padding: "1rem" }}>{children}</div>
+    </div>
+  );
+}
+function FlowNextBtn({ label, onClick, disabled }: { label: string; onClick: () => void; disabled?: boolean }) {
+  return (
+    <button onClick={onClick} disabled={disabled} style={{ marginTop: 14, padding: "0.55rem 1.2rem", borderRadius: 8, border: "none", background: disabled ? "#e2e8f0" : "#0d0d0d", color: disabled ? "#a0aec0" : "#fff", fontSize: "0.85rem", fontWeight: 600, cursor: disabled ? "not-allowed" : "pointer" }}>
+      {label} →
+    </button>
+  );
+}
+
 // ─── 主页面 ─────────────────────────────────────────────────────────────────
 type Tab = "replicate" | "ai_video";
 type ModelSrc = "auto" | "image" | "video";
@@ -146,6 +203,9 @@ export default function VideoGeneralPage() {
 
   // 灰度：视频复刻入口A 白名单判断
   const [isWhitelisted, setIsWhitelisted] = useState(false);
+  const [flowStep, setFlowStep]           = useState(1);  // 1=step1 2=step2 3=step3 4=create
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const tk = localStorage.getItem("token");
     if (!tk) return;
@@ -154,6 +214,10 @@ export default function VideoGeneralPage() {
       .then(d => { if (d?.email) setIsWhitelisted(REPLICATE_WHITELIST.includes(d.email)); })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (flowStep > 1) setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 200);
+  }, [flowStep]);
 
   // 入口A 专用：参考视频
   const [refVid, setRefVid] = useState<{ file: File | null; uploading: boolean; url: string }>({ file: null, uploading: false, url: "" });
@@ -202,7 +266,6 @@ export default function VideoGeneralPage() {
   const [chatShowParams, setChatShowParams]       = useState(false);  // 确认脚本后显示参数面板
   const [chatResolution, setChatResolution]       = useState("480p");
   const [chatEnableVoice, setChatEnableVoice]     = useState(true);
-  const chatEndRef = useRef<HTMLDivElement>(null);
   // 多角色 AI 附加数据
   type ChatReview = { score: number; details: string; suggestions: string };
   type ChatCopy   = { title: string; description: string; hashtags: string[]; best_time: string };
@@ -719,663 +782,482 @@ export default function VideoGeneralPage() {
           </>
         )}
 
-        {/* ── 标签B：AI 爆款视频 ── */}
+        {/* ── 标签B：AI 爆款视频（对话流） ── */}
         {tab === "ai_video" && (
-          <>
+          <div style={{ position: "relative" }}>
             {error && (
-              <div style={{ background: "#fff5f5", border: "1px solid #fed7d7", color: "#c53030", padding: "0.8rem 1rem", borderRadius: 10, marginBottom: "1rem", fontSize: "0.88rem" }}>
-                {error}
-              </div>
+              <div style={{ background: "#fff5f5", border: "1px solid #fed7d7", color: "#c53030", padding: "0.8rem 1rem", borderRadius: 10, marginBottom: "1rem", fontSize: "0.88rem" }}>{error}</div>
             )}
 
-            {/* ── Step 1：产品图 ── */}
-            <div style={CARD}>
-              <div style={{ display: "flex", alignItems: "center", marginBottom: "1rem" }}>
-                <span style={STEP_LABEL}>STEP 1</span>
-                <span style={{ fontSize: "0.92rem", fontWeight: 600, color: "#1a202c" }}>上传产品图</span>
-              </div>
-              <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-                <UploadBox slot={front} label="正面图" required
-                  onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setFront)}
-                  onRemove={() => removeSlot(setFront)} />
-                <UploadBox slot={back}  label="反面图"
-                  onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setBack)}
-                  onRemove={() => removeSlot(setBack)} />
-                <UploadBox slot={rear}  label="侧面图"
-                  onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setRear)}
-                  onRemove={() => removeSlot(setRear)} />
-                <UploadBox slot={scene} label="场景图"
-                  onUpload={f => uploadImg(f, "/api/video/general/upload/scene-image", "scene_image_url", setScene)}
-                  onRemove={() => removeSlot(setScene)} />
-              </div>
-              <div style={{ fontSize: "0.72rem", color: "#a0aec0", marginTop: 10 }}>正面图必传，其余可选 · 每张 ≤ 10MB · 支持 JPG / PNG / WebP</div>
-            </div>
+            {/* ── 对话消息流 ── */}
+            <div style={{ paddingBottom: 88 }}>
 
-            {/* ── Step 2：模特来源 ── */}
-            <div style={CARD}>
-              <div style={{ display: "flex", alignItems: "center", marginBottom: "1rem" }}>
-                <span style={STEP_LABEL}>STEP 2</span>
-                <span style={{ fontSize: "0.92rem", fontWeight: 600, color: "#1a202c" }}>模特来源</span>
-              </div>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-                {([
-                  { v: "auto",  label: "AI 自动出模特",  desc: "GPT-Image 2 生成亚洲/欧美面孔，按市场自动匹配" },
-                  { v: "image", label: "上传模特图",      desc: "上传真人照片，复刻模特形象" },
-                  { v: "video", label: "上传模特视频",    desc: "上传视频，自动提取中间帧" },
-                ] as { v: ModelSrc; label: string; desc: string }[]).map(o => (
-                  <label key={o.v} onClick={() => setModelSrc(o.v)}
-                    style={{ flex: "1 1 180px", minWidth: 160, border: `2px solid ${modelSrc === o.v ? "#0d0d0d" : "#e2e8f0"}`, borderRadius: 12, padding: "0.85rem", cursor: "pointer", background: modelSrc === o.v ? "#f7f7f5" : "#fff", transition: "all 0.15s" }}>
-                    <input type="radio" name="modelSrc" value={o.v} checked={modelSrc === o.v} onChange={() => setModelSrc(o.v)} style={{ marginRight: 7 }} />
-                    <strong style={{ fontSize: "0.88rem", color: "#1a202c" }}>{o.label}</strong>
-                    <div style={{ fontSize: "0.73rem", color: "#718096", marginTop: 5, lineHeight: 1.5 }}>{o.desc}</div>
-                  </label>
-                ))}
-              </div>
-              {modelSrc === "image" && (
-                <label style={{ display: "flex", alignItems: "center", gap: 10, border: "2px dashed #e2e8f0", borderRadius: 10, padding: "0.9rem 1rem", cursor: "pointer", background: "#fafafa" }}>
-                  <input type="file" accept="image/*" style={{ display: "none" }}
-                    onChange={e => { const f = e.target.files?.[0]; if (f) uploadImg(f, "/api/video/general/upload/model-image", "model_image_url", setModelImg); e.target.value = ""; }} />
-                  {modelImg.preview
-                    ? <><img src={modelImg.preview} alt="model" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 8 }} /><span style={{ fontSize: "0.85rem", color: "#4a5568" }}>已上传 {modelImg.uploading ? "（上传中…）" : "✓"}</span></>
-                    : <span style={{ fontSize: "0.85rem", color: "#a0aec0" }}>点击上传模特图片</span>
-                  }
-                </label>
-              )}
-              {modelSrc === "video" && (
-                <label style={{ display: "flex", alignItems: "center", gap: 10, border: "2px dashed #e2e8f0", borderRadius: 10, padding: "0.9rem 1rem", cursor: "pointer", background: "#fafafa" }}>
-                  <input type="file" accept="video/*" style={{ display: "none" }}
-                    onChange={async e => {
-                      const f = e.target.files?.[0]; if (!f) return;
-                      setModelVid({ file: f, uploading: true }); setError("");
-                      try {
-                        const fd = new FormData(); fd.append("file", f);
-                        const r = await fetch(`${API_BASE}/api/video/general/upload/video`, { method: "POST", headers: { Authorization: `Bearer ${getToken()}` }, body: fd });
-                        if (!r.ok) throw new Error(await r.text());
-                        const d = await r.json();
-                        setModelVidUrl(d.video_url || "");
-                        setModelVid({ file: f, uploading: false });
-                      } catch (err) { setError((err as Error).message || "视频上传失败"); setModelVid({ file: null, uploading: false }); }
-                      e.target.value = "";
-                    }} />
-                  <span style={{ fontSize: "0.85rem", color: modelVid.file ? "#4a5568" : "#a0aec0" }}>
-                    {modelVid.uploading ? "上传中…" : modelVid.file ? `已上传：${modelVid.file.name} ✓` : "点击上传模特视频（≤ 100MB）"}
-                  </span>
-                </label>
-              )}
-            </div>
+              {/* 开场问候 */}
+              <AgentRow sender="system">
+                <FlowBubble>你好！我将帮你一步步完成爆款视频的生成 👋<br />先上传产品图片，让我们开始吧。</FlowBubble>
+              </AgentRow>
 
-            {/* ── Step 3：视频参数 ── */}
-            <div style={CARD}>
-              <div style={{ display: "flex", alignItems: "center", marginBottom: "1rem" }}>
-                <span style={STEP_LABEL}>STEP 3</span>
-                <span style={{ fontSize: "0.92rem", fontWeight: 600, color: "#1a202c" }}>视频参数</span>
-              </div>
+              {/* STEP 1：上传产品图 */}
+              <AgentRow sender="system">
+                <FlowStepCard step={1} title="上传产品图">
+                  <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                    <UploadBox slot={front} label="正面图" required onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setFront)} onRemove={() => removeSlot(setFront)} />
+                    <UploadBox slot={back}  label="反面图" onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setBack)}  onRemove={() => removeSlot(setBack)} />
+                    <UploadBox slot={rear}  label="侧面图" onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setRear)}  onRemove={() => removeSlot(setRear)} />
+                    <UploadBox slot={scene} label="场景图" onUpload={f => uploadImg(f, "/api/video/general/upload/scene-image", "scene_image_url", setScene)} onRemove={() => removeSlot(setScene)} />
+                  </div>
+                  <div style={{ fontSize: "0.72rem", color: "#a0aec0", marginTop: 10 }}>正面图必传，其余可选 · 每张 ≤ 10MB</div>
+                  {flowStep === 1 && <FlowNextBtn label="已上传，下一步" onClick={() => setFlowStep(2)} disabled={!front.url || front.uploading} />}
+                </FlowStepCard>
+              </AgentRow>
 
-              {/* 脚本模式选择 */}
-              <div style={{ marginBottom: 18 }}>
-                <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 8 }}>脚本模式</div>
-                <div style={{ display: "flex", gap: 10 }}>
-                  {([
-                    { v: "story",  icon: "🎬", label: "剧情模式",  desc: "有故事冲突，产品是救星（推荐）" },
-                    { v: "direct", icon: "📦", label: "直接带货",  desc: "博主展示+安利产品，无剧情" },
-                    { v: "chat",   icon: "💬", label: "AI导师对话", desc: "跟AI对话，共同策划专属脚本" },
-                  ] as { v: "story" | "direct" | "chat"; icon: string; label: string; desc: string }[]).map(o => (
-                    <button key={o.v} onClick={() => setScriptMode(o.v)}
-                      style={{
-                        flex: "1 1 120px", padding: "0.7rem 0.9rem", border: `2px solid ${scriptMode === o.v ? "#0d0d0d" : "#e2e8f0"}`,
-                        borderRadius: 10, background: scriptMode === o.v ? "#0d0d0d" : "#fff",
-                        color: scriptMode === o.v ? "#fff" : "#4a5568", cursor: "pointer",
-                        textAlign: "left", transition: "all 0.15s",
-                      }}>
-                      <div style={{ fontSize: "0.85rem", fontWeight: 600, marginBottom: 3 }}>{o.icon} {o.label}</div>
-                      <div style={{ fontSize: "0.68rem", opacity: scriptMode === o.v ? 0.75 : 0.7, lineHeight: 1.4 }}>{o.desc}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {scriptMode !== "chat" && (
+              {/* STEP 2：模特来源 */}
+              {flowStep >= 2 && (
                 <>
-                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
-                    <div>
-                      <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>总时长</div>
-                      <select value={duration} onChange={e => setDuration(+e.target.value)}
-                        style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
-                        {[10, 15, 30].map(v => <option key={v} value={v}>{v} 秒</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>目标市场</div>
-                      <select value={market} onChange={e => setMarket(e.target.value)}
-                        style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
-                        {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>分辨率</div>
-                      <select value={resolution} onChange={e => setResolution(e.target.value)}
-                        style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
-                        <option value="480p">480p（标准）不加价</option>
-                        <option value="1080p">1080p（高清）+10积分</option>
-                        <option value="4k">4K（超清）+50积分</option>
-                      </select>
-                    </div>
-                  </div>
-                  {/* 声音开关 */}
-                  <div style={{ marginBottom: 16 }}>
-                    <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 8 }}>声音</div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      {([{ v: true, icon: "🔊", label: "有声音", desc: "TTS 配音 + 对口型" }, { v: false, icon: "🔇", label: "无声音", desc: "纯视觉，无配音" }] as { v: boolean; icon: string; label: string; desc: string }[]).map(o => (
-                        <button key={String(o.v)} onClick={() => setEnableVoice(o.v)}
-                          style={{ flex: "1 1 120px", padding: "0.6rem 0.8rem", border: `2px solid ${enableVoice === o.v ? "#0d0d0d" : "#e2e8f0"}`, borderRadius: 10, background: enableVoice === o.v ? "#0d0d0d" : "#fff", color: enableVoice === o.v ? "#fff" : "#4a5568", cursor: "pointer", textAlign: "left", transition: "all 0.15s" }}>
-                          <div style={{ fontSize: "0.85rem", fontWeight: 600, marginBottom: 2 }}>{o.icon} {o.label}</div>
-                          <div style={{ fontSize: "0.68rem", opacity: 0.7 }}>{o.desc}</div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                  <UserRow content="已上传产品图 ✓" />
+                  <AgentRow sender="system">
+                    <FlowStepCard step={2} title="选择模特来源">
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+                        {([
+                          { v: "auto",  label: "AI 自动出模特", desc: "GPT-Image 2 生成，按市场自动匹配" },
+                          { v: "image", label: "上传模特图",    desc: "上传真人照片，复刻模特形象" },
+                          { v: "video", label: "上传模特视频",  desc: "上传视频，自动提取中间帧" },
+                        ] as { v: ModelSrc; label: string; desc: string }[]).map(o => (
+                          <label key={o.v} onClick={() => setModelSrc(o.v)}
+                            style={{ flex: "1 1 160px", minWidth: 140, border: `2px solid ${modelSrc === o.v ? "#0d0d0d" : "#e2e8f0"}`, borderRadius: 12, padding: "0.75rem", cursor: "pointer", background: modelSrc === o.v ? "#f7f7f5" : "#fff", transition: "all 0.15s" }}>
+                            <input type="radio" name="modelSrcFlow" value={o.v} checked={modelSrc === o.v} onChange={() => setModelSrc(o.v)} style={{ marginRight: 7 }} />
+                            <strong style={{ fontSize: "0.85rem" }}>{o.label}</strong>
+                            <div style={{ fontSize: "0.72rem", color: "#718096", marginTop: 4, lineHeight: 1.4 }}>{o.desc}</div>
+                          </label>
+                        ))}
+                      </div>
+                      {modelSrc === "image" && (
+                        <label style={{ display: "flex", alignItems: "center", gap: 10, border: "2px dashed #e2e8f0", borderRadius: 10, padding: "0.75rem 1rem", cursor: "pointer", background: "#fafafa", marginBottom: 10 }}>
+                          <input type="file" accept="image/*" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) uploadImg(f, "/api/video/general/upload/model-image", "model_image_url", setModelImg); e.target.value = ""; }} />
+                          {modelImg.preview ? <><img src={modelImg.preview} alt="model" style={{ width: 44, height: 44, objectFit: "cover", borderRadius: 8 }} /><span style={{ fontSize: "0.82rem", color: "#4a5568" }}>已上传 {modelImg.uploading ? "（上传中…）" : "✓"}</span></> : <span style={{ fontSize: "0.82rem", color: "#a0aec0" }}>点击上传模特图片</span>}
+                        </label>
+                      )}
+                      {modelSrc === "video" && (
+                        <label style={{ display: "flex", alignItems: "center", gap: 10, border: "2px dashed #e2e8f0", borderRadius: 10, padding: "0.75rem 1rem", cursor: "pointer", background: "#fafafa", marginBottom: 10 }}>
+                          <input type="file" accept="video/*" style={{ display: "none" }} onChange={async e => {
+                            const f = e.target.files?.[0]; if (!f) return;
+                            setModelVid({ file: f, uploading: true }); setError("");
+                            try {
+                              const fd = new FormData(); fd.append("file", f);
+                              const r = await fetch(`${API_BASE}/api/video/general/upload/video`, { method: "POST", headers: { Authorization: `Bearer ${getToken()}` }, body: fd });
+                              if (!r.ok) throw new Error(await r.text());
+                              const d = await r.json(); setModelVidUrl(d.video_url || ""); setModelVid({ file: f, uploading: false });
+                            } catch (err) { setError((err as Error).message || "视频上传失败"); setModelVid({ file: null, uploading: false }); }
+                            e.target.value = "";
+                          }} />
+                          <span style={{ fontSize: "0.82rem", color: modelVid.file ? "#4a5568" : "#a0aec0" }}>{modelVid.uploading ? "上传中…" : modelVid.file ? `已上传：${modelVid.file.name} ✓` : "点击上传模特视频（≤ 100MB）"}</span>
+                        </label>
+                      )}
+                      {flowStep === 2 && <FlowNextBtn label="确认模特来源" onClick={() => setFlowStep(3)} />}
+                    </FlowStepCard>
+                  </AgentRow>
                 </>
               )}
 
-              <div>
-                <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>你的想法（可选）</div>
-                <textarea
-                  value={userIdea}
-                  onChange={e => setUserIdea(e.target.value.slice(0, 500))}
-                  rows={3}
-                  placeholder="描述你想要的风格、场景等，留空 AI 自动决定"
-                  style={{ width: "100%", padding: "0.6rem 0.8rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", lineHeight: 1.6, resize: "vertical", fontFamily: "inherit", boxSizing: "border-box", color: "#1a202c" }}
-                />
-                <div style={{ fontSize: "0.7rem", color: "#cbd5e0", textAlign: "right", marginTop: 3 }}>{userIdea.length}/500</div>
-              </div>
-            </div>
-
-            {/* ── Step 4：生成脚本 / AI导师对话 ── */}
-            <div style={CARD}>
-              <div style={{ display: "flex", alignItems: "center", marginBottom: "1rem" }}>
-                <span style={STEP_LABEL}>STEP 4</span>
-                <span style={{ fontSize: "0.92rem", fontWeight: 600, color: "#1a202c" }}>
-                  {scriptMode === "chat" ? "AI导师对话" : "生成创意脚本"}
-                </span>
-              </div>
-
-              {/* ── Chat 模式 ── */}
-              {scriptMode === "chat" && (
-                <div>
-                  <div style={{ fontSize: "0.78rem", color: "#6b7280", marginBottom: 12, padding: "0.6rem 0.8rem", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 8 }}>
-                    💡 AI导师会帮你策划最适合你产品的爆款脚本
-                  </div>
-
-                  {/* 消息列表 */}
-                  <div style={{ height: 320, overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: 10, padding: "0.8rem", marginBottom: 10, background: "#fafafa" }}>
-                    {chatMsgs.length === 0 && !front.url && (
-                      <div style={{ color: "#a0aec0", fontSize: "0.85rem", textAlign: "center", paddingTop: 80 }}>
-                        请先上传产品图，然后点击"开始对话"
+              {/* STEP 3：创作方式 */}
+              {flowStep >= 3 && (
+                <>
+                  <UserRow content="已选择模特来源 ✓" />
+                  <AgentRow sender="system">
+                    <FlowStepCard step={3} title="选择创作方式">
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+                        {([
+                          { v: "story",  icon: "🎬", label: "剧情模式",   desc: "有故事冲突，产品是救星（推荐）" },
+                          { v: "direct", icon: "📦", label: "直接带货",   desc: "博主展示+安利产品，无剧情" },
+                          { v: "chat",   icon: "💬", label: "AI导师对话", desc: "跟AI对话，共同策划专属脚本" },
+                        ] as { v: "story" | "direct" | "chat"; icon: string; label: string; desc: string }[]).map(o => (
+                          <button key={o.v} onClick={() => setScriptMode(o.v)}
+                            style={{ flex: "1 1 130px", padding: "0.7rem 0.8rem", border: `2px solid ${scriptMode === o.v ? "#0d0d0d" : "#e2e8f0"}`, borderRadius: 10, background: scriptMode === o.v ? "#0d0d0d" : "#fff", color: scriptMode === o.v ? "#fff" : "#4a5568", cursor: "pointer", textAlign: "left", transition: "all 0.15s" }}>
+                            <div style={{ fontSize: "0.85rem", fontWeight: 600, marginBottom: 3 }}>{o.icon} {o.label}</div>
+                            <div style={{ fontSize: "0.68rem", opacity: scriptMode === o.v ? 0.75 : 0.7, lineHeight: 1.4 }}>{o.desc}</div>
+                          </button>
+                        ))}
                       </div>
-                    )}
-                    {chatMsgs.length === 0 && front.url && (
-                      <div style={{ color: "#a0aec0", fontSize: "0.85rem", textAlign: "center", paddingTop: 80 }}>
-                        点击"开始对话"，AI导师将分析你的产品
-                      </div>
-                    )}
-                    {chatMsgs.map((m, msgIdx) => (
-                      <div key={msgIdx} style={{ marginBottom: 14, display: "flex", flexDirection: "column", alignItems: m.role === "user" ? "flex-end" : "flex-start" }}>
-                        {/* 用户消息图片缩略图 */}
-                        {m.role === "user" && m.images?.length ? (
-                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: m.content ? 4 : 0, justifyContent: "flex-end" }}>
-                            {m.images.map((url, ii) => (
-                              <img key={ii} src={url} alt="附图" style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 8, border: "1px solid #e2e8f0" }} />
+                      {scriptMode !== "chat" && (
+                        <div style={{ borderTop: "1px solid #f0f0f0", paddingTop: 14 }}>
+                          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 14 }}>
+                            <div>
+                              <div style={{ fontSize: "0.72rem", color: "#718096", marginBottom: 5 }}>总时长</div>
+                              <select value={duration} onChange={e => setDuration(+e.target.value)} style={{ padding: "0.45rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c" }}>
+                                {[10, 15, 30].map(v => <option key={v} value={v}>{v} 秒</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <div style={{ fontSize: "0.72rem", color: "#718096", marginBottom: 5 }}>目标市场</div>
+                              <select value={market} onChange={e => setMarket(e.target.value)} style={{ padding: "0.45rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c" }}>
+                                {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <div style={{ fontSize: "0.72rem", color: "#718096", marginBottom: 5 }}>分辨率</div>
+                              <select value={resolution} onChange={e => setResolution(e.target.value)} style={{ padding: "0.45rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c" }}>
+                                <option value="480p">480p 标准</option>
+                                <option value="1080p">1080p +10分</option>
+                                <option value="4k">4K +50分</option>
+                              </select>
+                            </div>
+                          </div>
+                          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                            {([{ v: true, icon: "🔊", label: "有声音" }, { v: false, icon: "🔇", label: "无声音" }] as { v: boolean; icon: string; label: string }[]).map(o => (
+                              <button key={String(o.v)} onClick={() => setEnableVoice(o.v)}
+                                style={{ flex: 1, padding: "0.5rem 0.7rem", borderRadius: 8, border: `2px solid ${enableVoice === o.v ? "#0d0d0d" : "#e2e8f0"}`, background: enableVoice === o.v ? "#0d0d0d" : "#fff", color: enableVoice === o.v ? "#fff" : "#4a5568", fontSize: "0.82rem", fontWeight: 600, cursor: "pointer", transition: "all 0.15s" }}>
+                                {o.icon} {o.label}
+                              </button>
                             ))}
                           </div>
-                        ) : null}
-                        {/* 气泡文字 */}
-                        {m.content && (
-                          <div style={{
-                            maxWidth: "90%", padding: "0.6rem 0.85rem", borderRadius: 12,
-                            background: m.role === "user" ? "#0d0d0d" : "#fff",
-                            color: m.role === "user" ? "#fff" : "#1a202c",
-                            fontSize: "0.85rem", lineHeight: 1.6,
-                            border: m.role === "assistant" ? "1px solid #e2e8f0" : "none",
-                            whiteSpace: "pre-wrap", marginBottom: m.questions?.length ? 8 : 0,
-                          }}>
-                            {m.content}
+                          <div>
+                            <div style={{ fontSize: "0.72rem", color: "#718096", marginBottom: 5 }}>你的想法（可选）</div>
+                            <textarea value={userIdea} onChange={e => setUserIdea(e.target.value.slice(0, 500))} rows={2} placeholder="描述想要的风格、场景等，留空AI自动决定" style={{ width: "100%", padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.82rem", lineHeight: 1.5, resize: "vertical", fontFamily: "inherit", boxSizing: "border-box", color: "#1a202c" }} />
                           </div>
-                        )}
-                        {/* 小李·趋势研究 搜索结果卡片 */}
-                        {m.role === "assistant" && m.searchResult && (
-                          <div style={{ maxWidth: "90%", marginTop: 6, padding: "0.55rem 0.8rem", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 10 }}>
-                            <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "#1d4ed8", marginBottom: 3, letterSpacing: "0.01em" }}>📡 小李·趋势研究</div>
-                            <div style={{ fontSize: "0.75rem", color: "#1e40af", lineHeight: 1.55 }}>
-                              {m.searchResult.slice(0, 100)}{m.searchResult.length > 100 ? "…" : ""}
-                            </div>
+                        </div>
+                      )}
+                      {flowStep === 3 && <FlowNextBtn label={scriptMode === "chat" ? "开始AI对话" : "生成脚本"} onClick={() => setFlowStep(4)} />}
+                    </FlowStepCard>
+                  </AgentRow>
+                </>
+              )}
+
+              {/* STEP 4A：普通模式（剧情/直接带货） */}
+              {flowStep >= 4 && scriptMode !== "chat" && (
+                <>
+                  <UserRow content={`选择${scriptMode === "story" ? "剧情模式" : "直接带货"} ✓`} />
+                  <AgentRow sender="linjiu">
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      <FlowBubble>好的！我来帮你生成{scriptMode === "story" ? "剧情带货" : "直接带货"}脚本 🎬</FlowBubble>
+                      <button onClick={generate} disabled={loading || !front.url || front.uploading}
+                        style={{ padding: "0.7rem", borderRadius: 10, border: "none", background: loading || !front.url ? "#e2e8f0" : "#7c3aed", color: loading || !front.url ? "#a0aec0" : "#fff", fontSize: "0.9rem", fontWeight: 600, cursor: loading || !front.url ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                        {loading ? <><span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #a0aec0", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />AI 正在撰写脚本…</> : script ? "重新生成脚本（35积分）" : "生成创意脚本（35积分）"}
+                      </button>
+                      {script && !loading && (
+                        <div>
+                          <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#718096", marginBottom: 8 }}>✨ 生成的创意脚本</div>
+                          <ScriptDisplay text={script} />
+                          <ContrastUploadHint scriptText={script} />
+                          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                            <button onClick={generate} disabled={loading || vidLoading} style={{ flex: "1 1 140px", padding: "0.6rem 0.9rem", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#374151", fontSize: "0.85rem", cursor: "pointer", fontWeight: 500 }}>🔄 重新生成（35积分）</button>
+                            <button onClick={() => generateVideo()} disabled={vidLoading || loading}
+                              style={{ flex: "1 1 140px", padding: "0.6rem 0.9rem", borderRadius: 8, border: "none", background: vidLoading || loading ? "#e2e8f0" : "#16a34a", color: vidLoading || loading ? "#a0aec0" : "#fff", fontSize: "0.85rem", fontWeight: 600, cursor: vidLoading || loading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                              {vidLoading ? <><span style={{ display: "inline-block", width: 12, height: 12, border: "2px solid #a0aec0", borderTopColor: "#555", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />生成中…</> : "🎬 确认，生成视频"}
+                            </button>
                           </div>
-                        )}
-                        {/* 结构化问题卡片 */}
-                        {m.role === "assistant" && m.questions && m.questions.length > 0 && (() => {
-                          const qs = m.questions!;
-                          // 提交所有问题的答案
-                          const submitAll = () => {
-                            const parts: string[] = [];
-                            qs.forEach((q, qi) => {
-                              const key = msgIdx * 10 + qi;
-                              const sel = chatSelections[key]?.trim();
-                              const custom = chatCustomInputs[key]?.trim();
-                              const ans = custom || sel;
-                              if (ans) parts.push(`${qi + 1}. ${q.question}：${ans}`);
-                            });
-                            if (parts.length === 0) return;
-                            sendChatMessage(parts.join("\n"));
-                            // 清除选中 & 自定义输入
-                            setChatSelections(prev => {
-                              const next = { ...prev };
-                              qs.forEach((_, qi) => delete next[msgIdx * 10 + qi]);
-                              return next;
-                            });
-                            setChatCustomInputs(prev => {
-                              const next = { ...prev };
-                              qs.forEach((_, qi) => delete next[msgIdx * 10 + qi]);
-                              return next;
-                            });
-                          };
-                          return (
-                            <div style={{ maxWidth: "95%", width: "100%" }}>
-                              {qs.map((q, qi) => {
-                                const key = msgIdx * 10 + qi;
-                                const selected = chatSelections[key];
+                        </div>
+                      )}
+                    </div>
+                  </AgentRow>
+                </>
+              )}
+
+              {/* STEP 4B：AI导师对话模式 */}
+              {flowStep >= 4 && scriptMode === "chat" && (
+                <>
+                  <UserRow content="开始AI导师对话，策划专属脚本！" />
+
+                  {/* 林久开场 */}
+                  {chatMsgs.length === 0 && !chatLoading && (
+                    <AgentRow sender="linjiu">
+                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                        <FlowBubble>我是林久，你的专属创意导师 💜<br />让我先分析一下你的产品，然后我们一起策划最适合的爆款脚本。</FlowBubble>
+                        <button onClick={() => sendChatMessage("请帮我分析这个产品，开始创作！")} disabled={chatLoading || !front.url}
+                          style={{ alignSelf: "flex-start", padding: "0.55rem 1.2rem", borderRadius: 8, border: "none", background: !front.url ? "#e2e8f0" : "#7c3aed", color: !front.url ? "#a0aec0" : "#fff", fontSize: "0.85rem", fontWeight: 600, cursor: !front.url ? "not-allowed" : "pointer" }}>
+                          开始分析产品 →
+                        </button>
+                      </div>
+                    </AgentRow>
+                  )}
+
+                  {/* 对话消息 */}
+                  {chatMsgs.map((m, msgIdx) => (
+                    <div key={msgIdx}>
+                      {m.role === "user" ? (
+                        <UserRow content={m.content} images={m.images} />
+                      ) : (
+                        <>
+                          {/* 小李搜索结果（先于林久显示） */}
+                          {m.searchResult && (
+                            <AgentRow sender="xiaoli">
+                              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                <FlowBubble style={{ background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1e3a8a" }}>
+                                  我是小李，趋势研究员 📡<br />让我搜索一下最新爆款趋势…
+                                </FlowBubble>
+                                <FlowBubble style={{ background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1e40af", fontSize: "0.8rem" }}>
+                                  {m.searchResult.slice(0, 300)}{m.searchResult.length > 300 ? "…" : ""}
+                                </FlowBubble>
+                                <div style={{ fontSize: "0.75rem", color: "#3b82f6", fontWeight: 500, paddingLeft: 2 }}>以上是最新趋势，交给林久继续创作 ✅</div>
+                              </div>
+                            </AgentRow>
+                          )}
+                          {/* 林久主回复 */}
+                          <AgentRow sender="linjiu">
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                              {m.content && <FlowBubble>{m.content}</FlowBubble>}
+                              {m.questions && m.questions.length > 0 && (() => {
+                                const qs = m.questions!;
+                                const submitAll = () => {
+                                  const parts: string[] = [];
+                                  qs.forEach((q, qi) => {
+                                    const key = msgIdx * 10 + qi;
+                                    const ans = chatCustomInputs[key]?.trim() || chatSelections[key]?.trim();
+                                    if (ans) parts.push(`${qi + 1}. ${q.question}：${ans}`);
+                                  });
+                                  if (!parts.length) return;
+                                  sendChatMessage(parts.join("\n"));
+                                  setChatSelections(prev => { const n = { ...prev }; qs.forEach((_, qi) => delete n[msgIdx * 10 + qi]); return n; });
+                                  setChatCustomInputs(prev => { const n = { ...prev }; qs.forEach((_, qi) => delete n[msgIdx * 10 + qi]); return n; });
+                                };
                                 return (
-                                  <div key={qi} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "0.85rem 1rem", marginBottom: 8 }}>
-                                    <div style={{ fontWeight: 600, fontSize: "0.88rem", color: "#1a202c", marginBottom: 4 }}>{q.question}</div>
-                                    {q.description && <div style={{ fontSize: "0.72rem", color: "#9ca3af", marginBottom: 10 }}>{q.description}</div>}
-                                    {/* 选项按钮 — 点击高亮，不发送 */}
-                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: q.allow_custom ? 8 : 0 }}>
-                                      {q.options.map((opt, oi) => {
-                                        const isSelected = selected === opt;
-                                        return (
-                                          <button key={oi}
-                                            onClick={() => {
-                                              setChatSelections(prev => ({ ...prev, [key]: isSelected ? "" : opt }));
-                                              // 选了预设选项就清空自定义输入
-                                              if (!isSelected) setChatCustomInputs(prev => ({ ...prev, [key]: "" }));
-                                            }}
-                                            disabled={chatLoading}
-                                            style={{
-                                              padding: "0.35rem 0.8rem", borderRadius: 999, fontSize: "0.8rem",
-                                              cursor: chatLoading ? "not-allowed" : "pointer", transition: "all 0.15s",
-                                              border: isSelected ? "1px solid #0d0d0d" : "1px solid #d1d5db",
-                                              background: isSelected ? "#0d0d0d" : "#f9fafb",
-                                              color: isSelected ? "#fff" : "#374151",
-                                            }}
-                                          >{opt}</button>
-                                        );
-                                      })}
-                                    </div>
-                                    {/* 自定义输入 */}
-                                    {q.allow_custom && (
-                                      <input
-                                        placeholder="或自定义回答…"
-                                        value={chatCustomInputs[key] || ""}
-                                        onChange={e => {
-                                          setChatCustomInputs(prev => ({ ...prev, [key]: e.target.value }));
-                                          // 打了自定义就取消预设选中
-                                          if (e.target.value) setChatSelections(prev => ({ ...prev, [key]: "" }));
-                                        }}
-                                        style={{ width: "100%", padding: "0.35rem 0.6rem", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: "0.8rem", boxSizing: "border-box" }}
-                                      />
-                                    )}
+                                  <div>
+                                    {qs.map((q, qi) => {
+                                      const key = msgIdx * 10 + qi;
+                                      const selected = chatSelections[key];
+                                      return (
+                                        <div key={qi} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "0.8rem 1rem", marginBottom: 8 }}>
+                                          <div style={{ fontWeight: 600, fontSize: "0.85rem", color: "#1a202c", marginBottom: 4 }}>{q.question}</div>
+                                          {q.description && <div style={{ fontSize: "0.7rem", color: "#9ca3af", marginBottom: 8 }}>{q.description}</div>}
+                                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: q.allow_custom ? 8 : 0 }}>
+                                            {q.options.map((opt, oi) => {
+                                              const isSel = selected === opt;
+                                              return (
+                                                <button key={oi} onClick={() => { setChatSelections(prev => ({ ...prev, [key]: isSel ? "" : opt })); if (!isSel) setChatCustomInputs(prev => ({ ...prev, [key]: "" })); }} disabled={chatLoading}
+                                                  style={{ padding: "0.3rem 0.75rem", borderRadius: 999, fontSize: "0.78rem", cursor: chatLoading ? "not-allowed" : "pointer", border: isSel ? "1px solid #0d0d0d" : "1px solid #d1d5db", background: isSel ? "#0d0d0d" : "#f9fafb", color: isSel ? "#fff" : "#374151", transition: "all 0.12s" }}>
+                                                  {opt}
+                                                </button>
+                                              );
+                                            })}
+                                          </div>
+                                          {q.allow_custom && (
+                                            <input placeholder="或自定义回答…" value={chatCustomInputs[key] || ""} onChange={e => { setChatCustomInputs(prev => ({ ...prev, [key]: e.target.value })); if (e.target.value) setChatSelections(prev => ({ ...prev, [key]: "" })); }}
+                                              style={{ width: "100%", padding: "0.3rem 0.6rem", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: "0.78rem", boxSizing: "border-box" }} />
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                    <button onClick={submitAll} disabled={chatLoading}
+                                      style={{ width: "100%", padding: "0.6rem", borderRadius: 10, border: "none", background: chatLoading ? "#e2e8f0" : "#7c3aed", color: chatLoading ? "#a0aec0" : "#fff", fontSize: "0.85rem", fontWeight: 600, cursor: chatLoading ? "not-allowed" : "pointer" }}>
+                                      提交回答
+                                    </button>
                                   </div>
                                 );
-                              })}
-                              {/* 提交按钮 */}
-                              <button
-                                onClick={submitAll}
-                                disabled={chatLoading}
-                                style={{
-                                  width: "100%", padding: "0.65rem", borderRadius: 10, border: "none",
-                                  background: chatLoading ? "#e2e8f0" : "#7c3aed",
-                                  color: chatLoading ? "#a0aec0" : "#fff",
-                                  fontSize: "0.88rem", fontWeight: 600,
-                                  cursor: chatLoading ? "not-allowed" : "pointer",
-                                }}>
-                                提交回答
-                              </button>
+                              })()}
                             </div>
-                          );
-                        })()}
-                      </div>
-                    ))}
-                    {chatLoading && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#6b7280", fontSize: "0.82rem" }}>
-                        <span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #cbd5e0", borderTopColor: "#0d0d0d", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-                        AI导师正在思考…
-                      </div>
-                    )}
-                    <div ref={chatEndRef} />
-                  </div>
+                          </AgentRow>
+                        </>
+                      )}
+                    </div>
+                  ))}
 
-                  {/* 脚本展示 */}
+                  {/* 思考中 */}
+                  {chatLoading && (
+                    <AgentRow sender="linjiu">
+                      <FlowBubble style={{ color: "#6b7280", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #d8b4fe", borderTopColor: "#7c3aed", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+                        正在思考…
+                      </FlowBubble>
+                    </AgentRow>
+                  )}
+
+                  {/* 脚本 */}
                   {chatScript && (
-                    <div style={{ marginBottom: 12 }}>
-                      <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#718096", marginBottom: 8 }}>✨ AI导师生成的脚本</div>
-                      <ScriptDisplay text={chatScript} />
-                      <ContrastUploadHint scriptText={chatScript} />
+                    <AgentRow sender="linjiu">
+                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                        <FlowBubble>好的，根据我们的讨论，脚本来了 ✨</FlowBubble>
+                        <ScriptDisplay text={chatScript} />
+                        <ContrastUploadHint scriptText={chatScript} />
+                      </div>
+                    </AgentRow>
+                  )}
 
-                      {/* 审稿评分卡片 */}
-                      {chatReview && (() => {
+                  {/* 审稿专家 */}
+                  {chatReview && (
+                    <AgentRow sender="reviewer">
+                      {(() => {
                         const s = chatReview.score;
-                        const clr  = s >= 50 ? "#16a34a" : s >= 40 ? "#d97706" : "#dc2626";
-                        const bg   = s >= 50 ? "#f0fdf4" : s >= 40 ? "#fefce8" : "#fef2f2";
-                        const bdr  = s >= 50 ? "#86efac" : s >= 40 ? "#fde68a" : "#fca5a5";
+                        const clr = s >= 50 ? "#16a34a" : s >= 40 ? "#d97706" : "#dc2626";
+                        const bg  = s >= 50 ? "#f0fdf4" : s >= 40 ? "#fefce8" : "#fef2f2";
+                        const bdr = s >= 50 ? "#86efac" : s >= 40 ? "#fde68a" : "#fca5a5";
                         return (
-                          <div style={{ margin: "10px 0", border: `1px solid ${bdr}`, borderRadius: 10, overflow: "hidden" }}>
-                            <div style={{ padding: "0.55rem 0.85rem", background: bg, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}
-                              onClick={() => setChatReviewExpanded(p => !p)}>
-                              <span style={{ fontWeight: 700, fontSize: "0.82rem", color: clr }}>
-                                {s >= 50 ? "✅" : s >= 40 ? "⚠️" : "❌"} 审稿评分：{s}/60
-                              </span>
-                              <span style={{ fontSize: "0.72rem", color: clr }}>{chatReviewExpanded ? "▲ 收起" : "▼ 展开详情"}</span>
-                            </div>
-                            {chatReviewExpanded && (
-                              <div style={{ padding: "0.75rem 0.85rem", background: "#fff", fontSize: "0.78rem", color: "#374151", lineHeight: 1.6 }}>
-                                <div style={{ whiteSpace: "pre-wrap", marginBottom: chatReview.suggestions ? 8 : 0 }}>{chatReview.details}</div>
-                                {chatReview.suggestions && (
-                                  <div style={{ borderTop: "1px solid #f3f4f6", paddingTop: 8, color: "#6b7280", whiteSpace: "pre-wrap" }}>
-                                    {chatReview.suggestions}
-                                  </div>
-                                )}
+                          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                            <FlowBubble>让我来审查一下这个脚本… 🔍</FlowBubble>
+                            <div style={{ border: `1px solid ${bdr}`, borderRadius: 10, overflow: "hidden" }}>
+                              <div style={{ padding: "0.55rem 0.85rem", background: bg, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }} onClick={() => setChatReviewExpanded(p => !p)}>
+                                <span style={{ fontWeight: 700, fontSize: "0.82rem", color: clr }}>{s >= 50 ? "✅" : s >= 40 ? "⚠️" : "❌"} 审稿评分：{s}/60</span>
+                                <span style={{ fontSize: "0.72rem", color: clr }}>{chatReviewExpanded ? "▲ 收起" : "▼ 展开"}</span>
                               </div>
-                            )}
+                              {chatReviewExpanded && (
+                                <div style={{ padding: "0.75rem 0.85rem", background: "#fff", fontSize: "0.78rem", color: "#374151", lineHeight: 1.6 }}>
+                                  <div style={{ whiteSpace: "pre-wrap", marginBottom: chatReview.suggestions ? 8 : 0 }}>{chatReview.details}</div>
+                                  {chatReview.suggestions && <div style={{ borderTop: "1px solid #f3f4f6", paddingTop: 8, color: "#6b7280", whiteSpace: "pre-wrap" }}>{chatReview.suggestions}</div>}
+                                </div>
+                              )}
+                            </div>
                           </div>
                         );
                       })()}
+                    </AgentRow>
+                  )}
 
+                  {/* 确认脚本 + 参数 */}
+                  {chatScript && (
+                    <div style={{ paddingLeft: 44, marginBottom: 18 }}>
                       {!chatShowParams ? (
                         <button onClick={() => setChatShowParams(true)} disabled={vidLoading}
-                          style={{ width: "100%", marginTop: 10, padding: "0.7rem 1rem", borderRadius: 10, border: "none", background: vidLoading ? "#e2e8f0" : "#16a34a", color: vidLoading ? "#a0aec0" : "#fff", fontSize: "0.88rem", fontWeight: 600, cursor: vidLoading ? "not-allowed" : "pointer" }}>
+                          style={{ padding: "0.65rem 1.4rem", borderRadius: 10, border: "none", background: vidLoading ? "#e2e8f0" : "#16a34a", color: vidLoading ? "#a0aec0" : "#fff", fontSize: "0.88rem", fontWeight: 600, cursor: vidLoading ? "not-allowed" : "pointer" }}>
                           🎬 确认脚本，生成视频
                         </button>
                       ) : (
-                        <div style={{ marginTop: 12, padding: "1rem", background: "#f8f9fa", border: "1px solid #e2e8f0", borderRadius: 12 }}>
+                        <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "1rem" }}>
                           <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "#1a202c", marginBottom: 12 }}>选择生成参数</div>
-
-                          {/* 声音 */}
                           <div style={{ marginBottom: 12 }}>
-                            <div style={{ fontSize: "0.73rem", color: "#718096", marginBottom: 6 }}>声音</div>
+                            <div style={{ fontSize: "0.72rem", color: "#718096", marginBottom: 6 }}>声音</div>
                             <div style={{ display: "flex", gap: 8 }}>
-                              {([{ v: true, icon: "🔊", label: "有声音" }, { v: false, icon: "🔇", label: "无声音" }] as {v:boolean;icon:string;label:string}[]).map(o => (
+                              {([{ v: true, icon: "🔊", label: "有声音" }, { v: false, icon: "🔇", label: "无声音" }] as { v: boolean; icon: string; label: string }[]).map(o => (
                                 <button key={String(o.v)} onClick={() => setChatEnableVoice(o.v)}
-                                  style={{ flex: 1, padding: "0.5rem 0.7rem", borderRadius: 8, border: `2px solid ${chatEnableVoice === o.v ? "#0d0d0d" : "#e2e8f0"}`, background: chatEnableVoice === o.v ? "#0d0d0d" : "#fff", color: chatEnableVoice === o.v ? "#fff" : "#4a5568", fontSize: "0.82rem", fontWeight: 600, cursor: "pointer", transition: "all 0.15s" }}>
+                                  style={{ flex: 1, padding: "0.5rem 0.7rem", borderRadius: 8, border: `2px solid ${chatEnableVoice === o.v ? "#0d0d0d" : "#e2e8f0"}`, background: chatEnableVoice === o.v ? "#0d0d0d" : "#fff", color: chatEnableVoice === o.v ? "#fff" : "#4a5568", fontSize: "0.82rem", fontWeight: 600, cursor: "pointer" }}>
                                   {o.icon} {o.label}
                                 </button>
                               ))}
                             </div>
                           </div>
-
-                          {/* 分辨率 */}
                           <div style={{ marginBottom: 14 }}>
-                            <div style={{ fontSize: "0.73rem", color: "#718096", marginBottom: 6 }}>分辨率</div>
+                            <div style={{ fontSize: "0.72rem", color: "#718096", marginBottom: 6 }}>分辨率</div>
                             <select value={chatResolution} onChange={e => setChatResolution(e.target.value)}
-                              style={{ width: "100%", padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
+                              style={{ width: "100%", padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c" }}>
                               <option value="480p">480p（标准）不加价</option>
                               <option value="1080p">1080p（高清）+10积分</option>
                               <option value="4k">4K（超清）+50积分</option>
                             </select>
                           </div>
-
-                          {/* 生成按钮 */}
                           <div style={{ display: "flex", gap: 8 }}>
-                            <button onClick={() => setChatShowParams(false)}
-                              style={{ padding: "0.6rem 1rem", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#4a5568", fontSize: "0.82rem", cursor: "pointer" }}>
-                              ← 返回
-                            </button>
-                            <button onClick={() => {
-                              // 用 chat 专属参数覆盖 resolution 和 enableVoice 后生成
-                              const origRes = resolution; const origVoice = enableVoice;
-                              setResolution(chatResolution); setEnableVoice(chatEnableVoice);
-                              // React 批量更新异步，用 setTimeout 确保 state 已更新再调
-                              setTimeout(() => {
-                                generateVideo(chatScript);
-                                setResolution(origRes); setEnableVoice(origVoice);
-                              }, 0);
-                              setChatShowParams(false);
-                            }} disabled={vidLoading}
+                            <button onClick={() => setChatShowParams(false)} style={{ padding: "0.6rem 1rem", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#4a5568", fontSize: "0.82rem", cursor: "pointer" }}>← 返回</button>
+                            <button onClick={() => { const oR = resolution; const oV = enableVoice; setResolution(chatResolution); setEnableVoice(chatEnableVoice); setTimeout(() => { generateVideo(chatScript); setResolution(oR); setEnableVoice(oV); }, 0); setChatShowParams(false); }} disabled={vidLoading}
                               style={{ flex: 1, padding: "0.6rem 1rem", borderRadius: 8, border: "none", background: vidLoading ? "#e2e8f0" : "#16a34a", color: vidLoading ? "#a0aec0" : "#fff", fontSize: "0.88rem", fontWeight: 600, cursor: vidLoading ? "not-allowed" : "pointer" }}>
                               🎬 开始生成视频
                             </button>
                           </div>
                         </div>
                       )}
+                    </div>
+                  )}
 
-                      {/* 发布文案卡片 */}
-                      {chatCopy && chatCopy.title && (
-                        <div style={{ marginTop: 12, padding: "0.9rem 1rem", background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 10 }}>
-                          <div style={{ fontWeight: 700, fontSize: "0.82rem", color: "#166534", marginBottom: 10 }}>📋 发布文案</div>
+                  {/* 对比图上传 */}
+                  {chatNeedsContrast && (
+                    <div style={{ paddingLeft: 44, marginBottom: 14 }}>
+                      <div style={{ padding: "0.85rem 1rem", background: "#fefce8", border: "1px solid #fde68a", borderRadius: 10 }}>
+                        <div style={{ fontWeight: 600, fontSize: "0.82rem", color: "#92400e", marginBottom: 6 }}>📸 AI导师建议上传对比图</div>
+                        <div style={{ fontSize: "0.75rem", color: "#78350f", marginBottom: 10 }}>上传一张旧款/竞品图片，视频对比效果更真实。</div>
+                        <label style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "0.4rem 0.8rem", background: "#f59e0b", color: "#fff", borderRadius: 6, fontSize: "0.8rem", fontWeight: 600, cursor: chatImgUploading ? "not-allowed" : "pointer" }}>
+                          <input type="file" accept="image/*" style={{ display: "none" }} disabled={chatImgUploading} onChange={async e => { const f = e.target.files?.[0]; if (!f) return; setChatImgUploading(true); try { const fd = new FormData(); fd.append("file", f); const r = await fetch(`${API_BASE}/api/video/general/upload/image`, { method: "POST", headers: { Authorization: `Bearer ${getToken()}` }, body: fd }); if (!r.ok) throw new Error(await r.text()); const d = await r.json(); if (d.image_url) setChatPendingImages(prev => [...prev, d.image_url]); } catch (err) { setError((err as Error).message || "图片上传失败"); } finally { setChatImgUploading(false); } e.target.value = ""; }} />
+                          {chatImgUploading ? "上传中…" : "📎 上传对比图"}
+                        </label>
+                      </div>
+                    </div>
+                  )}
 
-                          {/* 标题 */}
+                  {/* 文案师 */}
+                  {chatCopy && chatCopy.title && (
+                    <AgentRow sender="copywriter">
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        <FlowBubble style={{ background: "#fff7ed", border: "1px solid #fed7aa", color: "#9a3412" }}>视频准备生成了！我帮你准备了发布文案 📋</FlowBubble>
+                        <div style={{ padding: "0.9rem 1rem", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 12 }}>
                           <div style={{ marginBottom: 8 }}>
-                            <div style={{ fontSize: "0.7rem", color: "#6b7280", marginBottom: 3 }}>视频标题</div>
-                            <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff", border: "1px solid #d1fae5", borderRadius: 6, padding: "0.4rem 0.6rem" }}>
+                            <div style={{ fontSize: "0.7rem", color: "#9a3412", marginBottom: 3 }}>视频标题</div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff", border: "1px solid #fed7aa", borderRadius: 6, padding: "0.4rem 0.6rem" }}>
                               <span style={{ flex: 1, fontSize: "0.83rem", color: "#111827" }}>{chatCopy.title}</span>
-                              <button onClick={() => { navigator.clipboard.writeText(chatCopy!.title); setChatCopyCopied("title"); setTimeout(() => setChatCopyCopied(""), 1500); }}
-                                style={{ flexShrink: 0, padding: "0.2rem 0.5rem", borderRadius: 4, border: "1px solid #d1fae5", background: "#f0fdf4", color: "#16a34a", fontSize: "0.72rem", cursor: "pointer" }}>
-                                {chatCopyCopied === "title" ? "✓" : "复制"}
-                              </button>
+                              <button onClick={() => { navigator.clipboard.writeText(chatCopy!.title); setChatCopyCopied("title"); setTimeout(() => setChatCopyCopied(""), 1500); }} style={{ flexShrink: 0, padding: "0.2rem 0.5rem", borderRadius: 4, border: "1px solid #fed7aa", background: "#fff7ed", color: "#ea580c", fontSize: "0.72rem", cursor: "pointer" }}>{chatCopyCopied === "title" ? "✓" : "复制"}</button>
                             </div>
                           </div>
-
-                          {/* 描述 */}
                           {chatCopy.description && (
                             <div style={{ marginBottom: 8 }}>
-                              <div style={{ fontSize: "0.7rem", color: "#6b7280", marginBottom: 3 }}>视频描述</div>
-                              <div style={{ display: "flex", alignItems: "flex-start", gap: 6, background: "#fff", border: "1px solid #d1fae5", borderRadius: 6, padding: "0.4rem 0.6rem" }}>
+                              <div style={{ fontSize: "0.7rem", color: "#9a3412", marginBottom: 3 }}>视频描述</div>
+                              <div style={{ display: "flex", alignItems: "flex-start", gap: 6, background: "#fff", border: "1px solid #fed7aa", borderRadius: 6, padding: "0.4rem 0.6rem" }}>
                                 <span style={{ flex: 1, fontSize: "0.8rem", color: "#374151", lineHeight: 1.5 }}>{chatCopy.description}</span>
-                                <button onClick={() => { navigator.clipboard.writeText(chatCopy!.description); setChatCopyCopied("desc"); setTimeout(() => setChatCopyCopied(""), 1500); }}
-                                  style={{ flexShrink: 0, padding: "0.2rem 0.5rem", borderRadius: 4, border: "1px solid #d1fae5", background: "#f0fdf4", color: "#16a34a", fontSize: "0.72rem", cursor: "pointer" }}>
-                                  {chatCopyCopied === "desc" ? "✓" : "复制"}
-                                </button>
+                                <button onClick={() => { navigator.clipboard.writeText(chatCopy!.description); setChatCopyCopied("desc"); setTimeout(() => setChatCopyCopied(""), 1500); }} style={{ flexShrink: 0, padding: "0.2rem 0.5rem", borderRadius: 4, border: "1px solid #fed7aa", background: "#fff7ed", color: "#ea580c", fontSize: "0.72rem", cursor: "pointer" }}>{chatCopyCopied === "desc" ? "✓" : "复制"}</button>
                               </div>
                             </div>
                           )}
-
-                          {/* 话题标签 */}
                           {chatCopy.hashtags?.length > 0 && (
                             <div style={{ marginBottom: 8 }}>
-                              <div style={{ fontSize: "0.7rem", color: "#6b7280", marginBottom: 5 }}>话题标签</div>
+                              <div style={{ fontSize: "0.7rem", color: "#9a3412", marginBottom: 5 }}>话题标签</div>
                               <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 4 }}>
-                                {chatCopy.hashtags.map((tag, i) => (
-                                  <span key={i} style={{ padding: "0.2rem 0.55rem", background: "#dbeafe", color: "#1d4ed8", borderRadius: 999, fontSize: "0.75rem", fontWeight: 500 }}>{tag}</span>
-                                ))}
+                                {chatCopy.hashtags.map((tag, i) => <span key={i} style={{ padding: "0.2rem 0.55rem", background: "#dbeafe", color: "#1d4ed8", borderRadius: 999, fontSize: "0.75rem", fontWeight: 500 }}>{tag}</span>)}
                               </div>
-                              <button onClick={() => { navigator.clipboard.writeText(chatCopy!.hashtags.join(" ")); setChatCopyCopied("tags"); setTimeout(() => setChatCopyCopied(""), 1500); }}
-                                style={{ padding: "0.2rem 0.6rem", borderRadius: 4, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", fontSize: "0.72rem", cursor: "pointer" }}>
-                                {chatCopyCopied === "tags" ? "✓ 已复制" : "一键复制全部标签"}
-                              </button>
+                              <button onClick={() => { navigator.clipboard.writeText(chatCopy!.hashtags.join(" ")); setChatCopyCopied("tags"); setTimeout(() => setChatCopyCopied(""), 1500); }} style={{ padding: "0.2rem 0.6rem", borderRadius: 4, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", fontSize: "0.72rem", cursor: "pointer" }}>{chatCopyCopied === "tags" ? "✓ 已复制" : "一键复制全部标签"}</button>
                             </div>
                           )}
-
-                          {/* 推荐发布时间 */}
                           {chatCopy.best_time && (
-                            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0.35rem 0.6rem", background: "#fff", border: "1px solid #d1fae5", borderRadius: 6 }}>
-                              <span style={{ fontSize: "0.7rem", color: "#6b7280" }}>推荐发布时间</span>
-                              <span style={{ fontSize: "0.8rem", color: "#15803d", fontWeight: 600 }}>🕐 {chatCopy.best_time}</span>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0.35rem 0.6rem", background: "#fff", border: "1px solid #fed7aa", borderRadius: 6 }}>
+                              <span style={{ fontSize: "0.7rem", color: "#9a3412" }}>推荐发布时间</span>
+                              <span style={{ fontSize: "0.8rem", color: "#ea580c", fontWeight: 600 }}>🕐 {chatCopy.best_time}</span>
                             </div>
                           )}
                         </div>
-                      )}
-                    </div>
+                      </div>
+                    </AgentRow>
                   )}
-
-                  {/* 对比图上传提示（AI要求时显示） */}
-                  {chatNeedsContrast && (
-                    <div style={{ marginBottom: 10, padding: "0.85rem 1rem", background: "#fefce8", border: "1px solid #fde68a", borderRadius: 10 }}>
-                      <div style={{ fontWeight: 600, fontSize: "0.82rem", color: "#92400e", marginBottom: 6 }}>📸 AI导师建议上传对比图</div>
-                      <div style={{ fontSize: "0.75rem", color: "#78350f", marginBottom: 10 }}>上传一张旧款/竞品图片，视频对比效果更真实。上传后会自动附在你的下一条消息里。</div>
-                      <label style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "0.4rem 0.8rem", background: "#f59e0b", color: "#fff", borderRadius: 6, fontSize: "0.8rem", fontWeight: 600, cursor: chatImgUploading ? "not-allowed" : "pointer" }}>
-                        <input type="file" accept="image/*" style={{ display: "none" }} disabled={chatImgUploading}
-                          onChange={async e => {
-                            const f = e.target.files?.[0]; if (!f) return;
-                            setChatImgUploading(true);
-                            try {
-                              const fd = new FormData(); fd.append("file", f);
-                              const r = await fetch(`${API_BASE}/api/video/general/upload/image`, { method: "POST", headers: { Authorization: `Bearer ${getToken()}` }, body: fd });
-                              if (!r.ok) throw new Error(await r.text());
-                              const d = await r.json();
-                              if (d.image_url) setChatPendingImages(prev => [...prev, d.image_url]);
-                            } catch (err) { setError((err as Error).message || "图片上传失败"); }
-                            finally { setChatImgUploading(false); }
-                            e.target.value = "";
-                          }} />
-                        {chatImgUploading ? "上传中…" : "📎 上传对比图"}
-                      </label>
-                    </div>
-                  )}
-
-                  {/* 待发图片缩略图预览 */}
-                  {chatPendingImages.length > 0 && (
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-                      {chatPendingImages.map((url, i) => (
-                        <div key={i} style={{ position: "relative" }}>
-                          <img src={url} alt="待发图" style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 8, border: "1px solid #e2e8f0" }} />
-                          <button onClick={() => setChatPendingImages(prev => prev.filter((_, j) => j !== i))}
-                            style={{ position: "absolute", top: -6, right: -6, width: 18, height: 18, borderRadius: "50%", background: "#e53e3e", color: "#fff", border: "none", cursor: "pointer", fontSize: "0.7rem", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>×</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* 输入区 */}
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    {chatMsgs.length === 0 ? (
-                      <button
-                        onClick={() => sendChatMessage("请帮我分析这个产品，开始创作！")}
-                        disabled={chatLoading || !front.url}
-                        style={{ flex: 1, padding: "0.7rem", borderRadius: 10, border: "none", background: !front.url ? "#e2e8f0" : "#7c3aed", color: !front.url ? "#a0aec0" : "#fff", fontSize: "0.9rem", fontWeight: 600, cursor: !front.url ? "not-allowed" : "pointer" }}>
-                        💬 开始对话
-                      </button>
-                    ) : (
-                      <>
-                        {/* 📎 图片上传按钮 */}
-                        <label style={{ width: 36, height: 36, borderRadius: 8, border: "1px solid #e2e8f0", background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "center", cursor: chatImgUploading ? "not-allowed" : "pointer", flexShrink: 0, fontSize: "1rem" }}>
-                          <input type="file" accept="image/*" style={{ display: "none" }} disabled={chatImgUploading}
-                            onChange={async e => {
-                              const f = e.target.files?.[0]; if (!f) return;
-                              setChatImgUploading(true);
-                              try {
-                                const fd = new FormData(); fd.append("file", f);
-                                const r = await fetch(`${API_BASE}/api/video/general/upload/image`, { method: "POST", headers: { Authorization: `Bearer ${getToken()}` }, body: fd });
-                                if (!r.ok) throw new Error(await r.text());
-                                const d = await r.json();
-                                if (d.image_url) setChatPendingImages(prev => [...prev, d.image_url]);
-                              } catch (err) { setError((err as Error).message || "图片上传失败"); }
-                              finally { setChatImgUploading(false); }
-                              e.target.value = "";
-                            }} />
-                          {chatImgUploading ? "⏳" : "📎"}
-                        </label>
-                        <input
-                          value={chatInput}
-                          onChange={e => setChatInput(e.target.value)}
-                          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChatMessage(); } }}
-                          placeholder="输入修改意见或问题…"
-                          style={{ flex: 1, padding: "0.6rem 0.8rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem" }}
-                        />
-                        <button
-                          onClick={() => sendChatMessage()}
-                          disabled={chatLoading || (!chatInput.trim() && !chatPendingImages.length)}
-                          style={{ padding: "0.6rem 1rem", borderRadius: 8, border: "none", background: chatLoading || (!chatInput.trim() && !chatPendingImages.length) ? "#e2e8f0" : "#0d0d0d", color: chatLoading || (!chatInput.trim() && !chatPendingImages.length) ? "#a0aec0" : "#fff", cursor: chatLoading || (!chatInput.trim() && !chatPendingImages.length) ? "not-allowed" : "pointer", fontWeight: 600 }}>
-                          发送
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
+                </>
               )}
 
-              {/* ── 普通模式生成按钮 ── */}
-              {scriptMode !== "chat" && <button
-                onClick={generate}
-                disabled={loading || !front.url || front.uploading}
-                style={{
-                  width: "100%", padding: "0.9rem", borderRadius: 10, border: "none", fontSize: "0.95rem", fontWeight: 600,
-                  background: loading || !front.url ? "#e2e8f0" : "#0d0d0d",
-                  color: loading || !front.url ? "#a0aec0" : "#fff",
-                  cursor: loading || !front.url ? "not-allowed" : "pointer",
-                  transition: "all 0.15s",
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                }}
-              >
-                {loading ? (
-                  <>
-                    <span style={{ display: "inline-block", width: 16, height: 16, border: "2px solid #a0aec0", borderTopColor: "#555", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-                    AI 正在分析产品并撰写爆款脚本…
-                  </>
-                ) : script ? "重新生成脚本（35 积分）" : "生成创意脚本（35 积分）"}
-              </button>}
-              {scriptMode !== "chat" && !front.url && !loading && (
-                <div style={{ fontSize: "0.75rem", color: "#a0aec0", textAlign: "center", marginTop: 6 }}>请先上传正面产品图</div>
+              {/* 视频生成进度 */}
+              {vidLoading && vidProgress && (
+                <AgentRow sender="system">
+                  <FlowBubble style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#166534" }}>⏳ {vidProgress}</FlowBubble>
+                </AgentRow>
               )}
 
-              {/* 脚本展示区 */}
-              {script && !loading && (
-                <div style={{ marginTop: "1.4rem" }}>
-                  <div style={{ fontSize: "0.8rem", color: "#718096", fontWeight: 600, marginBottom: 10, letterSpacing: "0.05em" }}>✨ 生成的创意脚本</div>
-                  <ScriptDisplay text={script} />
-                  <ContrastUploadHint scriptText={script} />
-
-                  {/* 行动按钮 */}
-                  <div style={{ display: "flex", gap: 10, marginTop: "1.2rem", flexWrap: "wrap" }}>
-                    <button
-                      onClick={generate}
-                      disabled={loading || vidLoading}
-                      style={{ flex: "1 1 200px", padding: "0.7rem 1rem", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#374151", fontSize: "0.88rem", cursor: (loading || vidLoading) ? "not-allowed" : "pointer", fontWeight: 500 }}
-                    >
-                      🔄 重新生成脚本（35 积分）
-                    </button>
-                    <button
-                      onClick={() => generateVideo()}
-                      disabled={vidLoading || loading}
-                      style={{
-                        flex: "1 1 200px", padding: "0.7rem 1rem", borderRadius: 10, border: "none",
-                        background: vidLoading || loading ? "#e2e8f0" : "#16a34a",
-                        color: vidLoading || loading ? "#a0aec0" : "#fff",
-                        fontSize: "0.88rem", cursor: vidLoading || loading ? "not-allowed" : "pointer",
-                        fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                      }}
-                    >
-                      {vidLoading ? (
-                        <>
-                          <span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #a0aec0", borderTopColor: "#555", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-                          生成中…
-                        </>
-                      ) : "🎬 确认脚本，生成视频"}
-                    </button>
-                  </div>
-
-                  {/* 视频生成进度 */}
-                  {vidLoading && vidProgress && (
-                    <div style={{ marginTop: 12, padding: "0.7rem 0.9rem", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: "0.82rem", color: "#166534" }}>
-                      ⏳ {vidProgress}
-                    </div>
-                  )}
-
-                </div>
-              )}
-
-              {/* 视频结果（独立于脚本区块，避免被 loading 条件隐藏） */}
+              {/* 视频结果 */}
               {vidUrl && !vidLoading && (
-                <div style={{ marginTop: "1.2rem" }}>
-                  <div style={{ fontSize: "0.8rem", color: "#718096", fontWeight: 600, marginBottom: 10 }}>🎬 生成完成</div>
-                  <video src={vidUrl} controls style={{ width: "100%", maxWidth: 400, borderRadius: 10, display: "block" }} />
-                  <div style={{ marginTop: 8, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                    <a href={vidUrl} download style={{ fontSize: "0.85rem", color: "#16a34a", textDecoration: "none", fontWeight: 500 }}>⬇ 下载视频</a>
-                    <button onClick={() => { setVidUrl(""); setVidCost(0); }}
-                      style={{ background: "none", border: "none", color: "#888", fontSize: "0.82rem", cursor: "pointer" }}>
-                      重新生成视频
-                    </button>
+                <AgentRow sender="system">
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <FlowBubble>🎬 视频生成完成！</FlowBubble>
+                    <video src={vidUrl} controls style={{ width: "100%", maxWidth: 400, borderRadius: 12, display: "block" }} />
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <a href={vidUrl} download style={{ fontSize: "0.85rem", color: "#16a34a", textDecoration: "none", fontWeight: 500 }}>⬇ 下载视频</a>
+                      <button onClick={() => { setVidUrl(""); setVidCost(0); }} style={{ background: "none", border: "none", color: "#888", fontSize: "0.82rem", cursor: "pointer" }}>重新生成</button>
+                    </div>
                   </div>
+                </AgentRow>
+              )}
+
+              <div ref={chatEndRef} />
+            </div>
+
+            {/* ── 底部固定输入栏（仅AI导师模式激活） ── */}
+            <div style={{ position: "sticky", bottom: 0, background: "#edeae4", borderTop: "1px solid #e2e8f0", padding: "0.7rem 0" }}>
+              {chatPendingImages.length > 0 && (
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                  {chatPendingImages.map((url, i) => (
+                    <div key={i} style={{ position: "relative" }}>
+                      <img src={url} alt="待发图" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 8, border: "1px solid #e2e8f0" }} />
+                      <button onClick={() => setChatPendingImages(prev => prev.filter((_, j) => j !== i))} style={{ position: "absolute", top: -6, right: -6, width: 16, height: 16, borderRadius: "50%", background: "#e53e3e", color: "#fff", border: "none", cursor: "pointer", fontSize: "0.65rem", display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+                    </div>
+                  ))}
                 </div>
               )}
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <label style={{ width: 36, height: 36, borderRadius: 8, border: "1px solid #e2e8f0", background: flowStep >= 4 && scriptMode === "chat" ? "#fafafa" : "#f4f4f4", display: "flex", alignItems: "center", justifyContent: "center", cursor: flowStep >= 4 && scriptMode === "chat" && !chatImgUploading ? "pointer" : "not-allowed", flexShrink: 0, fontSize: "1rem", opacity: flowStep >= 4 && scriptMode === "chat" ? 1 : 0.4 }}>
+                  <input type="file" accept="image/*" style={{ display: "none" }} disabled={!(flowStep >= 4 && scriptMode === "chat") || chatImgUploading}
+                    onChange={async e => { const f = e.target.files?.[0]; if (!f) return; setChatImgUploading(true); try { const fd = new FormData(); fd.append("file", f); const r = await fetch(`${API_BASE}/api/video/general/upload/image`, { method: "POST", headers: { Authorization: `Bearer ${getToken()}` }, body: fd }); if (!r.ok) throw new Error(await r.text()); const d = await r.json(); if (d.image_url) setChatPendingImages(prev => [...prev, d.image_url]); } catch (err) { setError((err as Error).message || "图片上传失败"); } finally { setChatImgUploading(false); } e.target.value = ""; }} />
+                  {chatImgUploading ? "⏳" : "📎"}
+                </label>
+                <input
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && flowStep >= 4 && scriptMode === "chat") { e.preventDefault(); sendChatMessage(); } }}
+                  placeholder={flowStep >= 4 && scriptMode === "chat" ? "输入你的想法或修改意见…" : "请先完成上方步骤…"}
+                  disabled={!(flowStep >= 4 && scriptMode === "chat")}
+                  style={{ flex: 1, padding: "0.6rem 0.9rem", border: "1px solid #e2e8f0", borderRadius: 10, fontSize: "0.85rem", background: flowStep >= 4 && scriptMode === "chat" ? "#fff" : "#f4f4f4", color: flowStep >= 4 && scriptMode === "chat" ? "#1a202c" : "#a0aec0" }}
+                />
+                <button onClick={() => sendChatMessage()} disabled={!(flowStep >= 4 && scriptMode === "chat") || chatLoading || (!chatInput.trim() && !chatPendingImages.length)}
+                  style={{ padding: "0.6rem 1.1rem", borderRadius: 10, border: "none", background: flowStep >= 4 && scriptMode === "chat" && !chatLoading && (chatInput.trim() || chatPendingImages.length) ? "#0d0d0d" : "#e2e8f0", color: flowStep >= 4 && scriptMode === "chat" && !chatLoading && (chatInput.trim() || chatPendingImages.length) ? "#fff" : "#a0aec0", cursor: flowStep >= 4 && scriptMode === "chat" && !chatLoading && (chatInput.trim() || chatPendingImages.length) ? "pointer" : "not-allowed", fontWeight: 600, fontSize: "0.85rem" }}>
+                  发送
+                </button>
+              </div>
             </div>
-          </>
+          </div>
         )}
 
         {/* spin keyframe */}
