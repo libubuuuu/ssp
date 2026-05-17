@@ -273,6 +273,12 @@ export default function VideoGeneralPage() {
   const [chatReviewExpanded, setChatReviewExpanded] = useState<Record<number, boolean>>({});
   const [chatCopyCopied, setChatCopyCopied]     = useState("");
 
+  // 场景图生成模式
+  const [sceneModeAI, setSceneModeAI]         = useState(false);   // true=AI生成, false=自己上传
+  const [sceneDesc, setSceneDesc]             = useState("");
+  const [sceneGenLoading, setSceneGenLoading] = useState(false);
+  const [sceneGenPreview, setSceneGenPreview] = useState("");       // 生成后的预览URL（未确认）
+
   // Step 5 - video generation
   const [vidLoading, setVidLoading] = useState(false);
   const [vidProgress, setVidProgress] = useState("");
@@ -812,12 +818,82 @@ export default function VideoGeneralPage() {
                     <UploadBox slot={front} label="正面图" required onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setFront)} onRemove={() => removeSlot(setFront)} />
                     <UploadBox slot={back}  label="反面图" onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setBack)}  onRemove={() => removeSlot(setBack)} />
                     <UploadBox slot={rear}  label="侧面图" onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setRear)}  onRemove={() => removeSlot(setRear)} />
-                    <UploadBox slot={scene} label="场景图" onUpload={f => uploadImg(f, "/api/video/general/upload/scene-image", "scene_image_url", setScene)} onRemove={() => removeSlot(setScene)} />
+                    {/* 场景图：支持自己上传 / AI生成两种方式 */}
+                    <div style={{ flex: "1 1 120px", maxWidth: 140 }}>
+                      <div style={{ fontSize: "0.72rem", color: "#888", marginBottom: 6 }}>场景图</div>
+                      {/* 模式切换 */}
+                      <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+                        {([{ v: false, label: "自己上传" }, { v: true, label: "AI 生成" }] as { v: boolean; label: string }[]).map(o => (
+                          <button key={String(o.v)} onClick={() => { setSceneModeAI(o.v); setSceneGenPreview(""); }}
+                            style={{ flex: 1, padding: "0.2rem 0", borderRadius: 5, border: `1px solid ${sceneModeAI === o.v ? "#7c3aed" : "#e2e8f0"}`, background: sceneModeAI === o.v ? "#7c3aed" : "#f9fafb", color: sceneModeAI === o.v ? "#fff" : "#4a5568", fontSize: "0.65rem", fontWeight: 600, cursor: "pointer", transition: "all 0.12s" }}>
+                            {o.label}
+                          </button>
+                        ))}
+                      </div>
+                      {/* 自己上传 */}
+                      {!sceneModeAI && (
+                        <UploadBox slot={scene} label="" onUpload={f => uploadImg(f, "/api/video/general/upload/scene-image", "scene_image_url", setScene)} onRemove={() => removeSlot(setScene)} />
+                      )}
+                      {/* AI 生成场景 */}
+                      {sceneModeAI && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          {/* 已确认的场景图 */}
+                          {scene.url && !sceneGenPreview && (
+                            <div style={{ position: "relative", width: "100%", paddingTop: "100%" }}>
+                              <img src={scene.preview || scene.url} alt="场景图" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", borderRadius: 10, border: "1px solid #e2e8f0" }} />
+                              <button onClick={() => { removeSlot(setScene); setSceneGenPreview(""); }} style={{ position: "absolute", top: -8, right: -8, width: 22, height: 22, borderRadius: "50%", background: "#e53e3e", color: "#fff", border: "none", cursor: "pointer", fontSize: "0.8rem", display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+                            </div>
+                          )}
+                          {/* 预览待确认 */}
+                          {sceneGenPreview && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                              <div style={{ position: "relative", width: "100%", paddingTop: "100%" }}>
+                                <img src={sceneGenPreview} alt="场景预览" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", borderRadius: 10, border: "2px solid #7c3aed" }} />
+                              </div>
+                              <div style={{ display: "flex", gap: 4 }}>
+                                <button onClick={() => { setScene({ url: sceneGenPreview, preview: sceneGenPreview, uploading: false }); setSceneGenPreview(""); }}
+                                  style={{ flex: 1, padding: "0.25rem 0", borderRadius: 5, border: "none", background: "#16a34a", color: "#fff", fontSize: "0.65rem", fontWeight: 600, cursor: "pointer" }}>✓ 确认</button>
+                                <button onClick={async () => {
+                                  if (!sceneDesc.trim()) return;
+                                  setSceneGenLoading(true); setSceneGenPreview("");
+                                  try {
+                                    const r = await fetch(`${API_BASE}/api/video/general/generate-scene`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` }, body: JSON.stringify({ description: sceneDesc, orientation: "portrait" }) });
+                                    if (!r.ok) throw new Error(await r.text());
+                                    const d = await r.json(); setSceneGenPreview(d.scene_image_url || "");
+                                  } catch (e) { setError((e as Error).message || "生成失败"); }
+                                  finally { setSceneGenLoading(false); }
+                                }} style={{ flex: 1, padding: "0.25rem 0", borderRadius: 5, border: "none", background: "#7c3aed", color: "#fff", fontSize: "0.65rem", fontWeight: 600, cursor: "pointer" }}>🔄 重新生成</button>
+                              </div>
+                              <button onClick={() => { setSceneModeAI(false); setSceneGenPreview(""); }} style={{ padding: "0.2rem 0", borderRadius: 5, border: "1px solid #e2e8f0", background: "#f9fafb", color: "#6b7280", fontSize: "0.65rem", cursor: "pointer" }}>换成自己上传</button>
+                            </div>
+                          )}
+                          {/* 输入框+生成按钮（无预览且无确认图时显示） */}
+                          {!sceneGenPreview && !scene.url && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                              <textarea value={sceneDesc} onChange={e => setSceneDesc(e.target.value)} rows={3} placeholder="描述你想要的场景，比如：温馨的卧室、阳光透过窗帘、白色床单" style={{ width: "100%", padding: "0.35rem 0.45rem", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: "0.68rem", lineHeight: 1.5, resize: "none", fontFamily: "inherit", boxSizing: "border-box", color: "#1a202c" }} />
+                              <button onClick={async () => {
+                                if (!sceneDesc.trim()) return;
+                                setSceneGenLoading(true);
+                                try {
+                                  const r = await fetch(`${API_BASE}/api/video/general/generate-scene`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` }, body: JSON.stringify({ description: sceneDesc, orientation: "portrait" }) });
+                                  if (!r.ok) throw new Error(await r.text());
+                                  const d = await r.json(); setSceneGenPreview(d.scene_image_url || "");
+                                } catch (e) { setError((e as Error).message || "生成失败"); }
+                                finally { setSceneGenLoading(false); }
+                              }} disabled={sceneGenLoading || !sceneDesc.trim()}
+                                style={{ padding: "0.35rem 0", borderRadius: 6, border: "none", background: sceneGenLoading || !sceneDesc.trim() ? "#e2e8f0" : "#7c3aed", color: sceneGenLoading || !sceneDesc.trim() ? "#a0aec0" : "#fff", fontSize: "0.72rem", fontWeight: 600, cursor: sceneGenLoading || !sceneDesc.trim() ? "not-allowed" : "pointer" }}>
+                                {sceneGenLoading ? "生成中…" : "✨ 生成场景图"}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div style={{ fontSize: "0.72rem", color: "#a0aec0", marginTop: 10 }}>正面图必传，其余可选 · 每张 ≤ 10MB</div>
                   {!scene.url && (
                     <div style={{ marginTop: 10, padding: "0.65rem 0.9rem", background: "#fefce8", border: "1px solid #fde68a", borderRadius: 8, fontSize: "0.78rem", color: "#92400e", lineHeight: 1.55 }}>
-                      💡 <strong>强烈建议上传场景图！</strong>没有场景图 Seedance 会默认白底/影棚背景，上传一张你想要的环境照片（办公室、卧室、街头等），视频背景效果会好很多。
+                      💡 <strong>强烈建议上传/生成场景图！</strong>没有场景图 Seedance 会默认白底/影棚背景，上传或 AI 生成一张你想要的环境照片（办公室、卧室、街头等），视频背景效果会好很多。
                     </div>
                   )}
                   {flowStep === 1 && <FlowNextBtn label="已上传，下一步" onClick={() => setFlowStep(2)} disabled={!front.url || front.uploading} />}

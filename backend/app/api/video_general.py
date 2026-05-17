@@ -130,6 +130,46 @@ async def upload_scene_image(
     return {"scene_image_url": url}
 
 
+class GenerateSceneRequest(BaseModel):
+    description: str = Field(..., description="场景描述")
+    orientation: str = Field("portrait", description="portrait=9:16 / landscape=16:9")
+
+
+@router.post("/generate-scene")
+async def generate_scene(
+    body: GenerateSceneRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """AI 生成场景图（调 fal-ai/gpt-image-2，免费不扣积分）"""
+    import fal_client as _fal
+
+    image_size = "portrait_9_16" if body.orientation == "portrait" else "landscape_16_9"
+    prompt = (
+        f"Professional photography of {body.description.strip()}. "
+        "Empty scene without any people. Wide angle, natural lighting, "
+        "high quality, realistic. No text, no watermarks."
+    )
+    try:
+        result = await _fal.run_async(
+            "fal-ai/gpt-image-2",
+            arguments={
+                "prompt": prompt,
+                "image_size": image_size,
+                "num_images": 1,
+                "quality": "auto",
+            },
+        )
+        img_url = (result.get("images") or [{}])[0].get("url", "")
+        if not img_url:
+            raise RuntimeError("gpt-image-2 未返回图片 URL")
+    except Exception as e:
+        log_error(f"generate_scene 失败: {e}")
+        raise HTTPException(500, f"场景图生成失败: {str(e)[:200]}")
+
+    log_info(f"generate_scene OK user={current_user['id']} desc={body.description[:50]}")
+    return {"scene_image_url": img_url}
+
+
 @router.post("/upload/model-image")
 async def upload_model_image(
     file: UploadFile = File(...),
