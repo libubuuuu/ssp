@@ -815,6 +815,11 @@ export default function VideoGeneralPage() {
                     <UploadBox slot={scene} label="场景图" onUpload={f => uploadImg(f, "/api/video/general/upload/scene-image", "scene_image_url", setScene)} onRemove={() => removeSlot(setScene)} />
                   </div>
                   <div style={{ fontSize: "0.72rem", color: "#a0aec0", marginTop: 10 }}>正面图必传，其余可选 · 每张 ≤ 10MB</div>
+                  {!scene.url && (
+                    <div style={{ marginTop: 10, padding: "0.65rem 0.9rem", background: "#fefce8", border: "1px solid #fde68a", borderRadius: 8, fontSize: "0.78rem", color: "#92400e", lineHeight: 1.55 }}>
+                      💡 <strong>强烈建议上传场景图！</strong>没有场景图 Seedance 会默认白底/影棚背景，上传一张你想要的环境照片（办公室、卧室、街头等），视频背景效果会好很多。
+                    </div>
+                  )}
                   {flowStep === 1 && <FlowNextBtn label="已上传，下一步" onClick={() => setFlowStep(2)} disabled={!front.url || front.uploading} />}
                 </FlowStepCard>
               </AgentRow>
@@ -970,7 +975,11 @@ export default function VideoGeneralPage() {
                     <AgentRow sender="linjiu">
                       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                         <FlowBubble>我是林久，你的专属创意导师 💜<br />让我先分析一下你的产品，然后我们一起策划最适合的爆款脚本。</FlowBubble>
-                        <button onClick={() => sendChatMessage("请帮我分析这个产品，开始创作！")} disabled={chatLoading || !front.url}
+                        <button onClick={() => sendChatMessage(
+                          scene.url
+                            ? "请帮我分析这个产品，开始创作！"
+                            : "请帮我分析这个产品，开始创作！（提示：我还没有上传场景图，如果有合适的场景环境照片请提醒我上传）"
+                        )} disabled={chatLoading || !front.url}
                           style={{ alignSelf: "flex-start", padding: "0.55rem 1.2rem", borderRadius: 8, border: "none", background: !front.url ? "#e2e8f0" : "#7c3aed", color: !front.url ? "#a0aec0" : "#fff", fontSize: "0.85rem", fontWeight: 600, cursor: !front.url ? "not-allowed" : "pointer" }}>
                           开始分析产品 →
                         </button>
