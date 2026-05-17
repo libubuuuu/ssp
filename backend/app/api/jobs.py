@@ -5192,6 +5192,27 @@ async def _run_script_to_video_job(params: dict) -> dict:
     _e = _re.search(r'\[环境\][：:]\s*(.+?)(?:\n|\[)', script_text + "\n[", _re.DOTALL)
     scene_environment = _e.group(1).strip() if _e else ""
 
+    # 根据 target_lang 决定模特人种（若 [模特] 字段未写人种则补上）
+    _ETHNICITY_BY_LANG = {
+        "en": "Caucasian/Western European",
+        "zh": "Chinese Asian",
+        "ja": "East Asian with Japanese features",
+        "ko": "East Asian with Korean features",
+        "es": "Latin American",
+        "pt": "Latin American",
+        "ar": "Middle Eastern",
+    }
+    _ETHNICITY_KWS = [
+        "caucasian", "asian", "chinese", "japanese", "korean", "latin",
+        "middle eastern", "arabic", "european", "african",
+        "白人", "亚裔", "亚洲", "中国", "日本", "韩国", "拉美", "欧美",
+    ]
+    _ethnicity = _ETHNICITY_BY_LANG.get(target_lang, "Caucasian/Western European")
+    _has_ethnicity = any(kw in model_desc.lower() for kw in _ETHNICITY_KWS) if model_desc else False
+    portrait_model_desc = (
+        f"{_ethnicity} model, {model_desc}" if model_desc and not _has_ethnicity else model_desc
+    )
+
     # 基础 image_urls（产品图 + 模特图 + 场景图）
     base_imgs = list(product_urls[:9])
     if model_img_url and len(base_imgs) < 9:
@@ -5232,7 +5253,7 @@ async def _run_script_to_video_job(params: dict) -> dict:
                 "fal-ai/gpt-image-2",
                 arguments={
                     "prompt": (
-                        f"Professional portrait photo: {model_desc}. "
+                        f"Professional portrait photo: {portrait_model_desc}. "
                         "Head and shoulders only, no products held or worn. "
                         "Clean studio background, natural lighting, photorealistic. "
                         "No text, no watermarks."
@@ -5245,7 +5266,7 @@ async def _run_script_to_video_job(params: dict) -> dict:
             portrait_img_url = (result.get("images") or [{}])[0].get("url", "")
             if not portrait_img_url:
                 raise RuntimeError("gpt-image-2 返回无图片 URL")
-            log_info(f"script_to_video: portrait OK {portrait_img_url[:60]}")
+            log_info(f"script_to_video: portrait OK desc={portrait_model_desc[:80]} url={portrait_img_url[:60]}")
             return portrait_img_url
         except Exception as e:
             log_error(f"script_to_video: portrait failed (skip): {e}")
@@ -5354,6 +5375,7 @@ async def _run_script_to_video_job(params: dict) -> dict:
             else:
                 _is_conflict_stage = False
             _anchor_img = contrast_image_url if _is_conflict_stage else (product_urls[0] if product_urls else "")
+            log_info(f"script_to_video Task {ti+1} anchor={'contrast' if _is_conflict_stage else 'product'} stages={_task_stages}")
 
             # 构建此 task 的 image_urls（锚点图放第一位）
             task_imgs = [_anchor_img] if _anchor_img else []
@@ -5435,7 +5457,7 @@ async def _run_script_to_video_job(params: dict) -> dict:
                 for si in range(4):
                     use_prompt = (prompt + " " + _SENS_PREFIXES[si]).strip()
                     sensitive_fail = False
-                    log_info(f"script_to_video Task {ti+1} prompt(si={si})={use_prompt[:200]}")
+                    log_info(f"script_to_video Task {ti+1} prompt(si={si})={use_prompt[:400]}")
                     try:
                         fal_id = await _submit(task_imgs, use_prompt, req_dur)
                         log_info(f"script_to_video Task {ti+1} fal_id={fal_id} (to={timeout_attempt+1} sens={si+1})")
