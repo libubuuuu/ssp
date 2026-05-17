@@ -854,3 +854,14 @@ async def admin_v2_cost_report(_admin: dict = Depends(require_admin)):
         "estimated_usd_by_month": [dict(r) for r in monthly],
         "daily_spend_last_30d": [dict(r) for r in daily],
     }
+
+
+@router.post("/update-trends")
+async def manual_update_trends(_admin: dict = Depends(require_admin)):
+    """手动触发每日趋势更新（不用等凌晨3点）。"""
+    try:
+        from app.services.trend_updater import run_trend_update
+        success = await run_trend_update()
+        return {"status": "ok", "updated": success}
+    except Exception as e:
+        raise HTTPException(500, f"趋势更新失败: {str(e)[:200]}")

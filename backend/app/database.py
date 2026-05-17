@@ -554,6 +554,17 @@ def init_db():
             ("batch_whitelist", '["lirunting1a@gmail.com"]'),
         )
 
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS trend_cache (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            platform   TEXT NOT NULL,
+            category   TEXT NOT NULL,
+            content    TEXT NOT NULL,
+            source     TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
         # 创建索引优化查询性能
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")

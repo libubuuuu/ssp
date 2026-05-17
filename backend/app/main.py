@@ -76,6 +76,13 @@ async def lifespan(app: FastAPI):
         _asyncio.create_task(db_backup_loop())
     except Exception as e:
         print(f"db_backup startup failed: {e}")
+    # 启动趋势更新后台循环（每天凌晨3点）
+    try:
+        from app.services.trend_updater import trend_updater_loop
+        import asyncio as _asyncio
+        _asyncio.create_task(trend_updater_loop())
+    except Exception as e:
+        print(f"trend_updater startup failed: {e}")
     yield
     # 关闭:等所有后台任务完成再退出（最多 10 分钟）
     log_info("AI 创意平台 正在关闭...")

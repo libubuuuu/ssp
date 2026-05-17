@@ -1359,6 +1359,26 @@ async def chat_with_mentor(
     if body.video_url:
         sys_prompt += _CHAT_VIDEO_INSTRUCTION.format(video_url=body.video_url)
 
+    # ── 注入每日趋势数据（trend_cache，2天内） ────────────────────
+    try:
+        from app.database import get_db
+        _plat_filter = body.platform  # "tiktok" 或 "douyin"
+        with get_db() as _tc_conn:
+            _trends = _tc_conn.execute(
+                "SELECT platform, category, content FROM trend_cache "
+                "WHERE platform=? AND created_at > datetime('now', '-2 days') "
+                "ORDER BY created_at DESC LIMIT 4",
+                (_plat_filter,),
+            ).fetchall()
+        if _trends:
+            _trend_lines = "\n".join(
+                f"[{t[0]}/{t[1]}趋势] {t[2][:200]}" for t in _trends
+            )
+            sys_prompt += f"\n\n[最新平台趋势数据（每日自动更新）]\n{_trend_lines}"
+            log_info(f"trend_cache 注入 {len(_trends)} 条 platform={_plat_filter}")
+    except Exception as _te:
+        log_error(f"trend_cache 注入失败（跳过）: {_te}")
+
     # ── 小李·趋势研究员 ──────────────────────────────────────────
     search_result = None
     _, category = _detect_platform_and_category(body.messages)
