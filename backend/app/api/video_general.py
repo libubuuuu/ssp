@@ -170,6 +170,27 @@ async def generate_scene(
     return {"scene_image_url": img_url}
 
 
+class GenerateCopyRequest(BaseModel):
+    script: str = Field(..., description="脚本文字")
+    platform: str = Field("TikTok", description="TikTok或抖音")
+    target_lang: str = Field("en", description="目标语言代码")
+
+
+@router.post("/generate-copy")
+async def generate_copy(
+    body: GenerateCopyRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """用户确认脚本后生成文案（标题/描述/标签/发布时间），免费不扣积分。"""
+    from app.config import get_settings
+    from openai import AsyncOpenAI
+    s = get_settings()
+    client = AsyncOpenAI(base_url=s.LINGMENG_BASE_URL, api_key=s.LINGMENG_API_KEY)
+    copy_data = await _call_copywriter(client, body.script, body.platform, body.target_lang)
+    log_info(f"generate_copy OK user={current_user['id']} lang={body.target_lang}")
+    return copy_data or {"title": "", "description": "", "hashtags": [], "best_time": ""}
+
+
 @router.post("/upload/model-image")
 async def upload_model_image(
     file: UploadFile = File(...),
@@ -1497,11 +1518,8 @@ async def chat_with_mentor(
         review_data = await _call_reviewer(client, script)
         log_info(f"审稿员评分 user={user_id} score={review_data.get('score', 0)}")
 
-    # ── 文案师（有脚本就同步出文案，不等用户确认）────────────────
+    # 文案师在用户确认脚本后才调用（由前端单独请求 /generate-copy 端点）
     copy_data = None
-    if script:
-        copy_data = await _call_copywriter(client, script, detected_platform, _tl)
-        log_info(f"文案师完成 user={user_id} lang={_lang_name}")
 
     # 提取结构化问题
     questions = []

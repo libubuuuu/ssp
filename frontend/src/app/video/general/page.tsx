@@ -509,34 +509,7 @@ export default function VideoGeneralPage() {
         for (const _m of d.script.matchAll(/(\d+)-(\d+)s/g)) _times.push(parseInt(_m[2]));
         const _parsed = _times.length > 0 ? Math.max(..._times) : 0;
         if (_ALLOWED_DUR.includes(_parsed)) setDuration(_parsed);
-        // 提取所有唯一场景标签（| 场景：XXX |）
-        const _sceneMatches = [...d.script.matchAll(/场景[：:]\s*([^|\n，,]+)/g)];
-        const _uniqueScenes = [...new Set(_sceneMatches.map(m => m[1].trim()))].filter(Boolean).slice(0, 4);
-        // 为每个唯一场景生成场景图
-        if (_uniqueScenes.length > 0) {
-          _uniqueScenes.forEach(sceneName => {
-            fetch(`${API_BASE}/api/video/general/generate-scene`, {
-              method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
-              body: JSON.stringify({ description: sceneName, orientation: "portrait" }),
-            }).then(r => r.ok ? r.json() : null)
-              .then(d2 => { if (d2?.scene_image_url) setChatSceneImages(prev => ({ ...prev, [sceneName]: d2.scene_image_url })); })
-              .catch(() => {});
-          });
-        } else if (!scene.url) {
-          // 兼容旧格式：用 [环境] 字段
-          const _envMatch = d.script.match(/\[环境\][：:]\s*(.+?)(?:\n|\[|$)/s);
-          const _envDesc = (_envMatch ? _envMatch[1].trim() : "") || "Modern clean indoor room, natural soft lighting, minimalist decor";
-          _lastAutoSceneDesc.current = _envDesc;
-          setSceneAutoDesc(_envDesc); setSceneAutoEditInput(_envDesc);
-          setSceneAutoLoading(true); setSceneAutoPreview(""); setSceneAutoConfirmed(false); setSceneAutoEditMode(false);
-          fetch(`${API_BASE}/api/video/general/generate-scene`, {
-            method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
-            body: JSON.stringify({ description: _envDesc, orientation: "portrait" }),
-          }).then(r => r.ok ? r.json() : null)
-            .then(d2 => { if (d2?.scene_image_url) setSceneAutoPreview(d2.scene_image_url); })
-            .catch(() => {})
-            .finally(() => setSceneAutoLoading(false));
-        }
+        // 场景图和文案在用户"确认脚本"后才生成，此处不触发
       }
       if (d.need_contrast_image) setChatNeedsContrast(true);
       if (d.copy) setChatCopy(d.copy);
@@ -1378,7 +1351,34 @@ export default function VideoGeneralPage() {
                   {chatScript && (
                     <div style={{ paddingLeft: 44, marginBottom: 18 }}>
                       {!chatShowParams ? (
-                        <button onClick={() => setChatShowParams(true)} disabled={vidLoading}
+                        <button onClick={async () => {
+                          // 1. 提取场景标签 → 并发生成场景图
+                          setChatSceneImages({});
+                          const _sm = [...chatScript.matchAll(/场景[：:]\s*([^|\n，,]+)/g)];
+                          const _uniq = [...new Set(_sm.map(m => m[1].trim()))].filter(Boolean).slice(0, 4);
+                          if (_uniq.length > 0) {
+                            _uniq.forEach(sn => {
+                              fetch(`${API_BASE}/api/video/general/generate-scene`, {
+                                method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+                                body: JSON.stringify({ description: sn, orientation: "portrait" }),
+                              }).then(r => r.ok ? r.json() : null)
+                                .then(d2 => { if (d2?.scene_image_url) setChatSceneImages(prev => ({ ...prev, [sn]: d2.scene_image_url })); })
+                                .catch(() => {});
+                            });
+                          }
+                          // 2. 生成文案
+                          try {
+                            const _mkt_map: Record<string, string> = {"欧美":"TikTok","日韩":"TikTok","东南亚":"TikTok","中国":"抖音","中国大陆":"抖音"};
+                            const _plat = platform === "douyin" ? "抖音" : "TikTok";
+                            const cr = await fetch(`${API_BASE}/api/video/general/generate-copy`, {
+                              method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+                              body: JSON.stringify({ script: chatScript, platform: _plat, target_lang: targetLang }),
+                            });
+                            if (cr.ok) { const cd = await cr.json(); if (cd.title) setChatCopy(cd); }
+                          } catch (_) {}
+                          // 3. 弹出参数面板
+                          setChatShowParams(true);
+                        }} disabled={vidLoading}
                           style={{ padding: "0.65rem 1.4rem", borderRadius: 10, border: "none", background: vidLoading ? "#e2e8f0" : "#16a34a", color: vidLoading ? "#a0aec0" : "#fff", fontSize: "0.88rem", fontWeight: 600, cursor: vidLoading ? "not-allowed" : "pointer" }}>
                           🎬 确认脚本，生成视频
                         </button>
