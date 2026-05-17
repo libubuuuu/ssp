@@ -248,10 +248,6 @@ export default function VideoGeneralPage() {
     setError("");
   }, [tab]);
 
-  useEffect(() => {
-    if (market === "中国大陆" || market === "中国") setTargetLang("zh");
-  }, [market]);
-
   // 入口A 专用：参考视频
   const [refVid, setRefVid] = useState<{ file: File | null; uploading: boolean; url: string }>({ file: null, uploading: false, url: "" });
   // 入口A 专用：脚本状态（与入口B script 独立）
@@ -279,6 +275,11 @@ export default function VideoGeneralPage() {
   const [contrastImg, setContrastImg]     = useState<ImgSlot>(emptySlot());
   const [enableVoice, setEnableVoice]     = useState(true);
   const [targetLang, setTargetLang]       = useState("en");  // 目标语言代码
+
+  // market → targetLang 联动（必须在 market 和 targetLang 声明之后）
+  useEffect(() => {
+    if (market === "中国大陆" || market === "中国") setTargetLang("zh");
+  }, [market]);
 
   // Step 4 - script result
   const [loading, setLoading]   = useState(false);
