@@ -221,6 +221,28 @@ const LANG_OPTIONS = (
 
 const REPLICATE_WHITELIST = ["lirunting1a@gmail.com"];
 
+const TIKTOK_COUNTRIES = [
+  { lang: "en", label: "🇺🇸 美国/英国", sub: "English" },
+  { lang: "ja", label: "🇯🇵 日本", sub: "日本語" },
+  { lang: "ko", label: "🇰🇷 韩国", sub: "한국어" },
+  { lang: "th", label: "🇹🇭 泰国", sub: "ไทย" },
+  { lang: "vi", label: "🇻🇳 越南", sub: "Tiếng Việt" },
+  { lang: "id", label: "🇮🇩 印尼", sub: "Bahasa" },
+  { lang: "es", label: "🌎 拉美", sub: "Español" },
+  { lang: "ar", label: "🌙 中东", sub: "العربية" },
+  { lang: "fr", label: "🇫🇷 法国", sub: "Français" },
+  { lang: "de", label: "🇩🇪 德国", sub: "Deutsch" },
+  { lang: "ru", label: "🇷🇺 俄罗斯", sub: "Русский" },
+  { lang: "pt", label: "🇧🇷 巴西", sub: "Português" },
+];
+
+function _langToMarket(lang: string): string {
+  if (lang === "ja" || lang === "ko") return "日韩";
+  if (["th", "vi", "id", "ms"].includes(lang)) return "东南亚";
+  if (lang === "zh") return "中国";
+  return "欧美";
+}
+
 export default function VideoGeneralPage() {
   const [tab, setTab] = useState<Tab>("ai_video");
 
@@ -268,6 +290,7 @@ export default function VideoGeneralPage() {
 
   // Step 3 - params
   const [scriptMode, setScriptMode] = useState<"story" | "direct" | "chat">("story");
+  const [platform, setPlatform]     = useState<"tiktok" | "douyin">("tiktok");
   const [duration, setDuration]     = useState(15);
   const [market, setMarket]         = useState("欧美");
   const [userIdea, setUserIdea]     = useState("");
@@ -1052,12 +1075,6 @@ export default function VideoGeneralPage() {
                               </select>
                             </div>
                             <div>
-                              <div style={{ fontSize: "0.72rem", color: "#718096", marginBottom: 5 }}>目标市场</div>
-                              <select value={market} onChange={e => setMarket(e.target.value)} style={{ padding: "0.45rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c" }}>
-                                {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}
-                              </select>
-                            </div>
-                            <div>
                               <div style={{ fontSize: "0.72rem", color: "#718096", marginBottom: 5 }}>分辨率</div>
                               <select value={resolution} onChange={e => setResolution(e.target.value)} style={{ padding: "0.45rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c" }}>
                                 <option value="1080p">1080P（高清）</option>
@@ -1080,35 +1097,36 @@ export default function VideoGeneralPage() {
                           </div>
                         </div>
                       )}
-                      {/* TikTok市场/语言选择 — 非中国市场时显示 */}
-                      {market !== "中国" && market !== "中国大陆" && (
-                        <div style={{ borderTop: "1px solid #f0f0f0", paddingTop: 14, marginBottom: 14 }}>
-                          <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "#1a202c", marginBottom: 8 }}>🌍 选择TikTok目标市场</div>
-                          <div style={{ fontSize: "0.72rem", color: "#718096", marginBottom: 10 }}>决定视频台词语言、文案语言和模特人种</div>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            {[
-                              { lang: "en", label: "🇺🇸 美国/英国", sub: "English" },
-                              { lang: "ja", label: "🇯🇵 日本", sub: "日本語" },
-                              { lang: "ko", label: "🇰🇷 韩国", sub: "한국어" },
-                              { lang: "th", label: "🇹🇭 泰国", sub: "ไทย" },
-                              { lang: "vi", label: "🇻🇳 越南", sub: "Tiếng Việt" },
-                              { lang: "id", label: "🇮🇩 印尼", sub: "Bahasa" },
-                              { lang: "es", label: "🌎 拉美", sub: "Español" },
-                              { lang: "ar", label: "🌙 中东", sub: "العربية" },
-                              { lang: "fr", label: "🇫🇷 法国", sub: "Français" },
-                              { lang: "de", label: "🇩🇪 德国", sub: "Deutsch" },
-                              { lang: "ru", label: "🇷🇺 俄罗斯", sub: "Русский" },
-                              { lang: "pt", label: "🇧🇷 巴西", sub: "Português" },
-                            ].map(o => (
-                              <button key={o.lang} onClick={() => setTargetLang(o.lang)}
-                                style={{ padding: "0.5rem 0.8rem", borderRadius: 10, border: `2px solid ${targetLang === o.lang ? "#7c3aed" : "#e2e8f0"}`, background: targetLang === o.lang ? "#7c3aed" : "#fff", color: targetLang === o.lang ? "#fff" : "#374151", fontSize: "0.8rem", cursor: "pointer", transition: "all 0.12s", minWidth: 100, textAlign: "center" as const }}>
-                                <div style={{ fontWeight: 600 }}>{o.label}</div>
-                                <div style={{ fontSize: "0.68rem", opacity: 0.7 }}>{o.sub}</div>
-                              </button>
-                            ))}
-                          </div>
+                      {/* 平台 + 目标国家选择 */}
+                      <div style={{ borderTop: "1px solid #f0f0f0", paddingTop: 14, marginBottom: 14 }}>
+                        <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 8 }}>发布平台</div>
+                        <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+                          {([{ v: "tiktok" as const, icon: "🌍", label: "TikTok", sub: "海外市场" }, { v: "douyin" as const, icon: "🇨🇳", label: "抖音", sub: "中国市场" }]).map(o => (
+                            <button key={o.v} onClick={() => { setPlatform(o.v); if (o.v === "douyin") { setTargetLang("zh"); setMarket("中国"); } }}
+                              style={{ flex: 1, padding: "0.7rem", borderRadius: 10, border: `2px solid ${platform === o.v ? "#0d0d0d" : "#e2e8f0"}`, background: platform === o.v ? "#0d0d0d" : "#fff", color: platform === o.v ? "#fff" : "#4a5568", cursor: "pointer", textAlign: "center" as const, transition: "all 0.15s" }}>
+                              <div style={{ fontWeight: 600 }}>{o.icon} {o.label}</div>
+                              <div style={{ fontSize: "0.68rem", opacity: 0.7 }}>{o.sub}</div>
+                            </button>
+                          ))}
                         </div>
-                      )}
+                        {platform === "tiktok" && (
+                          <>
+                            <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 8 }}>目标国家</div>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              {TIKTOK_COUNTRIES.map(o => (
+                                <button key={o.lang} onClick={() => { setTargetLang(o.lang); setMarket(_langToMarket(o.lang)); }}
+                                  style={{ padding: "0.5rem 0.8rem", borderRadius: 10, border: `2px solid ${targetLang === o.lang ? "#7c3aed" : "#e2e8f0"}`, background: targetLang === o.lang ? "#7c3aed" : "#fff", color: targetLang === o.lang ? "#fff" : "#374151", fontSize: "0.8rem", cursor: "pointer", transition: "all 0.12s", minWidth: 100, textAlign: "center" as const }}>
+                                  <div style={{ fontWeight: 600 }}>{o.label}</div>
+                                  <div style={{ fontSize: "0.68rem", opacity: 0.7 }}>{o.sub}</div>
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                        {platform === "douyin" && (
+                          <div style={{ fontSize: "0.78rem", color: "#7c3aed", background: "#faf5ff", borderRadius: 8, padding: "0.6rem 0.8rem" }}>✅ 抖音内容将使用中文，面向中国市场</div>
+                        )}
+                      </div>
                       {flowStep === 3 && <FlowNextBtn label={scriptMode === "chat" ? "开始AI对话" : "生成脚本"} onClick={() => setFlowStep(4)} />}
                     </FlowStepCard>
                   </AgentRow>
@@ -1152,36 +1170,37 @@ export default function VideoGeneralPage() {
                 <>
                   <UserRow content="开始AI导师对话，策划专属脚本！" />
 
-                  {/* TikTok市场选择 — 非中国市场时，林久开场前显示 */}
-                  {market !== "中国" && market !== "中国大陆" && (
-                    <AgentRow sender="system">
-                      <FlowStepCard step={0} title="选择TikTok目标市场">
-                        <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 10 }}>决定视频台词语言、文案语言和模特人种</div>
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          {[
-                            { lang: "en", label: "🇺🇸 美国/英国", sub: "English" },
-                            { lang: "ja", label: "🇯🇵 日本", sub: "日本語" },
-                            { lang: "ko", label: "🇰🇷 韩国", sub: "한국어" },
-                            { lang: "th", label: "🇹🇭 泰国", sub: "ไทย" },
-                            { lang: "vi", label: "🇻🇳 越南", sub: "Tiếng Việt" },
-                            { lang: "id", label: "🇮🇩 印尼", sub: "Bahasa" },
-                            { lang: "es", label: "🌎 拉美", sub: "Español" },
-                            { lang: "ar", label: "🌙 中东", sub: "العربية" },
-                            { lang: "fr", label: "🇫🇷 法国", sub: "Français" },
-                            { lang: "de", label: "🇩🇪 德国", sub: "Deutsch" },
-                            { lang: "ru", label: "🇷🇺 俄罗斯", sub: "Русский" },
-                            { lang: "pt", label: "🇧🇷 巴西", sub: "Português" },
-                          ].map(o => (
-                            <button key={o.lang} onClick={() => setTargetLang(o.lang)}
-                              style={{ padding: "0.5rem 0.8rem", borderRadius: 10, border: `2px solid ${targetLang === o.lang ? "#7c3aed" : "#e2e8f0"}`, background: targetLang === o.lang ? "#7c3aed" : "#fff", color: targetLang === o.lang ? "#fff" : "#374151", fontSize: "0.8rem", cursor: "pointer", transition: "all 0.12s", minWidth: 100, textAlign: "center" as const }}>
-                              <div style={{ fontWeight: 600 }}>{o.label}</div>
-                              <div style={{ fontSize: "0.68rem", opacity: 0.7 }}>{o.sub}</div>
-                            </button>
-                          ))}
-                        </div>
-                      </FlowStepCard>
-                    </AgentRow>
-                  )}
+                  {/* 平台+目标国家选择（林久开场前，始终显示） */}
+                  <AgentRow sender="system">
+                    <FlowStepCard step={0} title="选择发布平台和目标国家">
+                      <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+                        {([{ v: "tiktok" as const, icon: "🌍", label: "TikTok", sub: "海外市场" }, { v: "douyin" as const, icon: "🇨🇳", label: "抖音", sub: "中国市场" }]).map(o => (
+                          <button key={o.v} onClick={() => { setPlatform(o.v); if (o.v === "douyin") { setTargetLang("zh"); setMarket("中国"); } }}
+                            style={{ flex: 1, padding: "0.7rem", borderRadius: 10, border: `2px solid ${platform === o.v ? "#0d0d0d" : "#e2e8f0"}`, background: platform === o.v ? "#0d0d0d" : "#fff", color: platform === o.v ? "#fff" : "#4a5568", cursor: "pointer", textAlign: "center" as const, transition: "all 0.15s" }}>
+                            <div style={{ fontWeight: 600 }}>{o.icon} {o.label}</div>
+                            <div style={{ fontSize: "0.68rem", opacity: 0.7 }}>{o.sub}</div>
+                          </button>
+                        ))}
+                      </div>
+                      {platform === "tiktok" && (
+                        <>
+                          <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 8 }}>目标国家</div>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            {TIKTOK_COUNTRIES.map(o => (
+                              <button key={o.lang} onClick={() => { setTargetLang(o.lang); setMarket(_langToMarket(o.lang)); }}
+                                style={{ padding: "0.5rem 0.8rem", borderRadius: 10, border: `2px solid ${targetLang === o.lang ? "#7c3aed" : "#e2e8f0"}`, background: targetLang === o.lang ? "#7c3aed" : "#fff", color: targetLang === o.lang ? "#fff" : "#374151", fontSize: "0.8rem", cursor: "pointer", transition: "all 0.12s", minWidth: 100, textAlign: "center" as const }}>
+                                <div style={{ fontWeight: 600 }}>{o.label}</div>
+                                <div style={{ fontSize: "0.68rem", opacity: 0.7 }}>{o.sub}</div>
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                      {platform === "douyin" && (
+                        <div style={{ fontSize: "0.78rem", color: "#7c3aed", background: "#faf5ff", borderRadius: 8, padding: "0.6rem 0.8rem" }}>✅ 抖音内容将使用中文，面向中国市场</div>
+                      )}
+                    </FlowStepCard>
+                  </AgentRow>
 
                   {/* 林久开场 */}
                   {chatMsgs.length === 0 && !chatLoading && (
