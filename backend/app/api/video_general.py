@@ -1371,10 +1371,44 @@ async def chat_with_mentor(
         raise HTTPException(500, f"AI导师暂时不可用: {str(e)[:200]}")
 
     # 提取脚本
-    script = ""
-    s_match = _re_chat.search(r"===SCRIPT_START===\s*([\s\S]+?)\s*===SCRIPT_END===", reply_text)
-    if s_match:
-        script = s_match.group(1).strip()
+    def _extract_script(text: str) -> str:
+        m = _re_chat.search(r"===SCRIPT_START===\s*([\s\S]+?)\s*===SCRIPT_END===", text)
+        return m.group(1).strip() if m else ""
+
+    script = _extract_script(reply_text)
+
+    # ── 脚本语言验证：台词含中文但 target_lang 非 zh → 强制重写 ──────────
+    if script and _tl != "zh":
+        import re as _re_lang
+        _dialogue_lines = _re_lang.findall(r'模特说[：:]\s*(.+)', script)
+        _has_chinese = any(_re_lang.search(r'[一-鿿]', ln) for ln in _dialogue_lines)
+        if _has_chinese:
+            log_info(f"脚本语言检查：target_lang={_tl} 但台词含中文，触发重写")
+            _retry_messages = openai_messages + [
+                {"role": "assistant", "content": reply_text},
+                {"role": "user", "content": (
+                    f"错误！台词语言不对！用户选择的目标语言是{_LANG_NAMES.get(_tl, 'English')}，"
+                    f"但你写的台词里有中文。请立刻用{_LANG_NAMES.get(_tl, 'English')}重写整个脚本，"
+                    f"所有台词必须是{_LANG_NAMES.get(_tl, 'English')}，禁止出现任何中文！"
+                    "输出完整的===SCRIPT_START===格式。"
+                )},
+            ]
+            try:
+                _retry_resp = await client.chat.completions.create(
+                    model=s.LINGMENG_MODEL,
+                    messages=_retry_messages,
+                    max_tokens=2000,
+                )
+                _retry_text = _retry_resp.choices[0].message.content or ""
+                _retry_script = _extract_script(_retry_text)
+                if _retry_script:
+                    script = _retry_script
+                    reply_text = _retry_text
+                    log_info(f"脚本语言重写成功 user={user_id}")
+                else:
+                    log_error(f"脚本语言重写未返回合法脚本 user={user_id}")
+            except Exception as _re:
+                log_error(f"脚本语言重写调用失败 user={user_id}: {_re}")
 
     # ── 审稿员：每次有新脚本就审查，不自动修改，由用户决定 ──────────
     review_data = None

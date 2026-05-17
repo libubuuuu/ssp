@@ -5265,8 +5265,8 @@ async def _run_script_to_video_job(params: dict) -> dict:
                 "fal-ai/gpt-image-2",
                 arguments={
                     "prompt": (
-                        f"Professional portrait photo: {portrait_model_desc}. "
-                        "Head and shoulders only, no products held or worn. "
+                        f"CRITICAL: This MUST be a {portrait_model_desc} person. "
+                        "Professional portrait photo, head and shoulders only, no products held or worn. "
                         "Clean studio background, natural lighting, photorealistic. "
                         "No text, no watermarks."
                     ),
