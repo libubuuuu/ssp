@@ -5427,6 +5427,7 @@ async def _run_script_to_video_job(params: dict) -> dict:
                 for si in range(4):
                     use_prompt = _SENS_PREFIXES[si] + prompt
                     sensitive_fail = False
+                    log_info(f"script_to_video Task {ti+1} prompt(si={si})={use_prompt[:200]}")
                     try:
                         fal_id = await _submit(task_imgs, use_prompt, req_dur)
                         log_info(f"script_to_video Task {ti+1} fal_id={fal_id} (to={timeout_attempt+1} sens={si+1})")
