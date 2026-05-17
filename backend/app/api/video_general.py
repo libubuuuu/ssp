@@ -820,10 +820,67 @@ _CHAT_SYSTEM_PROMPT = """你是一个顶级的短视频带货脚本策划导师�
 - 如果产品有"可以演示"的卖点（弹力、防水等），建议用户一定要拍出来
 
 ═══════════════════════════════════════
-TikTok/抖音带货视频完整知识库（你必须熟练运用）
+TikTok/抖音带货视频专业知识库（数据驱动版，必须熟练运用）
 ═══════════════════════════════════════
 
-【一、15种带货视频类型及适用场景】
+【一、高转化视频黄金结构（蝉妈妈数据：83%爆款遵循此结构）】
+
+4段式结构：
+0-3秒 钩子Hook → 3-7秒 痛点Pain → 7-12秒 产品+证据Solution/Proof → 最后2-3秒 行动CTA
+
+【二、8种开头钩子类型+公式（TOP100带货视频数据：76%使用以下类型）】
+
+TikTok英文钩子公式：
+- "I can't believe [product] actually does this..."
+- "POV: You finally found [solution to common problem]"
+- "Stop scrolling if you [pain point]"
+- "This $[low price] [product] replaced my $[high price] [alternative]"
+
+抖音中文钩子公式：
+- "姐妹们千万别再[错误行为]了！"
+- "用了X年终于找到了..."
+- "[数字]块钱解决了我[金额]块都没解决的问题"
+- "被我妈骂了三天，就因为没早告诉她这个"
+
+钩子类型：反差冲突/痛点提问/视觉冲击/数据震惊/悬念/场景带入/反常识/挑战质疑
+
+【二B、痛点三连问话术（用户用第二人称"你"完播率高42%）】
+
+① 你有没有……（具体场景还原）
+② 结果导致……（后果放大）
+③ 现在终于……（解决方案亮相）
+
+【三、信任证据类型（89%高转化视频使用"可即时验证"证据）】
+
+最强→强→中等：实时实验（温度计/倒置测试）> 前后对比 > 微观细节（放大镜/慢动作）> 真实订单数 > 用户截图
+❌已失效："销量10万+"/"明星同款"/"央视推荐"
+
+【四、高转化CTA原则（蝉妈妈A/B测试数据）】
+
+✅ "现在下单，输入暗号XX，自动减15元" — 购物车点击率高4.3倍
+❌ "点击左下角小黄车" / "去主页橱窗" — 失败指令
+TikTok: "Link in bio, grab yours before it sells out" / "Use code [CODE] for [X]% off, only today"
+抖音: "点下面链接，今天下单送[赠品]" / "库存只剩[数字]件"
+原则：优惠可见 + 路径唯一 + 操作无脑
+
+【五、分品类策略】
+
+内衣/文胸：开头展示勒痕→换新品对比→一整天脱下无痕（终极证据）；台词关键词：无痕/零束缚/忘了穿了内衣
+美容仪：照镜子发现问题→使用过程→即时前后对比；关键词：5分钟/立竿见影/在家做医美
+服装穿搭：翻车/丑状态→换装快剪→完整造型；要点：全身镜+自然光+干净背景
+食品零食：ASMR吃播/开箱/盲测；核心是咀嚼声+满足表情
+3C数码：一个动作解决一个问题；对比有vs没有这个产品的生活
+
+【六、TikTok vs 抖音具体差异（必须遵守）】
+
+| 维度 | TikTok | 抖音 |
+|------|--------|------|
+| 风格 | 手持感+自然光+粗糙真实 | 稍精致但有真实感 |
+| 开头节奏 | 1秒定胜负 | 3秒内必须给钩子 |
+| CTA | Link in bio / TikTok Shop | 小黄车+优惠暗号 |
+| 音乐 | 热门音频权重极高 | 音乐重要但不如TikTok关键 |
+
+【七、原有视频类型清单（保留参考）】
 
 1. 痛点剧情型
 结构：遭遇痛点→尝试解决失败→发现产品→问题解决
@@ -1068,20 +1125,33 @@ import json as _json_chat
 
 _XIAOLI_DONE_MARKER = "===XIAOLI_DONE==="
 
-_REVIEWER_SYSTEM = """你是一个TikTok/抖音带货视频脚本审稿专家。审查以下脚本并给出评分和改进建议。
+_REVIEWER_SYSTEM = """你是一个TikTok/抖音带货视频脚本审稿专家（数据驱动版）。审查以下脚本并给出评分和改进建议。
 
-评分维度（每项1-10分）：
-1. 开头钩子力度：前3秒能不能让人停下来？
-2. 痛点共鸣度：用户看了会不会觉得"说的就是我"？
-3. 产品植入自然度：产品出场是不是自然不生硬？
-4. 促单力度：结尾能不能让人想买？
-5. 台词口语化：像不像真人在说话？
-6. 视觉可执行性：Seedance能不能生成这些画面？
+评分标准（总分60分，每项0-10分）：
+1. 开头钩子力（10分）：3秒内是否制造冲突/好奇？是否用了验证过的钩子类型（反差/痛点提问/视觉冲击/数据/悬念/场景带入/反常识/挑战）？
+2. 痛点共鸣度（10分）：是否用第二人称"你"？是否有具体场景还原+情绪闭环（三连问结构）？
+3. 产品植入自然度（10分）：产品是"解决方案"还是"硬广"？是否有可即时验证的证据（实时实验>前后对比>微观细节）？
+4. 促单力度（10分）：CTA是否无脑操作？是否有紧迫感？路径是否唯一？有没有用失败指令（"点击左下角"）？
+5. 台词口语化（10分）：像朋友说话还是广告文案？有没有用"你"而非"我们的产品"？
+6. 视觉可执行性（10分）：场景是否具体？镜头切换是否合理？Seedance能否生成这些画面？
+
+扣分项（明确标注）：
+- 开头超3秒才进主题：-3分
+- 台词像广告文案（"尊享优质体验"等）：-5分
+- 没有任何可验证证据：-5分
+- CTA说"点击左下角"：-3分
+- 使用"我们的产品"而非"你"的视角：-3分
+
+加分项（明确标注）：
+- 使用"无限循环"脚本（结尾接开头）：+3分
+- 台词有可传播金句：+2分
+- 包含用户会截图分享的画面：+2分
 
 输出格式：
 总分：XX/60
-各项评分：...
-改进建议：（具体说哪里要改、怎么改）"""
+各项评分：1.X/10  2.X/10  3.X/10  4.X/10  5.X/10  6.X/10
+扣分/加分：（列出触发的项目）
+改进建议：（具体说哪里要改、怎么改，结合知识库公式给出替代台词）"""
 
 
 def _extract_all_text(messages: list) -> str:
@@ -1205,11 +1275,11 @@ async def _call_copywriter(client, script: str, platform: str, target_lang: str 
     lang_name = _LANG_NAMES.get(target_lang, "English")
     if target_lang == "zh":
         system_prompt = (
-            f"你是TikTok/抖音的文案专家。根据以下视频脚本，生成发布时需要的："
+            f"你是抖音的文案专家。根据以下视频脚本，生成发布时需要的："
             "1. 视频标题（吸引点击，15字以内）"
             "2. 视频描述（包含关键词，50字以内）"
-            "3. 话题标签（5-8个，包含热门标签和精准标签）"
-            "4. 推荐发布时间\n\n"
+            "3. 话题标签（3-5个，策略：1个热门+2个品类+1个长尾，不要加#fyp）"
+            "4. 推荐发布时间（抖音：工作日12:00-13:00午休/18:00-19:00下班/21:00-22:00睡前；周末10:00-11:00或15:00-16:00）\n\n"
             f"平台：{platform}\n"
             "所有内容必须用中文输出。\n\n"
             '请用以下JSON格式输出（只输出JSON，不要其他文字）：\n'
@@ -1221,8 +1291,8 @@ async def _call_copywriter(client, script: str, platform: str, target_lang: str 
             f"You are a {platform} copywriting expert. Based on the video script below, generate:\n"
             "1. Video title (compelling, under 60 characters)\n"
             "2. Video description (keyword-rich, under 150 characters)\n"
-            "3. Hashtags (5-8 tags, mix of trending and niche)\n"
-            "4. Best posting time\n\n"
+            "3. Hashtags (3-5 tags ONLY: 1 trending + 2 niche category + 1 long-tail. ALWAYS include #TikTokMadeMeBuyIt. Do NOT use #fyp — it does not guarantee reach)\n"
+            "4. Best posting time (TikTok: Sunday 20:00 / Tuesday 16:00 / Wednesday 17:00, post 3-5x/week)\n\n"
             f"Platform: {platform}\n"
             f"IMPORTANT: ALL content (title, description, hashtags) MUST be written in {lang_name}. "
             f"This targets the {lang_name}-speaking market.\n\n"
