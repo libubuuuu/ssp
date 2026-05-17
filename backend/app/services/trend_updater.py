@@ -36,7 +36,7 @@ async def run_trend_update() -> int:
     for item in SEARCH_QUERIES:
         try:
             resp = await client.chat.completions.create(
-                model="gpt-4o-search-preview",
+                model="gpt-4o-search-preview-2025-03-11",
                 messages=[{"role": "user", "content": item["query"]}],
                 max_tokens=800,
             )
