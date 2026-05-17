@@ -2848,9 +2848,9 @@ async def _run_skill_generate_job(params: dict) -> dict:
     # ── 全量:所有用户走 batch 分组,上限从数据库读(默认 8s) ──────────────────
     from app.database import get_app_config as _get_app_config
     try:
-        _batch_max_dur: float = float(_get_app_config("batch_max_duration", "8"))
+        _batch_max_dur: float = float(_get_app_config("batch_max_duration", "15"))
     except Exception:
-        _batch_max_dur = 8.0
+        _batch_max_dur = 15.0
     # ───────────────────────────────────────────────────────────────────────
 
     n_grids = len(replaced_grid_urls)

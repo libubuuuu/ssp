@@ -656,9 +656,9 @@ async def script_to_video_submit(
     # 按批处理分组估算积分（同 skill_generate 逻辑）
     try:
         from app.database import get_app_config
-        _batch_max = float(get_app_config("batch_max_duration", "8"))
+        _batch_max = float(get_app_config("batch_max_duration", "15"))
     except Exception:
-        _batch_max = 8.0
+        _batch_max = 15.0
 
     def _preview_cost(scs: list, max_dur: float = 8.0, min_dur: int = 4) -> int:
         tasks, cur = [], 0.0
