@@ -205,6 +205,7 @@ export default function VideoGeneralPage() {
   const [isWhitelisted, setIsWhitelisted] = useState(false);
   const [flowStep, setFlowStep]           = useState(1);  // 1=step1 2=step2 3=step3 4=create
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const _lastAutoSceneDesc = useRef("");
 
   useEffect(() => {
     const tk = localStorage.getItem("token");
@@ -218,29 +219,6 @@ export default function VideoGeneralPage() {
   useEffect(() => {
     if (flowStep > 1) setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 200);
   }, [flowStep]);
-
-  // ── 脚本生成后自动触发场景图生成 ─────────────────────────────────────────
-  const _triggerSceneGen = (scriptText: string) => {
-    if (scene.url) return; // 用户已手动上传场景图
-    const m = scriptText.match(/\[环境\][：:]\s*(.+?)(?:\n|\[|$)/s);
-    const desc = m ? m[1].trim() : "";
-    if (!desc || desc === _lastAutoSceneDesc.current) return;
-    _lastAutoSceneDesc.current = desc;
-    setSceneAutoDesc(desc); setSceneAutoEditInput(desc);
-    setSceneAutoPreview(""); setSceneAutoConfirmed(false); setSceneAutoEditMode(false);
-    setSceneAutoLoading(true);
-    fetch(`${API_BASE}/api/video/general/generate-scene`, {
-      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
-      body: JSON.stringify({ description: desc, orientation: "portrait" }),
-    }).then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.scene_image_url) setSceneAutoPreview(d.scene_image_url); })
-      .catch(() => {})
-      .finally(() => setSceneAutoLoading(false));
-  };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (chatScript) _triggerSceneGen(chatScript); }, [chatScript]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (script && scriptMode !== "chat") _triggerSceneGen(script); }, [script]);
 
   // 入口A 专用：参考视频
   const [refVid, setRefVid] = useState<{ file: File | null; uploading: boolean; url: string }>({ file: null, uploading: false, url: "" });
@@ -303,7 +281,29 @@ export default function VideoGeneralPage() {
   const [sceneAutoConfirmed, setSceneAutoConfirmed] = useState(false);
   const [sceneAutoEditMode, setSceneAutoEditMode] = useState(false);
   const [sceneAutoEditInput, setSceneAutoEditInput] = useState("");
-  const _lastAutoSceneDesc = useRef("");
+
+  // ── 脚本生成后自动触发场景图生成（必须在所有 state 之后定义，避免 TDZ）──
+  const _triggerSceneGen = (scriptText: string) => {
+    if (scene.url) return;
+    const m = scriptText.match(/\[环境\][：:]\s*(.+?)(?:\n|\[|$)/s);
+    const desc = (m ? m[1].trim() : "") || "Modern clean indoor room, natural soft lighting, minimalist decor";
+    if (desc === _lastAutoSceneDesc.current) return;
+    _lastAutoSceneDesc.current = desc;
+    setSceneAutoDesc(desc); setSceneAutoEditInput(desc);
+    setSceneAutoPreview(""); setSceneAutoConfirmed(false); setSceneAutoEditMode(false);
+    setSceneAutoLoading(true);
+    fetch(`${API_BASE}/api/video/general/generate-scene`, {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+      body: JSON.stringify({ description: desc, orientation: "portrait" }),
+    }).then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.scene_image_url) setSceneAutoPreview(d.scene_image_url); })
+      .catch(() => {})
+      .finally(() => setSceneAutoLoading(false));
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (chatScript) _triggerSceneGen(chatScript); }, [chatScript]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (script && scriptMode !== "chat") _triggerSceneGen(script); }, [script]);
 
   // Step 5 - video generation
   const [vidLoading, setVidLoading] = useState(false);
