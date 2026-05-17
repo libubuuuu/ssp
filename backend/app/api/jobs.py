@@ -5471,13 +5471,13 @@ async def _run_script_to_video_job(params: dict) -> dict:
                 s.get("visual_prompt", "") for s in task["scenes"] if s.get("visual_prompt")
             )
             prompt = (
-                f"@Image1 defines the EXACT visual appearance (colors, outfit, products) "
-                f"that MUST be preserved throughout. {ref_tags} "
-                f"{model_line}{portrait_line}{env_line}"
-                f"Generate a {req_dur}-second continuous video: {combined}. "
-                f"Scene action sequence: {_scene_descriptions}. "
-                f"CRITICAL: Strictly match all visual details from @Image1. "
-                f"Ignore any color words in the description — use ONLY what @Image1 shows."
+                f"Generate a {req_dur}-second continuous video with the following actions: "
+                f"{_scene_descriptions}. "
+                f"{model_line}{portrait_line}"
+                f"@Image1 is the reference for the model's appearance (face, body type). "
+                f"{ref_tags} "
+                f"{env_line}"
+                f"Use natural, cinematic movement. "
                 f"{NO_TEXT}"
             )
             # 两级清洗：GPT2 过滤 + Seedance 专项替换
