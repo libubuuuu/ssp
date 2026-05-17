@@ -479,7 +479,8 @@ export default function VideoGeneralPage() {
       const cost: number = d.cost ?? 0;
       setVidCost(cost);
       adjustLocalUserCredits(-cost);
-      setVidProgress(`Seedance 2.0 生成中，约 3-8 分钟（job=${jid}）…`);
+      const _estTime = duration >= 30 ? "4-8 分钟" : "2-4 分钟";
+      setVidProgress(`Seedance 2.0 生成中，约 ${_estTime}（job=${jid}）…`);
 
       // poll
       let elapsed = 0;
@@ -762,7 +763,7 @@ export default function VideoGeneralPage() {
                   </div>
                   {vidLoading && (
                     <div style={{ marginTop: 12, background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "0.65rem 0.9rem", fontSize: "0.8rem", color: "#1e40af", marginBottom: 6 }}>
-                      ✅ 任务已提交，预计3-8分钟完成。你可以关闭此页面去做其他事，生成完成后在右上角「我的任务」查看结果。
+                      ✅ 任务已提交，预计{duration >= 30 ? "4-8" : "2-4"}分钟完成。你可以关闭此页面去做其他事，生成完成后在右上角「我的任务」查看结果。
                     </div>
                   )}
                   {vidLoading && vidProgress && (
