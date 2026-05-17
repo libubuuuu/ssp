@@ -1017,7 +1017,7 @@ export default function VideoGeneralPage() {
                                         <div key={qi} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "0.8rem 1rem", marginBottom: 8 }}>
                                           <div style={{ fontWeight: 600, fontSize: "0.85rem", color: "#1a202c", marginBottom: 4 }}>{q.question}</div>
                                           {q.description && <div style={{ fontSize: "0.7rem", color: "#9ca3af", marginBottom: 8 }}>{q.description}</div>}
-                                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: q.allow_custom ? 8 : 0 }}>
+                                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
                                             {q.options.map((opt, oi) => {
                                               const isSel = selected === opt;
                                               return (
@@ -1028,10 +1028,8 @@ export default function VideoGeneralPage() {
                                               );
                                             })}
                                           </div>
-                                          {q.allow_custom && (
-                                            <input placeholder="或自定义回答…" value={chatCustomInputs[key] || ""} onChange={e => { setChatCustomInputs(prev => ({ ...prev, [key]: e.target.value })); if (e.target.value) setChatSelections(prev => ({ ...prev, [key]: "" })); }}
-                                              style={{ width: "100%", padding: "0.3rem 0.6rem", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: "0.78rem", boxSizing: "border-box" }} />
-                                          )}
+                                          <input placeholder="或自定义回答…" value={chatCustomInputs[key] || ""} onChange={e => { setChatCustomInputs(prev => ({ ...prev, [key]: e.target.value })); if (e.target.value) setChatSelections(prev => ({ ...prev, [key]: "" })); }}
+                                            style={{ width: "100%", padding: "0.3rem 0.6rem", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: "0.78rem", boxSizing: "border-box" }} />
                                         </div>
                                       );
                                     })}
