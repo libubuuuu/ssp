@@ -1170,38 +1170,6 @@ export default function VideoGeneralPage() {
                 <>
                   <UserRow content="开始AI导师对话，策划专属脚本！" />
 
-                  {/* 平台+目标国家选择（林久开场前，始终显示） */}
-                  <AgentRow sender="system">
-                    <FlowStepCard step={0} title="选择发布平台和目标国家">
-                      <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
-                        {([{ v: "tiktok" as const, icon: "🌍", label: "TikTok", sub: "海外市场" }, { v: "douyin" as const, icon: "🇨🇳", label: "抖音", sub: "中国市场" }]).map(o => (
-                          <button key={o.v} onClick={() => { setPlatform(o.v); if (o.v === "douyin") { setTargetLang("zh"); setMarket("中国"); } }}
-                            style={{ flex: 1, padding: "0.7rem", borderRadius: 10, border: `2px solid ${platform === o.v ? "#0d0d0d" : "#e2e8f0"}`, background: platform === o.v ? "#0d0d0d" : "#fff", color: platform === o.v ? "#fff" : "#4a5568", cursor: "pointer", textAlign: "center" as const, transition: "all 0.15s" }}>
-                            <div style={{ fontWeight: 600 }}>{o.icon} {o.label}</div>
-                            <div style={{ fontSize: "0.68rem", opacity: 0.7 }}>{o.sub}</div>
-                          </button>
-                        ))}
-                      </div>
-                      {platform === "tiktok" && (
-                        <>
-                          <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 8 }}>目标国家</div>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            {TIKTOK_COUNTRIES.map(o => (
-                              <button key={o.lang} onClick={() => { setTargetLang(o.lang); setMarket(_langToMarket(o.lang)); }}
-                                style={{ padding: "0.5rem 0.8rem", borderRadius: 10, border: `2px solid ${targetLang === o.lang ? "#7c3aed" : "#e2e8f0"}`, background: targetLang === o.lang ? "#7c3aed" : "#fff", color: targetLang === o.lang ? "#fff" : "#374151", fontSize: "0.8rem", cursor: "pointer", transition: "all 0.12s", minWidth: 100, textAlign: "center" as const }}>
-                                <div style={{ fontWeight: 600 }}>{o.label}</div>
-                                <div style={{ fontSize: "0.68rem", opacity: 0.7 }}>{o.sub}</div>
-                              </button>
-                            ))}
-                          </div>
-                        </>
-                      )}
-                      {platform === "douyin" && (
-                        <div style={{ fontSize: "0.78rem", color: "#7c3aed", background: "#faf5ff", borderRadius: 8, padding: "0.6rem 0.8rem" }}>✅ 抖音内容将使用中文，面向中国市场</div>
-                      )}
-                    </FlowStepCard>
-                  </AgentRow>
-
                   {/* 林久开场 */}
                   {chatMsgs.length === 0 && !chatLoading && (
                     <AgentRow sender="linjiu">
