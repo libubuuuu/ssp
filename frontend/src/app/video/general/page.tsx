@@ -1069,6 +1069,21 @@ export default function VideoGeneralPage() {
                           </div>
                         </div>
                       )}
+                      {scriptMode === "chat" && (
+                        <div style={{ borderTop: "1px solid #f0f0f0", paddingTop: 14, marginBottom: 14 }}>
+                          <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 6 }}>目标语言（决定脚本台词语言）</div>
+                          <select value={targetLang} onChange={e => setTargetLang(e.target.value)}
+                            style={{ padding: "0.45rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c" }}>
+                            <option value="en">English（英语）</option>
+                            <option value="zh">中文</option>
+                            <option value="ja">日本語（日语）</option>
+                            <option value="ko">한국어（韩语）</option>
+                            <option value="es">Español（西班牙语）</option>
+                            <option value="pt">Português（葡萄牙语）</option>
+                            <option value="ar">العربية（阿拉伯语）</option>
+                          </select>
+                        </div>
+                      )}
                       {flowStep === 3 && <FlowNextBtn label={scriptMode === "chat" ? "开始AI对话" : "生成脚本"} onClick={() => setFlowStep(4)} />}
                     </FlowStepCard>
                   </AgentRow>
@@ -1289,6 +1304,19 @@ export default function VideoGeneralPage() {
                               <option value="480p">480p（标准）不加价</option>
                               <option value="1080p">1080p（高清）+10积分</option>
                               <option value="4k">4K（超清）+50积分</option>
+                            </select>
+                          </div>
+                          <div style={{ marginBottom: 14 }}>
+                            <div style={{ fontSize: "0.72rem", color: "#718096", marginBottom: 6 }}>目标语言</div>
+                            <select value={targetLang} onChange={e => setTargetLang(e.target.value)}
+                              style={{ width: "100%", padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c" }}>
+                              <option value="en">English（英语）</option>
+                              <option value="zh">中文</option>
+                              <option value="ja">日本語（日语）</option>
+                              <option value="ko">한국어（韩语）</option>
+                              <option value="es">Español（西班牙语）</option>
+                              <option value="pt">Português（葡萄牙语）</option>
+                              <option value="ar">العربية（阿拉伯语）</option>
                             </select>
                           </div>
                           <div style={{ display: "flex", gap: 8 }}>
