@@ -225,6 +225,10 @@ export default function VideoGeneralPage() {
     setError("");
   }, [tab]);
 
+  useEffect(() => {
+    if (market === "中国大陆" || market === "中国") setTargetLang("zh");
+  }, [market]);
+
   // 入口A 专用：参考视频
   const [refVid, setRefVid] = useState<{ file: File | null; uploading: boolean; url: string }>({ file: null, uploading: false, url: "" });
   // 入口A 专用：脚本状态（与入口B script 独立）
@@ -824,6 +828,19 @@ export default function VideoGeneralPage() {
                   <select value={market} onChange={e => setMarket(e.target.value)}
                     style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
                     {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <div style={{ fontSize: "0.72rem", color: "#718096", marginBottom: 5 }}>目标语言</div>
+                  <select value={targetLang} onChange={e => setTargetLang(e.target.value)}
+                    style={{ padding: "0.45rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c" }}>
+                    <option value="en">English（英语）</option>
+                    <option value="zh">中文</option>
+                    <option value="ja">日本語（日语）</option>
+                    <option value="ko">한국어（韩语）</option>
+                    <option value="es">Español（西班牙语）</option>
+                    <option value="pt">Português（葡萄牙语）</option>
+                    <option value="ar">العربية（阿拉伯语）</option>
                   </select>
                 </div>
                 <div>
