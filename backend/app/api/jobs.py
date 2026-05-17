@@ -5179,6 +5179,7 @@ async def _run_script_to_video_job(params: dict) -> dict:
     contrast_image_url = params.get("contrast_image_url") or ""   # 对比产品图（起/承阶段）
     enable_voice       = params.get("enable_voice", True)          # 是否开启 TTS+Lipsync
     target_duration    = float(params.get("target_duration") or 0) # 目标总时长（秒）
+    target_lang        = params.get("target_lang", "en")           # 目标语言代码
 
     if not scenes:
         raise RuntimeError("scenes 必填（脚本解析结果为空）")
@@ -5326,7 +5327,7 @@ async def _run_script_to_video_job(params: dict) -> dict:
                         log_error(f"script_to_video 并行TTS失败: {_te}")
                         return None
                 _tts_concurrent_task = asyncio.create_task(_concurrent_tts())
-                log_info(f"script_to_video TTS 已并行启动 speech_len={len(_pre_speech_text)}")
+                log_info(f"script_to_video TTS 已并行启动 speech_len={len(_pre_speech_text)} lang={target_lang}")
 
         # ── 串行执行（需要前帧，不可并发）──────────────────────────────────
         all_raw: list[str] = []

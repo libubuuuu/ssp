@@ -629,6 +629,7 @@ class ScriptToVideoRequest(BaseModel):
     contrast_image_url: Optional[str] = Field(None, description="对比产品图URL（起/承阶段用，可选）")
     enable_voice: bool = Field(True, description="是否开启TTS+Lipsync")
     target_duration: int = Field(15, ge=5, le=120, description="目标视频总时长（秒），用于校准分镜时长")
+    target_lang: str = Field("en", description="目标语言代码 en/zh/ja/ko/es/pt/ar")
 
 
 @router.post("/script-to-video")
@@ -703,6 +704,7 @@ async def script_to_video_submit(
             "contrast_image_url": body.contrast_image_url or "",
             "enable_voice": body.enable_voice,
             "target_duration": body.target_duration,
+            "target_lang": body.target_lang,
             "_user_id": user_id,
         },
         "module": "video/general/script-to-video",
@@ -1054,6 +1056,7 @@ TikTok（海外）：手持感+自然光+不过度美颜；口语化英文像跟
 用户参数：
 - 目标市场：{market}
 - 视频时长：{duration}秒
+- 目标语言：{target_lang}（脚本台词和文案必须使用此语言）
 - 已上传产品图：{n_images}张"""
 
 _CHAT_VIDEO_INSTRUCTION = """
@@ -1150,9 +1153,9 @@ def _should_trigger_copywriter(messages: list) -> bool:
     return any(t in content for t in triggers)
 
 
-async def _call_xiaoli_search(client, platform: str, category: str) -> str:
+async def _call_xiaoli_search(client, platform: str, category: str, lang_name: str = "English") -> str:
     search_prompt = (
-        f"搜索{platform}平台上关于{category}的最新带货爆款视频趋势，包括："
+        f"搜索{platform}平台上{lang_name}市场关于{category}的最新带货爆款视频趋势，包括："
         "1.当前最火的视频格式和结构 2.热门的开头钩子手法 3.成功案例的特点 "
         "4.当前流行的BGM风格。只返回最新2025-2026年的信息。"
     )
@@ -1190,16 +1193,18 @@ async def _call_reviewer(client, script: str) -> dict:
         return {"score": 0, "details": "", "suggestions": ""}
 
 
-async def _call_copywriter(client, script: str, platform: str) -> dict:
-    if "TikTok" in platform or "tiktok" in platform.lower():
-        language_instruction = (
-            "IMPORTANT: All content (title, description, hashtags) MUST be in English. "
-            "This is for TikTok international market."
-        )
-    elif "抖音" in platform:
-        language_instruction = "重要：所有内容（标题、描述、标签）必须用中文。这是抖音国内市场。"
-    else:
-        language_instruction = ""
+_LANG_NAMES = {
+    "en": "English", "zh": "中文", "ja": "日本語",
+    "ko": "한국어", "es": "Español", "pt": "Português", "ar": "العربية",
+}
+
+
+async def _call_copywriter(client, script: str, platform: str, target_lang: str = "en") -> dict:
+    lang_name = _LANG_NAMES.get(target_lang, "English")
+    language_instruction = (
+        f"IMPORTANT: All content (title, description, hashtags) MUST be in {lang_name}. "
+        f"This is for {platform} {lang_name} market."
+    )
     system_prompt = (
         f"你是TikTok/抖音的文案专家。根据以下视频脚本，生成发布时需要的："
         "1. 视频标题（吸引点击，15字以内）"
@@ -1240,6 +1245,7 @@ class ChatRequest(BaseModel):
     product_image_urls: List[str] = Field(default=[], description="已上传产品图URL")
     market: str = Field("欧美")
     duration: int = Field(15)
+    target_lang: str = Field("en", description="目标语言代码 en/zh/ja/ko/es/pt/ar")
     video_url: Optional[str] = Field(None, description="入口A的参考视频URL")
 
 
@@ -1257,10 +1263,12 @@ async def chat_with_mentor(
     client = AsyncOpenAI(base_url=s.LINGMENG_BASE_URL, api_key=s.LINGMENG_API_KEY)
 
     # 构建 system prompt
+    _tl = body.target_lang or "en"
     sys_prompt = _CHAT_SYSTEM_PROMPT.format(
         market=body.market,
         duration=body.duration,
         n_images=len(body.product_image_urls),
+        target_lang=_LANG_NAMES.get(_tl, "English"),
     )
     if body.video_url:
         sys_prompt += _CHAT_VIDEO_INSTRUCTION.format(video_url=body.video_url)
@@ -1272,16 +1280,17 @@ async def chat_with_mentor(
     detected_platform = _mkt_map.get(body.market, "TikTok")
     _xiaoli_category = category or "fashion product"
     # 第2轮对话起触发小李搜索（不依赖关键词检测）
+    _lang_name = _LANG_NAMES.get(_tl, "English")
     if len(body.messages) >= 2 and not _xiaoli_already_searched(body.messages):
-        raw = await _call_xiaoli_search(client, detected_platform, _xiaoli_category)
+        raw = await _call_xiaoli_search(client, detected_platform, _xiaoli_category, _lang_name)
         if raw:
             search_result = raw
             sys_prompt += (
-                f"\n\n[小李趋势研究员实时搜索 — 平台:{detected_platform} 品类:{_xiaoli_category}]\n"
+                f"\n\n[小李趋势研究员实时搜索 — 平台:{detected_platform} 品类:{_xiaoli_category} 语言:{_lang_name}]\n"
                 f"{raw}\n"
                 "[请将以上最新趋势融入你的建议和脚本中]"
             )
-            log_info(f"小李搜索完成 user={user_id} platform={detected_platform} category={_xiaoli_category}")
+            log_info(f"小李搜索完成 user={user_id} platform={detected_platform} category={_xiaoli_category} lang={_lang_name}")
 
     # ── 构建多轮对话消息 ──────────────────────────────────────────
     openai_messages = [{"role": "system", "content": sys_prompt}]
@@ -1358,8 +1367,8 @@ async def chat_with_mentor(
     # ── 文案师（有脚本就同步出文案，不等用户确认）────────────────
     copy_data = None
     if script:
-        copy_data = await _call_copywriter(client, script, detected_platform)
-        log_info(f"文案师完成 user={user_id}")
+        copy_data = await _call_copywriter(client, script, detected_platform, _tl)
+        log_info(f"文案师完成 user={user_id} lang={_lang_name}")
 
     # 提取结构化问题
     questions = []

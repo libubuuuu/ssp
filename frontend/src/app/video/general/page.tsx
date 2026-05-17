@@ -246,6 +246,7 @@ export default function VideoGeneralPage() {
   const [resolution, setResolution]       = useState("480p");
   const [contrastImg, setContrastImg]     = useState<ImgSlot>(emptySlot());
   const [enableVoice, setEnableVoice]     = useState(true);
+  const [targetLang, setTargetLang]       = useState("en");  // 目标语言代码
 
   // Step 4 - script result
   const [loading, setLoading]   = useState(false);
@@ -396,6 +397,20 @@ export default function VideoGeneralPage() {
     if (text.includes("10秒") || text.includes("10 秒")) setDuration(10);
     else if (text.includes("15秒") || text.includes("15 秒")) setDuration(15);
     else if (text.includes("30秒") || text.includes("30 秒")) setDuration(30);
+    // 从用户回答提取目标语言
+    const _langMap: Record<string, string> = {
+      "英语": "en", "english": "en", "美国": "en", "英国": "en", "东南亚": "en",
+      "日语": "ja", "日本": "ja", "japanese": "ja",
+      "韩语": "ko", "韩国": "ko", "korean": "ko",
+      "西班牙语": "es", "拉美": "es", "spanish": "es",
+      "葡萄牙语": "pt", "巴西": "pt", "portuguese": "pt",
+      "阿拉伯语": "ar", "中东": "ar", "arabic": "ar",
+      "中文": "zh", "中国": "zh", "抖音": "zh",
+    };
+    const _tl = text.toLowerCase();
+    for (const [kw, lang] of Object.entries(_langMap)) {
+      if (_tl.includes(kw.toLowerCase())) { setTargetLang(lang); break; }
+    }
     const images = msgImages ?? (chatPendingImages.length ? [...chatPendingImages] : undefined);
     if (!text && !images?.length) return;
     const newMsg: ChatMsg = { role: "user", content: text, images };
@@ -412,7 +427,7 @@ export default function VideoGeneralPage() {
         body: JSON.stringify({
           messages: updatedMsgs,
           product_image_urls: [front.url, back.url, rear.url].filter(Boolean),
-          market, duration,
+          market, duration, target_lang: targetLang,
           video_url: null,
         }),
       });
@@ -458,7 +473,7 @@ export default function VideoGeneralPage() {
     } finally {
       setChatLoading(false);
     }
-  }, [chatInput, chatMsgs, chatPendingImages, front.url, back.url, rear.url, market, duration, scene.url]);
+  }, [chatInput, chatMsgs, chatPendingImages, front.url, back.url, rear.url, market, duration, scene.url, targetLang]);
 
   // ── 检测脚本里是否含对比关键词（决定是否显示对比图上传）──────────────────
   const _CONTRAST_KW = ["旧", "老款", "之前", "原来", "以前", "对比", "竞品", "old", "previous", "used to", "regular", "normal", "换上", "换了", "before", "instead"];
@@ -506,6 +521,7 @@ export default function VideoGeneralPage() {
           contrast_image_url:   contrastImg.url || null,
           enable_voice:         enableVoice,
           target_duration:      duration,
+          target_lang:          targetLang,
         }),
       });
       if (!r.ok) {
