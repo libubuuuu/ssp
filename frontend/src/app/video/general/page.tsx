@@ -291,7 +291,7 @@ export default function VideoGeneralPage() {
   // Step 3 - params
   const [scriptMode, setScriptMode] = useState<"story" | "direct" | "chat">("story");
   const [platform, setPlatform]     = useState<"tiktok" | "douyin">("tiktok");
-  const [duration, setDuration]     = useState(15);
+  const [duration, setDuration]     = useState(10);
   const [market, setMarket]         = useState("欧美");
   const [userIdea, setUserIdea]     = useState("");
   const [resolution, setResolution]       = useState("1080p");
@@ -450,10 +450,11 @@ export default function VideoGeneralPage() {
   // ── AI导师对话发送 ─────────────────────────────────────────────────────────
   const sendChatMessage = useCallback(async (msgText?: string, msgImages?: string[]) => {
     const text = (msgText ?? chatInput).trim();
-    // 从用户回答提取时长并同步 duration state
-    if (text.includes("10秒") || text.includes("10 秒")) setDuration(10);
-    else if (text.includes("15秒") || text.includes("15 秒")) setDuration(15);
-    else if (text.includes("30秒") || text.includes("30 秒")) setDuration(30);
+    // 从用户回答提取时长并同步 duration state（只接受 5/10/15/30/60）
+    const _ALLOWED = [5, 10, 15, 30, 60];
+    for (const v of _ALLOWED) {
+      if (text.includes(`${v}秒`) || text.includes(`${v} 秒`)) { setDuration(v); break; }
+    }
     // 从用户回答提取目标语言
     const _langMap: Record<string, string> = {
       "英语": "en", "english": "en", "美国": "en", "英国": "en", "东南亚": "en",
@@ -502,11 +503,12 @@ export default function VideoGeneralPage() {
         setChatScript(d.script);
         setChatCopy(null);
         setChatSceneImages({});
-        // 解析脚本总时长
+        // 解析脚本总时长（只在是允许值时才覆盖）
+        const _ALLOWED_DUR = [5, 10, 15, 30, 60];
         const _times: number[] = [];
         for (const _m of d.script.matchAll(/(\d+)-(\d+)s/g)) _times.push(parseInt(_m[2]));
         const _parsed = _times.length > 0 ? Math.max(..._times) : 0;
-        if (_parsed > 0) setDuration(_parsed);
+        if (_ALLOWED_DUR.includes(_parsed)) setDuration(_parsed);
         // 提取所有唯一场景标签（| 场景：XXX |）
         const _sceneMatches = [...d.script.matchAll(/场景[：:]\s*([^|\n，,]+)/g)];
         const _uniqueScenes = [...new Set(_sceneMatches.map(m => m[1].trim()))].filter(Boolean).slice(0, 4);
@@ -882,7 +884,11 @@ export default function VideoGeneralPage() {
                   <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>总时长</div>
                   <select value={duration} onChange={e => setDuration(+e.target.value)}
                     style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
-                    {[10, 15, 30].map(v => <option key={v} value={v}>{v} 秒</option>)}
+                    <option value={5}>5秒</option>
+                    <option value={10}>10秒（推荐）</option>
+                    <option value={15}>15秒</option>
+                    <option value={30}>30秒</option>
+                    <option value={60}>60秒</option>
                   </select>
                 </div>
                 <div>
@@ -1086,7 +1092,11 @@ export default function VideoGeneralPage() {
                             <div>
                               <div style={{ fontSize: "0.72rem", color: "#718096", marginBottom: 5 }}>总时长</div>
                               <select value={duration} onChange={e => setDuration(+e.target.value)} style={{ padding: "0.45rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c" }}>
-                                {[10, 15, 30].map(v => <option key={v} value={v}>{v} 秒</option>)}
+                                <option value={5}>5秒</option>
+                                <option value={10}>10秒（推荐）</option>
+                                <option value={15}>15秒</option>
+                                <option value={30}>30秒</option>
+                                <option value={60}>60秒</option>
                               </select>
                             </div>
                             <div>

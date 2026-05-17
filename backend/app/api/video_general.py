@@ -628,7 +628,7 @@ class ScriptToVideoRequest(BaseModel):
     resolution: str = Field("1080p", description="输出分辨率：'1080p' / '2k' / '4k'")
     contrast_image_url: Optional[str] = Field(None, description="对比产品图URL（起/承阶段用，可选）")
     enable_voice: bool = Field(True, description="是否开启TTS+Lipsync")
-    target_duration: int = Field(15, ge=5, le=120, description="目标视频总时长（秒），用于校准分镜时长")
+    target_duration: int = Field(10, description="视频时长，只能是5/10/15/30/60")
     target_lang: str = Field("en", description="目标语言代码 en/zh/ja/ko/es/pt/ar")
 
 
@@ -647,34 +647,19 @@ async def script_to_video_submit(
     if not body.product_image_urls:
         raise HTTPException(400, "product_image_urls 必填")
 
+    _ALLOWED_DURATIONS = {5, 10, 15, 30, 60}
+    if body.target_duration not in _ALLOWED_DURATIONS:
+        raise HTTPException(400, f"时长只能是 {sorted(_ALLOWED_DURATIONS)}，收到 {body.target_duration}")
+
     # 解析脚本
     scenes = parse_script(body.script)
     if not scenes:
         log_error(f"脚本解析失败 user={current_user['id']} script_head={body.script[:200]!r}")
         raise HTTPException(400, "脚本解析失败，未找到有效分镜。请确认脚本格式包含 [镜头X]：时间范围 |...")
 
-    # 按批处理分组估算积分（同 skill_generate 逻辑）
-    try:
-        from app.database import get_app_config
-        _batch_max = float(get_app_config("batch_max_duration", "15"))
-    except Exception:
-        _batch_max = 15.0
-
-    def _preview_cost(scs: list, max_dur: float = 8.0, min_dur: int = 4) -> int:
-        tasks, cur = [], 0.0
-        for s in scs:
-            d = float(s.get("duration_sec") or 4)
-            if cur + d <= max_dur:
-                cur += d
-            else:
-                tasks.append(cur)
-                cur = d
-        if cur > 0:
-            tasks.append(cur)
-        return sum(max(min_dur, _math.ceil(d)) for d in tasks)
-
-    billing_sec = _preview_cost(scenes, _batch_max)
-    cost = max(65, billing_sec * 65)
+    # 计费严格用用户选的时长（不用脚本解析时长，不用Seedance实际时长）
+    # 用户选10秒就收10秒的钱：max(65, target_duration * 65)
+    cost = max(65, body.target_duration * 65)
 
     # 分辨率附加费
     _RESOLUTION_SURCHARGE = {"1080p": 0, "2k": 20, "4k": 50}
@@ -1336,7 +1321,7 @@ class ChatRequest(BaseModel):
     messages: List[dict] = Field(..., description="聊天历史，每条有role和content")
     product_image_urls: List[str] = Field(default=[], description="已上传产品图URL")
     market: str = Field("欧美")
-    duration: int = Field(15)
+    duration: int = Field(10)
     target_lang: str = Field("en", description="目标语言代码 en/zh/ja/ko/es/pt/ar")
     platform: str = Field("tiktok", description="tiktok或douyin")
     video_url: Optional[str] = Field(None, description="入口A的参考视频URL")
