@@ -1365,6 +1365,8 @@ async def chat_with_mentor(
     clean_reply = _re_chat.sub(r"===QUESTIONS_START===[\s\S]*?===QUESTIONS_END===", "", clean_reply)
     clean_reply = clean_reply.replace("===NEED_CONTRAST_IMAGE===", "").replace(_XIAOLI_DONE_MARKER, "").strip()
 
+    if script:
+        log_info(f"chat script preview user={user_id}: {script[:300].replace(chr(10), '|')}")
     log_info(
         f"chat OK user={user_id} reply_len={len(reply_text)} has_script={bool(script)} "
         f"n_questions={len(questions)} has_review={bool(review_data)} "
