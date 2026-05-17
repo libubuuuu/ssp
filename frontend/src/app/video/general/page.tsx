@@ -920,14 +920,8 @@ export default function VideoGeneralPage() {
                     <UploadBox slot={front} label="正面图" required onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setFront)} onRemove={() => removeSlot(setFront)} />
                     <UploadBox slot={back}  label="反面图" onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setBack)}  onRemove={() => removeSlot(setBack)} />
                     <UploadBox slot={rear}  label="侧面图" onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setRear)}  onRemove={() => removeSlot(setRear)} />
-                    <UploadBox slot={scene} label="场景图（可选）" onUpload={f => uploadImg(f, "/api/video/general/upload/scene-image", "scene_image_url", setScene)} onRemove={() => { removeSlot(setScene); setSceneAutoConfirmed(false); _lastAutoSceneDesc.current = ""; }} />
                   </div>
                   <div style={{ fontSize: "0.72rem", color: "#a0aec0", marginTop: 10 }}>正面图必传，其余可选 · 每张 ≤ 10MB</div>
-                  {!scene.url && (
-                    <div style={{ marginTop: 10, padding: "0.65rem 0.9rem", background: "#fefce8", border: "1px solid #fde68a", borderRadius: 8, fontSize: "0.78rem", color: "#92400e", lineHeight: 1.55 }}>
-                      💡 <strong>建议上传场景图！</strong>没有场景图 Seedance 默认白底/影棚背景。不用担心，<strong>生成脚本后AI会自动为你生成场景图</strong>，你也可以在这里提前上传自己的场景照片。
-                    </div>
-                  )}
                   {flowStep === 1 && <FlowNextBtn label="已上传，下一步" onClick={() => setFlowStep(2)} disabled={!front.url || front.uploading} />}
                 </FlowStepCard>
               </AgentRow>
