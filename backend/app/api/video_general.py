@@ -650,6 +650,7 @@ async def script_to_video_submit(
     # 解析脚本
     scenes = parse_script(body.script)
     if not scenes:
+        log_error(f"脚本解析失败 user={current_user['id']} script_head={body.script[:200]!r}")
         raise HTTPException(400, "脚本解析失败，未找到有效分镜。请确认脚本格式包含 [镜头X]：时间范围 |...")
 
     # 按批处理分组估算积分（同 skill_generate 逻辑）

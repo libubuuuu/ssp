@@ -218,7 +218,12 @@ export default function VideoGeneralPage() {
 
   useEffect(() => {
     if (flowStep > 1) setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 200);
+    setError("");
   }, [flowStep]);
+
+  useEffect(() => {
+    setError("");
+  }, [tab]);
 
   // 入口A 专用：参考视频
   const [refVid, setRefVid] = useState<{ file: File | null; uploading: boolean; url: string }>({ file: null, uploading: false, url: "" });
