@@ -31,6 +31,7 @@ async def run_trend_update() -> int:
     # 清理 7 天前的旧数据
     with get_db() as conn:
         conn.execute("DELETE FROM trend_cache WHERE created_at < datetime('now', '-7 days')")
+        conn.commit()
 
     success = 0
     for item in SEARCH_QUERIES:
@@ -47,6 +48,7 @@ async def run_trend_update() -> int:
                         "INSERT INTO trend_cache (platform, category, content, source) VALUES (?, ?, ?, ?)",
                         (item["platform"], item["category"], content, "gpt-4o-search-preview"),
                     )
+                    conn.commit()
                 success += 1
                 log_info(f"trend_updater: {item['platform']}/{item['category']} 更新成功 len={len(content)}")
         except Exception as e:
