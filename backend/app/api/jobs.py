@@ -5185,9 +5185,11 @@ async def _run_script_to_video_job(params: dict) -> dict:
     if not product_urls:
         raise RuntimeError("product_image_urls 必填")
 
-    # 从脚本提取 [模特] 描述
+    # 从脚本提取 [模特] 和 [环境] 描述
     _m = _re.search(r'\[模特\][：:]\s*(.+?)(?:\n|\[)', script_text + "\n[", _re.DOTALL)
     model_desc = _m.group(1).strip() if _m else ""
+    _e = _re.search(r'\[环境\][：:]\s*(.+?)(?:\n|\[)', script_text + "\n[", _re.DOTALL)
+    scene_environment = _e.group(1).strip() if _e else ""
 
     # 基础 image_urls（产品图 + 模特图 + 场景图）
     base_imgs = list(product_urls[:9])
@@ -5211,11 +5213,11 @@ async def _run_script_to_video_job(params: dict) -> dict:
     # 总时长
     total_dur_all = sum(float(s.get("duration_sec") or 4) for s in scenes)
 
-    # 批处理上限（DB，默认 8s）
+    # 批处理上限（DB，默认 15s）
     try:
-        _batch_max = float(_get_app_config("batch_max_duration", "8"))
+        _batch_max = float(_get_app_config("batch_max_duration", "15"))
     except Exception:
-        _batch_max = 8.0
+        _batch_max = 15.0
 
     work_dir = _tmp.mkdtemp(prefix="script_to_video_")
     t0 = _t.time()
@@ -5386,10 +5388,15 @@ async def _run_script_to_video_job(params: dict) -> dict:
                 "IMPORTANT: Maintain the exact same model appearance as shown in the face reference image throughout all shots. "
                 if portrait_url else ""
             )
+            env_line = (
+                f"CRITICAL: This scene MUST take place in {scene_environment}. "
+                f"Do NOT use a plain white/studio background. "
+                if scene_environment else ""
+            )
             prompt = (
                 f"@Image1 defines the EXACT visual appearance (colors, outfit, products) "
                 f"that MUST be preserved throughout. {ref_tags} "
-                f"{model_line}{portrait_line}"
+                f"{model_line}{portrait_line}{env_line}"
                 f"Generate a {req_dur}-second continuous video: {combined}. "
                 f"CRITICAL: Strictly match all visual details from @Image1. "
                 f"Ignore any color words in the description — use ONLY what @Image1 shows."
@@ -5515,22 +5522,26 @@ async def _run_script_to_video_job(params: dict) -> dict:
                 all_clips.append((global_idx, clip))
                 offset += target; global_idx += 1
 
-        # ── concat ──────────────────────────────────────────────────────────
+        # ── concat（单 clip 直接复用，跳过 concat）────────────────────────
         all_clips.sort(key=lambda x: x[0])
-        list_path = _os.path.join(work_dir, "concat.txt")
-        with open(list_path, "w") as f:
-            for _, p in all_clips: f.write(f"file '{p}'\n")
         final = _os.path.join(work_dir, "final.mp4")
-        rr = _sp.run(
-            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
-             "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
-             "-c:a", "aac", "-b:a", "128k",  # 保留音轨
-             final],
-            capture_output=True, text=True, timeout=180,
-        )
-        if rr.returncode != 0 or not _os.path.exists(final):
-            raise RuntimeError(f"concat 失败: {rr.stderr[-300:]}")
-        log_info(f"script_to_video concat 完成 {_os.path.getsize(final)} bytes")
+        if len(all_clips) == 1:
+            _shutil.copy2(all_clips[0][1], final)
+            log_info(f"script_to_video 单clip直接输出 {_os.path.getsize(final)} bytes")
+        else:
+            list_path = _os.path.join(work_dir, "concat.txt")
+            with open(list_path, "w") as f:
+                for _, p in all_clips: f.write(f"file '{p}'\n")
+            rr = _sp.run(
+                ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+                 "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+                 "-c:a", "aac", "-b:a", "128k",  # 保留音轨
+                 final],
+                capture_output=True, text=True, timeout=180,
+            )
+            if rr.returncode != 0 or not _os.path.exists(final):
+                raise RuntimeError(f"concat 失败: {rr.stderr[-300:]}")
+            log_info(f"script_to_video concat 完成 {_os.path.getsize(final)} bytes")
 
         # 先上传 480p 成品
         video_url_out = await fal_upload_with_retry(final)

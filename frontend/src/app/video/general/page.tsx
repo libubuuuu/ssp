@@ -411,7 +411,15 @@ export default function VideoGeneralPage() {
         review: d.review || undefined,
       };
       setChatMsgs(prev => [...prev, assistantMsg]);
-      if (d.script) { setChatScript(d.script); setChatCopy(null); }
+      if (d.script) {
+        setChatScript(d.script);
+        setChatCopy(null);
+        // 从脚本时序自动解析总时长，同步 duration state，确保生成视频时传正确的 target_duration
+        const _times: number[] = [];
+        for (const _m of d.script.matchAll(/(\d+)-(\d+)s/g)) _times.push(parseInt(_m[2]));
+        const _parsed = _times.length > 0 ? Math.max(..._times) : 0;
+        if (_parsed > 0) setDuration(_parsed);
+      }
       if (d.need_contrast_image) setChatNeedsContrast(true);
       if (d.copy) setChatCopy(d.copy);
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
