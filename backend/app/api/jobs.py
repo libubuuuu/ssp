@@ -5471,11 +5471,15 @@ async def _run_script_to_video_job(params: dict) -> dict:
                 f"Do NOT use a plain white/studio background. "
                 if scene_environment else ""
             )
+            _scene_descriptions = " → ".join(
+                s.get("visual_prompt", "") for s in task["scenes"] if s.get("visual_prompt")
+            )
             prompt = (
                 f"@Image1 defines the EXACT visual appearance (colors, outfit, products) "
                 f"that MUST be preserved throughout. {ref_tags} "
                 f"{model_line}{portrait_line}{env_line}"
                 f"Generate a {req_dur}-second continuous video: {combined}. "
+                f"Scene action sequence: {_scene_descriptions}. "
                 f"CRITICAL: Strictly match all visual details from @Image1. "
                 f"Ignore any color words in the description — use ONLY what @Image1 shows."
                 f"{NO_TEXT}"
