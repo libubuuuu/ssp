@@ -734,7 +734,7 @@ export default function VideoGeneralPage() {
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "#edeae4", fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" }}>
       <Sidebar />
-      <main style={{ flex: 1, overflowY: "auto", maxWidth: 760, width: "100%", margin: "0 auto", padding: "0 1.5rem 3rem" }}>
+      <main style={{ flex: 1, overflowY: "auto", maxWidth: 760, width: "100%", margin: "0 auto", padding: "0 1.5rem 5rem" }}>
 
         {/* ── 页面标题 ── */}
         <div style={{ padding: "1.8rem 0 0.5rem" }}>
@@ -1507,7 +1507,7 @@ export default function VideoGeneralPage() {
             </div>
 
             {/* ── 底部固定输入栏（仅AI导师模式激活） ── */}
-            <div style={{ position: "sticky", bottom: 0, background: "#edeae4", borderTop: "1px solid #e2e8f0", padding: "0.7rem 1.5rem", margin: "0 -1.5rem" }}>
+            <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "#edeae4", borderTop: "1px solid #e2e8f0", padding: "0.7rem 1.5rem", zIndex: 100 }}>
               {chatPendingImages.length > 0 && (
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
                   {chatPendingImages.map((url, i) => (
