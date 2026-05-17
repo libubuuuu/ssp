@@ -1282,37 +1282,11 @@ async def chat_with_mentor(
     if s_match:
         script = s_match.group(1).strip()
 
-    # ── 审稿员 ────────────────────────────────────────────────────
+    # ── 审稿员：每次有新脚本就审查，不自动修改，由用户决定 ──────────
     review_data = None
     if script:
         review_data = await _call_reviewer(client, script)
-        if review_data["score"] > 0 and review_data["score"] < 40:
-            # 自动修改：追加审稿意见，重新调林久
-            revision_messages = openai_messages + [
-                {"role": "assistant", "content": reply_text},
-                {
-                    "role": "user",
-                    "content": (
-                        f"审稿专家评分{review_data['score']}/60，请根据以下改进建议重新修改脚本：\n"
-                        f"{review_data['suggestions']}"
-                    ),
-                },
-            ]
-            try:
-                resp2 = await client.chat.completions.create(
-                    model=s.LINGMENG_MODEL,
-                    messages=revision_messages,
-                    max_tokens=4096,
-                    temperature=0.8,
-                )
-                reply_text = resp2.choices[0].message.content or ""
-                s_match2 = _re_chat.search(r"===SCRIPT_START===\s*([\s\S]+?)\s*===SCRIPT_END===", reply_text)
-                if s_match2:
-                    script = s_match2.group(1).strip()
-                review_data = await _call_reviewer(client, script)
-                log_info(f"审稿员触发修改 user={user_id} new_score={review_data['score']}")
-            except Exception as e:
-                log_error(f"林久修改脚本失败 user={user_id}: {e}")
+        log_info(f"审稿员评分 user={user_id} score={review_data.get('score', 0)}")
 
     # ── 文案师 ────────────────────────────────────────────────────
     copy_data = None

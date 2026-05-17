@@ -253,7 +253,7 @@ export default function VideoGeneralPage() {
 
   // Chat mode state
   type ChatQuestion = { question: string; description: string; options: string[]; allow_custom: boolean };
-  type ChatMsg = { role: "user" | "assistant"; content: string; images?: string[]; questions?: ChatQuestion[]; searchResult?: string };
+  type ChatMsg = { role: "user" | "assistant"; content: string; images?: string[]; questions?: ChatQuestion[]; searchResult?: string; review?: ChatReview };
   const [chatMsgs, setChatMsgs]           = useState<ChatMsg[]>([]);
   const [chatInput, setChatInput]         = useState("");
   const [chatLoading, setChatLoading]     = useState(false);
@@ -269,9 +269,8 @@ export default function VideoGeneralPage() {
   // 多角色 AI 附加数据
   type ChatReview = { score: number; details: string; suggestions: string };
   type ChatCopy   = { title: string; description: string; hashtags: string[]; best_time: string };
-  const [chatReview, setChatReview]             = useState<ChatReview | null>(null);
   const [chatCopy, setChatCopy]                 = useState<ChatCopy | null>(null);
-  const [chatReviewExpanded, setChatReviewExpanded] = useState(false);
+  const [chatReviewExpanded, setChatReviewExpanded] = useState<Record<number, boolean>>({});
   const [chatCopyCopied, setChatCopyCopied]     = useState("");
 
   // Step 5 - video generation
@@ -409,11 +408,11 @@ export default function VideoGeneralPage() {
         content: d.reply || "",
         questions: d.questions?.length ? d.questions : undefined,
         searchResult: d.search_result || undefined,
+        review: d.review || undefined,
       };
       setChatMsgs(prev => [...prev, assistantMsg]);
-      if (d.script) { setChatScript(d.script); setChatReview(null); setChatCopy(null); setChatReviewExpanded(false); }
+      if (d.script) { setChatScript(d.script); setChatCopy(null); }
       if (d.need_contrast_image) setChatNeedsContrast(true);
-      if (d.review) setChatReview(d.review);
       if (d.copy) setChatCopy(d.copy);
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     } catch (e) {
@@ -1045,6 +1044,35 @@ export default function VideoGeneralPage() {
                               })()}
                             </div>
                           </AgentRow>
+                          {/* 审稿专家 — 每条有 review 的消息独立显示 */}
+                          {m.review && (() => {
+                            const rv = m.review!;
+                            const s = rv.score;
+                            const clr = s >= 50 ? "#16a34a" : s >= 40 ? "#d97706" : "#dc2626";
+                            const bg  = s >= 50 ? "#f0fdf4" : s >= 40 ? "#fefce8" : "#fef2f2";
+                            const bdr = s >= 50 ? "#86efac" : s >= 40 ? "#fde68a" : "#fca5a5";
+                            const expanded = chatReviewExpanded[msgIdx] ?? false;
+                            return (
+                              <AgentRow sender="reviewer">
+                                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                  <FlowBubble>让我来审查一下这个脚本… 🔍</FlowBubble>
+                                  <div style={{ border: `1px solid ${bdr}`, borderRadius: 10, overflow: "hidden" }}>
+                                    <div style={{ padding: "0.55rem 0.85rem", background: bg, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}
+                                      onClick={() => setChatReviewExpanded(prev => ({ ...prev, [msgIdx]: !expanded }))}>
+                                      <span style={{ fontWeight: 700, fontSize: "0.82rem", color: clr }}>{s >= 50 ? "✅" : s >= 40 ? "⚠️" : "❌"} 审稿评分：{s}/60</span>
+                                      <span style={{ fontSize: "0.72rem", color: clr }}>{expanded ? "▲ 收起" : "▼ 展开"}</span>
+                                    </div>
+                                    {expanded && (
+                                      <div style={{ padding: "0.75rem 0.85rem", background: "#fff", fontSize: "0.78rem", color: "#374151", lineHeight: 1.6 }}>
+                                        <div style={{ whiteSpace: "pre-wrap", marginBottom: rv.suggestions ? 8 : 0 }}>{rv.details}</div>
+                                        {rv.suggestions && <div style={{ borderTop: "1px solid #f3f4f6", paddingTop: 8, color: "#6b7280", whiteSpace: "pre-wrap" }}>{rv.suggestions}</div>}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </AgentRow>
+                            );
+                          })()}
                         </>
                       )}
                     </div>
@@ -1068,35 +1096,6 @@ export default function VideoGeneralPage() {
                         <ScriptDisplay text={chatScript} />
                         <ContrastUploadHint scriptText={chatScript} />
                       </div>
-                    </AgentRow>
-                  )}
-
-                  {/* 审稿专家 */}
-                  {chatReview && (
-                    <AgentRow sender="reviewer">
-                      {(() => {
-                        const s = chatReview.score;
-                        const clr = s >= 50 ? "#16a34a" : s >= 40 ? "#d97706" : "#dc2626";
-                        const bg  = s >= 50 ? "#f0fdf4" : s >= 40 ? "#fefce8" : "#fef2f2";
-                        const bdr = s >= 50 ? "#86efac" : s >= 40 ? "#fde68a" : "#fca5a5";
-                        return (
-                          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                            <FlowBubble>让我来审查一下这个脚本… 🔍</FlowBubble>
-                            <div style={{ border: `1px solid ${bdr}`, borderRadius: 10, overflow: "hidden" }}>
-                              <div style={{ padding: "0.55rem 0.85rem", background: bg, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }} onClick={() => setChatReviewExpanded(p => !p)}>
-                                <span style={{ fontWeight: 700, fontSize: "0.82rem", color: clr }}>{s >= 50 ? "✅" : s >= 40 ? "⚠️" : "❌"} 审稿评分：{s}/60</span>
-                                <span style={{ fontSize: "0.72rem", color: clr }}>{chatReviewExpanded ? "▲ 收起" : "▼ 展开"}</span>
-                              </div>
-                              {chatReviewExpanded && (
-                                <div style={{ padding: "0.75rem 0.85rem", background: "#fff", fontSize: "0.78rem", color: "#374151", lineHeight: 1.6 }}>
-                                  <div style={{ whiteSpace: "pre-wrap", marginBottom: chatReview.suggestions ? 8 : 0 }}>{chatReview.details}</div>
-                                  {chatReview.suggestions && <div style={{ borderTop: "1px solid #f3f4f6", paddingTop: 8, color: "#6b7280", whiteSpace: "pre-wrap" }}>{chatReview.suggestions}</div>}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })()}
                     </AgentRow>
                   )}
 
