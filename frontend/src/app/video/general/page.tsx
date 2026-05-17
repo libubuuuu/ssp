@@ -283,27 +283,6 @@ export default function VideoGeneralPage() {
   const [sceneAutoEditInput, setSceneAutoEditInput] = useState("");
 
   // ── 脚本生成后自动触发场景图生成（必须在所有 state 之后定义，避免 TDZ）──
-  const _triggerSceneGen = (scriptText: string) => {
-    if (scene.url) return;
-    const m = scriptText.match(/\[环境\][：:]\s*(.+?)(?:\n|\[|$)/s);
-    const desc = (m ? m[1].trim() : "") || "Modern clean indoor room, natural soft lighting, minimalist decor";
-    if (desc === _lastAutoSceneDesc.current) return;
-    _lastAutoSceneDesc.current = desc;
-    setSceneAutoDesc(desc); setSceneAutoEditInput(desc);
-    setSceneAutoPreview(""); setSceneAutoConfirmed(false); setSceneAutoEditMode(false);
-    setSceneAutoLoading(true);
-    fetch(`${API_BASE}/api/video/general/generate-scene`, {
-      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
-      body: JSON.stringify({ description: desc, orientation: "portrait" }),
-    }).then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.scene_image_url) setSceneAutoPreview(d.scene_image_url); })
-      .catch(() => {})
-      .finally(() => setSceneAutoLoading(false));
-  };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (chatScript) _triggerSceneGen(chatScript); }, [chatScript]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (script && scriptMode !== "chat") _triggerSceneGen(script); }, [script]);
 
   // Step 5 - video generation
   const [vidLoading, setVidLoading] = useState(false);
@@ -413,6 +392,10 @@ export default function VideoGeneralPage() {
   // ── AI导师对话发送 ─────────────────────────────────────────────────────────
   const sendChatMessage = useCallback(async (msgText?: string, msgImages?: string[]) => {
     const text = (msgText ?? chatInput).trim();
+    // 从用户回答提取时长并同步 duration state
+    if (text.includes("10秒") || text.includes("10 秒")) setDuration(10);
+    else if (text.includes("15秒") || text.includes("15 秒")) setDuration(15);
+    else if (text.includes("30秒") || text.includes("30 秒")) setDuration(30);
     const images = msgImages ?? (chatPendingImages.length ? [...chatPendingImages] : undefined);
     if (!text && !images?.length) return;
     const newMsg: ChatMsg = { role: "user", content: text, images };
@@ -446,11 +429,26 @@ export default function VideoGeneralPage() {
       if (d.script) {
         setChatScript(d.script);
         setChatCopy(null);
-        // 从脚本时序自动解析总时长，同步 duration state，确保生成视频时传正确的 target_duration
+        // 解析脚本总时长
         const _times: number[] = [];
         for (const _m of d.script.matchAll(/(\d+)-(\d+)s/g)) _times.push(parseInt(_m[2]));
         const _parsed = _times.length > 0 ? Math.max(..._times) : 0;
         if (_parsed > 0) setDuration(_parsed);
+        // 直接触发场景图生成（不用 useEffect，避免闭包问题）
+        if (!scene.url) {
+          const _envMatch = d.script.match(/\[环境\][：:]\s*(.+?)(?:\n|\[|$)/s);
+          const _envDesc = (_envMatch ? _envMatch[1].trim() : "") || "Modern clean indoor room, natural soft lighting, minimalist decor";
+          _lastAutoSceneDesc.current = _envDesc;
+          setSceneAutoDesc(_envDesc); setSceneAutoEditInput(_envDesc);
+          setSceneAutoLoading(true); setSceneAutoPreview(""); setSceneAutoConfirmed(false); setSceneAutoEditMode(false);
+          fetch(`${API_BASE}/api/video/general/generate-scene`, {
+            method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+            body: JSON.stringify({ description: _envDesc, orientation: "portrait" }),
+          }).then(r => r.ok ? r.json() : null)
+            .then(d2 => { if (d2?.scene_image_url) setSceneAutoPreview(d2.scene_image_url); })
+            .catch(() => {})
+            .finally(() => setSceneAutoLoading(false));
+        }
       }
       if (d.need_contrast_image) setChatNeedsContrast(true);
       if (d.copy) setChatCopy(d.copy);
@@ -460,7 +458,7 @@ export default function VideoGeneralPage() {
     } finally {
       setChatLoading(false);
     }
-  }, [chatInput, chatMsgs, chatPendingImages, front.url, back.url, rear.url, market, duration]);
+  }, [chatInput, chatMsgs, chatPendingImages, front.url, back.url, rear.url, market, duration, scene.url]);
 
   // ── 检测脚本里是否含对比关键词（决定是否显示对比图上传）──────────────────
   const _CONTRAST_KW = ["旧", "老款", "之前", "原来", "以前", "对比", "竞品", "old", "previous", "used to", "regular", "normal", "换上", "换了", "before", "instead"];

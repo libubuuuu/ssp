@@ -1253,21 +1253,21 @@ async def chat_with_mentor(
 
     # ── 小李·趋势研究员 ──────────────────────────────────────────
     search_result = None
-    platform, category = _detect_platform_and_category(body.messages)
-    if platform and category and not _xiaoli_already_searched(body.messages):
-        raw = await _call_xiaoli_search(client, platform, category)
+    _, category = _detect_platform_and_category(body.messages)
+    _mkt_map = {"欧美": "TikTok", "日韩": "TikTok", "东南亚": "TikTok", "中国": "抖音", "中国大陆": "抖音"}
+    detected_platform = _mkt_map.get(body.market, "TikTok")
+    _xiaoli_category = category or "fashion product"
+    # 第2轮对话起触发小李搜索（不依赖关键词检测）
+    if len(body.messages) >= 2 and not _xiaoli_already_searched(body.messages):
+        raw = await _call_xiaoli_search(client, detected_platform, _xiaoli_category)
         if raw:
             search_result = raw
             sys_prompt += (
-                f"\n\n[小李趋势研究员实时搜索 — 平台:{platform} 品类:{category}]\n"
+                f"\n\n[小李趋势研究员实时搜索 — 平台:{detected_platform} 品类:{_xiaoli_category}]\n"
                 f"{raw}\n"
                 "[请将以上最新趋势融入你的建议和脚本中]"
             )
-            log_info(f"小李搜索完成 user={user_id} platform={platform} category={category}")
-
-    # 文案师触发检测（在本次调用前检查历史里已有脚本+用户确认）
-    trigger_copywriter = _should_trigger_copywriter(body.messages)
-    detected_platform = platform or body.market or "抖音"
+            log_info(f"小李搜索完成 user={user_id} platform={detected_platform} category={_xiaoli_category}")
 
     # ── 构建多轮对话消息 ──────────────────────────────────────────
     openai_messages = [{"role": "system", "content": sys_prompt}]
@@ -1341,13 +1341,11 @@ async def chat_with_mentor(
         review_data = await _call_reviewer(client, script)
         log_info(f"审稿员评分 user={user_id} score={review_data.get('score', 0)}")
 
-    # ── 文案师 ────────────────────────────────────────────────────
+    # ── 文案师（有脚本就同步出文案，不等用户确认）────────────────
     copy_data = None
-    if trigger_copywriter:
-        script_for_copy = script or _script_in_history(body.messages)
-        if script_for_copy:
-            copy_data = await _call_copywriter(client, script_for_copy, detected_platform)
-            log_info(f"文案师完成 user={user_id}")
+    if script:
+        copy_data = await _call_copywriter(client, script, detected_platform)
+        log_info(f"文案师完成 user={user_id}")
 
     # 提取结构化问题
     questions = []
