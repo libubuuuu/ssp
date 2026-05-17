@@ -625,7 +625,7 @@ class ScriptToVideoRequest(BaseModel):
     model_source: str = Field("auto", description="'auto' / 'image' / 'video'")
     aspect_ratio: str = Field("9:16")
     ref_video_url: Optional[str] = Field(None, description="入口A参考视频URL（可选，Seedance 60% 折扣）")
-    resolution: str = Field("480p", description="输出分辨率：'480p' / '1080p' / '4k'")
+    resolution: str = Field("1080p", description="输出分辨率：'1080p' / '2k' / '4k'")
     contrast_image_url: Optional[str] = Field(None, description="对比产品图URL（起/承阶段用，可选）")
     enable_voice: bool = Field(True, description="是否开启TTS+Lipsync")
     target_duration: int = Field(15, ge=5, le=120, description="目标视频总时长（秒），用于校准分镜时长")
@@ -677,7 +677,7 @@ async def script_to_video_submit(
     cost = max(65, billing_sec * 65)
 
     # 分辨率附加费
-    _RESOLUTION_SURCHARGE = {"480p": 0, "1080p": 10, "4k": 50}
+    _RESOLUTION_SURCHARGE = {"1080p": 0, "2k": 20, "4k": 50}
     cost += _RESOLUTION_SURCHARGE.get(body.resolution, 0)
 
     user_id = str(current_user["id"])

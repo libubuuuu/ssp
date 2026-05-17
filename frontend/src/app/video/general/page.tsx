@@ -275,7 +275,7 @@ export default function VideoGeneralPage() {
   const [duration, setDuration]     = useState(15);
   const [market, setMarket]         = useState("欧美");
   const [userIdea, setUserIdea]     = useState("");
-  const [resolution, setResolution]       = useState("480p");
+  const [resolution, setResolution]       = useState("1080p");
   const [contrastImg, setContrastImg]     = useState<ImgSlot>(emptySlot());
   const [enableVoice, setEnableVoice]     = useState(true);
   const [targetLang, setTargetLang]       = useState("en");  // 目标语言代码
@@ -298,7 +298,7 @@ export default function VideoGeneralPage() {
   const [chatPendingImages, setChatPendingImages] = useState<string[]>([]);  // 待发送图片URL列表
   const [chatImgUploading, setChatImgUploading]   = useState(false);
   const [chatShowParams, setChatShowParams]       = useState(false);  // 确认脚本后显示参数面板
-  const [chatResolution, setChatResolution]       = useState("480p");
+  const [chatResolution, setChatResolution]       = useState("1080p");
   const [chatEnableVoice, setChatEnableVoice]     = useState(true);
   // 多角色 AI 附加数据
   type ChatReview = { score: number; details: string; suggestions: string };
@@ -864,9 +864,9 @@ export default function VideoGeneralPage() {
                   <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>分辨率</div>
                   <select value={resolution} onChange={e => setResolution(e.target.value)}
                     style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
-                    <option value="480p">480p（标准）不加价</option>
-                    <option value="1080p">1080p（高清）+10积分</option>
-                    <option value="4k">4K（超清）+50积分</option>
+                    <option value="1080p">1080P（高清）</option>
+                    <option value="2k">2K（超清）+20积分</option>
+                    <option value="4k">4K（极清）+50积分</option>
                   </select>
                 </div>
               </div>
@@ -1066,8 +1066,8 @@ export default function VideoGeneralPage() {
                             <div>
                               <div style={{ fontSize: "0.72rem", color: "#718096", marginBottom: 5 }}>分辨率</div>
                               <select value={resolution} onChange={e => setResolution(e.target.value)} style={{ padding: "0.45rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c" }}>
-                                <option value="480p">480p 标准</option>
-                                <option value="1080p">1080p +10分</option>
+                                <option value="1080p">1080P（高清）</option>
+                                <option value="2k">2K +20分</option>
                                 <option value="4k">4K +50分</option>
                               </select>
                             </div>
@@ -1312,9 +1312,9 @@ export default function VideoGeneralPage() {
                             <div style={{ fontSize: "0.72rem", color: "#718096", marginBottom: 6 }}>分辨率</div>
                             <select value={chatResolution} onChange={e => setChatResolution(e.target.value)}
                               style={{ width: "100%", padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c" }}>
-                              <option value="480p">480p（标准）不加价</option>
-                              <option value="1080p">1080p（高清）+10积分</option>
-                              <option value="4k">4K（超清）+50积分</option>
+                              <option value="1080p">1080P（高清）</option>
+                              <option value="2k">2K（超清）+20积分</option>
+                              <option value="4k">4K（极清）+50积分</option>
                             </select>
                           </div>
                           <div style={{ marginBottom: 14 }}>

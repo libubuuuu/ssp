@@ -5581,25 +5581,24 @@ async def _run_script_to_video_job(params: dict) -> dict:
         # 先上传 480p 成品
         video_url_out = await fal_upload_with_retry(final)
 
-        # ── Upscale 先做（静音视频放大，不会丢音轨）──────────────────────────────
-        if resolution != "480p":
-            try:
-                log_info(f"script_to_video upscale 开始 resolution={resolution} input={video_url_out[:60]}")
-                upscale_result = await _fal.subscribe_async(
-                    "fal-ai/bytedance-upscaler/upscale/video",
-                    arguments={"video_url": video_url_out, "resolution": resolution},
-                )
-                upscaled_url = None
-                if isinstance(upscale_result, dict):
-                    _v2 = upscale_result.get("video") or {}
-                    upscaled_url = (_v2.get("url") if isinstance(_v2, dict) else None) or upscale_result.get("video_url")
-                if upscaled_url:
-                    video_url_out = upscaled_url
-                    log_info(f"script_to_video upscale 完成 {resolution} url={upscaled_url[:80]}")
-                else:
-                    log_error("script_to_video upscale 返回无 URL，保留 480p 成品")
-            except Exception as _ue:
-                log_error(f"script_to_video upscale 失败（保留 480p）: {_ue}")
+        # ── Upscale（无条件执行，lipsync 需高分辨率输入）──────────────────────────
+        try:
+            log_info(f"script_to_video upscale 开始 resolution={resolution} input={video_url_out[:60]}")
+            upscale_result = await _fal.subscribe_async(
+                "fal-ai/bytedance-upscaler/upscale/video",
+                arguments={"video_url": video_url_out, "target_resolution": resolution},
+            )
+            upscaled_url = None
+            if isinstance(upscale_result, dict):
+                _v2 = upscale_result.get("video") or {}
+                upscaled_url = (_v2.get("url") if isinstance(_v2, dict) else None) or upscale_result.get("video_url")
+            if upscaled_url:
+                video_url_out = upscaled_url
+                log_info(f"script_to_video upscale 完成 {resolution} url={upscaled_url[:80]}")
+            else:
+                log_error("script_to_video upscale 返回无 URL，保留原始成品")
+        except Exception as _ue:
+            log_error(f"script_to_video upscale 失败（保留原始成品）: {_ue}")
 
         # ── Lipsync：await 并行TTS结果 → 对齐口型（音频加在放大后的视频上）──────
         if not enable_voice:
