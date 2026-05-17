@@ -1198,6 +1198,10 @@ async def _call_reviewer(client, script: str) -> dict:
 _LANG_NAMES = {
     "en": "English", "zh": "中文", "ja": "日本語",
     "ko": "한국어", "es": "Español", "pt": "Português", "ar": "العربية",
+    "fr": "Français", "de": "Deutsch", "it": "Italiano",
+    "th": "ไทย", "vi": "Tiếng Việt", "id": "Bahasa Indonesia",
+    "ms": "Bahasa Melayu", "tr": "Türkçe", "ru": "Русский",
+    "pl": "Polski", "nl": "Nederlands", "hi": "हिन्दी",
 }
 
 

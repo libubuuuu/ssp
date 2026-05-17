@@ -195,6 +195,29 @@ function FlowNextBtn({ label, onClick, disabled }: { label: string; onClick: () 
 type Tab = "replicate" | "ai_video";
 type ModelSrc = "auto" | "image" | "video";
 const MARKETS = ["欧美", "东南亚", "日韩", "中国"];
+const LANG_OPTIONS = (
+  <>
+    <option value="en">English（英语）</option>
+    <option value="zh">中文</option>
+    <option value="ja">日本語（日语）</option>
+    <option value="ko">한국어（韩语）</option>
+    <option value="es">Español（西班牙语）</option>
+    <option value="pt">Português（葡萄牙语）</option>
+    <option value="ar">العربية（阿拉伯语）</option>
+    <option value="fr">Français（法语）</option>
+    <option value="de">Deutsch（德语）</option>
+    <option value="it">Italiano（意大利语）</option>
+    <option value="th">ไทย（泰语）</option>
+    <option value="vi">Tiếng Việt（越南语）</option>
+    <option value="id">Bahasa Indonesia（印尼语）</option>
+    <option value="ms">Bahasa Melayu（马来语）</option>
+    <option value="tr">Türkçe（土耳其语）</option>
+    <option value="ru">Русский（俄语）</option>
+    <option value="pl">Polski（波兰语）</option>
+    <option value="nl">Nederlands（荷兰语）</option>
+    <option value="hi">हिन्दी（印地语）</option>
+  </>
+);
 
 const REPLICATE_WHITELIST = ["lirunting1a@gmail.com"];
 
@@ -834,13 +857,7 @@ export default function VideoGeneralPage() {
                   <div style={{ fontSize: "0.72rem", color: "#718096", marginBottom: 5 }}>目标语言</div>
                   <select value={targetLang} onChange={e => setTargetLang(e.target.value)}
                     style={{ padding: "0.45rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c" }}>
-                    <option value="en">English（英语）</option>
-                    <option value="zh">中文</option>
-                    <option value="ja">日本語（日语）</option>
-                    <option value="ko">한국어（韩语）</option>
-                    <option value="es">Español（西班牙语）</option>
-                    <option value="pt">Português（葡萄牙语）</option>
-                    <option value="ar">العربية（阿拉伯语）</option>
+                    {LANG_OPTIONS}
                   </select>
                 </div>
                 <div>
@@ -1074,13 +1091,7 @@ export default function VideoGeneralPage() {
                           <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 6 }}>目标语言（决定脚本台词语言）</div>
                           <select value={targetLang} onChange={e => setTargetLang(e.target.value)}
                             style={{ padding: "0.45rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c" }}>
-                            <option value="en">English（英语）</option>
-                            <option value="zh">中文</option>
-                            <option value="ja">日本語（日语）</option>
-                            <option value="ko">한국어（韩语）</option>
-                            <option value="es">Español（西班牙语）</option>
-                            <option value="pt">Português（葡萄牙语）</option>
-                            <option value="ar">العربية（阿拉伯语）</option>
+                            {LANG_OPTIONS}
                           </select>
                         </div>
                       )}
@@ -1310,13 +1321,7 @@ export default function VideoGeneralPage() {
                             <div style={{ fontSize: "0.72rem", color: "#718096", marginBottom: 6 }}>目标语言</div>
                             <select value={targetLang} onChange={e => setTargetLang(e.target.value)}
                               style={{ width: "100%", padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c" }}>
-                              <option value="en">English（英语）</option>
-                              <option value="zh">中文</option>
-                              <option value="ja">日本語（日语）</option>
-                              <option value="ko">한국어（韩语）</option>
-                              <option value="es">Español（西班牙语）</option>
-                              <option value="pt">Português（葡萄牙语）</option>
-                              <option value="ar">العربية（阿拉伯语）</option>
+                              {LANG_OPTIONS}
                             </select>
                           </div>
                           <div style={{ display: "flex", gap: 8 }}>

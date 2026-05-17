@@ -5201,6 +5201,18 @@ async def _run_script_to_video_job(params: dict) -> dict:
         "es": "Latin American",
         "pt": "Latin American",
         "ar": "Middle Eastern",
+        "fr": "Western European French",
+        "de": "Western European German",
+        "it": "Southern European Italian",
+        "th": "Southeast Asian Thai",
+        "vi": "Southeast Asian Vietnamese",
+        "id": "Southeast Asian Indonesian",
+        "ms": "Southeast Asian Malay",
+        "tr": "Middle Eastern Turkish",
+        "ru": "Eastern European Russian",
+        "pl": "Eastern European Polish",
+        "nl": "Western European Dutch",
+        "hi": "South Asian Indian",
     }
     _ETHNICITY_KWS = [
         "caucasian", "asian", "chinese", "japanese", "korean", "latin",
