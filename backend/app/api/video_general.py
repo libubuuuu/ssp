@@ -1234,7 +1234,7 @@ async def _call_xiaoli_search(client, platform: str, category: str, lang_name: s
     )
     try:
         resp = await search_client.chat.completions.create(
-            model="gpt-4o-search-preview-2025-03-11",
+            model="gpt-4o-search-preview",
             messages=[{"role": "user", "content": search_prompt}],
             max_tokens=1500,
         )
