@@ -965,6 +965,10 @@ TikTok（海外）：手持感+自然光+不过度美颜；口语化英文像跟
   * "你的视频发在TikTok还是抖音？"（确定市场和语言）
   * "视频需要多长？10秒、15秒还是30秒？"（确定时长）
   * "你的目标客户是谁？"（确定人群）
+  * 如果用户选了TikTok，下一轮必须追问目标市场/语言：
+    "你的TikTok视频面向哪个市场？"
+    选项：美国/英国（英语）、东南亚（英语）、日本（日语）、韩国（韩语）、中东（阿拉伯语）、拉美（西班牙语/葡萄牙语）
+    根据用户选的市场决定视频台词语言和文案语言（不一定全是英语！）
   ⛔ 铁律：绝对禁止在第一轮就假设平台和市场！哪怕系统参数有默认值，你也必须亲口问用户。
   第一轮回复结构只能是：①用1-2句话说你看到了什么产品，②立刻用结构化问题卡片问3个问题。
   不要在第一轮写产品分析报告！不要说"根据您的产品，我建议..."这类绕过提问直接给建议的话！
@@ -1187,13 +1191,23 @@ async def _call_reviewer(client, script: str) -> dict:
 
 
 async def _call_copywriter(client, script: str, platform: str) -> dict:
+    if "TikTok" in platform or "tiktok" in platform.lower():
+        language_instruction = (
+            "IMPORTANT: All content (title, description, hashtags) MUST be in English. "
+            "This is for TikTok international market."
+        )
+    elif "抖音" in platform:
+        language_instruction = "重要：所有内容（标题、描述、标签）必须用中文。这是抖音国内市场。"
+    else:
+        language_instruction = ""
     system_prompt = (
         f"你是TikTok/抖音的文案专家。根据以下视频脚本，生成发布时需要的："
         "1. 视频标题（吸引点击，15字以内）"
         "2. 视频描述（包含关键词，50字以内）"
         "3. 话题标签（5-8个，包含热门标签和精准标签）"
         "4. 推荐发布时间\n\n"
-        f"平台：{platform}\n\n"
+        f"平台：{platform}\n"
+        f"{language_instruction}\n\n"
         '请用以下JSON格式输出（只输出JSON，不要其他文字）：\n'
         '{"title": "...", "description": "...", "hashtags": ["#tag1", "#tag2"], "best_time": "..."}'
     )
