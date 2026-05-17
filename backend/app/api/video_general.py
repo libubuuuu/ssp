@@ -1203,27 +1203,39 @@ _LANG_NAMES = {
 
 async def _call_copywriter(client, script: str, platform: str, target_lang: str = "en") -> dict:
     lang_name = _LANG_NAMES.get(target_lang, "English")
-    language_instruction = (
-        f"IMPORTANT: All content (title, description, hashtags) MUST be in {lang_name}. "
-        f"This is for {platform} {lang_name} market."
-    )
-    system_prompt = (
-        f"你是TikTok/抖音的文案专家。根据以下视频脚本，生成发布时需要的："
-        "1. 视频标题（吸引点击，15字以内）"
-        "2. 视频描述（包含关键词，50字以内）"
-        "3. 话题标签（5-8个，包含热门标签和精准标签）"
-        "4. 推荐发布时间\n\n"
-        f"平台：{platform}\n"
-        f"{language_instruction}\n\n"
-        '请用以下JSON格式输出（只输出JSON，不要其他文字）：\n'
-        '{"title": "...", "description": "...", "hashtags": ["#tag1", "#tag2"], "best_time": "..."}'
-    )
+    if target_lang == "zh":
+        system_prompt = (
+            f"你是TikTok/抖音的文案专家。根据以下视频脚本，生成发布时需要的："
+            "1. 视频标题（吸引点击，15字以内）"
+            "2. 视频描述（包含关键词，50字以内）"
+            "3. 话题标签（5-8个，包含热门标签和精准标签）"
+            "4. 推荐发布时间\n\n"
+            f"平台：{platform}\n"
+            "所有内容必须用中文输出。\n\n"
+            '请用以下JSON格式输出（只输出JSON，不要其他文字）：\n'
+            '{"title": "...", "description": "...", "hashtags": ["#tag1", "#tag2"], "best_time": "..."}'
+        )
+        user_msg = f"脚本内容：\n\n{script}"
+    else:
+        system_prompt = (
+            f"You are a {platform} copywriting expert. Based on the video script below, generate:\n"
+            "1. Video title (compelling, under 60 characters)\n"
+            "2. Video description (keyword-rich, under 150 characters)\n"
+            "3. Hashtags (5-8 tags, mix of trending and niche)\n"
+            "4. Best posting time\n\n"
+            f"Platform: {platform}\n"
+            f"IMPORTANT: ALL content (title, description, hashtags) MUST be written in {lang_name}. "
+            f"This targets the {lang_name}-speaking market.\n\n"
+            'Output ONLY valid JSON, no other text:\n'
+            '{"title": "...", "description": "...", "hashtags": ["#tag1", "#tag2"], "best_time": "..."}'
+        )
+        user_msg = f"Script:\n\n{script}"
     try:
         resp = await client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"脚本内容：\n\n{script}"},
+                {"role": "user", "content": user_msg},
             ],
             max_tokens=500,
         )
