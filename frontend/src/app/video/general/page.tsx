@@ -1086,13 +1086,33 @@ export default function VideoGeneralPage() {
                           </div>
                         </div>
                       )}
-                      {scriptMode === "chat" && (
+                      {/* TikTok市场/语言选择 — 非中国市场时显示 */}
+                      {market !== "中国" && market !== "中国大陆" && (
                         <div style={{ borderTop: "1px solid #f0f0f0", paddingTop: 14, marginBottom: 14 }}>
-                          <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 6 }}>目标语言（决定脚本台词语言）</div>
-                          <select value={targetLang} onChange={e => setTargetLang(e.target.value)}
-                            style={{ padding: "0.45rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c" }}>
-                            {LANG_OPTIONS}
-                          </select>
+                          <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "#1a202c", marginBottom: 8 }}>🌍 选择TikTok目标市场</div>
+                          <div style={{ fontSize: "0.72rem", color: "#718096", marginBottom: 10 }}>决定视频台词语言、文案语言和模特人种</div>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            {[
+                              { lang: "en", label: "🇺🇸 美国/英国", sub: "English" },
+                              { lang: "ja", label: "🇯🇵 日本", sub: "日本語" },
+                              { lang: "ko", label: "🇰🇷 韩国", sub: "한국어" },
+                              { lang: "th", label: "🇹🇭 泰国", sub: "ไทย" },
+                              { lang: "vi", label: "🇻🇳 越南", sub: "Tiếng Việt" },
+                              { lang: "id", label: "🇮🇩 印尼", sub: "Bahasa" },
+                              { lang: "es", label: "🌎 拉美", sub: "Español" },
+                              { lang: "ar", label: "🌙 中东", sub: "العربية" },
+                              { lang: "fr", label: "🇫🇷 法国", sub: "Français" },
+                              { lang: "de", label: "🇩🇪 德国", sub: "Deutsch" },
+                              { lang: "ru", label: "🇷🇺 俄罗斯", sub: "Русский" },
+                              { lang: "pt", label: "🇧🇷 巴西", sub: "Português" },
+                            ].map(o => (
+                              <button key={o.lang} onClick={() => setTargetLang(o.lang)}
+                                style={{ padding: "0.5rem 0.8rem", borderRadius: 10, border: `2px solid ${targetLang === o.lang ? "#7c3aed" : "#e2e8f0"}`, background: targetLang === o.lang ? "#7c3aed" : "#fff", color: targetLang === o.lang ? "#fff" : "#374151", fontSize: "0.8rem", cursor: "pointer", transition: "all 0.12s", minWidth: 100, textAlign: "center" as const }}>
+                                <div style={{ fontWeight: 600 }}>{o.label}</div>
+                                <div style={{ fontSize: "0.68rem", opacity: 0.7 }}>{o.sub}</div>
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       )}
                       {flowStep === 3 && <FlowNextBtn label={scriptMode === "chat" ? "开始AI对话" : "生成脚本"} onClick={() => setFlowStep(4)} />}
