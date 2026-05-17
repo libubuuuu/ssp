@@ -5600,44 +5600,47 @@ async def _run_script_to_video_job(params: dict) -> dict:
         except Exception as _ue:
             log_error(f"script_to_video upscale 失败（保留原始成品）: {_ue}")
 
-        # ── Lipsync：await 并行TTS结果 → 对齐口型（音频加在放大后的视频上）──────
+        # ── 合并音视频（画外音模式，ffmpeg直接叠加，不做口型同步）──────────────
         if not enable_voice:
-            log_info("script_to_video lipsync: enable_voice=False，跳过 TTS+Lipsync")
+            log_info("script_to_video 无声音模式，跳过音频合并")
             if _tts_concurrent_task and not _tts_concurrent_task.done():
                 _tts_concurrent_task.cancel()
         else:
-            try:
-                # await 并行已启动的 TTS（与 Seedance 并行执行，此处只是等结果）
-                _tts_audio_url = None
-                if _tts_concurrent_task is not None:
-                    _tts_audio_url = await _tts_concurrent_task
-                    if _tts_audio_url:
-                        log_info(f"script_to_video lipsync TTS 并行完成 url={_tts_audio_url[:60]}")
-                    else:
-                        log_error("script_to_video 并行TTS无返回，跳过Lipsync")
-
+            _tts_audio_url = None
+            if _tts_concurrent_task is not None:
+                _tts_audio_url = await _tts_concurrent_task
                 if _tts_audio_url:
-                    _lipsync_result = await _fal.subscribe_async(
-                        "fal-ai/musetalk",
-                        arguments={
-                            "source_video_url": video_url_out,  # MuseTalk 字段名
-                            "audio_url": _tts_audio_url,
-                        },
-                    )
-                    _lipsync_url = None
-                    if isinstance(_lipsync_result, dict):
-                        _v = _lipsync_result.get("video") or {}
-                        _lipsync_url = (_v.get("url") if isinstance(_v, dict) else None) or _lipsync_result.get("video_url")
-                    if _lipsync_url:
-                        video_url_out = _lipsync_url
-                        log_info(f"script_to_video lipsync OK url={_lipsync_url[:80]}")
-                    else:
-                        log_error("script_to_video lipsync 返回无 URL，保留无口型视频继续")
+                    log_info(f"script_to_video TTS 并行完成 url={_tts_audio_url[:60]}")
                 else:
-                    log_info("script_to_video lipsync: 台词为空或TTS失败，跳过Lipsync")
-            except Exception as _lse:
-                log_error(f"script_to_video lipsync 失败（降级保留无口型视频）: {_lse}")
-        # ── Lipsync 结束 ────────────────────────────────────────────────────────
+                    log_error("script_to_video 并行TTS无返回，跳过音频合并")
+            if _tts_audio_url:
+                try:
+                    import urllib.request as _urllib
+                    _audio_path  = _os.path.join(work_dir, "tts_audio.mp3")
+                    _video_path  = _os.path.join(work_dir, "video_pre_merge.mp4")
+                    _merged_path = _os.path.join(work_dir, "merged_audio.mp4")
+                    _urllib.urlretrieve(video_url_out, _video_path)
+                    _urllib.urlretrieve(_tts_audio_url, _audio_path)
+                    _sp.run(
+                        ["ffmpeg", "-y",
+                         "-i", _video_path,
+                         "-i", _audio_path,
+                         "-c:v", "copy", "-c:a", "aac",
+                         "-shortest",
+                         _merged_path],
+                        check=True, capture_output=True, timeout=120,
+                    )
+                    _merged_url = await fal_upload_with_retry(_merged_path)
+                    if _merged_url:
+                        video_url_out = _merged_url
+                        log_info(f"script_to_video 音频合并完成 url={_merged_url[:80]}")
+                    else:
+                        log_error("script_to_video 音频合并上传失败，保留无声视频")
+                except Exception as _ae:
+                    log_error(f"script_to_video 音频合并失败（保留无声视频）: {_ae}")
+            else:
+                log_info("script_to_video TTS为空，跳过音频合并")
+        # ── 音频合并结束 ─────────────────────────────────────────────────────────
 
         log_info(
             f"script_to_video 收工 total={_t.time()-t0:.1f}s tasks={len(tasks)} "
