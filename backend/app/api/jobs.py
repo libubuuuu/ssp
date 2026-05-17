@@ -5299,8 +5299,8 @@ async def _run_script_to_video_job(params: dict) -> dict:
             log_error(f"script_to_video: last_frame failed: {e}")
             return None
 
-    # ── Seedance 提交（支持 video_urls）────────────────────────────────────
-    async def _submit(img_urls: list, prompt: str, duration: int) -> str:
+    # ── Seedance 提交（支持 video_urls + tts_audio_url 原生口播）──────────
+    async def _submit(img_urls: list, prompt: str, duration: int, tts_audio_url: str | None = None) -> str:
         safe_dur = max(4, min(15, int(duration)))  # Seedance Fast r2v 实测 4-15s
         args: dict = {
             "image_urls": img_urls,
@@ -5308,11 +5308,12 @@ async def _run_script_to_video_job(params: dict) -> dict:
             "duration": str(safe_dur),
             "aspect_ratio": aspect_ratio,
             "resolution": "480p",
-            "generate_audio": False,
+            "generate_audio": True,
         }
+        if tts_audio_url:
+            args["audio_urls"] = [tts_audio_url]
         if ref_video_url:
             args["video_urls"] = [ref_video_url]
-            args["audio_urls"] = []
         h = await _fal.submit_async(SEEDANCE_EP, arguments=args)
         return h.request_id
 
@@ -5375,26 +5376,25 @@ async def _run_script_to_video_job(params: dict) -> dict:
     )
 
     try:
-        # ── 改动4：TTS 提前启动，与 Seedance 并行（TTS 只需台词，不依赖视频）──
-        _tts_concurrent_task = None
-        _concurrent_audio_url: str | None = None
+        # ── TTS 先跑，拿到 audio_url 再传给 Seedance（原生口播+环境音）────────
+        _tts_audio_url: str | None = None
         if enable_voice:
             _pre_speeches = [str(sc.get("speech") or "").strip() for sc in scenes]
             _pre_speech_text = " ".join(s for s in _pre_speeches if s)
             if _pre_speech_text:
-                async def _concurrent_tts():
-                    try:
-                        _r = await _fal.run_async(
-                            "fal-ai/elevenlabs/tts/multilingual-v2",
-                            arguments={"text": _pre_speech_text[:1000]},
-                        )
-                        _ao = _r.get("audio") if isinstance(_r.get("audio"), dict) else None
-                        return (_ao.get("url") if _ao else None) or _r.get("audio_url")
-                    except Exception as _te:
-                        log_error(f"script_to_video 并行TTS失败: {_te}")
-                        return None
-                _tts_concurrent_task = asyncio.create_task(_concurrent_tts())
-                log_info(f"script_to_video TTS 已并行启动 speech_len={len(_pre_speech_text)} lang={target_lang}")
+                try:
+                    _r = await _fal.run_async(
+                        "fal-ai/elevenlabs/tts/multilingual-v2",
+                        arguments={"text": _pre_speech_text[:1000]},
+                    )
+                    _ao = _r.get("audio") if isinstance(_r.get("audio"), dict) else None
+                    _tts_audio_url = (_ao.get("url") if _ao else None) or _r.get("audio_url")
+                    if _tts_audio_url:
+                        log_info(f"script_to_video TTS 完成 url={_tts_audio_url[:60]} speech_len={len(_pre_speech_text)} lang={target_lang}")
+                    else:
+                        log_error("script_to_video TTS 无返回，继续无音频生成")
+                except Exception as _te:
+                    log_error(f"script_to_video TTS 失败（继续无音频生成）: {_te}")
 
         # ── 串行执行（需要前帧，不可并发）──────────────────────────────────
         all_raw: list[str] = []
@@ -5514,7 +5514,7 @@ async def _run_script_to_video_job(params: dict) -> dict:
                     sensitive_fail = False
                     log_info(f"script_to_video Task {ti+1} prompt(si={si})={use_prompt[:400]}")
                     try:
-                        fal_id = await _submit(task_imgs, use_prompt, req_dur)
+                        fal_id = await _submit(task_imgs, use_prompt, req_dur, _tts_audio_url)
                         log_info(f"script_to_video Task {ti+1} fal_id={fal_id} (to={timeout_attempt+1} sens={si+1})")
                     except Exception as e:
                         raise RuntimeError(f"Task {ti+1} submit 失败: {e}")
@@ -5643,47 +5643,6 @@ async def _run_script_to_video_job(params: dict) -> dict:
         except Exception as _ue:
             log_error(f"script_to_video upscale 失败（保留原始成品）: {_ue}")
 
-        # ── 合并音视频（画外音模式，ffmpeg直接叠加，不做口型同步）──────────────
-        if not enable_voice:
-            log_info("script_to_video 无声音模式，跳过音频合并")
-            if _tts_concurrent_task and not _tts_concurrent_task.done():
-                _tts_concurrent_task.cancel()
-        else:
-            _tts_audio_url = None
-            if _tts_concurrent_task is not None:
-                _tts_audio_url = await _tts_concurrent_task
-                if _tts_audio_url:
-                    log_info(f"script_to_video TTS 并行完成 url={_tts_audio_url[:60]}")
-                else:
-                    log_error("script_to_video 并行TTS无返回，跳过音频合并")
-            if _tts_audio_url:
-                try:
-                    import urllib.request as _urllib
-                    _audio_path  = _os.path.join(work_dir, "tts_audio.mp3")
-                    _video_path  = _os.path.join(work_dir, "video_pre_merge.mp4")
-                    _merged_path = _os.path.join(work_dir, "merged_audio.mp4")
-                    _urllib.urlretrieve(video_url_out, _video_path)
-                    _urllib.urlretrieve(_tts_audio_url, _audio_path)
-                    _sp.run(
-                        ["ffmpeg", "-y",
-                         "-i", _video_path,
-                         "-i", _audio_path,
-                         "-c:v", "copy", "-c:a", "aac",
-                         "-shortest",
-                         _merged_path],
-                        check=True, capture_output=True, timeout=120,
-                    )
-                    _merged_url = await fal_upload_with_retry(_merged_path)
-                    if _merged_url:
-                        video_url_out = _merged_url
-                        log_info(f"script_to_video 音频合并完成 url={_merged_url[:80]}")
-                    else:
-                        log_error("script_to_video 音频合并上传失败，保留无声视频")
-                except Exception as _ae:
-                    log_error(f"script_to_video 音频合并失败（保留无声视频）: {_ae}")
-            else:
-                log_info("script_to_video TTS为空，跳过音频合并")
-        # ── 音频合并结束 ─────────────────────────────────────────────────────────
 
         log_info(
             f"script_to_video 收工 total={_t.time()-t0:.1f}s tasks={len(tasks)} "
