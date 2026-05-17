@@ -734,7 +734,7 @@ export default function VideoGeneralPage() {
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "#edeae4", fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" }}>
       <Sidebar />
-      <main style={{ flex: 1, overflowY: "auto", maxWidth: 760, width: "100%", margin: "0 auto", padding: "0 0.5rem 5rem" }}>
+      <main style={{ flex: 1, overflowY: "auto", maxWidth: 1000, width: "100%", margin: "0 auto", padding: "0 0.5rem 5rem" }}>
 
         {/* ── 页面标题 ── */}
         <div style={{ padding: "1.8rem 0 0.5rem" }}>
