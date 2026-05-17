@@ -5322,23 +5322,19 @@ async def _run_script_to_video_job(params: dict) -> dict:
     # 改动3：所有视频都生成模特头像，保证人脸一致性
     portrait_url = await _gen_portrait() if model_desc else None
 
-    # ── 按场景边界 + 时长上限拆分 task ──────────────────────────────────────
+    # ── 纯时长拆分（去掉场景边界判断，避免场景名称差异导致过度拆分）──────────
     tasks: list[dict] = []
     cur: dict | None = None
-    _prev_scene_label = None
     for scene in scenes:
         dur = float(scene.get("duration_sec") or 4)
         _cur_scene = scene.get("scene_label") or ""
-        _scene_changed = bool(_cur_scene and _prev_scene_label and _cur_scene != _prev_scene_label)
         if cur is None:
             cur = {"scenes": [scene], "total_dur": dur, "scene_label": _cur_scene}
-        elif _scene_changed or cur["total_dur"] + dur > _batch_max:
+        elif cur["total_dur"] + dur > _batch_max:
             cur["task_idx"] = len(tasks); tasks.append(cur)
             cur = {"scenes": [scene], "total_dur": dur, "scene_label": _cur_scene}
         else:
             cur["scenes"].append(scene); cur["total_dur"] += dur
-        if _cur_scene:
-            _prev_scene_label = _cur_scene
     if cur:
         cur["task_idx"] = len(tasks); tasks.append(cur)
 
