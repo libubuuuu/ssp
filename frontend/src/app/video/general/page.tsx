@@ -483,7 +483,7 @@ export default function VideoGeneralPage() {
         body: JSON.stringify({
           messages: updatedMsgs,
           product_image_urls: [front.url, back.url, rear.url].filter(Boolean),
-          market, duration, target_lang: targetLang,
+          market, duration, target_lang: targetLang, platform,
           video_url: null,
         }),
       });

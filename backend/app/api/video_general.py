@@ -964,16 +964,11 @@ TikTok（海外）：手持感+自然光+不过度美颜；口语化英文像跟
    - 生成脚本前必须在心里确认：这是TikTok（英文台词）还是抖音（中文台词）？
 
 你的对话策略：
-- 第一轮（必问）：看产品图后，先问以下基础参数：
-  * "你的视频发在TikTok还是抖音？"（确定市场和语言）
-  * "视频需要多长？10秒、15秒还是30秒？"（确定时长）
+- 第一轮（必问）：用户已在界面选好了平台（{platform}）和目标语言（{target_lang}），⛔ 绝对不要再问平台和语言！直接问产品本身：
+  * "视频需要多长？10秒、15秒还是30秒？"（如果系统参数没有）
   * "你的目标客户是谁？"（确定人群）
-  ⛔ 铁律：绝对禁止在第一轮就假设平台和市场！哪怕系统参数有默认值，你也必须亲口问用户。
-  ⚠️ 特别规定：第一轮问题卡片中必须包含"你的视频是发在TikTok还是抖音？"这个问题，以及目标市场（如果选TikTok则必须在问完平台的同一轮里追加以下选项卡）：
-    "你的TikTok面向哪个市场？"
-    选项：🇺🇸美国/英国（英语）、🌏东南亚（英语）、🇯🇵日本（日语）、🇰🇷韩国（韩语）、🌙中东（阿拉伯语）、🌎拉美（西班牙语/葡萄牙语）
-    ⚠️ 根据用户选的市场确定台词语言：日本→日语、韩国→韩语、中东→阿拉伯语、拉美→西班牙语/葡萄牙语。TikTok台词不一定全是英语！
-  第一轮回复结构只能是：①用1-2句话说你看到了什么产品，②立刻用结构化问题卡片问3个问题。
+  * "这个产品最大的卖点是什么？"（确定核心卖点）
+  第一轮回复结构只能是：①用1-2句话说你看到了什么产品，②立刻用结构化问题卡片问3个问题（全是产品相关，绝不问平台语言）。
   不要在第一轮写产品分析报告！不要说"根据您的产品，我建议..."这类绕过提问直接给建议的话！
 
 - 第二轮（深入了解产品）：
@@ -1056,9 +1051,10 @@ TikTok（海外）：手持感+自然光+不过度美颜；口语化英文像跟
 - 专业知识融入对话自然体现，不要一次性倒出来
 
 用户参数：
-- 目标市场：{market}
+- 发布平台：{platform}（用户已在界面选定，无需再问）
+- 目标市场：{market}（用户已在界面选定，无需再问）
 - 视频时长：{duration}秒
-- 目标语言：{target_lang}（脚本台词和文案必须使用此语言）
+- 目标语言：{target_lang}（用户已在界面选定，脚本台词和文案必须使用此语言）
 - 已上传产品图：{n_images}张"""
 
 _CHAT_VIDEO_INSTRUCTION = """
@@ -1264,6 +1260,7 @@ class ChatRequest(BaseModel):
     market: str = Field("欧美")
     duration: int = Field(15)
     target_lang: str = Field("en", description="目标语言代码 en/zh/ja/ko/es/pt/ar")
+    platform: str = Field("tiktok", description="tiktok或douyin")
     video_url: Optional[str] = Field(None, description="入口A的参考视频URL")
 
 
@@ -1287,6 +1284,7 @@ async def chat_with_mentor(
         duration=body.duration,
         n_images=len(body.product_image_urls),
         target_lang=_LANG_NAMES.get(_tl, "English"),
+        platform="TikTok" if body.platform == "tiktok" else "抖音",
     )
     if body.video_url:
         sys_prompt += _CHAT_VIDEO_INSTRUCTION.format(video_url=body.video_url)
