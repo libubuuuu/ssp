@@ -189,7 +189,7 @@ export default function VideoGeneralPage() {
 
   // Chat mode state
   type ChatQuestion = { question: string; description: string; options: string[]; allow_custom: boolean };
-  type ChatMsg = { role: "user" | "assistant"; content: string; images?: string[]; questions?: ChatQuestion[] };
+  type ChatMsg = { role: "user" | "assistant"; content: string; images?: string[]; questions?: ChatQuestion[]; searchResult?: string };
   const [chatMsgs, setChatMsgs]           = useState<ChatMsg[]>([]);
   const [chatInput, setChatInput]         = useState("");
   const [chatLoading, setChatLoading]     = useState(false);
@@ -203,6 +203,13 @@ export default function VideoGeneralPage() {
   const [chatResolution, setChatResolution]       = useState("480p");
   const [chatEnableVoice, setChatEnableVoice]     = useState(true);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  // 多角色 AI 附加数据
+  type ChatReview = { score: number; details: string; suggestions: string };
+  type ChatCopy   = { title: string; description: string; hashtags: string[]; best_time: string };
+  const [chatReview, setChatReview]             = useState<ChatReview | null>(null);
+  const [chatCopy, setChatCopy]                 = useState<ChatCopy | null>(null);
+  const [chatReviewExpanded, setChatReviewExpanded] = useState(false);
+  const [chatCopyCopied, setChatCopyCopied]     = useState("");
 
   // Step 5 - video generation
   const [vidLoading, setVidLoading] = useState(false);
@@ -338,10 +345,13 @@ export default function VideoGeneralPage() {
         role: "assistant",
         content: d.reply || "",
         questions: d.questions?.length ? d.questions : undefined,
+        searchResult: d.search_result || undefined,
       };
       setChatMsgs(prev => [...prev, assistantMsg]);
-      if (d.script) setChatScript(d.script);
+      if (d.script) { setChatScript(d.script); setChatReview(null); setChatCopy(null); setChatReviewExpanded(false); }
       if (d.need_contrast_image) setChatNeedsContrast(true);
+      if (d.review) setChatReview(d.review);
+      if (d.copy) setChatCopy(d.copy);
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     } catch (e) {
       setError((e as Error).message || "对话失败，请重试");
@@ -931,6 +941,15 @@ export default function VideoGeneralPage() {
                             {m.content}
                           </div>
                         )}
+                        {/* 小李·趋势研究 搜索结果卡片 */}
+                        {m.role === "assistant" && m.searchResult && (
+                          <div style={{ maxWidth: "90%", marginTop: 6, padding: "0.55rem 0.8rem", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 10 }}>
+                            <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "#1d4ed8", marginBottom: 3, letterSpacing: "0.01em" }}>📡 小李·趋势研究</div>
+                            <div style={{ fontSize: "0.75rem", color: "#1e40af", lineHeight: 1.55 }}>
+                              {m.searchResult.slice(0, 100)}{m.searchResult.length > 100 ? "…" : ""}
+                            </div>
+                          </div>
+                        )}
                         {/* 结构化问题卡片 */}
                         {m.role === "assistant" && m.questions && m.questions.length > 0 && (() => {
                           const qs = m.questions!;
@@ -1040,6 +1059,35 @@ export default function VideoGeneralPage() {
                       <ScriptDisplay text={chatScript} />
                       <ContrastUploadHint scriptText={chatScript} />
 
+                      {/* 审稿评分卡片 */}
+                      {chatReview && (() => {
+                        const s = chatReview.score;
+                        const clr  = s >= 50 ? "#16a34a" : s >= 40 ? "#d97706" : "#dc2626";
+                        const bg   = s >= 50 ? "#f0fdf4" : s >= 40 ? "#fefce8" : "#fef2f2";
+                        const bdr  = s >= 50 ? "#86efac" : s >= 40 ? "#fde68a" : "#fca5a5";
+                        return (
+                          <div style={{ margin: "10px 0", border: `1px solid ${bdr}`, borderRadius: 10, overflow: "hidden" }}>
+                            <div style={{ padding: "0.55rem 0.85rem", background: bg, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}
+                              onClick={() => setChatReviewExpanded(p => !p)}>
+                              <span style={{ fontWeight: 700, fontSize: "0.82rem", color: clr }}>
+                                {s >= 50 ? "✅" : s >= 40 ? "⚠️" : "❌"} 审稿评分：{s}/60
+                              </span>
+                              <span style={{ fontSize: "0.72rem", color: clr }}>{chatReviewExpanded ? "▲ 收起" : "▼ 展开详情"}</span>
+                            </div>
+                            {chatReviewExpanded && (
+                              <div style={{ padding: "0.75rem 0.85rem", background: "#fff", fontSize: "0.78rem", color: "#374151", lineHeight: 1.6 }}>
+                                <div style={{ whiteSpace: "pre-wrap", marginBottom: chatReview.suggestions ? 8 : 0 }}>{chatReview.details}</div>
+                                {chatReview.suggestions && (
+                                  <div style={{ borderTop: "1px solid #f3f4f6", paddingTop: 8, color: "#6b7280", whiteSpace: "pre-wrap" }}>
+                                    {chatReview.suggestions}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+
                       {!chatShowParams ? (
                         <button onClick={() => setChatShowParams(true)} disabled={vidLoading}
                           style={{ width: "100%", marginTop: 10, padding: "0.7rem 1rem", borderRadius: 10, border: "none", background: vidLoading ? "#e2e8f0" : "#16a34a", color: vidLoading ? "#a0aec0" : "#fff", fontSize: "0.88rem", fontWeight: 600, cursor: vidLoading ? "not-allowed" : "pointer" }}>
@@ -1094,6 +1142,63 @@ export default function VideoGeneralPage() {
                               🎬 开始生成视频
                             </button>
                           </div>
+                        </div>
+                      )}
+
+                      {/* 发布文案卡片 */}
+                      {chatCopy && chatCopy.title && (
+                        <div style={{ marginTop: 12, padding: "0.9rem 1rem", background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 10 }}>
+                          <div style={{ fontWeight: 700, fontSize: "0.82rem", color: "#166534", marginBottom: 10 }}>📋 发布文案</div>
+
+                          {/* 标题 */}
+                          <div style={{ marginBottom: 8 }}>
+                            <div style={{ fontSize: "0.7rem", color: "#6b7280", marginBottom: 3 }}>视频标题</div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff", border: "1px solid #d1fae5", borderRadius: 6, padding: "0.4rem 0.6rem" }}>
+                              <span style={{ flex: 1, fontSize: "0.83rem", color: "#111827" }}>{chatCopy.title}</span>
+                              <button onClick={() => { navigator.clipboard.writeText(chatCopy!.title); setChatCopyCopied("title"); setTimeout(() => setChatCopyCopied(""), 1500); }}
+                                style={{ flexShrink: 0, padding: "0.2rem 0.5rem", borderRadius: 4, border: "1px solid #d1fae5", background: "#f0fdf4", color: "#16a34a", fontSize: "0.72rem", cursor: "pointer" }}>
+                                {chatCopyCopied === "title" ? "✓" : "复制"}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* 描述 */}
+                          {chatCopy.description && (
+                            <div style={{ marginBottom: 8 }}>
+                              <div style={{ fontSize: "0.7rem", color: "#6b7280", marginBottom: 3 }}>视频描述</div>
+                              <div style={{ display: "flex", alignItems: "flex-start", gap: 6, background: "#fff", border: "1px solid #d1fae5", borderRadius: 6, padding: "0.4rem 0.6rem" }}>
+                                <span style={{ flex: 1, fontSize: "0.8rem", color: "#374151", lineHeight: 1.5 }}>{chatCopy.description}</span>
+                                <button onClick={() => { navigator.clipboard.writeText(chatCopy!.description); setChatCopyCopied("desc"); setTimeout(() => setChatCopyCopied(""), 1500); }}
+                                  style={{ flexShrink: 0, padding: "0.2rem 0.5rem", borderRadius: 4, border: "1px solid #d1fae5", background: "#f0fdf4", color: "#16a34a", fontSize: "0.72rem", cursor: "pointer" }}>
+                                  {chatCopyCopied === "desc" ? "✓" : "复制"}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* 话题标签 */}
+                          {chatCopy.hashtags?.length > 0 && (
+                            <div style={{ marginBottom: 8 }}>
+                              <div style={{ fontSize: "0.7rem", color: "#6b7280", marginBottom: 5 }}>话题标签</div>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 4 }}>
+                                {chatCopy.hashtags.map((tag, i) => (
+                                  <span key={i} style={{ padding: "0.2rem 0.55rem", background: "#dbeafe", color: "#1d4ed8", borderRadius: 999, fontSize: "0.75rem", fontWeight: 500 }}>{tag}</span>
+                                ))}
+                              </div>
+                              <button onClick={() => { navigator.clipboard.writeText(chatCopy!.hashtags.join(" ")); setChatCopyCopied("tags"); setTimeout(() => setChatCopyCopied(""), 1500); }}
+                                style={{ padding: "0.2rem 0.6rem", borderRadius: 4, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", fontSize: "0.72rem", cursor: "pointer" }}>
+                                {chatCopyCopied === "tags" ? "✓ 已复制" : "一键复制全部标签"}
+                              </button>
+                            </div>
+                          )}
+
+                          {/* 推荐发布时间 */}
+                          {chatCopy.best_time && (
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0.35rem 0.6rem", background: "#fff", border: "1px solid #d1fae5", borderRadius: 6 }}>
+                              <span style={{ fontSize: "0.7rem", color: "#6b7280" }}>推荐发布时间</span>
+                              <span style={{ fontSize: "0.8rem", color: "#15803d", fontWeight: 600 }}>🕐 {chatCopy.best_time}</span>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
