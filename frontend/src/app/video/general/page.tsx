@@ -316,6 +316,7 @@ export default function VideoGeneralPage() {
   const [chatInput, setChatInput]         = useState("");
   const [chatLoading, setChatLoading]     = useState(false);
   const [chatScript, setChatScript]       = useState("");
+  const [chatSceneImages, setChatSceneImages] = useState<Record<string, string>>({}); // 场景标签→图片URL
   const [chatNeedsContrast, setChatNeedsContrast] = useState(false);
   const [chatCustomInputs, setChatCustomInputs]   = useState<Record<number, string>>({});  // key=msgIdx*10+qi → customText
   const [chatSelections, setChatSelections]       = useState<Record<number, string>>({});  // key=msgIdx*10+qi → selected option
@@ -500,13 +501,27 @@ export default function VideoGeneralPage() {
       if (d.script) {
         setChatScript(d.script);
         setChatCopy(null);
+        setChatSceneImages({});
         // 解析脚本总时长
         const _times: number[] = [];
         for (const _m of d.script.matchAll(/(\d+)-(\d+)s/g)) _times.push(parseInt(_m[2]));
         const _parsed = _times.length > 0 ? Math.max(..._times) : 0;
         if (_parsed > 0) setDuration(_parsed);
-        // 直接触发场景图生成（不用 useEffect，避免闭包问题）
-        if (!scene.url) {
+        // 提取所有唯一场景标签（| 场景：XXX |）
+        const _sceneMatches = [...d.script.matchAll(/场景[：:]\s*([^|\n，,]+)/g)];
+        const _uniqueScenes = [...new Set(_sceneMatches.map(m => m[1].trim()))].filter(Boolean).slice(0, 4);
+        // 为每个唯一场景生成场景图
+        if (_uniqueScenes.length > 0) {
+          _uniqueScenes.forEach(sceneName => {
+            fetch(`${API_BASE}/api/video/general/generate-scene`, {
+              method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+              body: JSON.stringify({ description: sceneName, orientation: "portrait" }),
+            }).then(r => r.ok ? r.json() : null)
+              .then(d2 => { if (d2?.scene_image_url) setChatSceneImages(prev => ({ ...prev, [sceneName]: d2.scene_image_url })); })
+              .catch(() => {});
+          });
+        } else if (!scene.url) {
+          // 兼容旧格式：用 [环境] 字段
           const _envMatch = d.script.match(/\[环境\][：:]\s*(.+?)(?:\n|\[|$)/s);
           const _envDesc = (_envMatch ? _envMatch[1].trim() : "") || "Modern clean indoor room, natural soft lighting, minimalist decor";
           _lastAutoSceneDesc.current = _envDesc;
@@ -1317,6 +1332,23 @@ export default function VideoGeneralPage() {
 
                   {/* 场景确认（脚本后自动触发）*/}
                   {chatScript && <SceneConfirmCard />}
+
+                  {/* 多场景图（按场景标签分组显示）*/}
+                  {chatScript && Object.keys(chatSceneImages).length > 0 && (
+                    <AgentRow sender="system">
+                      <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "0.8rem 1rem" }}>
+                        <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#1a202c", marginBottom: 10 }}>🏠 各场景参考图（AI已自动生成，可在上传场景图区域替换）</div>
+                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                          {Object.entries(chatSceneImages).map(([label, url]) => (
+                            <div key={label} style={{ textAlign: "center" as const }}>
+                              <img src={url} alt={label} style={{ width: 90, height: 160, objectFit: "cover", borderRadius: 8, border: "1px solid #e2e8f0", display: "block" }} />
+                              <div style={{ fontSize: "0.65rem", color: "#6b7280", marginTop: 4, maxWidth: 90 }}>{label}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </AgentRow>
+                  )}
 
                   {/* 确认脚本 + 参数 */}
                   {chatScript && (

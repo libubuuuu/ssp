@@ -557,6 +557,14 @@ def parse_script(text: str) -> list[dict]:
                 stage = s
                 break
 
+        # 提取场景标签（如 "场景：温馨卧室"）
+        scene_label = ""
+        _sl = re.search(r'场景[：:]\s*([^|，,\n]+)', m.group(3))
+        if _sl:
+            scene_label = _sl.group(1).strip()
+            # 从 rest 里移除场景标签，避免混入 visual_prompt
+            rest = re.sub(r'\s*场景[：:][^|，,\n]+', '', rest).strip()
+
         scenes.append({
             "id":            len(scenes) + 1,
             "time_range":    f"{start:.1f}-{end:.1f}s",
@@ -566,6 +574,7 @@ def parse_script(text: str) -> list[dict]:
             "visual_prompt": visual_prompt,
             "speech":        speech,
             "stage":         stage,
+            "scene_label":   scene_label,
         })
 
     return scenes

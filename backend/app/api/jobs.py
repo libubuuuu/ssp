@@ -5235,7 +5235,7 @@ async def _run_script_to_video_job(params: dict) -> dict:
     # 第二层：强制校准分镜总时长（Gemini 可能写歪）
     if target_duration > 0:
         actual_total = sum(float(s.get("duration_sec") or 4) for s in scenes)
-        if abs(actual_total - target_duration) > 0.5:
+        if abs(actual_total - target_duration) > 0.1:
             scale = target_duration / actual_total
             for s in scenes:
                 s["duration_sec"] = round(float(s.get("duration_sec") or 4) * scale, 1)
@@ -5322,22 +5322,60 @@ async def _run_script_to_video_job(params: dict) -> dict:
     # 改动3：所有视频都生成模特头像，保证人脸一致性
     portrait_url = await _gen_portrait() if model_desc else None
 
+    # ── 按场景边界 + 时长上限拆分 task ──────────────────────────────────────
     tasks: list[dict] = []
     cur: dict | None = None
+    _prev_scene_label = None
     for scene in scenes:
         dur = float(scene.get("duration_sec") or 4)
+        _cur_scene = scene.get("scene_label") or ""
+        _scene_changed = bool(_cur_scene and _prev_scene_label and _cur_scene != _prev_scene_label)
         if cur is None:
-            cur = {"scenes": [scene], "total_dur": dur}
-        elif cur["total_dur"] + dur > _batch_max:
+            cur = {"scenes": [scene], "total_dur": dur, "scene_label": _cur_scene}
+        elif _scene_changed or cur["total_dur"] + dur > _batch_max:
             cur["task_idx"] = len(tasks); tasks.append(cur)
-            cur = {"scenes": [scene], "total_dur": dur}
+            cur = {"scenes": [scene], "total_dur": dur, "scene_label": _cur_scene}
         else:
             cur["scenes"].append(scene); cur["total_dur"] += dur
+        if _cur_scene:
+            _prev_scene_label = _cur_scene
     if cur:
         cur["task_idx"] = len(tasks); tasks.append(cur)
+
+    # ── 为每个唯一场景生成场景图（与 Seedance 并行） ─────────────────────────
+    _unique_scenes: dict[str, str] = {}  # scene_label → image_url
+    _scene_labels = list(dict.fromkeys(
+        t["scene_label"] for t in tasks if t.get("scene_label")
+    ))
+    if _scene_labels:
+        async def _gen_scene_img(label: str) -> tuple[str, str]:
+            try:
+                _r = await _fal.run_async(
+                    "fal-ai/gpt-image-2",
+                    arguments={
+                        "prompt": (
+                            f"Professional photography of {label}. "
+                            "Empty scene without any people. Wide angle, natural lighting, "
+                            "high quality, realistic. No text, no watermarks."
+                        ),
+                        "image_size": {"width": 1024, "height": 1792},
+                        "num_images": 1,
+                        "quality": "auto",
+                    },
+                )
+                _url = (_r.get("images") or [{}])[0].get("url", "")
+                if _url:
+                    log_info(f"script_to_video 场景图 [{label}] OK url={_url[:60]}")
+                return label, _url
+            except Exception as _se:
+                log_error(f"script_to_video 场景图 [{label}] 失败（跳过）: {_se}")
+                return label, ""
+        _scene_img_results = await asyncio.gather(*[_gen_scene_img(lb) for lb in _scene_labels])
+        _unique_scenes = {lb: url for lb, url in _scene_img_results if url}
+
     log_info(
         f"script_to_video 批处理模式: total={total_dur_all:.1f}s "
-        f"tasks={len(tasks)} max_dur={_batch_max}s"
+        f"tasks={len(tasks)} max_dur={_batch_max}s scenes_with_img={len(_unique_scenes)}"
     )
 
     try:
@@ -5389,8 +5427,13 @@ async def _run_script_to_video_job(params: dict) -> dict:
             _anchor_img = contrast_image_url if _is_conflict_stage else (product_urls[0] if product_urls else "")
             log_info(f"script_to_video Task {ti+1} anchor={'contrast' if _is_conflict_stage else 'product'} stages={_task_stages}")
 
-            # 构建此 task 的 image_urls（锚点图放第一位）
+            # 构建此 task 的 image_urls（锚点图放第一位，场景图紧随）
             task_imgs = [_anchor_img] if _anchor_img else []
+            # 插入此 task 的场景图（唯一场景标签对应的图）
+            _task_scene_lbl = task.get("scene_label", "")
+            _task_scene_img = _unique_scenes.get(_task_scene_lbl, "")
+            if _task_scene_img and _task_scene_img not in task_imgs and len(task_imgs) < 9:
+                task_imgs.append(_task_scene_img)
             for _u in base_imgs:
                 if _u not in task_imgs and len(task_imgs) < 9:
                     task_imgs.append(_u)
