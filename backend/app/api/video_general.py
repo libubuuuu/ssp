@@ -1222,13 +1222,18 @@ def _should_trigger_copywriter(messages: list) -> bool:
 
 
 async def _call_xiaoli_search(client, platform: str, category: str, lang_name: str = "English") -> str:
+    from app.config import get_settings
+    from openai import AsyncOpenAI as _OAI
+    s = get_settings()
+    # 用联网搜索专用 key；如未配置则降级使用 client（会 503）
+    search_client = _OAI(base_url=s.SEARCH_BASE_URL, api_key=s.SEARCH_API_KEY) if s.SEARCH_API_KEY else client
     search_prompt = (
         f"搜索{platform}平台上{lang_name}市场关于{category}的最新带货爆款视频趋势，包括："
         "1.当前最火的视频格式和结构 2.热门的开头钩子手法 3.成功案例的特点 "
         "4.当前流行的BGM风格。只返回最新2025-2026年的信息。"
     )
     try:
-        resp = await client.chat.completions.create(
+        resp = await search_client.chat.completions.create(
             model="gpt-4o-search-preview",
             messages=[{"role": "user", "content": search_prompt}],
             max_tokens=1500,

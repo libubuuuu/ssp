@@ -23,7 +23,10 @@ async def run_trend_update() -> int:
     from openai import AsyncOpenAI
 
     s = get_settings()
-    client = AsyncOpenAI(base_url=s.LINGMENG_BASE_URL, api_key=s.LINGMENG_API_KEY)
+    # 用联网搜索专用 key；未配置时降级为普通 key
+    _key = s.SEARCH_API_KEY or s.LINGMENG_API_KEY
+    _base = s.SEARCH_BASE_URL or s.LINGMENG_BASE_URL
+    client = AsyncOpenAI(base_url=_base, api_key=_key)
 
     # 清理 7 天前的旧数据
     with get_db() as conn:
