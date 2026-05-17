@@ -854,13 +854,6 @@ export default function VideoGeneralPage() {
                   </select>
                 </div>
                 <div>
-                  <div style={{ fontSize: "0.72rem", color: "#718096", marginBottom: 5 }}>目标语言</div>
-                  <select value={targetLang} onChange={e => setTargetLang(e.target.value)}
-                    style={{ padding: "0.45rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c" }}>
-                    {LANG_OPTIONS}
-                  </select>
-                </div>
-                <div>
                   <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>分辨率</div>
                   <select value={resolution} onChange={e => setResolution(e.target.value)}
                     style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
