@@ -997,6 +997,169 @@ _CHAT_VIDEO_INSTRUCTION = """
 请先分析这个视频的结构：有几个镜头，用了什么叙事结构，节奏如何。
 在第一条回复中告诉用户你观察到的视频结构，并说明你会按同样的结构帮他翻拍新产品视频。"""
 
+# ── 多角色 AI 系统辅助 ─────────────────────────────────────────────
+import re as _re_chat
+import json as _json_chat
+
+_XIAOLI_DONE_MARKER = "===XIAOLI_DONE==="
+
+_REVIEWER_SYSTEM = """你是一个TikTok/抖音带货视频脚本审稿专家。审查以下脚本并给出评分和改进建议。
+
+评分维度（每项1-10分）：
+1. 开头钩子力度：前3秒能不能让人停下来？
+2. 痛点共鸣度：用户看了会不会觉得"说的就是我"？
+3. 产品植入自然度：产品出场是不是自然不生硬？
+4. 促单力度：结尾能不能让人想买？
+5. 台词口语化：像不像真人在说话？
+6. 视觉可执行性：Seedance能不能生成这些画面？
+
+输出格式：
+总分：XX/60
+各项评分：...
+改进建议：（具体说哪里要改、怎么改）"""
+
+
+def _extract_all_text(messages: list) -> str:
+    parts = []
+    for m in messages:
+        content = m.get("content", "")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    parts.append(part.get("text", ""))
+    return " ".join(parts)
+
+
+def _detect_platform_and_category(messages: list):
+    text = _extract_all_text(messages)
+    text_lower = text.lower()
+    platform = None
+    if "tiktok" in text_lower:
+        platform = "TikTok"
+    elif "抖音" in text or "douyin" in text_lower:
+        platform = "抖音"
+
+    category = None
+    cats = ["内衣", "文胸", "护肤", "美妆", "化妆品", "口红", "眼影", "粉底", "食品", "零食",
+            "小吃", "饮料", "3C", "数码", "手机", "耳机", "平板", "穿搭", "连衣裙", "T恤",
+            "外套", "裤子", "鞋子", "包包", "家居", "厨房", "运动", "健身", "宠物", "母婴"]
+    for cat in cats:
+        if cat in text:
+            category = cat
+            break
+    return platform, category
+
+
+def _xiaoli_already_searched(messages: list) -> bool:
+    for m in messages:
+        if m.get("role") == "assistant":
+            content = m.get("content", "")
+            if isinstance(content, str) and _XIAOLI_DONE_MARKER in content:
+                return True
+    return False
+
+
+def _script_in_history(messages: list):
+    for m in reversed(messages):
+        if m.get("role") == "assistant":
+            content = m.get("content", "")
+            if isinstance(content, str):
+                match = _re_chat.search(r"===SCRIPT_START===\s*([\s\S]+?)\s*===SCRIPT_END===", content)
+                if match:
+                    return match.group(1).strip()
+    return None
+
+
+def _should_trigger_copywriter(messages: list) -> bool:
+    if not _script_in_history(messages):
+        return False
+    last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+    if not last_user:
+        return False
+    content = last_user.get("content", "")
+    if not isinstance(content, str):
+        return False
+    triggers = ["生成视频", "开始生成", "确认脚本", "可以生成", "开始制作", "生成吧",
+                "制作视频", "用这个脚本", "就这个脚本", "可以了", "好的生成"]
+    return any(t in content for t in triggers)
+
+
+async def _call_xiaoli_search(client, platform: str, category: str) -> str:
+    search_prompt = (
+        f"搜索{platform}平台上关于{category}的最新带货爆款视频趋势，包括："
+        "1.当前最火的视频格式和结构 2.热门的开头钩子手法 3.成功案例的特点 "
+        "4.当前流行的BGM风格。只返回最新2025-2026年的信息。"
+    )
+    try:
+        resp = await client.chat.completions.create(
+            model="gpt-4o-search-preview-2025-03-11",
+            messages=[{"role": "user", "content": search_prompt}],
+            max_tokens=1500,
+        )
+        return resp.choices[0].message.content or ""
+    except Exception as e:
+        log_error(f"小李搜索失败: {e}")
+        return ""
+
+
+async def _call_reviewer(client, script: str) -> dict:
+    try:
+        resp = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": _REVIEWER_SYSTEM},
+                {"role": "user", "content": f"请审查以下脚本：\n\n{script}"},
+            ],
+            max_tokens=1000,
+        )
+        review_text = resp.choices[0].message.content or ""
+        score_match = _re_chat.search(r"总分[：:]\s*(\d+)\s*/\s*60", review_text)
+        score = int(score_match.group(1)) if score_match else 0
+        sugg_idx = review_text.find("改进建议")
+        suggestions = review_text[sugg_idx:].strip() if sugg_idx != -1 else review_text
+        details = review_text[:sugg_idx].strip() if sugg_idx != -1 else review_text
+        return {"score": score, "details": details, "suggestions": suggestions}
+    except Exception as e:
+        log_error(f"审稿员调用失败: {e}")
+        return {"score": 0, "details": "", "suggestions": ""}
+
+
+async def _call_copywriter(client, script: str, platform: str) -> dict:
+    system_prompt = (
+        f"你是TikTok/抖音的文案专家。根据以下视频脚本，生成发布时需要的："
+        "1. 视频标题（吸引点击，15字以内）"
+        "2. 视频描述（包含关键词，50字以内）"
+        "3. 话题标签（5-8个，包含热门标签和精准标签）"
+        "4. 推荐发布时间\n\n"
+        f"平台：{platform}\n\n"
+        '请用以下JSON格式输出（只输出JSON，不要其他文字）：\n'
+        '{"title": "...", "description": "...", "hashtags": ["#tag1", "#tag2"], "best_time": "..."}'
+    )
+    try:
+        resp = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"脚本内容：\n\n{script}"},
+            ],
+            max_tokens=500,
+        )
+        copy_text = resp.choices[0].message.content or ""
+        json_match = _re_chat.search(r"\{[\s\S]+\}", copy_text)
+        if json_match:
+            data = _json_chat.loads(json_match.group())
+            return {
+                "title": data.get("title", ""),
+                "description": data.get("description", ""),
+                "hashtags": data.get("hashtags", []),
+                "best_time": data.get("best_time", ""),
+            }
+    except Exception as e:
+        log_error(f"文案师调用失败: {e}")
+    return {"title": "", "description": "", "hashtags": [], "best_time": ""}
+
 
 class ChatRequest(BaseModel):
     messages: List[dict] = Field(..., description="聊天历史，每条有role和content")
@@ -1012,10 +1175,12 @@ async def chat_with_mentor(
     current_user: dict = Depends(get_current_user),
 ):
     """AI脚本导师对话（免费，不扣积分）"""
-    import re as _re
-    from app.services.gemini_client import ask_gemini
+    from app.config import get_settings
+    from openai import AsyncOpenAI
 
     user_id = str(current_user["id"])
+    s = get_settings()
+    client = AsyncOpenAI(base_url=s.LINGMENG_BASE_URL, api_key=s.LINGMENG_API_KEY)
 
     # 构建 system prompt
     sys_prompt = _CHAT_SYSTEM_PROMPT.format(
@@ -1026,10 +1191,27 @@ async def chat_with_mentor(
     if body.video_url:
         sys_prompt += _CHAT_VIDEO_INSTRUCTION.format(video_url=body.video_url)
 
-    # 构建多轮对话消息
+    # ── 小李·趋势研究员 ──────────────────────────────────────────
+    search_result = None
+    platform, category = _detect_platform_and_category(body.messages)
+    if platform and category and not _xiaoli_already_searched(body.messages):
+        raw = await _call_xiaoli_search(client, platform, category)
+        if raw:
+            search_result = raw
+            sys_prompt += (
+                f"\n\n[小李趋势研究员实时搜索 — 平台:{platform} 品类:{category}]\n"
+                f"{raw}\n"
+                "[请将以上最新趋势融入你的建议和脚本中]"
+            )
+            log_info(f"小李搜索完成 user={user_id} platform={platform} category={category}")
+
+    # 文案师触发检测（在本次调用前检查历史里已有脚本+用户确认）
+    trigger_copywriter = _should_trigger_copywriter(body.messages)
+    detected_platform = platform or body.market or "抖音"
+
+    # ── 构建多轮对话消息 ──────────────────────────────────────────
     openai_messages = [{"role": "system", "content": sys_prompt}]
 
-    # 产品图始终作为第一条 user 消息附件，保证 AI 任何时候都能看到产品
     if body.product_image_urls:
         img_content: list = [
             {"type": "image_url", "image_url": {"url": url}}
@@ -1040,18 +1222,16 @@ async def chat_with_mentor(
             openai_messages.append({"role": "user", "content": img_content})
             openai_messages.append({"role": "assistant", "content": "[好的，我来分析你的产品]"})
         else:
-            # 有历史消息时：把产品图插入第一条历史 user 消息里
             first_user = next((m for m in body.messages if m.get("role") == "user"), None)
             if first_user:
                 first_user_content = first_user.get("content", "")
                 img_content.append({"type": "text", "text": first_user_content or "（产品图）"})
                 openai_messages.append({"role": "user", "content": img_content})
-                # 把第一条 user 消息之后的历史消息依次追加
                 past_first = False
                 for msg in body.messages:
                     if not past_first and msg.get("role") == "user" and msg.get("content") == first_user_content:
                         past_first = True
-                        continue  # 第一条 user 已经上面加过了，跳过
+                        continue
                     role = msg.get("role", "user")
                     content = msg.get("content", "")
                     images = msg.get("images") or []
@@ -1062,11 +1242,9 @@ async def chat_with_mentor(
                     else:
                         openai_messages.append({"role": role, "content": content})
             else:
-                # 没有 user 消息（全是 assistant），正常追加历史
                 for msg in body.messages:
                     openai_messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
     else:
-        # 没有产品图，直接追加历史消息
         for msg in body.messages:
             role = msg.get("role", "user")
             content = msg.get("content", "")
@@ -1078,12 +1256,8 @@ async def chat_with_mentor(
             else:
                 openai_messages.append({"role": role, "content": content})
 
-    # 调灵梦 gpt-4o
+    # ── 林久主调用 ────────────────────────────────────────────────
     try:
-        from app.config import get_settings
-        from openai import AsyncOpenAI
-        s = get_settings()
-        client = AsyncOpenAI(base_url=s.LINGMENG_BASE_URL, api_key=s.LINGMENG_API_KEY)
         resp = await client.chat.completions.create(
             model=s.LINGMENG_MODEL,
             messages=openai_messages,
@@ -1095,36 +1269,90 @@ async def chat_with_mentor(
         log_error(f"chat 调用失败 user={user_id}: {e}")
         raise HTTPException(500, f"AI导师暂时不可用: {str(e)[:200]}")
 
-    import json as _json_chat
-
     # 提取脚本
     script = ""
-    script_match = _re.search(r"===SCRIPT_START===\s*([\s\S]+?)\s*===SCRIPT_END===", reply_text)
-    if script_match:
-        script = script_match.group(1).strip()
+    s_match = _re_chat.search(r"===SCRIPT_START===\s*([\s\S]+?)\s*===SCRIPT_END===", reply_text)
+    if s_match:
+        script = s_match.group(1).strip()
+
+    # ── 审稿员 ────────────────────────────────────────────────────
+    review_data = None
+    if script:
+        review_data = await _call_reviewer(client, script)
+        if review_data["score"] > 0 and review_data["score"] < 40:
+            # 自动修改：追加审稿意见，重新调林久
+            revision_messages = openai_messages + [
+                {"role": "assistant", "content": reply_text},
+                {
+                    "role": "user",
+                    "content": (
+                        f"审稿专家评分{review_data['score']}/60，请根据以下改进建议重新修改脚本：\n"
+                        f"{review_data['suggestions']}"
+                    ),
+                },
+            ]
+            try:
+                resp2 = await client.chat.completions.create(
+                    model=s.LINGMENG_MODEL,
+                    messages=revision_messages,
+                    max_tokens=4096,
+                    temperature=0.8,
+                )
+                reply_text = resp2.choices[0].message.content or ""
+                s_match2 = _re_chat.search(r"===SCRIPT_START===\s*([\s\S]+?)\s*===SCRIPT_END===", reply_text)
+                if s_match2:
+                    script = s_match2.group(1).strip()
+                review_data = await _call_reviewer(client, script)
+                log_info(f"审稿员触发修改 user={user_id} new_score={review_data['score']}")
+            except Exception as e:
+                log_error(f"林久修改脚本失败 user={user_id}: {e}")
+
+    # ── 文案师 ────────────────────────────────────────────────────
+    copy_data = None
+    if trigger_copywriter:
+        script_for_copy = script or _script_in_history(body.messages)
+        if script_for_copy:
+            copy_data = await _call_copywriter(client, script_for_copy, detected_platform)
+            log_info(f"文案师完成 user={user_id}")
 
     # 提取结构化问题
     questions = []
-    q_match = _re.search(r"===QUESTIONS_START===\s*([\s\S]+?)\s*===QUESTIONS_END===", reply_text)
+    q_match = _re_chat.search(r"===QUESTIONS_START===\s*([\s\S]+?)\s*===QUESTIONS_END===", reply_text)
     if q_match:
         try:
             questions = _json_chat.loads(q_match.group(1).strip())
         except Exception:
             pass
 
-    # 判断是否需要对比图
     need_contrast = "===NEED_CONTRAST_IMAGE===" in reply_text
 
-    # 清理回复文字（去掉所有标记块）
+    # 清理回复文字
     clean_reply = reply_text
-    clean_reply = _re.sub(r"===SCRIPT_START===[\s\S]*?===SCRIPT_END===", "[脚本已生成，见下方]", clean_reply)
-    clean_reply = _re.sub(r"===QUESTIONS_START===[\s\S]*?===QUESTIONS_END===", "", clean_reply)
-    clean_reply = clean_reply.replace("===NEED_CONTRAST_IMAGE===", "").strip()
+    clean_reply = _re_chat.sub(r"===SCRIPT_START===[\s\S]*?===SCRIPT_END===", "[脚本已生成，见下方]", clean_reply)
+    clean_reply = _re_chat.sub(r"===QUESTIONS_START===[\s\S]*?===QUESTIONS_END===", "", clean_reply)
+    clean_reply = clean_reply.replace("===NEED_CONTRAST_IMAGE===", "").replace(_XIAOLI_DONE_MARKER, "").strip()
 
-    log_info(f"chat OK user={user_id} reply_len={len(reply_text)} has_script={bool(script)} n_questions={len(questions)}")
-    return {
+    log_info(
+        f"chat OK user={user_id} reply_len={len(reply_text)} has_script={bool(script)} "
+        f"n_questions={len(questions)} has_review={bool(review_data)} "
+        f"has_copy={bool(copy_data)} has_search={bool(search_result)}"
+    )
+
+    result: dict = {
         "reply": clean_reply,
         "script": script,
         "need_contrast_image": need_contrast,
         "questions": questions,
     }
+    if search_result:
+        # 只返回摘要（前600字），完整版已注入 sys_prompt
+        result["search_result"] = search_result[:600]
+    if review_data and review_data.get("score", 0) > 0:
+        result["review"] = {
+            "score": review_data["score"],
+            "details": review_data["details"],
+            "suggestions": review_data["suggestions"],
+        }
+    if copy_data and copy_data.get("title"):
+        result["copy"] = copy_data
+    return result
