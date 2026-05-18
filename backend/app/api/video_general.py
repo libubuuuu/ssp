@@ -1540,6 +1540,38 @@ async def chat_with_mentor(
             except Exception as _re:
                 log_error(f"脚本语言重写调用失败 user={user_id}: {_re}")
 
+    # ── 场景数量强制检查：超限就让林久重写 ──────────────────────────
+    if script:
+        import re as _re_scene
+        _scene_labels = list(set(_re_scene.findall(r'场景[：:]\s*([^|，,\n]+)', script)))
+        _max_scenes = {5: 1, 10: 1, 15: 2, 30: 3, 60: 4}.get(body.duration, 2)
+        if len(_scene_labels) > _max_scenes:
+            log_info(
+                f"脚本场景超限 user={user_id}: {len(_scene_labels)}个场景 > 上限{_max_scenes}个, 触发重写"
+            )
+            _fix_msgs = openai_messages + [
+                {"role": "assistant", "content": reply_text},
+                {"role": "user", "content": (
+                    f"错误！你写了{len(_scene_labels)}个场景（{', '.join(_scene_labels)}），"
+                    f"但{body.duration}秒视频只能有{_max_scenes}个场景！"
+                    f"立刻重写，所有镜头都在同一个场景里，输出完整===SCRIPT_START===格式。"
+                )},
+            ]
+            try:
+                _fix_resp = await client.chat.completions.create(
+                    model="gpt-4o", messages=_fix_msgs, max_tokens=2000
+                )
+                _fix_text = _fix_resp.choices[0].message.content or ""
+                _fix_script = _extract_script(_fix_text)
+                if _fix_script:
+                    script = _fix_script
+                    reply_text = _fix_text
+                    log_info(f"脚本场景数量重写成功 user={user_id}")
+                else:
+                    log_error(f"脚本场景数量重写未返回合法脚本 user={user_id}")
+            except Exception as _fe:
+                log_error(f"脚本场景数量重写调用失败 user={user_id}: {_fe}")
+
     # ── 审稿员：每次有新脚本就审查，不自动修改，由用户决定 ──────────
     review_data = None
     if script:
