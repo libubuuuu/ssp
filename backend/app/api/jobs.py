@@ -5387,6 +5387,9 @@ async def _run_script_to_video_job(params: dict) -> dict:
         if enable_voice:
             _pre_speeches = [str(sc.get("speech") or "").strip() for sc in scenes]
             _pre_speech_text = " ".join(s for s in _pre_speeches if s)
+            # Seedance audio_urls 上限 15 秒，截断文本防超长（~60 字符/秒，留 1 秒余量）
+            _max_speech_chars = int(min(target_duration if target_duration > 0 else 14, 14) * 60)
+            _pre_speech_text = _pre_speech_text[:_max_speech_chars]
             if _pre_speech_text:
                 try:
                     _r = await _fal.run_async(
