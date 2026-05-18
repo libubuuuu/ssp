@@ -134,7 +134,7 @@ export default function ProfilePage(){
             </div>
             <div style={{marginLeft:"auto",alignSelf:"center",display:"flex",gap:"0.6rem"}}>
               <button onClick={()=>router.push("/credits")} style={{background:"none",color:"#555",border:"1px solid #ddd",padding:"0.65rem 1.1rem",borderRadius:"999px",cursor:"pointer",fontSize:"0.85rem"}}>积分明细</button>
-              <button onClick={()=>router.push("/pricing")} style={{background:"#0d0d0d",color:"#fff",border:"none",padding:"0.65rem 1.4rem",borderRadius:"999px",cursor:"pointer",fontSize:"0.85rem"}}>{t("profile.topupCredits")}</button>
+              <button onClick={()=>router.push("/pricing?tab=credit")} style={{background:"#0d0d0d",color:"#fff",border:"none",padding:"0.65rem 1.4rem",borderRadius:"999px",cursor:"pointer",fontSize:"0.85rem"}}>{t("profile.topupCredits")}</button>
             </div>
           </div>
         </div>
