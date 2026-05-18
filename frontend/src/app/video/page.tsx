@@ -205,7 +205,7 @@ export default function VideoPage() {
                   width: "100%", padding: "0.7rem", background: (c.status === "uploading" || c.status === "pending" || c.status === "running") ? "#999" : "#0d0d0d",
                   color: "#fff", border: "none", borderRadius: 10, cursor: "pointer", fontSize: "0.88rem", fontWeight: 500,
                 }}>
-                {c.status === "completed" ? t("video.regenerate") : (c.status === "pending" || c.status === "running" || c.status === "uploading") ? t("video.generating") : t("video.generate")}
+                {c.status === "completed" ? t("video.regenerate") : (c.status === "pending" || c.status === "running" || c.status === "uploading") ? t("video.generating") : `${t("video.generate")}（扣${c.duration * 50}积分）`}
               </button>
             </div>
           ))}
