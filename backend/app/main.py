@@ -153,4 +153,11 @@ async def health():
     checker = get_health_checker()
     return await checker.get_full_health()
 
+@app.get("/internal/active-jobs")
+async def internal_active_jobs():
+    """deploy.sh drain 专用：返回当前进程内正在运行的任务数，不需要鉴权。"""
+    from app.api.jobs import JOBS
+    active = sum(1 for j in JOBS.values() if j.get("status") in ("running", "pending"))
+    return {"active_jobs": active}
+
 # startup / shutdown 已由顶部 @asynccontextmanager 管理(取代 deprecated @app.on_event)

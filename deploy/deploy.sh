@@ -92,38 +92,29 @@ nginx -t 2>&1 | tee -a $LOG
 nginx -s reload
 echo "✅ 流量已切换到 $STANDBY" | tee -a $LOG
 
-# ── 5. drain：等旧 active 跑完进行中任务再停（最多等 10 分钟）──────────
+# ── 5. drain：查旧进程内存中的活跃任务数，等完成后再停（最多 15 分钟）──
 echo "[5/5] 关闭 $ACTIVE（先 drain 进行中任务）" | tee -a $LOG
 
-ACTIVE_JOBS_FILE="/opt/ssp/jobs_data/jobs.json"
-DRAIN_MAX=600   # 最多等 10 分钟
+DRAIN_MAX=900   # 最多等 15 分钟
 DRAIN_ELAPSED=0
 
-# 先等 30 秒让刚提交的任务有时间写入 jobs.json（防竞态）
-echo "⏸  等待 30s 让进行中任务状态落盘..." | tee -a $LOG
-sleep 30
-DRAIN_ELAPSED=30
+# 查旧槽进程内存（不用 jobs.json，防止被新槽 cleanup 污染）
+_get_active() {
+    curl -s --max-time 3 http://127.0.0.1:${ACTIVE_BACKEND}/internal/active-jobs \
+        2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('active_jobs',0))" 2>/dev/null || echo 0
+}
 
 while [ $DRAIN_ELAPSED -lt $DRAIN_MAX ]; do
-    RUNNING_COUNT=$(python3 -c "
-import json, os, sys
-f = '$ACTIVE_JOBS_FILE'
-try:
-    data = json.load(open(f))
-    jobs = list(data.values()) if isinstance(data, dict) else data
-    n = sum(1 for j in jobs if j.get('status') in ('running','pending'))
-    print(n)
-except: print(0)
-" 2>/dev/null || echo 0)
+    RUNNING_COUNT=$(_get_active)
 
-    if [ "$RUNNING_COUNT" -eq "0" ] 2>/dev/null; then
+    if [ "$RUNNING_COUNT" = "0" ] || [ -z "$RUNNING_COUNT" ]; then
         echo "✅ 旧进程无进行中任务，可以安全停止" | tee -a $LOG
         break
     fi
 
-    echo "⏳ 旧进程还有 $RUNNING_COUNT 个任务进行中，等待完成... (${DRAIN_ELAPSED}s/${DRAIN_MAX}s)" | tee -a $LOG
-    sleep 10
-    DRAIN_ELAPSED=$((DRAIN_ELAPSED + 10))
+    echo "⏳ 旧进程还有 $RUNNING_COUNT 个任务运行中，等待完成... (${DRAIN_ELAPSED}s/${DRAIN_MAX}s)" | tee -a $LOG
+    sleep 15
+    DRAIN_ELAPSED=$((DRAIN_ELAPSED + 15))
 done
 
 if [ $DRAIN_ELAPSED -ge $DRAIN_MAX ]; then
