@@ -8,8 +8,78 @@
 """
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
+import tempfile
+
 from app.services.gemini_client import ask_gemini
-from app.services.logger import log_info
+from app.services.logger import log_info, log_error
+
+
+async def extract_frames_from_video(video_url: str, num_frames: int = 5) -> list[str]:
+    """下载视频并用 ffmpeg 均匀截帧，上传到 fal storage，返回图片 URL 列表。
+
+    失败时返回空列表（调用方降级处理）。
+    """
+    import fal_client
+    import httpx
+
+    tmp_dir = tempfile.mkdtemp(prefix="ssp_frames_")
+    try:
+        # 1. 下载视频
+        video_path = os.path.join(tmp_dir, "input.mp4")
+        async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
+            r = await client.get(video_url)
+            r.raise_for_status()
+            with open(video_path, "wb") as f:
+                f.write(r.content)
+
+        # 2. 获取时长
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+            capture_output=True, text=True,
+        )
+        duration = float(probe.stdout.strip() or "0")
+        if duration <= 0:
+            log_error(f"extract_frames: ffprobe 时长为0, video={video_url[:80]}")
+            return []
+
+        # 3. 均匀截帧
+        frame_paths = []
+        for i in range(num_frames):
+            t = duration * i / num_frames
+            frame_path = os.path.join(tmp_dir, f"frame_{i:02d}.jpg")
+            subprocess.run(
+                ["ffmpeg", "-y", "-ss", str(t), "-i", video_path,
+                 "-frames:v", "1", "-q:v", "2", frame_path],
+                capture_output=True,
+            )
+            if os.path.exists(frame_path) and os.path.getsize(frame_path) > 0:
+                frame_paths.append(frame_path)
+
+        if not frame_paths:
+            log_error(f"extract_frames: 截帧全部失败 video={video_url[:80]}")
+            return []
+
+        # 4. 上传到 fal storage
+        frame_urls = []
+        for fp in frame_paths:
+            try:
+                url = await fal_client.upload_file_async(fp)
+                frame_urls.append(url)
+            except Exception as e:
+                log_error(f"extract_frames: fal 上传失败 {fp}: {e}")
+
+        log_info(f"extract_frames: OK {len(frame_urls)}/{num_frames} 帧 video={video_url[:60]}")
+        return frame_urls
+
+    except Exception as e:
+        log_error(f"extract_frames: 异常 {e} video={video_url[:80]}")
+        return []
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 共用部分：输出格式 + 镜头要求 + 避坑 + 参考示例 + 用户参数
@@ -446,10 +516,19 @@ async def analyze_video(
         f"n_product_imgs={len(product_image_urls)} video={video_url[:60]}"
     )
 
+    # 截帧：把视频截成5张均匀分布的图片再传给 gpt-4o（gpt-4o 不支持视频直链）
+    frame_urls = await extract_frames_from_video(video_url, num_frames=5)
+    if frame_urls:
+        log_info(f"video_analyze: 截帧成功 {len(frame_urls)} 张，改用图片 URL 传入")
+        all_image_urls = frame_urls + list(product_image_urls[:4])
+    else:
+        log_error("video_analyze: 截帧失败，降级为直传视频 URL")
+        all_image_urls = list(product_image_urls[:4])
+
     script = await ask_gemini(
         prompt=prompt,
-        video_url=video_url,
-        image_urls=product_image_urls[:4],  # 最多传4张产品图
+        video_url=video_url if not frame_urls else None,  # 截帧成功则不传原视频URL
+        image_urls=all_image_urls,
         max_tokens=8192,
         temperature=0.7,
     )
