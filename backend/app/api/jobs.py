@@ -145,8 +145,14 @@ async def _run_image_job(params: dict):
     import asyncio, fal_client
     service = get_image_service()
     refs = params.get("reference_images") or []
-    size = params.get("size", "1024x1024")
-    image_size = _GPT_IMAGE_SIZE_MAP.get(size, "square_hd")
+    aspect_ratio = params.get("aspect_ratio", "")
+    if aspect_ratio == "9:16":
+        image_size = "portrait_16_9"
+    elif aspect_ratio == "16:9":
+        image_size = "landscape_16_9"
+    else:
+        size = params.get("size", "1024x1024")
+        image_size = _GPT_IMAGE_SIZE_MAP.get(size, "square_hd")
 
     if refs:
         result = await asyncio.wait_for(
