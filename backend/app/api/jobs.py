@@ -2848,7 +2848,7 @@ async def _run_skill_generate_job(params: dict) -> dict:
     if not scenes_active:
         raise RuntimeError("所有分镜都被跳过,请至少保留 1 个")
 
-    MAX_API_DUR = 14   # Seedance 上限 15s，留 1s 余量
+    MAX_API_DUR = 15   # Seedance Fast r2v 上限(实测)
     MIN_API_DUR = 3    # Seedance Fast r2v 下限(API 要求)
 
     # ── 全量:所有用户走 batch 分组,上限从数据库读(默认 8s) ──────────────────
@@ -4936,7 +4936,7 @@ async def _run_video_general_job(params: dict) -> dict:
                     f"video_general seg {idx} Seedance r2v 提交(attempt={attempt}) "
                     f"n_refs={len(image_urls)} prompt_len={len(r2v_prompt)}"
                 )
-                seg_dur = max(4, min(14, int(scene.get("duration_sec") or 8)))  # Seedance 上限 15s，留 1s 余量
+                seg_dur = max(4, min(15, int(scene.get("duration_sec") or 8)))
                 sub = await ad_video_models.submit_seedance_fast_r2v_video(
                     image_urls=image_urls,
                     prompt=r2v_prompt,
@@ -5169,7 +5169,7 @@ async def _run_script_to_video_job(params: dict) -> dict:
     from app.database import get_app_config as _get_app_config
 
     SEEDANCE_EP = "bytedance/seedance-2.0/fast/reference-to-video"
-    MAX_DUR = 14  # Seedance 上限 15s，留 1s 余量
+    MAX_DUR = 15
     NO_TEXT = (
         " CRITICAL: Do NOT render any text, subtitles, captions, "
         "titles or watermarks on screen. The video must be purely visual with zero on-screen text."
@@ -5308,7 +5308,7 @@ async def _run_script_to_video_job(params: dict) -> dict:
 
     # ── Seedance 提交（支持 video_urls + tts_audio_url 原生口播）──────────
     async def _submit(img_urls: list, prompt: str, duration: int, tts_audio_url: str | None = None) -> str:
-        safe_dur = max(4, min(14, int(duration)))  # Seedance 上限 15s，留 1s 余量
+        safe_dur = max(4, min(15, int(duration)))  # Seedance Fast r2v 实测 4-15s
         args: dict = {
             "image_urls": img_urls,
             "prompt": prompt,
