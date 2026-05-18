@@ -273,11 +273,8 @@ export default function VideoGeneralPage() {
   // 入口A 专用：参考视频
   const [refVid, setRefVid] = useState<{ file: File | null; uploading: boolean; url: string }>({ file: null, uploading: false, url: "" });
   // 入口A 专用：脚本状态（与入口B script 独立）
-  const [scriptA, setScriptA]         = useState("");
-  const [loadingA, setLoadingA]       = useState(false);
-  const [adaptedScript, setAdaptedScript]   = useState("");
-  const [adaptedScriptEdit, setAdaptedScriptEdit] = useState("");
-  const [loadingAdapt, setLoadingAdapt] = useState(false);
+  const [scriptA, setScriptA]       = useState("");
+  const [loadingA, setLoadingA]     = useState(false);
 
   // Step 1 - product images
   const [front, setFront]   = useState<ImgSlot>(emptySlot());
@@ -442,26 +439,7 @@ export default function VideoGeneralPage() {
         throw new Error((await r.json()).detail || await r.text());
       }
       const d = await r.json();
-      const rawScript = d.script || "";
-      setScriptA(rawScript);
-      setAdaptedScript(""); setAdaptedScriptEdit("");
-      // 自动改编：用产品图替换脚本里的旧产品描述
-      if (rawScript) {
-        setLoadingAdapt(true);
-        try {
-          const ar = await fetch(`${API_BASE}/api/video/general/adapt-script`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
-            body: JSON.stringify({ script: rawScript, product_image_urls: productUrls }),
-          });
-          if (ar.ok) {
-            const ad = await ar.json();
-            setAdaptedScript(ad.adapted_script || "");
-            setAdaptedScriptEdit(ad.adapted_script || "");
-          }
-        } catch {}
-        setLoadingAdapt(false);
-      }
+      setScriptA(d.script || "");
     } catch (e) {
       setError((e as Error).message || "视频分析失败，请重试");
     } finally {
@@ -949,45 +927,20 @@ export default function VideoGeneralPage() {
 
               {scriptA && !loadingA && (
                 <div style={{ marginTop: "1.4rem" }}>
-                  {/* 两栏：左原始脚本，右改编脚本 */}
-                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    {/* 左：原始脚本 */}
-                    <div style={{ flex: "1 1 280px", minWidth: 0 }}>
-                      <div style={{ fontSize: "0.78rem", color: "#718096", fontWeight: 600, marginBottom: 6 }}>📋 原始脚本（参考视频）</div>
-                      <ScriptDisplay text={scriptA} />
-                    </div>
-                    {/* 右：改编脚本 */}
-                    <div style={{ flex: "1 1 280px", minWidth: 0 }}>
-                      <div style={{ fontSize: "0.78rem", color: "#7c3aed", fontWeight: 600, marginBottom: 6 }}>
-                        ✨ 产品改编脚本{loadingAdapt ? "（AI 改编中…）" : "（可编辑）"}
-                      </div>
-                      {loadingAdapt ? (
-                        <div style={{ padding: "1.2rem", background: "#f5f3ff", borderRadius: 8, color: "#7c3aed", fontSize: "0.82rem", display: "flex", alignItems: "center", gap: 8 }}>
-                          <span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #c4b5fd", borderTopColor: "#7c3aed", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-                          正在用产品图替换脚本描述…
-                        </div>
-                      ) : (
-                        <textarea
-                          value={adaptedScriptEdit}
-                          onChange={e => setAdaptedScriptEdit(e.target.value)}
-                          style={{ width: "100%", minHeight: 280, padding: "0.75rem", borderRadius: 8, border: "1px solid #ddd6fe", fontSize: "0.8rem", lineHeight: 1.6, resize: "vertical", fontFamily: "monospace", boxSizing: "border-box" }}
-                          placeholder="改编脚本将显示在这里，可直接编辑…"
-                        />
-                      )}
-                    </div>
-                  </div>
-                  <ContrastUploadHint scriptText={adaptedScriptEdit || scriptA} />
+                  <div style={{ fontSize: "0.8rem", color: "#718096", fontWeight: 600, marginBottom: 10 }}>✨ 视频分析结果（可复刻脚本）</div>
+                  <ScriptDisplay text={scriptA} />
+                  <ContrastUploadHint scriptText={scriptA} />
                   <div style={{ display: "flex", gap: 10, marginTop: "1.2rem", flexWrap: "wrap" }}>
                     <button onClick={analyzeVideo} disabled={loadingA || vidLoading}
                       style={{ flex: "1 1 200px", padding: "0.7rem 1rem", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#374151", fontSize: "0.88rem", cursor: "pointer", fontWeight: 500 }}>
                       🔄 重新分析（35 积分）
                     </button>
-                    <button onClick={() => generateVideo(adaptedScriptEdit || scriptA)} disabled={vidLoading || loadingA || loadingAdapt}
+                    <button onClick={() => generateVideo(scriptA, refVid.url || undefined)} disabled={vidLoading || loadingA}
                       style={{
                         flex: "1 1 200px", padding: "0.7rem 1rem", borderRadius: 10, border: "none",
-                        background: vidLoading || loadingA || loadingAdapt ? "#e2e8f0" : "#16a34a",
-                        color: vidLoading || loadingA || loadingAdapt ? "#a0aec0" : "#fff",
-                        fontSize: "0.88rem", cursor: vidLoading || loadingA || loadingAdapt ? "not-allowed" : "pointer",
+                        background: vidLoading || loadingA ? "#e2e8f0" : "#16a34a",
+                        color: vidLoading || loadingA ? "#a0aec0" : "#fff",
+                        fontSize: "0.88rem", cursor: vidLoading || loadingA ? "not-allowed" : "pointer",
                         fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
                       }}>
                       {vidLoading ? <><span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #a0aec0", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />生成中…</> : "🎬 确认脚本，生成视频"}
