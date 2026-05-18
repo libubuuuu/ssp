@@ -5419,7 +5419,7 @@ async def _run_script_to_video_job(params: dict) -> dict:
 
         MAX_WAIT = 600
 
-        async def _gen_one_task(task: dict) -> str:
+        async def _gen_one_task(task: dict, prev_frame_url: str | None = None) -> str:
             ti = task["task_idx"]
             req_dur = max(4, math.ceil(min(task["total_dur"], MAX_DUR)))  # Seedance 最低 4s
             req_dur = min(req_dur, MAX_DUR)
@@ -5458,7 +5458,8 @@ async def _run_script_to_video_job(params: dict) -> dict:
 
             if portrait_url and len(task_imgs) < 9:
                 task_imgs.append(portrait_url)
-            # prev_frame 已去除（并行模式各段独立生成，无法依赖前段末帧）
+            if prev_frame_url and len(task_imgs) < 9:
+                task_imgs.append(prev_frame_url)
             task_imgs = task_imgs[:9]
 
             # Prompt
@@ -5564,7 +5565,16 @@ async def _run_script_to_video_job(params: dict) -> dict:
             task["raw_path"] = raw
             return raw
 
-        all_raw: list[str] = list(await asyncio.gather(*[_gen_one_task(t) for t in tasks]))
+        if params.get("is_replicate"):
+            # 视频拆解：并行生成（各段独立，无 prev_frame）
+            all_raw: list[str] = list(await asyncio.gather(*[_gen_one_task(t) for t in tasks]))
+        else:
+            # AI爆款视频：串行生成（保留 prev_frame 段间衔接）
+            all_raw: list[str] = []
+            for _t_serial in tasks:
+                _prev = await _last_frame(all_raw[-1], _t_serial["task_idx"]) if all_raw else None
+                _raw = await _gen_one_task(_t_serial, prev_frame_url=_prev)
+                all_raw.append(_raw)
 
         # ── ffprobe + 裁剪（保留音轨）──────────────────────────────────────
         def _ffprobe_dur(path: str) -> float:
