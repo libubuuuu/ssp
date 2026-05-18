@@ -779,6 +779,65 @@ async def video_analyze_submit(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# POST /api/video/general/adapt-script
+# ──────────────────────────────────────────────────────────────────────────────
+
+class AdaptScriptRequest(BaseModel):
+    script: str
+    product_image_urls: List[str]
+
+
+@router.post("/adapt-script")
+async def adapt_script(
+    body: AdaptScriptRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """用 GPT-4o 视觉把原始脚本里的旧产品描述替换成用户上传产品的细节。不扣积分（视频分析步骤的一部分）。"""
+    from openai import AsyncOpenAI
+    from app.config import get_settings
+    s = get_settings()
+    client = AsyncOpenAI(base_url=s.LINGMENG_BASE_URL, api_key=s.LINGMENG_API_KEY)
+
+    if not body.script.strip():
+        raise HTTPException(400, "script 必填")
+    if not body.product_image_urls:
+        raise HTTPException(400, "product_image_urls 必填")
+
+    image_contents = [
+        {"type": "image_url", "image_url": {"url": url}}
+        for url in body.product_image_urls[:4]
+    ]
+    messages = [
+        {"role": "system", "content": (
+            "你是脚本改编助手。用户给你一个参考视频的拆解脚本和新产品的图片。\n"
+            "你的任务：\n"
+            "1. 仔细看新产品图片，分析产品的外观、材质、颜色、设计细节\n"
+            "2. 把脚本里所有关于旧产品的描述替换成新产品的描述\n"
+            "3. 台词里提到旧产品特点的地方也要替换成新产品的特点\n"
+            "4. 保持脚本的结构、时长、镜头数量完全不变\n"
+            "5. 输出完整脚本，保持原有格式（===SCRIPT_START=== 等标记完整保留）"
+        )},
+        {"role": "user", "content": [
+            {"type": "text", "text": f"原始脚本：\n{body.script}\n\n请根据以下产品图片替换脚本中的产品描述："},
+            *image_contents,
+        ]},
+    ]
+
+    try:
+        resp = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            max_tokens=3000,
+        )
+        adapted = resp.choices[0].message.content or ""
+        log_info(f"adapt-script OK user={current_user['id']} len={len(adapted)}")
+        return {"adapted_script": adapted}
+    except Exception as e:
+        log_error(f"adapt-script 失败 user={current_user['id']}: {e}")
+        raise HTTPException(500, f"脚本改编失败: {str(e)[:200]}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # AI脚本导师对话接口
 # POST /api/video/general/chat
 # ──────────────────────────────────────────────────────────────────────────────
