@@ -565,6 +565,7 @@ export default function VideoGeneralPage() {
           enable_voice:         enableVoice,
           target_duration:      duration,
           target_lang:          targetLang,
+          is_replicate:         tab === "replicate",
         }),
       });
       if (!r.ok) {

@@ -651,6 +651,7 @@ class ScriptToVideoRequest(BaseModel):
     enable_voice: bool = Field(True, description="是否开启TTS+Lipsync")
     target_duration: int = Field(10, description="视频时长，只能是5/10/15/30/60")
     target_lang: str = Field("en", description="目标语言代码 en/zh/ja/ko/es/pt/ar")
+    is_replicate: bool = Field(False, description="视频拆解路径，跳过时长白名单校验")
 
 
 @router.post("/script-to-video")
@@ -669,7 +670,7 @@ async def script_to_video_submit(
         raise HTTPException(400, "product_image_urls 必填")
 
     _ALLOWED_DURATIONS = {5, 10, 15, 30, 60}
-    if body.target_duration not in _ALLOWED_DURATIONS:
+    if not body.is_replicate and body.target_duration not in _ALLOWED_DURATIONS:
         raise HTTPException(400, f"时长只能是 {sorted(_ALLOWED_DURATIONS)}，收到 {body.target_duration}")
 
     # 解析脚本
