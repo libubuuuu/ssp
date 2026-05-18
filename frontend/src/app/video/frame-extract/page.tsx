@@ -569,8 +569,8 @@ export default function VideoFrameExtractPage() {
               <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: "0.3rem" }}>品类</div>
               <select value={isSensitive ? "sensitive" : "normal"} onChange={e => setIsSensitive(e.target.value === "sensitive")} disabled={loading}
                 style={{ padding: "0.4rem 0.6rem", border: "1px solid #ddd", borderRadius: 8, fontSize: "0.85rem", background: "#fff" }}>
-                <option value="normal">普通品类（84积分/张）</option>
-                <option value="sensitive">敏感品类·内衣泳装等（168积分/张）</option>
+                <option value="normal">普通类目（84积分/张）</option>
+                <option value="sensitive">内衣/泳装类目（168积分/张）</option>
               </select>
             </div>
             <button onClick={doReplace} disabled={loading}
