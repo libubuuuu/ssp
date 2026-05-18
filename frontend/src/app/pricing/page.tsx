@@ -2,7 +2,6 @@
 import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
 
@@ -67,7 +66,6 @@ export default function PricingPage() {
     const token = localStorage.getItem("token");
     if (!token) { router.push("/auth"); return; }
     setError(null); setSuccess(null);
-    // 立刻弹出二维码，订单号后台生成后填入
     setProcessingOrder("生成中...");
     try {
       const res = await fetch(`${API_BASE}/api/payment/orders/create`, {
@@ -77,12 +75,15 @@ export default function PricingPage() {
       });
       const data = await res.json();
       if (data.order_id) {
-        setProcessingOrder(data.order_id);
         if (data.payment_url) {
+          setProcessingOrder(data.order_id);
           setPaymentUrl(data.payment_url);
           window.open(data.payment_url, "_blank");
+          setTimeout(() => pollOrderStatus(data.order_id, token, data.amount), 1000);
+        } else {
+          setProcessingOrder(null);
+          setError("支付通道暂时不可用，请稍后重试");
         }
-        setTimeout(() => pollOrderStatus(data.order_id, token, data.amount), 1000);
       } else { setProcessingOrder(null); setError(data.detail || t("errors.createOrderFailed")); }
     } catch (err) { setProcessingOrder(null); setError(err instanceof Error ? err.message : t("errors.networkError")); }
   };
@@ -185,31 +186,7 @@ export default function PricingPage() {
                 </button>
               </>
             ) : (
-              <>
-                <h2 style={{ margin: "0 0 1rem", fontSize: "1.2rem", fontWeight: 500 }}>{t("pricing.scanTitle")}</h2>
-                <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "1.5rem" }}>{t("pricing.scanHint")}</div>
-                <div style={{ background: "#fafaf7", borderRadius: 12, padding: "2rem", marginBottom: "1rem" }}>
-                  <Image src="/qr-payment.png" alt={t("pricing.qrAlt")} width={200} height={200}
-                    onError={(e) => { (e.target as HTMLImageElement).src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Crect width='200' height='200' fill='%23ddd'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.35em' fill='%23666'%3E收款码占位%3C/text%3E%3C/svg%3E"; }}
-                    style={{ display: "block", margin: "0 auto" }} />
-                </div>
-                <div style={{ background: "#fff8ea", border: "1px solid #f5d884", borderRadius: 10, padding: "0.8rem", marginBottom: "1rem", textAlign: "left", fontSize: "0.82rem", color: "#7a5400" }}>
-                  <div style={{ fontWeight: 600, marginBottom: 4 }}>⚠ {t("pricing.payFlow")}</div>
-                  <div>{t("pricing.payFlow1")}</div>
-                  <div>{t("pricing.payFlow2Pre")}<b>{t("pricing.orderNoLabel")}</b>{t("pricing.payFlow2Post")}</div>
-                  <div>{t("pricing.payFlow3")}</div>
-                </div>
-                <div style={{ background: "#f5f5f0", padding: "0.75rem", borderRadius: 8, marginBottom: "1rem", fontFamily: "monospace", fontSize: "0.82rem" }}>
-                  {t("pricing.orderNoLabel")}: <span style={{ fontWeight: 600, userSelect: "all" }}>{processingOrder}</span>
-                  <button onClick={() => { navigator.clipboard.writeText(processingOrder); setSuccess(t("pricing.orderNoCopied")); setTimeout(() => setSuccess(null), 2000); }}
-                    style={{ marginLeft: 8, background: "#0d0d0d", color: "#fff", border: "none", borderRadius: 6, padding: "0.2rem 0.6rem", fontSize: "0.75rem", cursor: "pointer" }}>{t("pricing.copyBtn")}</button>
-                </div>
-                <div style={{ fontSize: "0.8rem", color: "#999", marginBottom: "1rem" }}>{t("pricing.waitConfirm")}</div>
-                <button onClick={() => { setProcessingOrder(null); setPaymentUrl(null); setLoading(false); }}
-                  style={{ width: "100%", padding: "0.7rem", background: "#f5f5f0", border: "none", borderRadius: 10, cursor: "pointer", fontSize: "0.88rem", color: "#333" }}>
-                  {t("pricing.closeKeepOrder")}
-                </button>
-              </>
+              <div style={{ color: "#666", fontSize: "0.9rem", padding: "1rem 0" }}>正在生成支付订单，请稍候…</div>
             )}
           </div>
         </div>
