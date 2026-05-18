@@ -156,19 +156,20 @@ async def create_order(req: CreateOrderRequest, current_user: dict = Depends(get
         """, (order_id, current_user["id"], amount, price))
         conn.commit()
 
-    # credit 类型：调虎皮椒自动支付
+    # 调虎皮椒自动支付（package / credit 均走此流程）
     payment_url: str | None = None
-    if req.type == "credit":
+    if req.type in ("credit", "package"):
         try:
             from app.config import get_settings
             s = get_settings()
             if s.HUPIJIAO_SECRET:
+                title = f"积分充值 {amount} 积分" if req.type == "credit" else f"订阅套餐 {amount} 积分"
                 payment_url = await _hpj_create_order(
                     appid=s.HUPIJIAO_APPID,
                     secret=s.HUPIJIAO_SECRET,
                     order_id=order_id,
                     total_fee=price,
-                    title=f"积分充值 {amount} 积分",
+                    title=title,
                     notify_url="https://ailixiao.com/api/payment/hupijiao/notify",
                     return_url="https://ailixiao.com/pricing?payment=success",
                 )
