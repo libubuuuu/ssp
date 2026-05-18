@@ -563,7 +563,7 @@ export default function VideoGeneralPage() {
           resolution:           resolution,
           contrast_image_url:   contrastImg.url || null,
           enable_voice:         enableVoice,
-          target_duration:      Math.min(duration, 14),
+          target_duration:      duration,
           target_lang:          targetLang,
         }),
       });
