@@ -107,6 +107,10 @@ class Settings(BaseSettings):
     SEARCH_API_KEY: str = ""
     SEARCH_BASE_URL: str = "https://1189.xin/v1"
 
+    # 虎皮椒支付
+    HUPIJIAO_APPID: str = "201906180392"
+    HUPIJIAO_SECRET: str = ""  # 从 .env.enc 读取
+
     class Config:
         env_file = str(_ENV_PATH)
         extra = "ignore"

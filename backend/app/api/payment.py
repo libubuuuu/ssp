@@ -1,17 +1,58 @@
 """
 支付订单 API
 - 套餐购买
-- 额度充值
+- 额度充值（虎皮椒自动支付）
 - 订单查询
 """
 from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from typing import Optional, List, Literal
 from ..api.auth import get_current_user
 from ..database import get_db
+from ..services.logger import log_info, log_error
 import uuid
+import hashlib
+import time as _time
+import random
+import string
 
 router = APIRouter()
+
+
+# ── 虎皮椒签名 ────────────────────────────────────────────────────────────
+def _hpj_sign(params: dict, secret: str) -> str:
+    """按 key 字母排序拼接后追加 appsecret，MD5"""
+    items = sorted((k, str(v)) for k, v in params.items() if v != "" and v is not None and k != "hash")
+    query = "&".join(f"{k}={v}" for k, v in items) + f"&appsecret={secret}"
+    return hashlib.md5(query.encode()).hexdigest()
+
+
+async def _hpj_create_order(appid: str, secret: str, order_id: str,
+                             total_fee: float, title: str,
+                             notify_url: str, return_url: str) -> str:
+    """调虎皮椒接口创建支付订单，返回支付页 URL"""
+    import httpx
+    nonce = "".join(random.choices(string.ascii_letters + string.digits, k=16))
+    params = {
+        "version": "1.1",
+        "appid": appid,
+        "trade_order_id": order_id,
+        "total_fee": f"{total_fee:.2f}",
+        "title": title,
+        "time": str(int(_time.time())),
+        "notify_url": notify_url,
+        "return_url": return_url,
+        "nonce_str": nonce,
+    }
+    params["hash"] = _hpj_sign(params, secret)
+    async with httpx.AsyncClient(timeout=10) as cli:
+        r = await cli.post("https://api.xunhupay.com/payment/do.html", data=params)
+        r.raise_for_status()
+        data = r.json()
+    if data.get("errcode") != 0:
+        raise RuntimeError(f"虎皮椒建单失败: {data.get('errmsg', '未知')}")
+    return data["url"]
 
 
 # 套餐配置(2026-05-13 老板锁定:50 积分 = 1 元,套餐价 = credits / 50 × 折扣)
@@ -42,11 +83,12 @@ PACKAGES = [
     },
 ]
 
-# 充值包(2026-05-13:50 积分 = 1 元,大额送积分)
+# 充值包(50 积分 = 1 元)
 CREDIT_PACKS = [
-    {"id": "small",  "credits": 500,  "price": 10.00},   # 10 元 = 500 积分(1:1 兑换)
-    {"id": "medium", "credits": 2500, "price": 50.00},   # 50 元 = 2500 积分(1:1 兑换)
-    {"id": "large",  "credits": 5250, "price": 100.00},  # 100 元 = 5250 积分(9.5 折,送 250)
+    {"id": "small",   "credits": 500,   "price": 10.00},
+    {"id": "medium",  "credits": 2500,  "price": 50.00},
+    {"id": "large",   "credits": 5000,  "price": 100.00},
+    {"id": "xlarge",  "credits": 10000, "price": 200.00},
 ]
 
 
@@ -114,14 +156,33 @@ async def create_order(req: CreateOrderRequest, current_user: dict = Depends(get
         """, (order_id, current_user["id"], amount, price))
         conn.commit()
 
+    # credit 类型：调虎皮椒自动支付
+    payment_url: str | None = None
+    if req.type == "credit":
+        try:
+            from app.config import get_settings
+            s = get_settings()
+            if s.HUPIJIAO_SECRET:
+                payment_url = await _hpj_create_order(
+                    appid=s.HUPIJIAO_APPID,
+                    secret=s.HUPIJIAO_SECRET,
+                    order_id=order_id,
+                    total_fee=price,
+                    title=f"积分充值 {amount} 积分",
+                    notify_url="https://ailixiao.com/api/payment/hupijiao/notify",
+                    return_url="https://ailixiao.com/pricing?payment=success",
+                )
+                log_info(f"虎皮椒建单 order={order_id} fee={price} url={payment_url[:80]}")
+        except Exception as e:
+            log_error(f"虎皮椒建单失败（降级手动）: {e}")
+
     return {
         "order_id": order_id,
         "type": req.type,
         "amount": amount,
         "price": price,
         "status": "pending",
-        # 实际部署时需要返回支付链接或二维码
-        "payment_url": f"/api/payment/pay/{order_id}",
+        "payment_url": payment_url,
     }
 
 
@@ -263,3 +324,52 @@ async def admin_list_all_orders(
                 "user_name": row[8],
             })
         return {"orders": orders}
+
+
+# ── 虎皮椒异步通知 ────────────────────────────────────────────────────────
+@router.post("/hupijiao/notify")
+async def hupijiao_notify(request: Request):
+    """虎皮椒支付回调（无需鉴权）"""
+    from app.config import get_settings
+    from app.services.billing import add_credits as _add_credits
+    s = get_settings()
+
+    # 支持 form 和 json 两种格式
+    try:
+        data = dict(await request.form())
+    except Exception:
+        data = await request.json()
+
+    received_hash = data.pop("hash", "")
+    expected_hash = _hpj_sign(dict(data), s.HUPIJIAO_SECRET)
+    if received_hash != expected_hash:
+        log_error(f"虎皮椒回调签名错误: received={received_hash} expected={expected_hash}")
+        return PlainTextResponse("fail")
+
+    # 只处理支付成功（status=OD）
+    if data.get("status") != "OD":
+        return PlainTextResponse("success")
+
+    order_id = data.get("trade_order_id", "")
+    if not order_id:
+        return PlainTextResponse("fail")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, user_id, amount, status FROM credit_orders WHERE id = ?", (order_id,))
+        row = cursor.fetchone()
+        if not row:
+            log_error(f"虎皮椒回调：订单不存在 {order_id}")
+            return PlainTextResponse("fail")
+        if row[3] == "paid":
+            return PlainTextResponse("success")  # 幂等
+        cursor.execute(
+            "UPDATE credit_orders SET status='paid', paid_at=CURRENT_TIMESTAMP WHERE id = ?",
+            (order_id,)
+        )
+        conn.commit()
+        user_id, credits = row[1], row[2]
+
+    _add_credits(user_id, credits, reason="recharge_hupijiao", ref_id=order_id, module="payment/hupijiao")
+    log_info(f"虎皮椒回调成功: order={order_id} user={user_id} credits={credits}")
+    return PlainTextResponse("success")

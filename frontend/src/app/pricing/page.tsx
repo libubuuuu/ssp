@@ -25,6 +25,7 @@ export default function PricingPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [processingOrder, setProcessingOrder] = useState<string | null>(null);
+  const [paymentUrl, setPaymentUrl] = useState<string | null>(null);
   const [userCredits, setUserCredits] = useState<number>(0);
 
   useEffect(() => {
@@ -72,8 +73,14 @@ export default function PricingPage() {
         body: JSON.stringify({ type, package_id: packageId, credit_pack_id: creditPackId }),
       });
       const data = await res.json();
-      if (data.order_id) { setProcessingOrder(data.order_id); setTimeout(() => pollOrderStatus(data.order_id, token, data.amount), 1000); }
-      else { setProcessingOrder(null); setError(data.detail || t("errors.createOrderFailed")); }
+      if (data.order_id) {
+        setProcessingOrder(data.order_id);
+        if (data.payment_url) {
+          setPaymentUrl(data.payment_url);
+          window.open(data.payment_url, "_blank");
+        }
+        setTimeout(() => pollOrderStatus(data.order_id, token, data.amount), 1000);
+      } else { setProcessingOrder(null); setError(data.detail || t("errors.createOrderFailed")); }
     } catch (err) { setProcessingOrder(null); setError(err instanceof Error ? err.message : t("errors.networkError")); }
   };
 
@@ -154,33 +161,53 @@ export default function PricingPage() {
         </div>
       </main>
 
-      {/* 收款码弹窗 */}
+      {/* 支付弹窗 */}
       {processingOrder && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
           <div style={{ background: "#fff", borderRadius: 20, maxWidth: 440, width: "100%", padding: "2rem", textAlign: "center" }}>
-            <h2 style={{ margin: "0 0 1rem", fontSize: "1.2rem", fontWeight: 500 }}>{t("pricing.scanTitle")}</h2>
-            <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "1.5rem" }}>{t("pricing.scanHint")}</div>
-            <div style={{ background: "#fafaf7", borderRadius: 12, padding: "2rem", marginBottom: "1rem" }}>
-              <Image src="/qr-payment.png" alt={t("pricing.qrAlt")} width={200} height={200}
-                onError={(e) => { (e.target as HTMLImageElement).src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Crect width='200' height='200' fill='%23ddd'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.35em' fill='%23666'%3E收款码占位%3C/text%3E%3C/svg%3E"; }}
-                style={{ display: "block", margin: "0 auto" }} />
-            </div>
-            <div style={{ background: "#fff8ea", border: "1px solid #f5d884", borderRadius: 10, padding: "0.8rem", marginBottom: "1rem", textAlign: "left", fontSize: "0.82rem", color: "#7a5400" }}>
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>⚠ {t("pricing.payFlow")}</div>
-              <div>{t("pricing.payFlow1")}</div>
-              <div>{t("pricing.payFlow2Pre")}<b>{t("pricing.orderNoLabel")}</b>{t("pricing.payFlow2Post")}</div>
-              <div>{t("pricing.payFlow3")}</div>
-            </div>
-            <div style={{ background: "#f5f5f0", padding: "0.75rem", borderRadius: 8, marginBottom: "1rem", fontFamily: "monospace", fontSize: "0.82rem" }}>
-              {t("pricing.orderNoLabel")}: <span style={{ fontWeight: 600, userSelect: "all" }}>{processingOrder}</span>
-              <button onClick={() => { navigator.clipboard.writeText(processingOrder); setSuccess(t("pricing.orderNoCopied")); setTimeout(() => setSuccess(null), 2000); }}
-                style={{ marginLeft: 8, background: "#0d0d0d", color: "#fff", border: "none", borderRadius: 6, padding: "0.2rem 0.6rem", fontSize: "0.75rem", cursor: "pointer" }}>{t("pricing.copyBtn")}</button>
-            </div>
-            <div style={{ fontSize: "0.8rem", color: "#999", marginBottom: "1rem" }}>{t("pricing.waitConfirm")}</div>
-            <button onClick={() => { setProcessingOrder(null); setLoading(false); }}
-              style={{ width: "100%", padding: "0.7rem", background: "#f5f5f0", border: "none", borderRadius: 10, cursor: "pointer", fontSize: "0.88rem", color: "#333" }}>
-              {t("pricing.closeKeepOrder")}
-            </button>
+            {paymentUrl ? (
+              <>
+                <h2 style={{ margin: "0 0 0.75rem", fontSize: "1.2rem", fontWeight: 500 }}>支付窗口已打开</h2>
+                <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "1.5rem" }}>请在新标签页完成支付，支付成功后积分将自动到账</div>
+                <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 10, padding: "1rem", marginBottom: "1rem", fontSize: "0.85rem", color: "#166534" }}>
+                  ⏳ 等待支付确认中…
+                </div>
+                <button onClick={() => window.open(paymentUrl, "_blank")}
+                  style={{ width: "100%", padding: "0.75rem", background: "#0d0d0d", color: "#fff", border: "none", borderRadius: 10, cursor: "pointer", fontSize: "0.9rem", fontWeight: 500, marginBottom: "0.75rem" }}>
+                  重新打开支付页
+                </button>
+                <button onClick={() => { setProcessingOrder(null); setPaymentUrl(null); setLoading(false); }}
+                  style={{ width: "100%", padding: "0.7rem", background: "#f5f5f0", border: "none", borderRadius: 10, cursor: "pointer", fontSize: "0.88rem", color: "#333" }}>
+                  关闭（支付成功后积分自动到账）
+                </button>
+              </>
+            ) : (
+              <>
+                <h2 style={{ margin: "0 0 1rem", fontSize: "1.2rem", fontWeight: 500 }}>{t("pricing.scanTitle")}</h2>
+                <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "1.5rem" }}>{t("pricing.scanHint")}</div>
+                <div style={{ background: "#fafaf7", borderRadius: 12, padding: "2rem", marginBottom: "1rem" }}>
+                  <Image src="/qr-payment.png" alt={t("pricing.qrAlt")} width={200} height={200}
+                    onError={(e) => { (e.target as HTMLImageElement).src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Crect width='200' height='200' fill='%23ddd'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.35em' fill='%23666'%3E收款码占位%3C/text%3E%3C/svg%3E"; }}
+                    style={{ display: "block", margin: "0 auto" }} />
+                </div>
+                <div style={{ background: "#fff8ea", border: "1px solid #f5d884", borderRadius: 10, padding: "0.8rem", marginBottom: "1rem", textAlign: "left", fontSize: "0.82rem", color: "#7a5400" }}>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>⚠ {t("pricing.payFlow")}</div>
+                  <div>{t("pricing.payFlow1")}</div>
+                  <div>{t("pricing.payFlow2Pre")}<b>{t("pricing.orderNoLabel")}</b>{t("pricing.payFlow2Post")}</div>
+                  <div>{t("pricing.payFlow3")}</div>
+                </div>
+                <div style={{ background: "#f5f5f0", padding: "0.75rem", borderRadius: 8, marginBottom: "1rem", fontFamily: "monospace", fontSize: "0.82rem" }}>
+                  {t("pricing.orderNoLabel")}: <span style={{ fontWeight: 600, userSelect: "all" }}>{processingOrder}</span>
+                  <button onClick={() => { navigator.clipboard.writeText(processingOrder); setSuccess(t("pricing.orderNoCopied")); setTimeout(() => setSuccess(null), 2000); }}
+                    style={{ marginLeft: 8, background: "#0d0d0d", color: "#fff", border: "none", borderRadius: 6, padding: "0.2rem 0.6rem", fontSize: "0.75rem", cursor: "pointer" }}>{t("pricing.copyBtn")}</button>
+                </div>
+                <div style={{ fontSize: "0.8rem", color: "#999", marginBottom: "1rem" }}>{t("pricing.waitConfirm")}</div>
+                <button onClick={() => { setProcessingOrder(null); setPaymentUrl(null); setLoading(false); }}
+                  style={{ width: "100%", padding: "0.7rem", background: "#f5f5f0", border: "none", borderRadius: 10, cursor: "pointer", fontSize: "0.88rem", color: "#333" }}>
+                  {t("pricing.closeKeepOrder")}
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
