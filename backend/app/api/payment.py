@@ -357,20 +357,42 @@ async def hupijiao_notify(request: Request):
 
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, user_id, amount, status FROM credit_orders WHERE id = ?", (order_id,))
+        cursor.execute("SELECT id, user_id, amount, status, price FROM credit_orders WHERE id = ?", (order_id,))
         row = cursor.fetchone()
         if not row:
             log_error(f"虎皮椒回调：订单不存在 {order_id}")
             return PlainTextResponse("fail")
         if row[3] == "paid":
             return PlainTextResponse("success")  # 幂等
+
+        # 验证实际支付金额和订单金额一致
+        paid_fee = float(data.get("total_fee", "0"))
+        order_price = float(row[4])
+        if abs(paid_fee - order_price) > 0.01:
+            log_error(f"虎皮椒回调金额不符: paid={paid_fee} expected={order_price} order={order_id}")
+            return PlainTextResponse("fail")
+
+        user_id, credits = row[1], row[2]
+
+        # 同一事务：订单状态 + 用户积分原子更新
         cursor.execute(
             "UPDATE credit_orders SET status='paid', paid_at=CURRENT_TIMESTAMP WHERE id = ?",
             (order_id,)
         )
+        cursor.execute(
+            "UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (credits, user_id)
+        )
+        cursor.execute("SELECT credits FROM users WHERE id = ?", (user_id,))
+        new_credits_row = cursor.fetchone()
+        new_credits = new_credits_row[0] if new_credits_row else 0
         conn.commit()
-        user_id, credits = row[1], row[2]
 
-    _add_credits(user_id, credits, reason="recharge_hupijiao", ref_id=order_id, module="payment/hupijiao")
-    log_info(f"虎皮椒回调成功: order={order_id} user={user_id} credits={credits}")
+    # ledger 在 commit 后写（审计轨迹，非资金操作，允许单独失败）
+    from app.services.credits_ledger import record_credits_change
+    record_credits_change(
+        user_id=user_id, delta=credits, balance_after=new_credits,
+        reason="recharge_hupijiao", ref_id=order_id, module="payment/hupijiao",
+    )
+    log_info(f"虎皮椒回调成功: order={order_id} user={user_id} credits={credits} new_balance={new_credits}")
     return PlainTextResponse("success")
