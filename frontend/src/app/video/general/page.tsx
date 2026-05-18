@@ -1483,6 +1483,13 @@ export default function VideoGeneralPage() {
               )}
 
               {/* 视频生成进度 */}
+              {vidLoading && (
+                <div style={{ textAlign: "center", padding: "1rem", color: "#718096", fontSize: "0.85rem" }}>
+                  🎬 高清视频生成中，预计需要5-8分钟，请耐心等待...
+                  <br/>
+                  生成完成后视频会自动显示在这里
+                </div>
+              )}
               {vidLoading && vidProgress && (
                 <AgentRow sender="system">
                   <FlowBubble style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#166534" }}>⏳ {vidProgress}</FlowBubble>
