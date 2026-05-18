@@ -743,7 +743,7 @@ export default function VideoGeneralPage() {
 
         {/* ── 标签页 ── */}
         <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", marginBottom: "1.4rem" }}>
-          <button style={TAB_STYLE(tab === "replicate")} onClick={() => setTab("replicate")}>视频复刻</button>
+          <button style={TAB_STYLE(tab === "replicate")} onClick={() => setTab("replicate")}>视频拆解</button>
           <button style={TAB_STYLE(tab === "ai_video")}  onClick={() => setTab("ai_video")}>AI 爆款视频</button>
         </div>
 
@@ -751,7 +751,7 @@ export default function VideoGeneralPage() {
         {tab === "replicate" && !isWhitelisted && (
           <div style={{ ...CARD, textAlign: "center", padding: "3rem 2rem", color: "#888" }}>
             <div style={{ fontSize: "2rem", marginBottom: 12 }}>🎬</div>
-            <div style={{ fontSize: "1.1rem", fontWeight: 500, color: "#555", marginBottom: 8 }}>视频复刻功能</div>
+            <div style={{ fontSize: "1.1rem", fontWeight: 500, color: "#555", marginBottom: 8 }}>视频拆解功能</div>
             <div style={{ fontSize: "0.88rem" }}>功能开发中，敬请期待</div>
           </div>
         )}

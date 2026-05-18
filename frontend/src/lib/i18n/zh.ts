@@ -66,7 +66,7 @@ export const zh = {
     },
     cards: {
       imageGen: { title: "图片生成", desc: "电商主图 · 模特图 · 多图参考" },
-      videoClone: { title: "视频复刻", desc: "分镜复刻 · 图片复刻 · 视频复刻" },
+      videoClone: { title: "视频拆解", desc: "分镜复刻 · 图片复刻 · 视频复刻" },
       videoGen: { title: "视频生成", desc: "上传一张图 · 写提示词 · AI 拍 5-10s 短片" },
     },
     popupStudio: "一键生图工作室",
@@ -199,7 +199,7 @@ export const zh = {
   },
   videoReproduce: {
     crumb: "分镜复刻 · 图片复刻 · 视频复刻",
-    title: "视频复刻",
+    title: "视频拆解",
     footer: "每张卡片均可点击,真实预览图来自示例案例",
     cards: {
       frame: { title: "分镜复刻", desc1: "视频拆成 9 宫格", desc2: "替换元素重新出片" },
@@ -345,7 +345,7 @@ export const zh = {
     mod_voice_clone: "声音克隆",
     mod_tts: "语音合成",
     mod_editor_compose: "视频剪辑合成",
-    mod_replicate: "视频复刻",
+    mod_replicate: "视频拆解",
   },
   profile: {
     accountSettings: "账户设置",

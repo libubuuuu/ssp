@@ -82,6 +82,7 @@ async def ask_gemini(
     system_prompt: Optional[str] = None,
     max_tokens: int = 4096,
     temperature: float = 0.7,
+    model: Optional[str] = None,
 ) -> str:
     """调用灵梦 Gemini API，返回模型生成的文字内容。
 
@@ -130,7 +131,7 @@ async def ask_gemini(
     })
 
     log_info(
-        f"gemini_client: model={settings.LINGMENG_MODEL} "
+        f"gemini_client: model={model or settings.LINGMENG_MODEL} "
         f"has_image={bool(image_base64)} has_video={bool(video_url)} "
         f"n_image_urls={len(image_urls or [])} "
         f"prompt_len={len(prompt)}"
@@ -138,7 +139,7 @@ async def ask_gemini(
 
     try:
         response = await client.chat.completions.create(
-            model=settings.LINGMENG_MODEL,
+            model=model or settings.LINGMENG_MODEL,
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
