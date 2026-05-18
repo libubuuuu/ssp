@@ -22,9 +22,9 @@ router = APIRouter()
 
 # ── 虎皮椒签名 ────────────────────────────────────────────────────────────
 def _hpj_sign(params: dict, secret: str) -> str:
-    """按 key 字母排序拼接后追加 appsecret，MD5"""
+    """按 key 字母排序拼接后直接追加 secret（个人版，无 &appsecret= 前缀），MD5"""
     items = sorted((k, str(v)) for k, v in params.items() if v != "" and v is not None and k != "hash")
-    query = "&".join(f"{k}={v}" for k, v in items) + f"&appsecret={secret}"
+    query = "&".join(f"{k}={v}" for k, v in items) + secret
     return hashlib.md5(query.encode()).hexdigest()
 
 
