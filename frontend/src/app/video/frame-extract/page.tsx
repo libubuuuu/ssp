@@ -628,7 +628,7 @@ export default function VideoFrameExtractPage() {
           <>
             <button onClick={doGenerate} disabled={loading}
               style={{ background: "#0d8a3e", color: "#fff", border: "none", padding: "1rem 1.8rem", borderRadius: 10, fontSize: "1rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1, marginBottom: "0.75rem", fontWeight: 600 }}>
-              {loading ? loadingMsg || "生成中..." : `🎬 生成完整视频(65 积分/秒 · ${scenes.length} 段并发 ~3-5 分钟)`}
+              {loading ? loadingMsg || "生成中..." : (() => { const acts = scenes.filter(sc => !skippedScenes.has(sc.id)); const merged: number[] = []; let i = 0; while (i < acts.length) { let d = acts[i].duration_sec; while (d < 3 && i + 1 < acts.length) { const n = acts[i+1].duration_sec; if (d + n <= 15) { d += n; i++; } else break; } merged.push(Math.max(4, Math.round(d))); i++; } const tot = merged.reduce((s, d) => s + d, 0); return `🎬 生成完整视频（扣${Math.max(65, tot * 65)}积分）`; })()}
             </button>
             {loading && (
               <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "0.65rem 0.9rem", fontSize: "0.8rem", color: "#1e40af", marginBottom: "1rem" }}>
