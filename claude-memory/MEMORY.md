@@ -1,0 +1,43 @@
+- [SSP 项目结构与栈](project_ssp.md) — 路径、技术栈、deploy/rollback 脚本位置
+- [SSP 编码约定与禁忌](feedback_ssp_conventions.md) — `??` 不用 `||`、i18n、不改 main、不提交敏感文件
+- [SSP 生产 bug 立即修复约定](feedback_ssp_bug_fix.md) — 用户报 bug 时立刻动手改代码,不只是诊断/指引
+- [SSP 前端改动必须独立复核](feedback_ssp_frontend_verify.md) — Edit 工具返"成功"不算数,必须 grep 看真值 + npm run build 才能 commit/deploy
+- [SSP 用户时间 > 算力](feedback_ssp_user_time.md) — 别列选项菜单让用户挑,自己想清楚直接干
+- [SSP rsync 后必须 chown](feedback_ssp_deploy_chown.md) — rsync /root → /opt 用 root 跑后,文件 owner 变 root,backend 起不来
+- [SSP deploy 前必须查 running session](feedback_ssp_deploy_check_running.md) — 蓝绿切换会杀进程,task 协程死 → db 状态卡死 + fal 钱白花
+- [SSP Edit 必须改 /root/ssp 源码不是 /opt](feedback_ssp_edit_root_not_opt.md) — Edit /opt 副本 git 不追踪 → commit 漏文件 → deploy 反向 rsync 覆盖
+- [SSP prompt 拗不过 diffusion 架构](feedback_ssp_prompt_vs_mask.md) — Kling/Sora/Wan prompt 是软引导,要精确控制必须 mask 硬约束(VACE+SAM2)
+- [SSP 口播 V4 P71 最终架构](project_ssp_oral_v4_p71.md) — vace-mask 真分层(SAM2+VACE Fun+qwen-vl)行业第一档,2026-05-04 实测
+- [SSP VACE Fun NSFW prompt sanitize](feedback_ssp_vace_nsfw_sanitize.md) — 中文敏感词("内衣/文胸/拉起")拼 VACE prompt 硬拒,必须替换中性词
+- [SSP deploy 后必须 restart 正确 frontend program](feedback_ssp_deploy_frontend_program.md) — 用 nginx frontend port 判断 active,不要用 backend port
+- [SSP rsync 严禁多 source 形式](feedback_ssp_rsync_safety.md) — 多 source 把目录内容污染 prod,P16 已踩(blue EXITED)
+- [SSP 多文件批量替换不用 sed -i](feedback_ssp_no_sed_batch.md) — sed -i 偶发清空文件已踩 2 次,用 Edit 单处替换
+- [SSP 口播 V3 P15 最终架构](project_ssp_oral_v3.md) — Seedream 首帧 + kling i2v + 无水印,2026-04-30 实测 4 分 16 秒出 19s 成片
+- [SSP fal 端点切换前必须 probe](feedback_ssp_fal_probe_first.md) — 改 fal endpoint/引擎前用真 KEY 实测 submit+result+NSFW,不要 deploy 打地鼠
+- [SSP 任何 fal 调用先经用户同意](feedback_ssp_no_unauth_fal.md) — probe / 真任务执行前必须报端点+预估成本,等用户点头才跑(我已踩,十几刀)
+- [SSP 不脑补 + 不甩锅](feedback_ssp_no_pattern_match.md) — 技术事实必 verify 后说;出 bug 时先怀疑自己 prompt/代码,不要甩锅给模型/库/用户
+- [SSP V2 /tmp 工作目录 owner](feedback_ssp_v2_tmp_workdir.md) — V2 卡 processing 第一查 /tmp/video_clone_v2_work owner,root → ssp-app mkdir 拒,协程默默死
+- [SSP fal seedance r2v 实测参数](reference_fal_seedance_r2v.md) — 字段名 image_urls(非 fast 版才是 reference_image_urls)+ 端点是参考生成非对象替换 + duration ≥ 4(2026-05-10 修正 + WebFetch 文档实证)
+- [SSP ffmpeg 截短段头不能 -c copy](feedback_ssp_ffmpeg_no_copy_first_segment.md) — 段首帧未必是 IDR,-c copy 出 33KB 损坏文件 + ffmpeg 退出码仍 0 + fal video_read_error
+- [SSP P221 视频复刻 V2 状态](project_ssp_p221_v2.md) — 上线 + 3 bug 已部署 + duration 架构正解未部署(2026-05-10 收工状态)
+- [SSP V2 视频复刻永久启用](project_ssp_v2_always_on.md) — ENABLE_VIDEO_CLONE_V2=true 不能再关,kill switch 已删(2026-05-13 用户授权)
+- [SSP V2 视频复刻 working pipeline 锁定](project_ssp_v2_working_pipeline.md) — 7 处关键修(切片重编码 / fal 音频关 / retry seed+1 / 整单失败设计 / 水印保音轨)任意一处回退都坏
+- [SSP 全站定价锁定 2026-05-13](project_ssp_pricing_locked.md) — 50积分=1元/视频50秒/图片20张/文案5次,代码全落地 commit f7847fb 推 origin
+- [SSP 假蓝绿架构 bug](project_ssp_fake_bluegreen.md) — blue/green 共用 /opt/ssp 同份代码,产品公开前必修真蓝绿(双独立目录或 archive 钩子)
+- [SSP deploy 必须走规范脚本](feedback_ssp_deploy_via_script.md) — 手动 rsync 跳过 archive 钩子 → 出事 rollback 脚本失效,2026-05-10 已踩
+- [SSP rollback 默认整 commit 回退](feedback_ssp_rollback_full_commit.md) — 单边 rollback 破坏前后端版本对齐,只能作为紧急止血,事后必须整 commit 同步
+- [SSP V2 fal cost 对账机制(公开前必修)](project_ssp_v2_fal_cost_audit.md) — fal API 不返 cost,db 里 actual_cost_usd 是估算非真实,长期慢性对账 bug
+- [SSP V2 fal wall time 体验雷(公开前必修)](project_ssp_v2_walltime_ux.md) — 单段 116-132s 临近 2 分钟阈值,缺进度反馈/超时保护/监控,公开前必修
+- [SSP V2 setpts 拉伸副作用与降级路径](project_ssp_v2_setpts_tradeoff.md) — commit 3 选 B'' 是显式决策,1% 拉伸副作用列清,音乐人会听出节拍偏差,触发条件再切方案
+- [SSP 字段删除前必须 verify 下游读者](feedback_ssp_verify_before_delete.md) — 先删再补 = 生产 bug 温床,2026-05-10 commit 3 块 6 差点踩,grep + verify + 决定保留/改值,不要默认删
+- [SSP dict.get 默认 0 反模式](feedback_ssp_dict_get_default_zero_anti_pattern.md) — 钱/积分/退款 fallback 静默 0 = 用户钱被吃,必须爆炸式失败。2026-05-10 commit 3 L1028 退款 bug 实战
+- [SSP Pydantic 模型必须 extra="forbid"](feedback_ssp_pydantic_extra_forbid.md) — 默认 extra="allow" 静默吞未知字段,删字段后老 client 仍传该字段被静默接受,2026-05-10 commit 3 砍单档实战
+- [SSP 自我产出适用同等 verify 标准(meta)](feedback_ssp_self_audit_same_standard.md) — 对外部 verify 严对自己降标准是反模式,改 memory / 判归类前 grep + sweep,跟交付外部代码同标准
+- [SSP 端点能力 verify 必须 link 官方文档](feedback_ssp_endpoint_capability_mismatch.md) — 本项目代码不可作"已验证"二手证据,V1 docstring 误解 r2v 8 个月被 V2 继承,2026-05-10 ¥39.8 + 9 小时损失
+- [SSP deploy.sh frontend 不 rsync](feedback_ssp_deploy_rsync_first.md) — deploy.sh 只在 /opt build,前端代码改完必须先 rsync /root→/opt + chown 再跑,否则 build 的是旧码
+- [SSP 分镜复刻(frame-extract)当前架构](project_ssp_frameextract_2026_05_14.md) — 双路径(GPT-2普通/FLUX.2敏感)+ffmpeg单pass拆帧+中文NSFW过滤,2026-05-14
+- [SSP 2026-05-14 大改动汇总](project_ssp_2026_05_14_daily.md) — 口播删除/真蓝绿/全局fal超时/V2积分即时/分镜复刻重构,commit a4f4143
+- [SSP 2026-05-16 大改动汇总](project_ssp_2026_05_16_daily.md) — AI爆款视频全链路/视频复刻灰度/灵梦API/积分修复，最新 commit 2f81e95
+- [SSP 2026-05-17 大改动汇总](project_ssp_2026_05_17_daily.md) — target_lang全链路/19种语言/脚本语言验证/upscale→lipsync顺序/去480p，最新 commit 4b5c055
+- [SSP 2026-05-18 大改动汇总](project_ssp_2026_05_18_daily.md) — 时长固定5选项/TTS先跑传Seedance/prompt动作置顶/场景铁律三重拦截，最新 commit e56b640
+- [SSP AI爆款视频 pipeline 架构锁定](project_ssp_video_general_pipeline_locked.md) — 6个关键点不能回退：TTS串行先跑/generate_audio=True/audio_urls/无ffmpeg合并/动作描述置顶/纯时长拆分
