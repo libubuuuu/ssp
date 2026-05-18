@@ -5050,7 +5050,7 @@ async def _run_video_clone_job(params: dict) -> dict:
     video_url = params.get("reference_video_url")
     image_urls = params.get("reference_image_urls") or []
     duration = params.get("duration") or "5"
-    duration = str(max(4, min(14, int(duration))))  # Seedance 上限 15s，留 1s 余量
+    duration = str(max(4, min(14, int(float(duration)))))  # Seedance 上限 15s，留 1s 余量
     aspect_ratio = params.get("aspect_ratio") or "9:16"
     generate_audio = params.get("generate_audio", True)
     count = int(params.get("count") or 1)
