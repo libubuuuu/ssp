@@ -559,7 +559,7 @@ export default function VideoGeneralPage() {
           model_video_url:  modelSrc === "video" ? modelVidUrl || null : null,
           model_source:     modelSrc,
           aspect_ratio:     "9:16",
-          ref_video_url:    refVideoOverride || null,
+          ref_video_url:    tab === "replicate" ? null : (refVideoOverride || null),
           resolution:           resolution,
           contrast_image_url:   contrastImg.url || null,
           enable_voice:         enableVoice,
