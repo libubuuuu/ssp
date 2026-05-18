@@ -5405,10 +5405,21 @@ async def _run_script_to_video_job(params: dict) -> dict:
                 except Exception as _te:
                     log_error(f"script_to_video TTS 失败（继续无音频生成）: {_te}")
 
-        # ── 串行执行（需要前帧，不可并发）──────────────────────────────────
-        all_raw: list[str] = []
+        # ── 并行执行（所有段同时提交 Seedance）──────────────────────────────
+        _SENS_PREFIXES = [
+            "",
+            "专业品牌广告拍摄，真实生活场景，自然光线，社交媒体营销内容。",
+            "Professional brand campaign. Real-life lifestyle scene, natural lighting, social media marketing content. ",
+            "Fashion brand promotional video. Everyday life scenario with natural aesthetics. Social media ready content. ",
+        ]
 
-        for task in tasks:
+        def _is_sensitive(err_str: str) -> bool:
+            return any(kw in (err_str or "").lower()
+                       for kw in ["sensitive", "nsfw", "inappropriate", "content"])
+
+        MAX_WAIT = 600
+
+        async def _gen_one_task(task: dict) -> str:
             ti = task["task_idx"]
             req_dur = max(4, math.ceil(min(task["total_dur"], MAX_DUR)))  # Seedance 最低 4s
             req_dur = min(req_dur, MAX_DUR)
@@ -5447,10 +5458,7 @@ async def _run_script_to_video_job(params: dict) -> dict:
 
             if portrait_url and len(task_imgs) < 9:
                 task_imgs.append(portrait_url)
-            if ti > 0 and all_raw and len(task_imgs) < 9:
-                prev_frame = await _last_frame(all_raw[-1], ti)
-                if prev_frame:
-                    task_imgs.append(prev_frame)
+            # prev_frame 已去除（并行模式各段独立生成，无法依赖前段末帧）
             task_imgs = task_imgs[:9]
 
             # Prompt
@@ -5499,19 +5507,6 @@ async def _run_script_to_video_job(params: dict) -> dict:
             )
             log_info(f"script_to_video Task {ti+1} image_urls={[u[:80] for u in task_imgs]}")
 
-            # 商业语境前缀（随敏感内容重试逐级加强，不含"产品展示/studio/影棚"等词以免影响视频风格）
-            _SENS_PREFIXES = [
-                "",  # si=0 不加前缀
-                "专业品牌广告拍摄，真实生活场景，自然光线，社交媒体营销内容。",
-                "Professional brand campaign. Real-life lifestyle scene, natural lighting, social media marketing content. ",
-                "Fashion brand promotional video. Everyday life scenario with natural aesthetics. Social media ready content. ",
-            ]
-
-            def _is_sensitive(err_str: str) -> bool:
-                return any(kw in (err_str or "").lower()
-                           for kw in ["sensitive", "nsfw", "inappropriate", "content"])
-
-            MAX_WAIT = 600  # 10 分钟
             vid_url = None
             last_err = ""
 
@@ -5566,8 +5561,10 @@ async def _run_script_to_video_job(params: dict) -> dict:
                 r = await cli.get(vid_url); r.raise_for_status()
                 with open(raw, "wb") as f: f.write(r.content)
             log_info(f"script_to_video Task {ti+1} 下载 {_os.path.getsize(raw)} bytes ({_t.time()-tp:.1f}s)")
-            all_raw.append(raw)
             task["raw_path"] = raw
+            return raw
+
+        all_raw: list[str] = list(await asyncio.gather(*[_gen_one_task(t) for t in tasks]))
 
         # ── ffprobe + 裁剪（保留音轨）──────────────────────────────────────
         def _ffprobe_dur(path: str) -> float:
