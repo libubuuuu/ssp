@@ -609,7 +609,12 @@ export default function VideoGeneralPage() {
             const mm = Math.floor(elapsed / 60), ss = elapsed % 60;
             setVidProgress(`Seedance 2.0 生成中… 已 ${mm}:${String(ss).padStart(2,"0")}（job=${jid}）`);
           }
-        } catch {}
+        } catch (err) {
+          console.error("polling error:", err);
+          clearInterval(iv);
+          setVidLoading(false); setVidProgress("");
+          setError("视频生成查询失败，请重新提交");
+        }
       }, 10000);
     } catch (e) {
       setError((e as Error).message || "视频生成失败，请重试");
