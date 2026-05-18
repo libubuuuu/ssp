@@ -259,8 +259,8 @@ async def replace_submit(
         raise HTTPException(400, "产品图 / 人物图 / 场景图 至少上传 1 张")
 
     user_id = str(current_user["id"])
-    # 普通品类 20积分/张九宫格;敏感品类(Kolors VTON) 10积分/张(后续涨价)
-    credits_per_grid = 10 if sensitive else 20
+    # 普通品类 84积分/张九宫格;敏感品类(Kolors VTON) 168积分/张
+    credits_per_grid = 168 if sensitive else 84
     cost = max(credits_per_grid, credits_per_grid * len(grid_urls))
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
