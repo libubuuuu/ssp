@@ -1,7 +1,7 @@
 "use client";
 import { useLang } from "@/lib/i18n/LanguageContext";
 import { useState, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
@@ -18,10 +18,10 @@ export default function PricingPage() {
     discount: pkg.discount === "8 折" ? t("pricing.discount_80") : pkg.discount === "7 折" ? t("pricing.discount_70") : pkg.discount === "6 折" ? t("pricing.discount_60") : pkg.discount,
   });
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const [tab, setTab] = useState<"package" | "credit">(
-    searchParams.get("tab") === "credit" ? "credit" : "package"
-  );
+  const [tab, setTab] = useState<"package" | "credit">("package");
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("tab") === "credit") setTab("credit");
+  }, []);
   const [packages, setPackages] = useState<Package[]>([]);
   const [creditPacks, setCreditPacks] = useState<CreditPack[]>([]);
   const [loading, setLoading] = useState(false);
