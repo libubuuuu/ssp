@@ -17,8 +17,7 @@ export default function ImagePage(){
   const [prompt,setPrompt]=useState("");
   const [style,setStyle]=useState("advertising");
   const model = "gpt-image-2";
-  const [size,setSize]=useState("1024x1024");
-  const [aspectRatio, setAspectRatio] = useState("9:16");
+  const [size,setSize]=useState("1:1");
   const [refImages,setRefImages]=useState<string[]>([]);
   const [refPreviews,setRefPreviews]=useState<string[]>([]);
   const [uploading,setUploading]=useState(false);
@@ -88,7 +87,7 @@ export default function ImagePage(){
             size,
             model,
             style,
-            aspect_ratio:aspectRatio,
+            aspect_ratio:size,
           },
         }),
       });
@@ -204,9 +203,9 @@ export default function ImagePage(){
         <div>
           <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>{t("image.section.size")}</div>
           <select value={size} onChange={e=>setSize(e.target.value)} style={{width:"100%",padding:"0.65rem 0.9rem",border:"1px solid #e5e5e5",borderRadius:"10px",fontSize:"0.85rem",background:"#fff",color:"#333"}}>
-            <option value="1024x1024">{t("image.sizeSquare")}</option>
-            <option value="768x1024">{t("image.sizePortrait")}</option>
-            <option value="1024x768">{t("image.sizeLandscape")}</option>
+            <option value="1:1">正方形 1:1</option>
+            <option value="9:16">竖版 9:16</option>
+            <option value="16:9">横版 16:9</option>
           </select>
         </div>
         <div style={{flex:1,display:"flex",flexDirection:"column"}}>
@@ -216,18 +215,7 @@ export default function ImagePage(){
         </div>
         {msg && <div style={{color:"#0a0",background:"#eaf7ea",padding:"0.7rem",borderRadius:"10px",fontSize:"0.8rem"}}>{msg}</div>}
         {error && <div style={{color:"#c00",background:"#ffeaea",padding:"0.7rem",borderRadius:"10px",fontSize:"0.8rem"}}>{error}</div>}
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 8 }}>图片比例</div>
-          <div style={{ display: "flex", gap: 10 }}>
-            {["9:16", "16:9"].map(r => (
-              <button key={r} onClick={() => setAspectRatio(r)}
-                style={{ flex: 1, padding: "0.6rem 0", borderRadius: 10, border: `2px solid ${aspectRatio === r ? "#7c3aed" : "#e2e8f0"}`, background: aspectRatio === r ? "#7c3aed" : "#fff", color: aspectRatio === r ? "#fff" : "#374151", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer" }}>
-                {r === "9:16" ? "📱 竖版 9:16" : "🖥️ 横版 16:9"}
-              </button>
-            ))}
-          </div>
-        </div>
-        <button onClick={generate}
+<button onClick={generate}
           style={{padding:"0.9rem",background:"#0d0d0d",color:"#fff",border:"none",borderRadius:"12px",cursor:loading?"wait":"pointer",fontSize:"0.95rem",fontWeight:500}}>
           {refImages.length>0?t("image.generateRef"):t("image.generate")}
         </button>
