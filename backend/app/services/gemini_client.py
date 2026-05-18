@@ -103,14 +103,21 @@ async def ask_gemini(
         RuntimeError: API 调用失败
     """
     settings = get_settings()
-    if not settings.LINGMENG_API_KEY:
-        raise RuntimeError("LINGMENG_API_KEY 未配置")
+    use_gemini_key = model and model.startswith("gemini")
+    if use_gemini_key:
+        if not settings.GEMINI_API_KEY:
+            raise RuntimeError("GEMINI_API_KEY 未配置")
+        api_key = settings.GEMINI_API_KEY
+    else:
+        if not settings.LINGMENG_API_KEY:
+            raise RuntimeError("LINGMENG_API_KEY 未配置")
+        api_key = settings.LINGMENG_API_KEY
 
     from openai import AsyncOpenAI
 
     client = AsyncOpenAI(
         base_url=settings.LINGMENG_BASE_URL,
-        api_key=settings.LINGMENG_API_KEY,
+        api_key=api_key,
     )
 
     messages: list[dict] = []

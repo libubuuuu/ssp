@@ -102,6 +102,7 @@ class Settings(BaseSettings):
     LINGMENG_BASE_URL: str = "https://1189.xin/v1"
     LINGMENG_MODEL: str = "gpt-4o"
     LINGMENG_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
     # 联网搜索专用 key（gpt-4o-search-preview，独立渠道）
     SEARCH_API_KEY: str = ""
     SEARCH_BASE_URL: str = "https://1189.xin/v1"
