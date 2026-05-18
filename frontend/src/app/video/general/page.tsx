@@ -531,12 +531,9 @@ export default function VideoGeneralPage() {
     return (
       <div style={{ margin: "1rem 0", padding: "0.9rem 1rem", background: "#fefce8", border: "1px solid #fde68a", borderRadius: 10 }}>
         <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "#92400e", marginBottom: 6 }}>💡 脚本中有产品对比环节</div>
-        <div style={{ fontSize: "0.75rem", color: "#78350f", marginBottom: 10 }}>
-          上传一张旧款/竞品图片，视频中的对比效果更真实。不上传也可以，AI 会自动处理。
+        <div style={{ fontSize: "0.75rem", color: "#78350f" }}>
+          AI 会自动生成对比产品图，无需上传。
         </div>
-        <UploadBox slot={contrastImg} label="对比图"
-          onUpload={f => uploadImg(f, "/api/video/general/upload/image", "image_url", setContrastImg)}
-          onRemove={() => removeSlot(setContrastImg)} />
       </div>
     );
   };
