@@ -562,10 +562,13 @@ export default function VideoFrameExtractPage() {
         )}
 
         {scenes && (productImageUrl || modelImageUrl || sceneImageUrl) && replacedGridUrls.length === 0 && (
-          <button onClick={doReplace} disabled={loading}
-            style={{ background: "#0d0d0d", color: "#fff", border: "none", padding: "0.9rem 1.6rem", borderRadius: 10, fontSize: "0.95rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1, marginBottom: "1rem" }}>
-            {loading ? loadingMsg || "替换中..." : `🎨 替换九宫格元素(消耗 20 积分/张 · 共 ${gridUrls.length} 张)`}
-          </button>
+          <div>
+            <button onClick={doReplace} disabled={loading}
+              style={{ background: "#0d0d0d", color: "#fff", border: "none", padding: "0.9rem 1.6rem", borderRadius: 10, fontSize: "0.95rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1, marginBottom: "0.4rem" }}>
+              {loading ? loadingMsg || "替换中..." : `🎨 替换九宫格元素(消耗 20 积分/张 · 共 ${gridUrls.length} 张)`}
+            </button>
+            <div style={{ fontSize: "0.78rem", color: "#999", marginBottom: "1rem" }}>⚠️ 敏感品类（内衣、泳装等）生成价格会比普通品类高</div>
+          </div>
         )}
 
         {replacedGridUrls.length > 0 && (
