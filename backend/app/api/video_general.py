@@ -679,12 +679,14 @@ async def script_to_video_submit(
         log_error(f"脚本解析失败 user={current_user['id']} script_head={body.script[:200]!r}")
         raise HTTPException(400, "脚本解析失败，未找到有效分镜。请确认脚本格式包含 [镜头X]：时间范围 |...")
 
-    cost = max(65, body.target_duration * 65)
-    # 模特头像（所有路径都要收）
-    cost += 18
+    cost = max(65, body.target_duration * 65)  # 视频
+    cost += 13  # 模特头像（原18改13）
+    cost += 13  # 场景图
+    cost += 26  # 趋势搜索
+    cost += 26  # 审稿员
+    cost += 13  # 文案师
 
     if not body.is_replicate:
-        # 分辨率附加费（按秒，只有AI爆款视频收，视频拆解跳过upscale不收）
         _RESOLUTION_PER_SEC = {"1080p": 3, "2k": 6, "4k": 11}
         cost += _RESOLUTION_PER_SEC.get(body.resolution, 3) * body.target_duration
 
