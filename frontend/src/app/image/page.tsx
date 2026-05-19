@@ -205,6 +205,7 @@ export default function ImagePage(){
           <select value={size} onChange={e=>setSize(e.target.value)} style={{width:"100%",padding:"0.65rem 0.9rem",border:"1px solid #e5e5e5",borderRadius:"10px",fontSize:"0.85rem",background:"#fff",color:"#333"}}>
             <option value="1:1">正方形 1:1</option>
             <option value="9:16">竖版 9:16</option>
+            <option value="3:4">竖版 3:4</option>
             <option value="16:9">横版 16:9</option>
           </select>
         </div>

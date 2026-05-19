@@ -150,6 +150,8 @@ async def _run_image_job(params: dict):
         image_size = "portrait_16_9"
     elif aspect_ratio == "16:9":
         image_size = "landscape_16_9"
+    elif aspect_ratio == "3:4":
+        image_size = "portrait_4_3"
     else:
         size = params.get("size", "1024x1024")
         image_size = _GPT_IMAGE_SIZE_MAP.get(size, "square_hd")
