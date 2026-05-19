@@ -235,8 +235,8 @@ export default function VideoFrameExtractPage() {
             setLoading(false); setLoadingMsg("");
           } else if (sd.status === "failed") {
             clearInterval(interval);
-            adjustLocalUserCredits(+5); // 退还分析积分
-            setError((sd.error ?? "提取失败") + "（已退还 5 积分）");
+            adjustLocalUserCredits(+50); // 退还分析积分
+            setError((sd.error ?? "提取失败") + "（已退还 50 积分）");
             setLoading(false); setLoadingMsg("");
           } else {
             pollFails = 0;
@@ -429,7 +429,7 @@ export default function VideoFrameExtractPage() {
             )}
             <button onClick={extract} disabled={loading}
               style={{ background: "#0d0d0d", color: "#fff", border: "none", padding: "0.9rem 1.6rem", borderRadius: 10, fontSize: "0.95rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1 }}>
-              {loading ? loadingMsg || "提取中..." : "🔍 提取 storyboard(消耗 5 积分)"}
+              {loading ? loadingMsg || "提取中..." : "🔍 提取 storyboard(消耗 50 积分)"}
             </button>
           </div>
         )}

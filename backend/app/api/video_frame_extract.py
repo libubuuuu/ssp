@@ -134,7 +134,7 @@ async def analyze_submit(
     if not video_url:
         raise HTTPException(400, "video_url 必填")
     user_id = str(current_user["id"])
-    cost = 5  # 2026-05-13:生成文案 5 积分
+    cost = 50
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
 
