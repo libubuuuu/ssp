@@ -930,7 +930,7 @@ export default function VideoGeneralPage() {
                   <div style={{ fontSize: "0.8rem", color: "#718096", fontWeight: 600, marginBottom: 10 }}>✨ 视频分析结果（可复刻脚本）</div>
                   <ScriptDisplay text={scriptA} />
                   <ContrastUploadHint scriptText={scriptA} />
-                  {(() => { const v = Math.max(65, duration * 65); const total = v + 102; return (<div style={{ background: "#f8f9fa", borderRadius: 10, padding: "0.8rem", marginBottom: "0.8rem", fontSize: "0.78rem", color: "#555" }}><div style={{ fontWeight: 600, marginBottom: 6 }}>📋 费用明细</div><div>🎬 视频生成：{duration}秒 × 65 = {v}积分</div><div>👤 模特头像：13积分</div><div>🖼️ 场景图：13积分</div><div>🔍 趋势搜索：26积分</div><div>📝 审稿员：26积分</div><div>✍️ 文案师：13积分</div><div>🔊 声音(TTS)：11积分</div><div style={{ borderTop: "1px solid #ddd", marginTop: 6, paddingTop: 6, fontWeight: 600 }}>合计：{total}积分（¥{(total/50).toFixed(2)}）</div></div>); })()}
+                  {(() => { const v = Math.max(65, duration * 65); const total = v + 37; return (<div style={{ background: "#f8f9fa", borderRadius: 10, padding: "0.8rem", marginBottom: "0.8rem", fontSize: "0.78rem", color: "#555" }}><div style={{ fontWeight: 600, marginBottom: 6 }}>📋 费用明细</div><div>🎬 视频生成：{duration}秒 × 65 = {v}积分</div><div>👤 模特头像：13积分</div><div>🖼️ 场景图：13积分</div><div>🔊 声音(TTS)：11积分</div><div style={{ borderTop: "1px solid #ddd", marginTop: 6, paddingTop: 6, fontWeight: 600 }}>合计：{total}积分（¥{(total/50).toFixed(2)}）</div></div>); })()}
                   <div style={{ display: "flex", gap: 10, marginTop: "1.2rem", flexWrap: "wrap" }}>
                     <button onClick={analyzeVideo} disabled={loadingA || vidLoading}
                       style={{ flex: "1 1 200px", padding: "0.7rem 1rem", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#374151", fontSize: "0.88rem", cursor: "pointer", fontWeight: 500 }}>
@@ -944,7 +944,7 @@ export default function VideoGeneralPage() {
                         fontSize: "0.88rem", cursor: vidLoading || loadingA ? "not-allowed" : "pointer",
                         fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
                       }}>
-                      {vidLoading ? <><span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #a0aec0", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />生成中…</> : (() => { const v = Math.max(65, duration * 65); const ai = 13 + 13 + 26 + 26 + 13 + 11; return `🎬 确认脚本，生成视频（视频${v} + AI${ai} = 扣${v + ai}积分）`; })()}
+                      {vidLoading ? <><span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #a0aec0", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />生成中…</> : (() => { const v = Math.max(65, duration * 65); const ai = 13 + 13 + 11; return `🎬 确认脚本，生成视频（视频${v} + AI${ai} = 扣${v + ai}积分）`; })()}
                     </button>
                   </div>
                   {vidLoading && (

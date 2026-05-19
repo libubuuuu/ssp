@@ -680,14 +680,14 @@ async def script_to_video_submit(
         raise HTTPException(400, "脚本解析失败，未找到有效分镜。请确认脚本格式包含 [镜头X]：时间范围 |...")
 
     cost = max(65, body.target_duration * 65)  # 视频
-    cost += 13  # 模特头像（原18改13）
+    cost += 13  # 模特头像
     cost += 13  # 场景图
-    cost += 26  # 趋势搜索
-    cost += 26  # 审稿员
-    cost += 13  # 文案师
-    cost += 11  # TTS声音
+    cost += 11  # TTS
 
     if not body.is_replicate:
+        cost += 26  # 趋势搜索（只有AI爆款用）
+        cost += 26  # 审稿员（只有AI爆款用）
+        cost += 13  # 文案师（只有AI爆款用）
         _RESOLUTION_PER_SEC = {"1080p": 3, "2k": 6, "4k": 11}
         cost += _RESOLUTION_PER_SEC.get(body.resolution, 3) * body.target_duration
 
