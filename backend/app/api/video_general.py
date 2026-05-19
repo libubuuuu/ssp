@@ -40,6 +40,21 @@ VIDEO_MIMES = ("video/mp4", "video/quicktime", "video/webm", "video/x-msvideo")
 MAX_VIDEO_SIZE = 100 * 1024 * 1024  # 100 MB
 MAX_IMAGE_SIZE = 10 * 1024 * 1024   # 10 MB
 
+_FALLBACK_MODELS = ["gpt-5.5", "gpt-4o", "gpt-4.1"]
+
+
+async def _chat_with_fallback(client, messages, max_tokens=2000, **kwargs):
+    last_err = None
+    for model in _FALLBACK_MODELS:
+        try:
+            return await client.chat.completions.create(
+                model=model, messages=messages, max_tokens=max_tokens, **kwargs
+            )
+        except Exception as e:
+            last_err = e
+            log_error(f"模型 {model} 失败，尝试下一个: {e}")
+    raise last_err
+
 
 @router.post("/upload/image")
 async def upload_image(
@@ -1005,8 +1020,8 @@ async def _call_xiaoli_search(client, platform: str, category: str, lang_name: s
 
 async def _call_reviewer(client, script: str) -> dict:
     try:
-        resp = await client.chat.completions.create(
-            model="gpt-4o",
+        resp = await _chat_with_fallback(
+            client,
             messages=[
                 {"role": "system", "content": _REVIEWER_SYSTEM},
                 {"role": "user", "content": f"请审查以下脚本：\n\n{script}"},
@@ -1065,8 +1080,8 @@ async def _call_copywriter(client, script: str, platform: str, target_lang: str 
         )
         user_msg = f"Script:\n\n{script}"
     try:
-        resp = await client.chat.completions.create(
-            model="gpt-4o",
+        resp = await _chat_with_fallback(
+            client,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_msg},
@@ -1216,8 +1231,8 @@ async def chat_with_mentor(
 
     # ── 林久主调用 ────────────────────────────────────────────────
     try:
-        resp = await client.chat.completions.create(
-            model=s.LINGMENG_MODEL,
+        resp = await _chat_with_fallback(
+            client,
             messages=openai_messages,
             max_tokens=4096,
             temperature=0.8,
@@ -1251,8 +1266,8 @@ async def chat_with_mentor(
                 )},
             ]
             try:
-                _retry_resp = await client.chat.completions.create(
-                    model=s.LINGMENG_MODEL,
+                _retry_resp = await _chat_with_fallback(
+                    client,
                     messages=_retry_messages,
                     max_tokens=2000,
                 )
@@ -1285,8 +1300,8 @@ async def chat_with_mentor(
                 )},
             ]
             try:
-                _fix_resp = await client.chat.completions.create(
-                    model="gpt-4o", messages=_fix_msgs, max_tokens=2000
+                _fix_resp = await _chat_with_fallback(
+                    client, messages=_fix_msgs, max_tokens=2000
                 )
                 _fix_text = _fix_resp.choices[0].message.content or ""
                 _fix_script = _extract_script(_fix_text)
