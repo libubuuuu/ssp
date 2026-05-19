@@ -149,7 +149,7 @@ export default function ImagePage(){
           {gallery.length>0 && (
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:"1rem"}}>
               {gallery.map((item,i)=>(
-                <div key={i} style={{borderRadius:"14px",overflow:"hidden",background:"#fff",position:"relative",aspectRatio:"1",boxShadow:"0 4px 12px rgba(0,0,0,0.04)",cursor:"pointer"}}
+                <div key={i} style={{borderRadius:"14px",overflow:"hidden",background:"#fff",position:"relative",aspectRatio:size.replace(":","/"),boxShadow:"0 4px 12px rgba(0,0,0,0.04)",cursor:"pointer"}}
                   onClick={async()=>{
                     try{
                       const res=await fetch(item.url);
