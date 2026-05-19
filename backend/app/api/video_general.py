@@ -709,9 +709,9 @@ async def script_to_video_submit(
         cost += _TTS_COST[tts_dur]
     else:
         cost += 11  # TTS
-        cost += 26  # 趋势搜索
-        cost += 26  # 审稿员
-        cost += 13  # 文案师
+        cost += 3   # 趋势搜索（原26）
+        cost += 3   # 审稿员（原26）
+        cost += 2   # 文案师（原13）
 
     user_id = str(current_user["id"])
     if not deduct_credits(user_id, cost):
@@ -1124,7 +1124,7 @@ async def chat_with_mentor(
 
     user_id = str(current_user["id"])
 
-    CHAT_COST = 39
+    CHAT_COST = 5
     if not deduct_credits(user_id, CHAT_COST):
         raise HTTPException(402, f"积分不足，每次对话消耗 {CHAT_COST} 积分")
 
