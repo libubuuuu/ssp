@@ -1547,6 +1547,7 @@ export default function VideoGeneralPage() {
                   发送
                 </button>
               </div>
+              <div style={{ fontSize: "0.75rem", color: "#999", marginTop: 4 }}>每次对话消耗 18 积分</div>
             </div>
           </div>
         )}

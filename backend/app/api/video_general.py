@@ -1092,11 +1092,16 @@ async def chat_with_mentor(
     body: ChatRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """AI脚本导师对话（免费，不扣积分）"""
+    """AI脚本导师对话（每次扣 18 积分）"""
     from app.config import get_settings
     from openai import AsyncOpenAI
 
     user_id = str(current_user["id"])
+
+    CHAT_COST = 18
+    if not deduct_credits(user_id, CHAT_COST):
+        raise HTTPException(402, f"积分不足，每次对话消耗 {CHAT_COST} 积分")
+
     s = get_settings()
     client = AsyncOpenAI(base_url=s.LINGMENG_BASE_URL, api_key=s.LINGMENG_API_KEY)
 
