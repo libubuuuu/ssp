@@ -943,7 +943,7 @@ export default function VideoGeneralPage() {
                         fontSize: "0.88rem", cursor: vidLoading || loadingA ? "not-allowed" : "pointer",
                         fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
                       }}>
-                      {vidLoading ? <><span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #a0aec0", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />生成中…</> : "🎬 确认脚本，生成视频"}
+                      {vidLoading ? <><span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #a0aec0", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />生成中…</> : (() => { const v = Math.max(65, duration * 65); const s = resolution === "2k" ? 20 : resolution === "4k" ? 50 : 0; return `🎬 确认脚本，生成视频（视频${v} + 分辨率${s} = 扣${v + s}积分）`; })()}
                     </button>
                   </div>
                   {vidLoading && (
@@ -1168,7 +1168,7 @@ export default function VideoGeneralPage() {
                             <button onClick={generate} disabled={loading || vidLoading} style={{ flex: "1 1 140px", padding: "0.6rem 0.9rem", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#374151", fontSize: "0.85rem", cursor: "pointer", fontWeight: 500 }}>🔄 重新生成（35积分）</button>
                             <button onClick={() => generateVideo()} disabled={vidLoading || loading}
                               style={{ flex: "1 1 140px", padding: "0.6rem 0.9rem", borderRadius: 8, border: "none", background: vidLoading || loading ? "#e2e8f0" : "#16a34a", color: vidLoading || loading ? "#a0aec0" : "#fff", fontSize: "0.85rem", fontWeight: 600, cursor: vidLoading || loading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                              {vidLoading ? <><span style={{ display: "inline-block", width: 12, height: 12, border: "2px solid #a0aec0", borderTopColor: "#555", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />生成中…</> : "🎬 确认，生成视频"}
+                              {vidLoading ? <><span style={{ display: "inline-block", width: 12, height: 12, border: "2px solid #a0aec0", borderTopColor: "#555", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />生成中…</> : (() => { const v = Math.max(65, duration * 65); const s = resolution === "2k" ? 20 : resolution === "4k" ? 50 : 0; return `🎬 确认，生成视频（视频${v} + 分辨率${s} = 扣${v + s}积分）`; })()}
                             </button>
                           </div>
                         </div>
@@ -1383,7 +1383,7 @@ export default function VideoGeneralPage() {
                           setChatShowParams(true);
                         }} disabled={vidLoading}
                           style={{ padding: "0.65rem 1.4rem", borderRadius: 10, border: "none", background: vidLoading ? "#e2e8f0" : "#16a34a", color: vidLoading ? "#a0aec0" : "#fff", fontSize: "0.88rem", fontWeight: 600, cursor: vidLoading ? "not-allowed" : "pointer" }}>
-                          🎬 确认脚本，生成视频
+                          {(() => { const v = Math.max(65, duration * 65); const s = resolution === "2k" ? 20 : resolution === "4k" ? 50 : 0; return `🎬 确认脚本，生成视频（视频${v} + 分辨率${s} = 扣${v + s}积分）`; })()}
                         </button>
                       ) : (
                         <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "1rem" }}>
