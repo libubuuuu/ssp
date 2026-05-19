@@ -1782,7 +1782,7 @@ async def submit_job(req: SubmitJobRequest, current_user: dict = Depends(get_cur
     if req.type == "video_i2v":
         # kling o3 standard image-to-video 支持 3/5/10/15s
         safe_dur = max(3, min(15, int(req.params.get("duration_sec") or 5)))
-        cost = safe_dur * 50
+        cost = safe_dur * 40
     else:
         cost = get_task_cost(module)
 
