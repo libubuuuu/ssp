@@ -684,8 +684,8 @@ async def script_to_video_submit(
     cost += 13  # 场景图
 
     # 分辨率附加费（所有路径都收）
-    _RESOLUTION_PER_SEC = {"1080p": 3, "2k": 6, "4k": 11}
-    cost += _RESOLUTION_PER_SEC.get(body.resolution, 3) * body.target_duration
+    _RESOLUTION_PER_SEC = {"1080p": 5, "2k": 10, "4k": 15}
+    cost += _RESOLUTION_PER_SEC.get(body.resolution, 5) * body.target_duration
 
     if body.is_replicate:
         # 视频拆解 TTS 按时长分档

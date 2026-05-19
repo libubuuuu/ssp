@@ -884,9 +884,9 @@ export default function VideoGeneralPage() {
                   <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>分辨率</div>
                   <select value={resolution} onChange={e => setResolution(e.target.value)}
                     style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
-                    <option value="1080p">1080P（+3积分/秒）</option>
-                    <option value="2k">2K（+6积分/秒）</option>
-                    <option value="4k">4K（+11积分/秒）</option>
+                    <option value="1080p">1080P 高清（+5积分/秒）</option>
+                    <option value="2k">2K 超清（+10积分/秒）</option>
+                    <option value="4k">4K 极清（+15积分/秒）</option>
                   </select>
                 </div>
               </div>
@@ -936,7 +936,7 @@ export default function VideoGeneralPage() {
                   <div style={{ fontSize: "0.8rem", color: "#718096", fontWeight: 600, marginBottom: 10 }}>✨ 视频分析结果（可复刻脚本）</div>
                   <ScriptDisplay text={scriptA} />
                   <ContrastUploadHint scriptText={scriptA} />
-                  {(() => { const v = Math.max(55, duration * 55); const tts = duration <= 5 ? 13 : duration <= 10 ? 26 : duration <= 15 ? 33 : duration <= 30 ? 52 : 104; const resPerSec = resolution === "1080p" ? 3 : resolution === "2k" ? 6 : 11; const s = resPerSec * duration; const total = v + 26 + tts + s; return (<div style={{ background: "#f8f9fa", borderRadius: 10, padding: "0.8rem", marginBottom: "0.8rem", fontSize: "0.78rem", color: "#555" }}><div style={{ fontWeight: 600, marginBottom: 6 }}>📋 费用明细</div><div>🎬 视频生成：{duration}秒 × 55 = {v}积分</div><div>👤 模特头像：13积分</div><div>🖼️ 场景图：13积分</div><div>🔊 声音(TTS)：{tts}积分</div><div>📺 分辨率({resolution})：{resPerSec} × {duration}秒 = {s}积分</div><div style={{ borderTop: "1px solid #ddd", marginTop: 6, paddingTop: 6, fontWeight: 600 }}>合计：{total}积分（¥{(total/50).toFixed(2)}）</div></div>); })()}
+                  {(() => { const v = Math.max(55, duration * 55); const tts = duration <= 5 ? 13 : duration <= 10 ? 26 : duration <= 15 ? 33 : duration <= 30 ? 52 : 104; const resPerSec = resolution === "1080p" ? 5 : resolution === "2k" ? 10 : 15; const s = resPerSec * duration; const total = v + 26 + tts + s; return (<div style={{ background: "#f8f9fa", borderRadius: 10, padding: "0.8rem", marginBottom: "0.8rem", fontSize: "0.78rem", color: "#555" }}><div style={{ fontWeight: 600, marginBottom: 6 }}>📋 费用明细</div><div>🎬 视频生成：{duration}秒 × 55 = {v}积分</div><div>👤 模特头像：13积分</div><div>🖼️ 场景图：13积分</div><div>🔊 声音(TTS)：{tts}积分</div><div>📺 分辨率({resolution})：{resPerSec} × {duration}秒 = {s}积分</div><div style={{ borderTop: "1px solid #ddd", marginTop: 6, paddingTop: 6, fontWeight: 600 }}>合计：{total}积分（¥{(total/50).toFixed(2)}）</div></div>); })()}
                   <div style={{ display: "flex", gap: 10, marginTop: "1.2rem", flexWrap: "wrap" }}>
                     <button onClick={analyzeVideo} disabled={loadingA || vidLoading}
                       style={{ flex: "1 1 200px", padding: "0.7rem 1rem", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#374151", fontSize: "0.88rem", cursor: "pointer", fontWeight: 500 }}>
@@ -950,7 +950,7 @@ export default function VideoGeneralPage() {
                         fontSize: "0.88rem", cursor: vidLoading || loadingA ? "not-allowed" : "pointer",
                         fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
                       }}>
-                      {vidLoading ? <><span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #a0aec0", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />生成中…</> : (() => { const v = Math.max(55, duration * 55); const tts = duration <= 5 ? 13 : duration <= 10 ? 26 : duration <= 15 ? 33 : duration <= 30 ? 52 : 104; const resPerSec = resolution === "1080p" ? 3 : resolution === "2k" ? 6 : 11; const s = resPerSec * duration; const ai = 13 + 13 + tts; return `🎬 确认脚本，生成视频（视频${v} + AI${ai} + 分辨率${s} = 扣${v + ai + s}积分）`; })()}
+                      {vidLoading ? <><span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #a0aec0", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />生成中…</> : (() => { const v = Math.max(55, duration * 55); const tts = duration <= 5 ? 13 : duration <= 10 ? 26 : duration <= 15 ? 33 : duration <= 30 ? 52 : 104; const resPerSec = resolution === "1080p" ? 5 : resolution === "2k" ? 10 : 15; const s = resPerSec * duration; const ai = 13 + 13 + tts; return `🎬 确认脚本，生成视频（视频${v} + AI${ai} + 分辨率${s} = 扣${v + ai + s}积分）`; })()}
                     </button>
                   </div>
                   {vidLoading && (
@@ -1091,9 +1091,9 @@ export default function VideoGeneralPage() {
                             <div>
                               <div style={{ fontSize: "0.72rem", color: "#718096", marginBottom: 5 }}>分辨率</div>
                               <select value={resolution} onChange={e => setResolution(e.target.value)} style={{ padding: "0.45rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c" }}>
-                                <option value="1080p">1080P（+3积分/秒）</option>
-                                <option value="2k">2K（+6积分/秒）</option>
-                                <option value="4k">4K（+11积分/秒）</option>
+                                <option value="1080p">1080P 高清（+5积分/秒）</option>
+                                <option value="2k">2K 超清（+10积分/秒）</option>
+                                <option value="4k">4K 极清（+15积分/秒）</option>
                               </select>
                             </div>
                           </div>
@@ -1177,12 +1177,12 @@ export default function VideoGeneralPage() {
                           <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#718096", marginBottom: 8 }}>✨ 生成的创意脚本</div>
                           <ScriptDisplay text={script} />
                           <ContrastUploadHint scriptText={script} />
-                          {(() => { const v = Math.max(55, duration * 55); const resPerSec = resolution === "1080p" ? 3 : resolution === "2k" ? 6 : 11; const s = resPerSec * duration; const total = v + 102 + s; return (<div style={{ background: "#f8f9fa", borderRadius: 10, padding: "0.8rem", marginBottom: "0.8rem", fontSize: "0.78rem", color: "#555" }}><div style={{ fontWeight: 600, marginBottom: 6 }}>📋 费用明细</div><div>🎬 视频生成：{duration}秒 × 55 = {v}积分</div><div>👤 模特头像：13积分</div><div>🖼️ 场景图：13积分</div><div>🔍 趋势搜索：26积分</div><div>📝 审稿员：26积分</div><div>✍️ 文案师：13积分</div><div>🔊 声音(TTS)：11积分</div><div>📺 分辨率({resolution})：{resPerSec} × {duration}秒 = {s}积分</div><div style={{ borderTop: "1px solid #ddd", marginTop: 6, paddingTop: 6, fontWeight: 600 }}>合计：{total}积分（¥{(total/50).toFixed(2)}）</div></div>); })()}
+                          {(() => { const v = Math.max(55, duration * 55); const resPerSec = resolution === "1080p" ? 5 : resolution === "2k" ? 10 : 15; const s = resPerSec * duration; const total = v + 102 + s; return (<div style={{ background: "#f8f9fa", borderRadius: 10, padding: "0.8rem", marginBottom: "0.8rem", fontSize: "0.78rem", color: "#555" }}><div style={{ fontWeight: 600, marginBottom: 6 }}>📋 费用明细</div><div>🎬 视频生成：{duration}秒 × 55 = {v}积分</div><div>👤 模特头像：13积分</div><div>🖼️ 场景图：13积分</div><div>🔍 趋势搜索：26积分</div><div>📝 审稿员：26积分</div><div>✍️ 文案师：13积分</div><div>🔊 声音(TTS)：11积分</div><div>📺 分辨率({resolution})：{resPerSec} × {duration}秒 = {s}积分</div><div style={{ borderTop: "1px solid #ddd", marginTop: 6, paddingTop: 6, fontWeight: 600 }}>合计：{total}积分（¥{(total/50).toFixed(2)}）</div></div>); })()}
                           <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
                             <button onClick={generate} disabled={loading || vidLoading} style={{ flex: "1 1 140px", padding: "0.6rem 0.9rem", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#374151", fontSize: "0.85rem", cursor: "pointer", fontWeight: 500 }}>🔄 重新生成（35积分）</button>
                             <button onClick={() => generateVideo()} disabled={vidLoading || loading}
                               style={{ flex: "1 1 140px", padding: "0.6rem 0.9rem", borderRadius: 8, border: "none", background: vidLoading || loading ? "#e2e8f0" : "#16a34a", color: vidLoading || loading ? "#a0aec0" : "#fff", fontSize: "0.85rem", fontWeight: 600, cursor: vidLoading || loading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                              {vidLoading ? <><span style={{ display: "inline-block", width: 12, height: 12, border: "2px solid #a0aec0", borderTopColor: "#555", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />生成中…</> : (() => { const v = Math.max(55, duration * 55); const ai = 13 + 13 + 26 + 26 + 13 + 11; const s = (resolution === "1080p" ? 3 : resolution === "2k" ? 6 : 11) * duration; return `🎬 确认，生成视频（视频${v} + AI${ai} + 分辨率${s} = 扣${v + ai + s}积分）`; })()}
+                              {vidLoading ? <><span style={{ display: "inline-block", width: 12, height: 12, border: "2px solid #a0aec0", borderTopColor: "#555", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />生成中…</> : (() => { const v = Math.max(55, duration * 55); const ai = 13 + 13 + 26 + 26 + 13 + 11; const s = (resolution === "1080p" ? 5 : resolution === "2k" ? 10 : 15) * duration; return `🎬 确认，生成视频（视频${v} + AI${ai} + 分辨率${s} = 扣${v + ai + s}积分）`; })()}
                             </button>
                           </div>
                         </div>
@@ -1369,7 +1369,7 @@ export default function VideoGeneralPage() {
                     <div style={{ paddingLeft: 44, marginBottom: 18 }}>
                       {!chatShowParams ? (
                         <>
-                          {(() => { const v = Math.max(55, duration * 55); const resPerSec = resolution === "1080p" ? 3 : resolution === "2k" ? 6 : 11; const s = resPerSec * duration; const total = v + 102 + s; return (<div style={{ background: "#f8f9fa", borderRadius: 10, padding: "0.8rem", marginBottom: "0.8rem", fontSize: "0.78rem", color: "#555" }}><div style={{ fontWeight: 600, marginBottom: 6 }}>📋 费用明细</div><div>🎬 视频生成：{duration}秒 × 55 = {v}积分</div><div>👤 模特头像：13积分</div><div>🖼️ 场景图：13积分</div><div>🔍 趋势搜索：26积分</div><div>📝 审稿员：26积分</div><div>✍️ 文案师：13积分</div><div>🔊 声音(TTS)：11积分</div><div>📺 分辨率({resolution})：{resPerSec} × {duration}秒 = {s}积分</div><div style={{ borderTop: "1px solid #ddd", marginTop: 6, paddingTop: 6, fontWeight: 600 }}>合计：{total}积分（¥{(total/50).toFixed(2)}）</div></div>); })()}
+                          {(() => { const v = Math.max(55, duration * 55); const resPerSec = resolution === "1080p" ? 5 : resolution === "2k" ? 10 : 15; const s = resPerSec * duration; const total = v + 102 + s; return (<div style={{ background: "#f8f9fa", borderRadius: 10, padding: "0.8rem", marginBottom: "0.8rem", fontSize: "0.78rem", color: "#555" }}><div style={{ fontWeight: 600, marginBottom: 6 }}>📋 费用明细</div><div>🎬 视频生成：{duration}秒 × 55 = {v}积分</div><div>👤 模特头像：13积分</div><div>🖼️ 场景图：13积分</div><div>🔍 趋势搜索：26积分</div><div>📝 审稿员：26积分</div><div>✍️ 文案师：13积分</div><div>🔊 声音(TTS)：11积分</div><div>📺 分辨率({resolution})：{resPerSec} × {duration}秒 = {s}积分</div><div style={{ borderTop: "1px solid #ddd", marginTop: 6, paddingTop: 6, fontWeight: 600 }}>合计：{total}积分（¥{(total/50).toFixed(2)}）</div></div>); })()}
                           <button onClick={async () => {
                           // 1. 提取场景标签 → 并发生成场景图
                           setChatSceneImages({});
@@ -1399,7 +1399,7 @@ export default function VideoGeneralPage() {
                           setChatShowParams(true);
                         }} disabled={vidLoading}
                           style={{ padding: "0.65rem 1.4rem", borderRadius: 10, border: "none", background: vidLoading ? "#e2e8f0" : "#16a34a", color: vidLoading ? "#a0aec0" : "#fff", fontSize: "0.88rem", fontWeight: 600, cursor: vidLoading ? "not-allowed" : "pointer" }}>
-                          {(() => { const v = Math.max(55, duration * 55); const ai = 13 + 13 + 26 + 26 + 13 + 11; const s = (resolution === "1080p" ? 3 : resolution === "2k" ? 6 : 11) * duration; return `🎬 确认脚本，生成视频（视频${v} + AI${ai} + 分辨率${s} = 扣${v + ai + s}积分）`; })()}
+                          {(() => { const v = Math.max(55, duration * 55); const ai = 13 + 13 + 26 + 26 + 13 + 11; const s = (resolution === "1080p" ? 5 : resolution === "2k" ? 10 : 15) * duration; return `🎬 确认脚本，生成视频（视频${v} + AI${ai} + 分辨率${s} = 扣${v + ai + s}积分）`; })()}
                         </button>
                         </>
                       ) : (
@@ -1420,9 +1420,9 @@ export default function VideoGeneralPage() {
                             <div style={{ fontSize: "0.72rem", color: "#718096", marginBottom: 6 }}>分辨率</div>
                             <select value={chatResolution} onChange={e => setChatResolution(e.target.value)}
                               style={{ width: "100%", padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.85rem", background: "#fff", color: "#1a202c" }}>
-                              <option value="1080p">1080P（+3积分/秒）</option>
-                              <option value="2k">2K（+6积分/秒）</option>
-                              <option value="4k">4K（+11积分/秒）</option>
+                              <option value="1080p">1080P 高清（+5积分/秒）</option>
+                              <option value="2k">2K 超清（+10积分/秒）</option>
+                              <option value="4k">4K 极清（+15积分/秒）</option>
                             </select>
                           </div>
                           <div style={{ marginBottom: 14 }}>
