@@ -755,7 +755,7 @@ async def video_analyze_submit(
         raise HTTPException(400, "product_image_urls 必填")
 
     user_id = str(current_user["id"])
-    cost = 35
+    cost = 24
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足，需 {cost} 积分")
 
@@ -1098,7 +1098,7 @@ async def chat_with_mentor(
 
     user_id = str(current_user["id"])
 
-    CHAT_COST = 18
+    CHAT_COST = 39
     if not deduct_credits(user_id, CHAT_COST):
         raise HTTPException(402, f"积分不足，每次对话消耗 {CHAT_COST} 积分")
 
