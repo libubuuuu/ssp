@@ -246,7 +246,7 @@ async def replace_submit(
         raise HTTPException(400, "产品图 / 人物图 / 场景图 至少上传 1 张")
 
     user_id = str(current_user["id"])
-    credits_per_grid = 84
+    credits_per_grid = 90
     cost = max(credits_per_grid, credits_per_grid * len(grid_urls))
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
@@ -347,7 +347,7 @@ async def generate_submit(
 
     task_durs = _preview_group_tasks(active_scenes)
     total_duration_sec = sum(task_durs)
-    cost = max(65, total_duration_sec * 65)
+    cost = max(55, total_duration_sec * 55)
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
 

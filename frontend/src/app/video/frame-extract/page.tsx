@@ -499,7 +499,7 @@ export default function VideoFrameExtractPage() {
               const activeDur = mergedScenes.reduce((s, sc) => s + Math.max(4, Math.round(sc.duration_sec)), 0);
               return (
                 <div style={{ fontSize: "0.78rem", color: "#0d0d0d", background: "#f5f3ed", borderRadius: 8, padding: "0.4rem 0.8rem", marginBottom: 10 }}>
-                  已选 <b>{activeCnt}</b> 个分镜 · 预计消耗 <b>{activeDur * 65}</b> 积分（¥{((activeDur * 65) / 50).toFixed(1)}）
+                  已选 <b>{activeCnt}</b> 个分镜 · 预计消耗 <b>{activeDur * 55}</b> 积分（¥{((activeDur * 55) / 50).toFixed(1)}）
                 </div>
               );
             })()}
@@ -564,7 +564,7 @@ export default function VideoFrameExtractPage() {
           <div>
             <button onClick={doReplace} disabled={loading}
               style={{ background: "#0d0d0d", color: "#fff", border: "none", padding: "0.9rem 1.6rem", borderRadius: 10, fontSize: "0.95rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1, marginBottom: "1rem" }}>
-              {loading ? loadingMsg || "替换中..." : `🎨 替换九宫格元素（消耗 84积分/张 · 共 ${gridUrls.length}张）`}
+              {loading ? loadingMsg || "替换中..." : `🎨 替换九宫格元素（消耗 90积分/张 · 共 ${gridUrls.length}张）`}
             </button>
           </div>
         )}
@@ -617,7 +617,7 @@ export default function VideoFrameExtractPage() {
           <>
             <button onClick={doGenerate} disabled={loading}
               style={{ background: "#0d8a3e", color: "#fff", border: "none", padding: "1rem 1.8rem", borderRadius: 10, fontSize: "1rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1, marginBottom: "0.75rem", fontWeight: 600 }}>
-              {loading ? loadingMsg || "生成中..." : (() => { const acts = scenes.filter(sc => !skippedScenes.has(sc.id)); const merged: number[] = []; let i = 0; while (i < acts.length) { let d = acts[i].duration_sec; while (d < 3 && i + 1 < acts.length) { const n = acts[i+1].duration_sec; if (d + n <= 15) { d += n; i++; } else break; } merged.push(Math.max(4, Math.round(d))); i++; } const tot = merged.reduce((s, d) => s + d, 0); return `🎬 生成完整视频（扣${Math.max(65, tot * 65)}积分）`; })()}
+              {loading ? loadingMsg || "生成中..." : (() => { const acts = scenes.filter(sc => !skippedScenes.has(sc.id)); const merged: number[] = []; let i = 0; while (i < acts.length) { let d = acts[i].duration_sec; while (d < 3 && i + 1 < acts.length) { const n = acts[i+1].duration_sec; if (d + n <= 15) { d += n; i++; } else break; } merged.push(Math.max(4, Math.round(d))); i++; } const tot = merged.reduce((s, d) => s + d, 0); return `🎬 生成完整视频（扣${Math.max(55, tot * 55)}积分）`; })()}
             </button>
             {loading && (
               <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "0.65rem 0.9rem", fontSize: "0.8rem", color: "#1e40af", marginBottom: "1rem" }}>
