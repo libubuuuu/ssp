@@ -764,6 +764,12 @@ export default function VideoGeneralPage() {
 
         {tab === "replicate" && isWhitelisted && (
           <>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.6rem" }}>
+              <button onClick={() => window.open("/video/general", "_blank", "noopener")}
+                style={{ padding: "0.4rem 0.8rem", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#555", fontSize: "0.78rem", cursor: "pointer" }}>
+                🆕 新建窗口（批量制作）
+              </button>
+            </div>
             {error && (
               <div style={{ background: "#fff5f5", border: "1px solid #fed7d7", color: "#c53030", padding: "0.8rem 1rem", borderRadius: 10, marginBottom: "1rem", fontSize: "0.88rem" }}>{error}</div>
             )}
@@ -971,6 +977,12 @@ export default function VideoGeneralPage() {
         {/* ── 标签B：AI 爆款视频（对话流） ── */}
         {tab === "ai_video" && (
           <div style={{ position: "relative" }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.6rem" }}>
+              <button onClick={() => window.open("/video/general", "_blank", "noopener")}
+                style={{ padding: "0.4rem 0.8rem", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", color: "#555", fontSize: "0.78rem", cursor: "pointer" }}>
+                🆕 新建窗口（批量制作）
+              </button>
+            </div>
             {error && (
               <div style={{ background: "#fff5f5", border: "1px solid #fed7d7", color: "#c53030", padding: "0.8rem 1rem", borderRadius: 10, marginBottom: "1rem", fontSize: "0.88rem" }}>{error}</div>
             )}
