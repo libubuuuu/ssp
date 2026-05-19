@@ -682,12 +682,17 @@ async def script_to_video_submit(
     cost = max(65, body.target_duration * 65)  # 视频
     cost += 13  # 模特头像
     cost += 13  # 场景图
-    cost += 11  # TTS
 
-    if not body.is_replicate:
-        cost += 26  # 趋势搜索（只有AI爆款用）
-        cost += 26  # 审稿员（只有AI爆款用）
-        cost += 13  # 文案师（只有AI爆款用）
+    if body.is_replicate:
+        # 视频拆解 TTS 按时长分档
+        _TTS_COST = {5: 13, 10: 26, 15: 33, 30: 52, 60: 104}
+        tts_dur = min(_TTS_COST.keys(), key=lambda x: abs(x - body.target_duration))
+        cost += _TTS_COST[tts_dur]
+    else:
+        cost += 11  # TTS声音（AI爆款固定）
+        cost += 26  # 趋势搜索
+        cost += 26  # 审稿员
+        cost += 13  # 文案师
         _RESOLUTION_PER_SEC = {"1080p": 3, "2k": 6, "4k": 11}
         cost += _RESOLUTION_PER_SEC.get(body.resolution, 3) * body.target_duration
 
