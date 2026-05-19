@@ -684,7 +684,7 @@ async def script_to_video_submit(
     cost = max(65, body.target_duration * 65)
 
     # 分辨率附加费
-    _RESOLUTION_SURCHARGE = {"1080p": 0, "2k": 20, "4k": 50}
+    _RESOLUTION_SURCHARGE = {"1080p": 25, "2k": 40, "4k": 50}
     cost += _RESOLUTION_SURCHARGE.get(body.resolution, 0)
 
     user_id = str(current_user["id"])
