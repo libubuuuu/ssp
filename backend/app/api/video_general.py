@@ -685,6 +685,7 @@ async def script_to_video_submit(
     cost += 26  # 趋势搜索
     cost += 26  # 审稿员
     cost += 13  # 文案师
+    cost += 11  # TTS声音
 
     if not body.is_replicate:
         _RESOLUTION_PER_SEC = {"1080p": 3, "2k": 6, "4k": 11}
