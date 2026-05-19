@@ -943,7 +943,7 @@ export default function VideoGeneralPage() {
                         fontSize: "0.88rem", cursor: vidLoading || loadingA ? "not-allowed" : "pointer",
                         fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
                       }}>
-                      {vidLoading ? <><span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #a0aec0", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />生成中…</> : (() => { const v = Math.max(65, duration * 65); const s = (resolution === "1080p" ? 3 : resolution === "2k" ? 6 : 11) * duration; const m = 18; return `🎬 确认脚本，生成视频（视频${v} + 分辨率${s} + 模特${m} = 扣${v + s + m}积分）`; })()}
+                      {vidLoading ? <><span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #a0aec0", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />生成中…</> : `🎬 确认脚本，生成视频（扣${Math.max(65, duration * 65)}积分）`}
                     </button>
                   </div>
                   {vidLoading && (
