@@ -2370,19 +2370,32 @@ async def _run_skill_analyze_job(params: dict) -> dict:
 
         # 5. 并发跑:qwen-vl 看多张九宫格 + wizper 口播
         instruction = _build_skill_instruction(skill_out["scenes"], n_grids=skill_out["n_grids"])
-        svc = AliyunQwenVLVideoService()
-        if not svc.is_available():
-            raise RuntimeError("qwen-vl 不可用(DASHSCOPE_API_KEY)")
-
-        async def _qwen():
-            t = _t.time()
-            # 单张时用 analyze_image,多张时用 analyze_images(token 共享上限,实测 max 5 张)
-            if len(grid_urls) == 1:
-                r = await svc.analyze_image(grid_urls[0], instruction)
-            else:
-                r = await svc.analyze_images(grid_urls, instruction)
-            log_info(f"skill_analyze qwen-vl elapsed={_t.time()-t:.1f}s n_imgs={len(grid_urls)} err={'error' in r}")
-            return r
+        async def _analyze_with_fallback():
+            try:
+                svc = AliyunQwenVLVideoService()
+                if not svc.is_available():
+                    raise RuntimeError("qwen-vl 不可用")
+                t = _t.time()
+                if len(grid_urls) == 1:
+                    r = await svc.analyze_image(grid_urls[0], instruction)
+                else:
+                    r = await svc.analyze_images(grid_urls, instruction)
+                log_info(f"skill_analyze qwen-vl elapsed={_t.time()-t:.1f}s n_imgs={len(grid_urls)}")
+                if "error" in r:
+                    raise RuntimeError(f"qwen-vl 返回错误: {r['error'][:200]}")
+                return (r.get("text") or "").strip()
+            except Exception as _qe:
+                log_error(f"skill_analyze qwen-vl 失败,降级 gpt-4o: {_qe}")
+                from app.services.gemini_client import ask_gemini
+                t = _t.time()
+                _fb = await ask_gemini(
+                    prompt=instruction,
+                    image_urls=grid_urls,
+                    model="gpt-4o",
+                    max_tokens=4096,
+                )
+                log_info(f"skill_analyze gpt-4o fallback elapsed={_t.time()-t:.1f}s")
+                return (_fb or "").strip()
 
         async def _speech():
             try:
@@ -2391,12 +2404,9 @@ async def _run_skill_analyze_job(params: dict) -> dict:
                 log_error(f"skill_analyze speech 异常(忽略): {_e}")
                 return {"original_speech": "", "speech_audio_url": "", "has_background_music": False, "speech_chunks": []}
 
-        qwen_res, speech_info = await asyncio.gather(_qwen(), _speech())
+        text, speech_info = await asyncio.gather(_analyze_with_fallback(), _speech())
 
-        # 6. 解析 qwen-vl JSON
-        if "error" in qwen_res:
-            raise RuntimeError(f"qwen-vl 失败: {qwen_res['error'][:200]}")
-        text = (qwen_res.get("text") or "").strip()
+        # 6. 解析分析结果 JSON
         text = _re.sub(r"^```(?:json)?\s*", "", text)
         text = _re.sub(r"\s*```$", "", text)
         try:

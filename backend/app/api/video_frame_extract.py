@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 
 from app.api.auth import get_current_user
 from app.services.billing import deduct_credits, add_credits
-from app.services.fal_service import fal_upload_with_retry, AliyunQwenVLVideoService
+from app.services.fal_service import fal_upload_with_retry
 from app.services.upload_guard import read_bounded, IMAGE_MIMES, _check_mime
 from app.services.logger import log_info
 
@@ -137,18 +137,6 @@ async def analyze_submit(
     cost = 5  # 2026-05-13:生成文案 5 积分
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
-
-    # fail-fast:qwen-vl 服务可用性
-    try:
-        svc = AliyunQwenVLVideoService()
-        if not svc.is_available():
-            add_credits(user_id, cost, reason="task_refund")
-            raise HTTPException(503, "qwen-vl 视觉服务不可用(DASHSCOPE_API_KEY 未配置)")
-    except HTTPException:
-        raise
-    except Exception as e:
-        add_credits(user_id, cost, reason="task_refund")
-        raise HTTPException(503, f"qwen-vl 初始化失败: {str(e)[:200]}")
 
     from app.api.jobs import JOBS, _save_jobs, _execute_job, create_tracked_task
     job_id = str(uuid.uuid4())[:8]
