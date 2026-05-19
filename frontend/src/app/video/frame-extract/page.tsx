@@ -66,8 +66,6 @@ export default function VideoFrameExtractPage() {
   const [hasBackgroundMusic, setHasBackgroundMusic] = useState<boolean>(false);
   const [modelIdentity, setModelIdentity] = useState<string>("");
   const [productCategory, setProductCategory] = useState<string>("");
-  const [isSensitive, setIsSensitive] = useState(false);
-
   // 第二步:素材上传 + 替换
   const [productImageUrl, setProductImageUrl] = useState<string>("");
   const [modelImageUrl, setModelImageUrl] = useState<string>("");
@@ -268,7 +266,6 @@ export default function VideoFrameExtractPage() {
           scene_image_url: sceneImageUrl || undefined,
           model_identity: modelIdentity,
           product_category: productCategory,
-          sensitive: isSensitive,
           scenes,  // P237:后端用 qwen-vl 看替换后的图重写 visual_prompt
         }),
       });
@@ -565,17 +562,9 @@ export default function VideoFrameExtractPage() {
 
         {scenes && (productImageUrl || modelImageUrl || sceneImageUrl) && replacedGridUrls.length === 0 && (
           <div>
-            <div style={{ marginBottom: "0.6rem" }}>
-              <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: "0.3rem" }}>品类</div>
-              <select value={isSensitive ? "sensitive" : "normal"} onChange={e => setIsSensitive(e.target.value === "sensitive")} disabled={loading}
-                style={{ padding: "0.4rem 0.6rem", border: "1px solid #ddd", borderRadius: 8, fontSize: "0.85rem", background: "#fff" }}>
-                <option value="normal">普通类目（84积分/张）</option>
-                <option value="sensitive">内衣/泳装类目（168积分/张）</option>
-              </select>
-            </div>
             <button onClick={doReplace} disabled={loading}
               style={{ background: "#0d0d0d", color: "#fff", border: "none", padding: "0.9rem 1.6rem", borderRadius: 10, fontSize: "0.95rem", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1, marginBottom: "1rem" }}>
-              {loading ? loadingMsg || "替换中..." : `🎨 替换九宫格元素（消耗 ${isSensitive ? 168 : 84}积分/张 · 共 ${gridUrls.length}张）`}
+              {loading ? loadingMsg || "替换中..." : `🎨 替换九宫格元素（消耗 84积分/张 · 共 ${gridUrls.length}张）`}
             </button>
           </div>
         )}

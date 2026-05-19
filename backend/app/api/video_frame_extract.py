@@ -249,7 +249,6 @@ async def replace_submit(
     scene_image_url = body.get("scene_image_url")  # 可选
     model_identity = body.get("model_identity") or ""
     product_category = body.get("product_category") or "其他"
-    sensitive = bool(body.get("sensitive", False))  # 敏感品类(内衣/泳装等)→ 走 FLUX.2 edit
     scenes = body.get("scenes") or []  # P237:前端传当前 scenes,worker 替换后用 qwen-vl 重写其中的 visual_prompt
 
     if not grid_urls:
@@ -259,8 +258,7 @@ async def replace_submit(
         raise HTTPException(400, "产品图 / 人物图 / 场景图 至少上传 1 张")
 
     user_id = str(current_user["id"])
-    # 普通品类 84积分/张九宫格;敏感品类(Kolors VTON) 168积分/张
-    credits_per_grid = 168 if sensitive else 84
+    credits_per_grid = 84
     cost = max(credits_per_grid, credits_per_grid * len(grid_urls))
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足,需 {cost}")
@@ -280,7 +278,6 @@ async def replace_submit(
             "scene_image_url": scene_image_url,
             "model_identity": model_identity,
             "product_category": product_category,
-            "sensitive": sensitive,
             "scenes": scenes,  # P237 透传给 worker 重写 visual_prompt
             "_user_id": user_id,
         },
