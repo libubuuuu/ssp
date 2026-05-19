@@ -679,7 +679,7 @@ async def script_to_video_submit(
         log_error(f"脚本解析失败 user={current_user['id']} script_head={body.script[:200]!r}")
         raise HTTPException(400, "脚本解析失败，未找到有效分镜。请确认脚本格式包含 [镜头X]：时间范围 |...")
 
-    cost = max(65, body.target_duration * 65)  # 视频
+    cost = max(55, body.target_duration * 55)  # 视频
     cost += 13  # 模特头像
     cost += 13  # 场景图
 
