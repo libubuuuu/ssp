@@ -99,8 +99,8 @@ class Settings(BaseSettings):
     WECHAT_PAY_NOTIFY_URL: str = ""              # 异步回调 URL,如 https://ailixiao.com/api/wechat-pay/notify
 
     # 灵梦 API(Gemini,OpenAI 兼容接口)
-    LINGMENG_BASE_URL: str = "https://1189.xin/v1"
-    LINGMENG_MODEL: str = "gpt-4o"
+    LINGMENG_BASE_URL: str = "https://subrouter.ai/v1"
+    LINGMENG_MODEL: str = "gpt-5.5"
     LINGMENG_API_KEY: str = ""
     GEMINI_API_KEY: str = ""
     # 联网搜索专用 key（gpt-4o-search-preview，独立渠道）
