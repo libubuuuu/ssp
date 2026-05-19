@@ -417,7 +417,7 @@ export default function VideoGeneralPage() {
     if (!refVid.url)  { setError("请先上传参考视频"); return; }
     if (!front.url)   { setError("请先上传正面产品图"); return; }
     setError(""); setScriptA(""); setLoadingA(true);
-    adjustLocalUserCredits(-25);
+    adjustLocalUserCredits(-40);
     const modelInfo = modelSrc === "auto"
       ? (market === "中国" ? "AI 自动生成亚洲模特" : "AI 自动生成欧美模特")
       : modelSrc === "image" ? "用户上传模特图" : "用户上传模特视频";
@@ -917,7 +917,7 @@ export default function VideoGeneralPage() {
                 }}>
                 {loadingA ? (
                   <><span style={{ display: "inline-block", width: 16, height: 16, border: "2px solid #a0aec0", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />AI 正在分析视频…</>
-                ) : scriptA ? "重新分析视频（扣25积分）" : "分析视频并生成脚本（扣25积分）"}
+                ) : scriptA ? "重新分析视频（扣40积分）" : "分析视频并生成脚本（扣40积分）"}
               </button>
               {(!refVid.url || !front.url) && !loadingA && (
                 <div style={{ fontSize: "0.75rem", color: "#a0aec0", textAlign: "center", marginTop: 6 }}>
@@ -934,7 +934,7 @@ export default function VideoGeneralPage() {
                   <div style={{ display: "flex", gap: 10, marginTop: "1.2rem", flexWrap: "wrap" }}>
                     <button onClick={analyzeVideo} disabled={loadingA || vidLoading}
                       style={{ flex: "1 1 200px", padding: "0.7rem 1rem", borderRadius: 10, border: "1px solid #e2e8f0", background: "#fff", color: "#374151", fontSize: "0.88rem", cursor: "pointer", fontWeight: 500 }}>
-                      🔄 重新分析（扣25积分）
+                      🔄 重新分析（扣40积分）
                     </button>
                     <button onClick={() => generateVideo(scriptA, refVid.url || undefined)} disabled={vidLoading || loadingA}
                       style={{
