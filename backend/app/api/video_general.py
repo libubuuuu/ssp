@@ -687,6 +687,9 @@ async def script_to_video_submit(
     _RESOLUTION_SURCHARGE = {"1080p": 25, "2k": 40, "4k": 50}
     cost += _RESOLUTION_SURCHARGE.get(body.resolution, 0)
 
+    # 模特头像生成附加费
+    cost += 18
+
     user_id = str(current_user["id"])
     if not deduct_credits(user_id, cost):
         raise HTTPException(402, f"积分不足，需 {cost} 积分（约 {len(scenes)} 个分镜）")
