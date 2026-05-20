@@ -5579,9 +5579,11 @@ async def _run_script_to_video_job(params: dict) -> dict:
 
                     if vid_url or timeout_hit:
                         break  # 成功或超时，退出敏感重试
+                    if _ai_rewrite_needed:
+                        break  # AI重写已触发，立即退出 si 循环
                     if not sensitive_fail:
                         last_err = f"超时 {MAX_WAIT}s"; break  # 非敏感原因退出
-                    # sensitive_fail=True and si<3: 继续下一个前缀
+                    # sensitive_fail=True and si<1: 继续下一个前缀（si=0→si=1）
 
                 # 4次商业语境全被拦截 → GPT-5.5 重写 prompt 再试一次
                 if _ai_rewrite_needed and not vid_url:
