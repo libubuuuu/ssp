@@ -92,8 +92,8 @@ class FalImageService:
         import httpx
         from openai import AsyncOpenAI
         from app.config import get_settings
+        from app.services.logger import log_error, log_info
         s = get_settings()
-        client = AsyncOpenAI(base_url=s.IMAGE_API_BASE_URL, api_key=s.IMAGE_API_KEY)
         size = self._SIZE_TO_WH.get(image_size, image_size if "x" in str(image_size) else "1024x1024")
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as hc:
             imgs = []
@@ -104,10 +104,30 @@ class FalImageService:
                 bio.name = f"image_{i}.png"
                 imgs.append(bio)
         image_param = imgs if len(imgs) > 1 else imgs[0]
-        r = await asyncio.wait_for(
-            client.images.edit(model="gpt-image-2", image=image_param, prompt=prompt, n=1, size=size),
-            timeout=120,
-        )
+
+        urls_to_try = [s.IMAGE_API_BASE_URL]
+        fallback = getattr(s, "IMAGE_API_FALLBACK_URL", "")
+        if fallback and fallback != s.IMAGE_API_BASE_URL:
+            urls_to_try.append(fallback)
+
+        last_err: Exception = RuntimeError("no attempts")
+        for base_url in urls_to_try:
+            # BytesIO 需重置读取位置（多次尝试时）
+            for bio in (imgs if isinstance(image_param, list) else [image_param]):
+                bio.seek(0)
+            try:
+                client = AsyncOpenAI(base_url=base_url, api_key=s.IMAGE_API_KEY)
+                r = await asyncio.wait_for(
+                    client.images.edit(model="gpt-image-2", image=image_param, prompt=prompt, n=1, size=size),
+                    timeout=120,
+                )
+                log_info(f"_edit_subrouter OK base_url={base_url}")
+                break
+            except Exception as e:
+                log_error(f"_edit_subrouter {base_url} 失败: {e}")
+                last_err = e
+        else:
+            raise last_err
         b64 = r.data[0].b64_json
         if not b64:
             raise RuntimeError("subrouter edit 返回空 base64")

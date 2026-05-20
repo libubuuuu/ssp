@@ -145,35 +145,36 @@ async def ask_gemini(
     )
 
     primary_model = model or settings.LINGMENG_MODEL
-    try:
-        response = await client.chat.completions.create(
-            model=primary_model,
+
+    async def _call(base_url: str, key: str, mdl: str) -> str:
+        c = AsyncOpenAI(base_url=base_url, api_key=key)
+        resp = await c.chat.completions.create(
+            model=mdl,
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
         )
-        text = response.choices[0].message.content or ""
-        log_info(f"gemini_client: OK output_len={len(text)}")
-        return text
-    except Exception as e:
-        log_error(f"gemini_client: {primary_model} 调用失败，尝试降级 gpt-5.5: {e}")
-        # gemini 模型失败时降级到 gpt-5.5，必须换 LINGMENG_API_KEY（sk-Z6C2...，qicunshang 渠道）
-        if not use_gemini_key:
-            raise RuntimeError(f"Gemini API 调用失败: {str(e)[:300]}")
+        return resp.choices[0].message.content or ""
+
+    # 尝试顺序：主 URL 主模型 → 主 URL gpt-5.5 → 备用 URL gpt-5.5
+    attempts = [
+        (settings.LINGMENG_BASE_URL, api_key, primary_model, "primary"),
+    ]
+    if use_gemini_key:
+        attempts.append((settings.LINGMENG_BASE_URL, settings.LINGMENG_API_KEY, "gpt-5.5", "gpt-5.5"))
+    fallback_url = getattr(settings, "LINGMENG_FALLBACK_URL", "")
+    if fallback_url:
+        key2 = settings.LINGMENG_API_KEY if use_gemini_key else api_key
+        attempts.append((fallback_url, key2, primary_model if not use_gemini_key else "gpt-5.5", "fallback-url"))
+
+    last_err: Exception = RuntimeError("no attempts")
+    for base_url, key_, mdl, tag in attempts:
         try:
-            fallback_client = AsyncOpenAI(
-                base_url=settings.LINGMENG_BASE_URL,
-                api_key=settings.LINGMENG_API_KEY,
-            )
-            response = await fallback_client.chat.completions.create(
-                model="gpt-5.5",
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
-            text = response.choices[0].message.content or ""
-            log_info(f"gemini_client: gpt-5.5 fallback OK output_len={len(text)}")
+            text = await _call(base_url, key_, mdl)
+            log_info(f"gemini_client: OK tag={tag} model={mdl} output_len={len(text)}")
             return text
-        except Exception as e2:
-            log_error(f"gemini_client: gpt-5.5 fallback 也失败: {e2}")
-            raise RuntimeError(f"Gemini API 及降级均失败: {str(e2)[:300]}")
+        except Exception as e:
+            log_error(f"gemini_client: {tag} 失败: {e}")
+            last_err = e
+
+    raise RuntimeError(f"gemini_client 全部路径失败: {str(last_err)[:300]}")
