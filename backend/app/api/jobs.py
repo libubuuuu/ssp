@@ -5492,6 +5492,33 @@ async def _run_script_to_video_job(params: dict) -> dict:
                 task_imgs.append(prev_frame_url)
             task_imgs = task_imgs[:9]
 
+            # replicate 模式：用 GPT-Image-2 把 anchor 产品图转成场景图（无人物），
+            # 避免产品图中的人物触发 Seedance "likenesses of real people" 拦截
+            if params.get("is_replicate") and task_imgs:
+                _raw_desc = " ".join(
+                    sc.get("visual_prompt", "") for sc in task["scenes"] if sc.get("visual_prompt")
+                )[:150]
+                try:
+                    _sr = await asyncio.wait_for(
+                        _fal.run_async("fal-ai/gpt-image-2", arguments={
+                            "prompt": (
+                                f"{_raw_desc}. "
+                                "Product only, neatly displayed on a light surface, "
+                                "flat-lay, no people, commercial photography, soft natural lighting"
+                            )[:600],
+                            "image_size": "portrait_4_3", "num_images": 1, "quality": "auto",
+                        }),
+                        timeout=60,
+                    )
+                    _su = (_sr.get("images") or [{}])[0].get("url", "")
+                    if _su:
+                        task_imgs[0] = _su
+                        log_info(f"script_to_video Task {ti+1} replicate 场景图替换 anchor OK url={_su[:60]}")
+                    else:
+                        log_error(f"script_to_video Task {ti+1} replicate 场景图生成返回空，使用原始产品图")
+                except Exception as _se:
+                    log_error(f"script_to_video Task {ti+1} replicate 场景图生成失败，使用原始产品图: {_se}")
+
             # Prompt
             descs = [
                 _strip_video_color_words(sc.get("visual_prompt") or "Cinematic product showcase")
