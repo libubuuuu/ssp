@@ -219,7 +219,6 @@ const LANG_OPTIONS = (
   </>
 );
 
-const REPLICATE_WHITELIST = ["lirunting1a@gmail.com"];
 
 const TIKTOK_COUNTRIES = [
   { lang: "en", label: "🇺🇸 美国/英国", sub: "English" },
@@ -246,20 +245,9 @@ function _langToMarket(lang: string): string {
 export default function VideoGeneralPage() {
   const [tab, setTab] = useState<Tab>("ai_video");
 
-  // 灰度：视频复刻入口A 白名单判断
-  const [isWhitelisted, setIsWhitelisted] = useState(false);
   const [flowStep, setFlowStep]           = useState(1);  // 1=step1 2=step2 3=step3 4=create
   const chatEndRef = useRef<HTMLDivElement>(null);
   const _lastAutoSceneDesc = useRef("");
-
-  useEffect(() => {
-    const tk = localStorage.getItem("token");
-    if (!tk) return;
-    fetch(`${API_BASE}/api/auth/me`, { headers: { Authorization: `Bearer ${tk}` } })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.email) setIsWhitelisted(REPLICATE_WHITELIST.includes(d.email)); })
-      .catch(() => {});
-  }, []);
 
   useEffect(() => {
     if (flowStep > 1) setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 200);
@@ -754,15 +742,7 @@ export default function VideoGeneralPage() {
         </div>
 
         {/* ── 标签A：视频复刻 ── */}
-        {tab === "replicate" && !isWhitelisted && (
-          <div style={{ ...CARD, textAlign: "center", padding: "3rem 2rem", color: "#888" }}>
-            <div style={{ fontSize: "2rem", marginBottom: 12 }}>🎬</div>
-            <div style={{ fontSize: "1.1rem", fontWeight: 500, color: "#555", marginBottom: 8 }}>视频拆解功能</div>
-            <div style={{ fontSize: "0.88rem" }}>功能开发中，敬请期待</div>
-          </div>
-        )}
-
-        {tab === "replicate" && isWhitelisted && (
+        {tab === "replicate" && (
           <>
             <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.6rem" }}>
               <button onClick={() => window.open("/video/general", "_blank", "noopener")}
