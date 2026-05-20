@@ -75,24 +75,24 @@ echo "[3/5] 启动 ssp-backend-$STANDBY 和 ssp-frontend-$STANDBY" | tee -a $LOG
 supervisorctl start ssp-backend-$STANDBY  2>&1 | tee -a $LOG
 supervisorctl start ssp-frontend-$STANDBY 2>&1 | tee -a $LOG
 
-echo "健康检查（等 15 秒）..." | tee -a $LOG
-sleep 15
-
-for i in 1 2 3; do
-    BACKEND_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:$STANDBY_BACKEND/api/payment/packages)
-    FRONTEND_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:$STANDBY_FRONTEND)
+echo "等待 $STANDBY 健康就绪（最多 60s）..." | tee -a $LOG
+HEALTH_OK=0
+for i in $(seq 1 12); do
+    BACKEND_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://127.0.0.1:$STANDBY_BACKEND/health)
+    FRONTEND_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://127.0.0.1:$STANDBY_FRONTEND)
     if [ "$BACKEND_STATUS" = "200" ] && [ "$FRONTEND_STATUS" = "200" ]; then
-        echo "✅ $STANDBY 健康检查通过 (backend=$BACKEND_STATUS, frontend=$FRONTEND_STATUS)" | tee -a $LOG
+        echo "✅ $STANDBY 健康检查通过 (backend=$BACKEND_STATUS, frontend=$FRONTEND_STATUS) — ${i}x5s" | tee -a $LOG
+        HEALTH_OK=1
         break
     fi
-    if [ $i -eq 3 ]; then
-        echo "❌ $STANDBY 启动失败，停止 standby，$ACTIVE 继续在线" | tee -a $LOG
-        supervisorctl stop ssp-backend-$STANDBY ssp-frontend-$STANDBY 2>/dev/null || true
-        exit 1
-    fi
-    echo "⏳ 第 $i 次检查... backend=$BACKEND_STATUS, frontend=$FRONTEND_STATUS" | tee -a $LOG
+    echo "⏳ 等待中 ($((i*5))s/60s) backend=$BACKEND_STATUS frontend=$FRONTEND_STATUS" | tee -a $LOG
     sleep 5
 done
+if [ "$HEALTH_OK" != "1" ]; then
+    echo "❌ $STANDBY 启动失败，停止 standby，$ACTIVE 继续在线" | tee -a $LOG
+    supervisorctl stop ssp-backend-$STANDBY ssp-frontend-$STANDBY 2>/dev/null || true
+    exit 1
+fi
 
 # ── 4. nginx 切换 ────────────────────────────────────────────────────
 echo "[4/5] nginx 切换流量到 $STANDBY" | tee -a $LOG

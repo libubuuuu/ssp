@@ -474,32 +474,106 @@ async def analyze_video(
         f"n_product_imgs={len(product_image_urls)} video={video_url[:60]}"
     )
 
-    # subrouter.ai 的 Gemini 端点不支持 video_url 作为 image_url 传入（挂死不返回，60s 白等）
-    # 已通过实测证实：传 MP4 URL 给 gemini-2.5-flash-lite → 60s timeout，exit 124
-    # 直接走 Qwen-VL（阿里云），先归档视频到国内 CDN，避免跨境下载超时
+    # 主路：Qwen-VL（阿里云），先归档到国内 CDN 避免跨境下载超时
     from app.services.fal_service import get_aliyun_qwenvl_service
     svc = get_aliyun_qwenvl_service()
-    if not svc.is_available():
-        raise RuntimeError("video_analyze: Qwen-VL 不可用(DASHSCOPE_API_KEY 未配置)")
-    qwen_video_url = video_url
+    qwen_err: Exception | None = None
+    if svc.is_available():
+        qwen_video_url = video_url
+        try:
+            from app.services.media_archiver import archive_url
+            qwen_video_url = await archive_url(video_url, user_id, "video")
+            log_info(f"video_analyze: Qwen-VL 视频归档完成 -> {qwen_video_url[:80]}")
+        except Exception as ae:
+            log_error(f"video_analyze: 视频归档失败,直接传 fal URL: {ae}")
+        try:
+            content: list = [{"video": qwen_video_url}]
+            for img_url in list(product_image_urls[:4]):
+                content.append({"image": img_url})
+            content.append({"text": prompt})
+            res = await svc._analyze_raw(content)
+            if "error" in res:
+                raise RuntimeError(f"Qwen-VL error: {res['error']}")
+            text = (res.get("text") or "").strip()
+            if not text:
+                raise RuntimeError("Qwen-VL 返回空内容")
+            log_info(f"video_analyze: Qwen-VL 成功 output_len={len(text)}")
+            return text
+        except Exception as e:
+            qwen_err = e
+            log_error(f"video_analyze: Qwen-VL 失败，启动 GPT-5.5 抽帧兜底: {e}")
+    else:
+        qwen_err = RuntimeError("Qwen-VL 不可用(DASHSCOPE_API_KEY 未配置)")
+        log_error(f"video_analyze: {qwen_err}")
+
+    # 备路：ffmpeg 抽帧 → fal upload → GPT-5.5 图片分析
+    import subprocess as _sp, tempfile as _tmp, os as _os, shutil as _shutil
+    import httpx as _httpx
+    from app.services.fal_service import fal_upload_with_retry
+    tmp_path: str | None = None
+    frame_dir: str | None = None
     try:
-        from app.services.media_archiver import archive_url
-        qwen_video_url = await archive_url(video_url, user_id, "video")
-        log_info(f"video_analyze: Qwen-VL 视频归档完成 -> {qwen_video_url[:80]}")
-    except Exception as ae:
-        log_error(f"video_analyze: 视频归档失败,直接传 fal URL(Qwen-VL 可能看不到视频): {ae}")
-    content: list = [{"video": qwen_video_url}]
-    for img_url in list(product_image_urls[:4]):
-        content.append({"image": img_url})
-    content.append({"text": prompt})
-    res = await svc._analyze_raw(content)
-    if "error" in res:
-        raise RuntimeError(f"video_analyze Qwen-VL 兜底失败: {res['error']}")
-    text = (res.get("text") or "").strip()
-    if not text:
-        raise RuntimeError("video_analyze Qwen-VL 返回空内容")
-    log_info(f"video_analyze: Qwen-VL 兜底成功 output_len={len(text)}")
-    return text
+        log_info("video_analyze: 下载视频并 ffmpeg 抽帧 → GPT-5.5")
+        # 1. 下载视频到临时文件
+        with _tmp.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_vid:
+            tmp_path = tmp_vid.name
+        async with _httpx.AsyncClient(timeout=60, follow_redirects=True) as hc:
+            resp = await hc.get(video_url)
+            resp.raise_for_status()
+            with open(tmp_path, "wb") as f:
+                f.write(resp.content)
+        # 2. ffmpeg 以 1fps 抽帧
+        frame_dir = _tmp.mkdtemp(prefix="vid_frames_")
+        _sp.run(
+            ["ffmpeg", "-y", "-i", tmp_path,
+             "-vf", "fps=1/1", "-q:v", "3", f"{frame_dir}/frame_%02d.jpg"],
+            capture_output=True, timeout=30,
+        )
+        all_frames = sorted(f for f in _os.listdir(frame_dir) if f.endswith(".jpg"))
+        if not all_frames:
+            raise RuntimeError("ffmpeg 抽帧失败：无帧图片")
+        # 均匀选最多 6 帧
+        step = max(1, len(all_frames) // 6)
+        selected = all_frames[::step][:6]
+        log_info(f"video_analyze: 抽帧 {len(selected)}/{len(all_frames)} 张")
+        # 3. 上传帧图片到 fal storage
+        frame_urls = []
+        for fn in selected:
+            url = await fal_upload_with_retry(_os.path.join(frame_dir, fn))
+            frame_urls.append(url)
+        log_info(f"video_analyze: 帧上传完成 n={len(frame_urls)}")
+        # 4. GPT-5.5 分析（帧图片 + 产品图 + prompt）
+        all_img_urls = frame_urls + list(product_image_urls[:4])
+        gpt_text = await asyncio.wait_for(
+            ask_gemini(
+                prompt=prompt,
+                image_urls=all_img_urls,
+                model="gpt-5.5",
+                max_tokens=8192,
+                temperature=0.7,
+            ),
+            timeout=60,
+        )
+        gpt_text = (gpt_text or "").strip()
+        if not gpt_text:
+            raise RuntimeError("GPT-5.5 帧分析返回空")
+        log_info(f"video_analyze: GPT-5.5 帧分析成功 output_len={len(gpt_text)}")
+        return gpt_text
+    except Exception as fallback_err:
+        raise RuntimeError(
+            f"video_analyze 全部路径失败 — Qwen-VL: {qwen_err}; GPT-5.5帧: {fallback_err}"
+        )
+    finally:
+        try:
+            if tmp_path:
+                _os.unlink(tmp_path)
+        except Exception:
+            pass
+        try:
+            if frame_dir:
+                _shutil.rmtree(frame_dir, ignore_errors=True)
+        except Exception:
+            pass
 
 
 def parse_script(text: str) -> list[dict]:
