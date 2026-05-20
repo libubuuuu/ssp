@@ -97,10 +97,12 @@ class FalImageService:
         size = self._SIZE_TO_WH.get(image_size, image_size if "x" in str(image_size) else "1024x1024")
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as hc:
             imgs = []
-            for url in image_urls:
+            for i, url in enumerate(image_urls):
                 resp = await hc.get(url)
                 resp.raise_for_status()
-                imgs.append(io.BytesIO(resp.content))
+                bio = io.BytesIO(resp.content)
+                bio.name = f"image_{i}.png"
+                imgs.append(bio)
         image_param = imgs if len(imgs) > 1 else imgs[0]
         r = await asyncio.wait_for(
             client.images.edit(model="gpt-image-2", image=image_param, prompt=prompt, n=1, size=size),
