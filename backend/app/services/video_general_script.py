@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from app.services.gemini_client import ask_gemini
-from app.services.logger import log_info
+from app.services.logger import log_info, log_error
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -473,17 +473,40 @@ async def analyze_video(
         f"n_product_imgs={len(product_image_urls)} video={video_url[:60]}"
     )
 
-    script = await ask_gemini(
-        prompt=prompt,
-        video_url=video_url,
-        image_urls=list(product_image_urls[:4]),
-        max_tokens=8192,
-        temperature=0.7,
-        model="gemini-2.5-flash-lite",
-    )
+    gemini_exc: Exception | None = None
+    try:
+        script = await ask_gemini(
+            prompt=prompt,
+            video_url=video_url,
+            image_urls=list(product_image_urls[:4]),
+            max_tokens=8192,
+            temperature=0.7,
+            model="gemini-2.5-flash-lite",
+        )
+        log_info(f"video_analyze: 脚本生成完成 output_len={len(script)}")
+        return script.strip()
+    except Exception as e:
+        gemini_exc = e
+        log_error(f"video_analyze: gemini/subrouter 全部路径失败,降级 Qwen-VL: {e}")
 
-    log_info(f"video_analyze: 脚本生成完成 output_len={len(script)}")
-    return script.strip()
+    # Qwen-VL 兜底（subrouter 全挂时由阿里云接住）
+    from app.services.fal_service import get_aliyun_qwenvl_service
+    svc = get_aliyun_qwenvl_service()
+    if not svc.is_available():
+        raise RuntimeError(f"video_analyze 所有路径失败(Qwen-VL 亦不可用): {gemini_exc}")
+    # 把视频 + 产品图 + prompt 一起传给 Qwen-VL
+    content: list = [{"video": video_url}]
+    for img_url in list(product_image_urls[:4]):
+        content.append({"image": img_url})
+    content.append({"text": prompt})
+    res = await svc._analyze_raw(content)
+    if "error" in res:
+        raise RuntimeError(f"video_analyze Qwen-VL 兜底失败: {res['error']}")
+    text = (res.get("text") or "").strip()
+    if not text:
+        raise RuntimeError("video_analyze Qwen-VL 返回空内容")
+    log_info(f"video_analyze: Qwen-VL 兜底成功 output_len={len(text)}")
+    return text
 
 
 def parse_script(text: str) -> list[dict]:
