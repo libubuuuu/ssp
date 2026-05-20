@@ -90,7 +90,7 @@ class VideoFrameSkill:
             raw_scenes = [Scene(idx=0, start_seconds=0.0, end_seconds=duration)]
 
         # 3. 计算目标帧数：每15s 1张九宫格，最多4张
-        n_grids_target = max(1, min(4, round(duration / 15)))
+        n_grids_target = max(1, min(12, round(duration / 10)))
         n_target = n_grids_target * 9
 
         # 4. 按场景时长比例分配帧数，确保每个场景至少1帧
