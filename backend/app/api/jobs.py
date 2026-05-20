@@ -5326,8 +5326,13 @@ async def _run_script_to_video_job(params: dict) -> dict:
     # ── 分组逻辑 ───────────────────────────────────────────────────────────
     # 统一走8s批处理分组（去掉≤15s单次逻辑，保证生成时长可控）
     # 模特一致性通过 model_desc 写进 prompt 来保证，不依赖 portrait
-    # 改动3：所有视频都生成模特头像，保证人脸一致性
-    portrait_url = await _gen_portrait() if model_desc else None
+    # ① replicate：直接用上传视频抽帧（0s），跳过 GPT-image-2 生成（~54s）
+    # ② 非 replicate：portrait = None，放入下方 try 块与 TTS 并行
+    if params.get("is_replicate") and model_img_url:
+        portrait_url: str | None = model_img_url
+        log_info(f"script_to_video: replicate 跳过 portrait，使用上传视频抽帧 url={model_img_url[:60]}")
+    else:
+        portrait_url = None  # 非 replicate：在 try 块中与 TTS 并行生成
 
     # ── 纯时长拆分（去掉场景边界判断，避免场景名称差异导致过度拆分）──────────
     tasks: list[dict] = []
@@ -5382,28 +5387,46 @@ async def _run_script_to_video_job(params: dict) -> dict:
     )
 
     try:
-        # ── TTS 先跑，拿到 audio_url 再传给 Seedance（原生口播+环境音）────────
+        # ── ② portrait（非 replicate）与 TTS 并行，两者均完成后再提交 Seedance ──
         _tts_audio_url: str | None = None
-        if enable_voice:
+
+        async def _do_tts() -> str | None:
+            if not enable_voice:
+                return None
             _pre_speeches = [str(sc.get("speech") or "").strip() for sc in scenes]
             _pre_speech_text = " ".join(s for s in _pre_speeches if s)
-            # Seedance audio_urls 上限 15 秒，截断文本防超长（~60 字符/秒，留 1 秒余量）
             _max_speech_chars = int(min(target_duration if target_duration > 0 else 14, 14) * 60)
             _pre_speech_text = _pre_speech_text[:_max_speech_chars]
-            if _pre_speech_text:
-                try:
-                    _r = await _fal.run_async(
-                        "fal-ai/elevenlabs/tts/multilingual-v2",
-                        arguments={"text": _pre_speech_text[:1000]},
-                    )
-                    _ao = _r.get("audio") if isinstance(_r.get("audio"), dict) else None
-                    _tts_audio_url = (_ao.get("url") if _ao else None) or _r.get("audio_url")
-                    if _tts_audio_url:
-                        log_info(f"script_to_video TTS 完成 url={_tts_audio_url[:60]} speech_len={len(_pre_speech_text)} lang={target_lang}")
-                    else:
-                        log_error("script_to_video TTS 无返回，继续无音频生成")
-                except Exception as _te:
-                    log_error(f"script_to_video TTS 失败（继续无音频生成）: {_te}")
+            if not _pre_speech_text:
+                return None
+            try:
+                _r = await _fal.run_async(
+                    "fal-ai/elevenlabs/tts/multilingual-v2",
+                    arguments={"text": _pre_speech_text[:1000]},
+                )
+                _ao = _r.get("audio") if isinstance(_r.get("audio"), dict) else None
+                url = (_ao.get("url") if _ao else None) or _r.get("audio_url")
+                if url:
+                    log_info(f"script_to_video TTS 完成 url={url[:60]} speech_len={len(_pre_speech_text)} lang={target_lang}")
+                else:
+                    log_error("script_to_video TTS 无返回，继续无音频生成")
+                return url
+            except Exception as _te:
+                log_error(f"script_to_video TTS 失败（继续无音频生成）: {_te}")
+                return None
+
+        if portrait_url is None:
+            # 非 replicate：portrait ~54s 与 TTS ~4s 并行，节省 TTS 等待时间
+            async def _none_coro() -> None:
+                return None
+            _pg, _tts_audio_url = await asyncio.gather(
+                _gen_portrait() if model_desc else _none_coro(),
+                _do_tts(),
+            )
+            portrait_url = _pg
+        else:
+            # replicate：portrait 已设好，直接跑 TTS
+            _tts_audio_url = await _do_tts()
 
         # ── 并行执行（所有段同时提交 Seedance）──────────────────────────────
         _SENS_PREFIXES = [
