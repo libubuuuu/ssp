@@ -8,6 +8,8 @@
 """
 from __future__ import annotations
 
+import asyncio
+
 from app.services.gemini_client import ask_gemini
 from app.services.logger import log_info, log_error
 
@@ -475,19 +477,22 @@ async def analyze_video(
 
     gemini_exc: Exception | None = None
     try:
-        script = await ask_gemini(
-            prompt=prompt,
-            video_url=video_url,
-            image_urls=list(product_image_urls[:4]),
-            max_tokens=8192,
-            temperature=0.7,
-            model="gemini-2.5-flash-lite",
+        script = await asyncio.wait_for(
+            ask_gemini(
+                prompt=prompt,
+                video_url=video_url,
+                image_urls=list(product_image_urls[:4]),
+                max_tokens=8192,
+                temperature=0.7,
+                model="gemini-2.5-flash-lite",
+            ),
+            timeout=60,  # 60s 超时，立即切 Qwen-VL，不等 subrouter 多次重试
         )
         log_info(f"video_analyze: 脚本生成完成 output_len={len(script)}")
         return script.strip()
     except Exception as e:
         gemini_exc = e
-        log_error(f"video_analyze: gemini/subrouter 全部路径失败,降级 Qwen-VL: {e}")
+        log_error(f"video_analyze: gemini 失败/超时,立即降级 Qwen-VL: {e}")
 
     # Qwen-VL 兜底（subrouter 全挂时由阿里云接住）
     from app.services.fal_service import get_aliyun_qwenvl_service
