@@ -3422,7 +3422,9 @@ def _sanitize_for_seedance(text: str) -> str:
     if not text:
         return text
     pairs = [
-        # 内衣类 → 商业中性
+        # 内衣类 → 商业中性（bralett 必须先于 bra 匹配，防止局部替换乱码）
+        ("bralette",    "seamless support top"),
+        ("bralett",     "seamless support top"),
         ("bra",         "seamless support top"),
         ("内衣",        "fashion essential"),
         ("underwear",   "comfort wear"),
@@ -3439,8 +3441,13 @@ def _sanitize_for_seedance(text: str) -> str:
         ("走光",        "sheer coverage"),
         # 身体部位 → 中性描述
         ("副乳",        "side silhouette"),
+        ("胸垫",        "interior padding"),      # 先于"胸"匹配，防止变成 front panel垫
+        ("front panel垫","interior padding"),     # 兜底：胸→front panel 后遗留的"front panel垫"
         ("胸",          "front panel"),
         ("cleavage",    "neckline"),
+        # 皮肤可见描述 → 中性外观
+        ("皮肤纹理清晰可见", "natural appearance"),
+        ("皮肤纹理",    "natural texture"),
         # 风格词 → 优雅化
         ("sexy",        "elegant"),
         ("性感",        "优雅"),
