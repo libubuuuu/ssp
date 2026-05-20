@@ -259,7 +259,7 @@ export default function VideoGeneralPage() {
   }, [tab]);
 
   // 入口A 专用：参考视频
-  const [refVid, setRefVid] = useState<{ file: File | null; uploading: boolean; url: string }>({ file: null, uploading: false, url: "" });
+  const [refVid, setRefVid] = useState<{ file: File | null; uploading: boolean; url: string; duration_sec: number }>({ file: null, uploading: false, url: "", duration_sec: 0 });
   // 入口A 专用：脚本状态（与入口B script 独立）
   const [scriptA, setScriptA]       = useState("");
   const [loadingA, setLoadingA]     = useState(false);
@@ -773,7 +773,9 @@ export default function VideoGeneralPage() {
                       });
                       if (!r.ok) throw new Error(await r.text());
                       const d = await r.json();
-                      setRefVid({ file: f, uploading: false, url: d.video_url || "" });
+                      const _dur = Math.round(d.duration_sec || 15);
+                      setRefVid({ file: f, uploading: false, url: d.video_url || "", duration_sec: _dur });
+                      setDuration(_dur);
                     } catch (err) {
                       setError((err as Error).message || "视频上传失败");
                       setRefVid({ file: null, uploading: false, url: "" });
@@ -844,14 +846,9 @@ export default function VideoGeneralPage() {
               <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
                 <div>
                   <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>总时长</div>
-                  <select value={duration} onChange={e => setDuration(+e.target.value)}
-                    style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#fff", color: "#1a202c", cursor: "pointer" }}>
-                    <option value={5}>5秒</option>
-                    <option value={10}>10秒（推荐）</option>
-                    <option value={15}>15秒</option>
-                    <option value={30}>30秒</option>
-                    <option value={60}>60秒</option>
-                  </select>
+                  <div style={{ padding: "0.5rem 0.7rem", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.88rem", background: "#f7fafc", color: "#1a202c", minWidth: 120 }}>
+                    {refVid.duration_sec ? `${refVid.duration_sec}秒（跟随视频）` : "上传视频后自动填入"}
+                  </div>
                 </div>
                 <div>
                   <div style={{ fontSize: "0.75rem", color: "#718096", marginBottom: 5 }}>目标市场</div>
