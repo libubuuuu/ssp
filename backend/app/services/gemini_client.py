@@ -144,9 +144,10 @@ async def ask_gemini(
         f"prompt_len={len(prompt)}"
     )
 
+    primary_model = model or settings.LINGMENG_MODEL
     try:
         response = await client.chat.completions.create(
-            model=model or settings.LINGMENG_MODEL,
+            model=primary_model,
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
@@ -155,5 +156,24 @@ async def ask_gemini(
         log_info(f"gemini_client: OK output_len={len(text)}")
         return text
     except Exception as e:
-        log_error(f"gemini_client: 调用失败: {e}")
-        raise RuntimeError(f"Gemini API 调用失败: {str(e)[:300]}")
+        log_error(f"gemini_client: {primary_model} 调用失败，尝试降级 gpt-4o: {e}")
+        # gemini 模型失败时降级到 gpt-4o，必须换 LINGMENG_API_KEY（sk-Z6C2...）
+        if not use_gemini_key:
+            raise RuntimeError(f"Gemini API 调用失败: {str(e)[:300]}")
+        try:
+            fallback_client = AsyncOpenAI(
+                base_url=settings.LINGMENG_BASE_URL,
+                api_key=settings.LINGMENG_API_KEY,
+            )
+            response = await fallback_client.chat.completions.create(
+                model="gpt-4o",
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            text = response.choices[0].message.content or ""
+            log_info(f"gemini_client: gpt-4o fallback OK output_len={len(text)}")
+            return text
+        except Exception as e2:
+            log_error(f"gemini_client: gpt-4o fallback 也失败: {e2}")
+            raise RuntimeError(f"Gemini API 及降级均失败: {str(e2)[:300]}")
