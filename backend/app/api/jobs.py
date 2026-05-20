@@ -2373,6 +2373,21 @@ async def _run_skill_analyze_job(params: dict) -> dict:
         # 5. 并发跑:qwen-vl 看多张九宫格 + wizper 口播
         instruction = _build_skill_instruction(skill_out["scenes"], n_grids=skill_out["n_grids"])
         async def _analyze_with_fallback():
+            # 主力：gpt-5.5（LINGMENG_API_KEY，支持图片输入）
+            try:
+                from app.services.gemini_client import ask_gemini
+                t = _t.time()
+                _r = await ask_gemini(
+                    prompt=instruction,
+                    image_urls=grid_urls,
+                    model="gpt-5.5",
+                    max_tokens=4096,
+                )
+                log_info(f"skill_analyze gpt-5.5 elapsed={_t.time()-t:.1f}s n_imgs={len(grid_urls)}")
+                return (_r or "").strip()
+            except Exception as _ge:
+                log_error(f"skill_analyze gpt-5.5 失败,降级 qwen-vl: {_ge}")
+            # 备选：阿里云 Qwen-VL
             try:
                 svc = AliyunQwenVLVideoService()
                 if not svc.is_available():
@@ -2382,22 +2397,12 @@ async def _run_skill_analyze_job(params: dict) -> dict:
                     r = await svc.analyze_image(grid_urls[0], instruction)
                 else:
                     r = await svc.analyze_images(grid_urls, instruction)
-                log_info(f"skill_analyze qwen-vl elapsed={_t.time()-t:.1f}s n_imgs={len(grid_urls)}")
+                log_info(f"skill_analyze qwen-vl fallback elapsed={_t.time()-t:.1f}s n_imgs={len(grid_urls)}")
                 if "error" in r:
                     raise RuntimeError(f"qwen-vl 返回错误: {r['error'][:200]}")
                 return (r.get("text") or "").strip()
             except Exception as _qe:
-                log_error(f"skill_analyze qwen-vl 失败,降级 gpt-5.5: {_qe}")
-                from app.services.gemini_client import ask_gemini
-                t = _t.time()
-                _fb = await ask_gemini(
-                    prompt=instruction,
-                    image_urls=grid_urls,
-                    model="gpt-5.5",
-                    max_tokens=4096,
-                )
-                log_info(f"skill_analyze gpt-5.5 fallback elapsed={_t.time()-t:.1f}s")
-                return (_fb or "").strip()
+                raise RuntimeError(f"gpt-5.5 和 qwen-vl 均失败: {_qe}") from _qe
 
         async def _speech():
             try:
