@@ -259,7 +259,7 @@ export default function VideoGeneralPage() {
   }, [tab]);
 
   // 入口A 专用：参考视频
-  const [refVid, setRefVid] = useState<{ file: File | null; uploading: boolean; url: string; duration_sec: number }>({ file: null, uploading: false, url: "", duration_sec: 0 });
+  const [refVid, setRefVid] = useState<{ file: File | null; uploading: boolean; url: string; duration_sec: number; model_image_url: string }>({ file: null, uploading: false, url: "", duration_sec: 0, model_image_url: "" });
   // 入口A 专用：脚本状态（与入口B script 独立）
   const [scriptA, setScriptA]       = useState("");
   const [loadingA, setLoadingA]     = useState(false);
@@ -543,7 +543,7 @@ export default function VideoGeneralPage() {
           script: useScript,
           product_image_urls: productUrls,
           scene_image_url:  scene.url  || null,
-          model_image_url:  modelSrc === "image" ? modelImg.url || null : null,
+          model_image_url:  tab === "replicate" ? refVid.model_image_url || null : (modelSrc === "image" ? modelImg.url || null : null),
           model_video_url:  modelSrc === "video" ? modelVidUrl || null : null,
           model_source:     modelSrc,
           aspect_ratio:     "9:16",
@@ -765,7 +765,7 @@ export default function VideoGeneralPage() {
                   onChange={async e => {
                     const f = e.target.files?.[0]; if (!f) return;
                     if (f.size > 100 * 1024 * 1024) { setError("视频不能超过 100MB"); return; }
-                    setRefVid({ file: f, uploading: true, url: "", duration_sec: 0 }); setError("");
+                    setRefVid({ file: f, uploading: true, url: "", duration_sec: 0, model_image_url: "" }); setError("");
                     try {
                       const fd = new FormData(); fd.append("file", f);
                       const r = await fetch(`${API_BASE}/api/video/general/upload/video`, {
@@ -774,11 +774,11 @@ export default function VideoGeneralPage() {
                       if (!r.ok) throw new Error(await r.text());
                       const d = await r.json();
                       const _dur = Math.round(d.duration_sec || 15);
-                      setRefVid({ file: f, uploading: false, url: d.video_url || "", duration_sec: _dur });
+                      setRefVid({ file: f, uploading: false, url: d.video_url || "", duration_sec: _dur, model_image_url: d.model_image_url || "" });
                       setDuration(_dur);
                     } catch (err) {
                       setError((err as Error).message || "视频上传失败");
-                      setRefVid({ file: null, uploading: false, url: "", duration_sec: 0 });
+                      setRefVid({ file: null, uploading: false, url: "", duration_sec: 0, model_image_url: "" });
                     }
                     e.target.value = "";
                   }} />

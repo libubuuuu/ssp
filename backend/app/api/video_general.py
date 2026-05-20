@@ -739,6 +739,7 @@ async def script_to_video_submit(
             "enable_voice": body.enable_voice,
             "target_duration": body.target_duration,
             "target_lang": body.target_lang,
+            "is_replicate": body.is_replicate,
             "_user_id": user_id,
         },
         "module": "video/general/script-to-video",
