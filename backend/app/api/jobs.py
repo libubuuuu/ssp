@@ -5510,6 +5510,7 @@ async def _run_script_to_video_job(params: dict) -> dict:
 
             vid_url = None
             last_err = ""
+            _ai_rewrite_needed = False
 
             # 外层：超时重试（最多 1 次）
             for timeout_attempt in range(2):
@@ -5536,7 +5537,10 @@ async def _run_script_to_video_job(params: dict) -> dict:
                                 log_info(f"script_to_video Task {ti+1} 敏感内容拦截，升级商业语境重试 (si={si})")
                                 sensitive_fail = True; break
                             if _is_sensitive(err) and si >= 3:
-                                raise RuntimeError(f"Task {ti+1} 内容审核持续拒绝（{si+1} 次），请调整脚本描述")
+                                log_info(f"script_to_video Task {ti+1} 4次商业语境均被拦截，转 AI 重写 prompt")
+                                sensitive_fail = True
+                                _ai_rewrite_needed = True
+                                break
                             raise RuntimeError(f"Task {ti+1} fal failed: {err}")
                         await asyncio.sleep(5)
                     else:
@@ -5548,6 +5552,45 @@ async def _run_script_to_video_job(params: dict) -> dict:
                     if not sensitive_fail:
                         last_err = f"超时 {MAX_WAIT}s"; break  # 非敏感原因退出
                     # sensitive_fail=True and si<3: 继续下一个前缀
+
+                # 4次商业语境全被拦截 → GPT-5.5 重写 prompt 再试一次
+                if _ai_rewrite_needed and not vid_url:
+                    _ai_rewrite_needed = False  # 只重写一次
+                    try:
+                        from app.services.gemini_client import ask_gemini
+                        _rewrite_sys = (
+                            "You are a content safety expert for video generation. "
+                            "Rewrite the following video prompt to pass all content filters. "
+                            "Rules: (1) Remove ANY words about body parts, underwear, bra, lingerie, "
+                            "skin exposure, intimate clothing, revealing. "
+                            "(2) Replace body-focused actions with product-showcase commercial actions. "
+                            "(3) Keep the scene structure and product being shown. "
+                            "(4) Use only neutral commercial English. "
+                            "Output ONLY the rewritten prompt, nothing else."
+                        )
+                        _safe_p = await asyncio.wait_for(
+                            ask_gemini(prompt=use_prompt, system_prompt=_rewrite_sys,
+                                       model="gpt-5.5", max_tokens=600, temperature=0.3),
+                            timeout=30,
+                        )
+                        _safe_p = _safe_p.strip()
+                        log_info(f"script_to_video Task {ti+1} AI重写 prompt={_safe_p[:200]}")
+                        _ai_fid = await _submit(task_imgs, _safe_p, req_dur, _tts_audio_url)
+                        _tp2 = _t.time()
+                        while _t.time() - _tp2 < 180:
+                            _st2 = await poll_seedance_fast_r2v_status(_ai_fid)
+                            if _st2.get("status") == "completed":
+                                vid_url = _st2.get("video_url")
+                                log_info(f"script_to_video Task {ti+1} AI重写后 Seedance 成功")
+                                break
+                            if _st2.get("status") == "failed":
+                                log_error(f"script_to_video Task {ti+1} AI重写后 Seedance 仍失败: {_st2.get('error','')[:120]}")
+                                break
+                            await asyncio.sleep(5)
+                    except Exception as _re:
+                        log_error(f"script_to_video Task {ti+1} AI重写异常: {_re}")
+                    if not vid_url:
+                        raise RuntimeError(f"Task {ti+1} 内容审核持续拒绝（4次+AI重写），请换产品类别重试")
 
                 if vid_url: break
                 if timeout_attempt == 0:
