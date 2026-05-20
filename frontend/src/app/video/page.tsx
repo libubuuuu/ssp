@@ -171,6 +171,7 @@ export default function VideoPage() {
                   style={{ width: "100%", padding: "0.5rem", border: "1px solid #ddd", borderRadius: 8, fontSize: "0.85rem", background: "#fff" }}>
                   <option value={5}>5 {t("video.seconds")}</option>
                   <option value={10}>10 {t("video.seconds")}</option>
+                  <option value={15}>15 {t("video.seconds")}</option>
                 </select>
               </div>
 
