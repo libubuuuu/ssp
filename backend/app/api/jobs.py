@@ -5333,11 +5333,11 @@ async def _run_script_to_video_job(params: dict) -> dict:
     # ── 分组逻辑 ───────────────────────────────────────────────────────────
     # 统一走8s批处理分组（去掉≤15s单次逻辑，保证生成时长可控）
     # 模特一致性通过 model_desc 写进 prompt 来保证，不依赖 portrait
-    # ① replicate：直接用上传视频抽帧（0s），跳过 GPT-image-2 生成（~54s）
+    # ① replicate：不传 portrait（真人抽帧触发 Seedance 肖像拦截），节省 ~54s
     # ② 非 replicate：portrait = None，放入下方 try 块与 TTS 并行
-    if params.get("is_replicate") and model_img_url:
-        portrait_url: str | None = model_img_url
-        log_info(f"script_to_video: replicate 跳过 portrait，使用上传视频抽帧 url={model_img_url[:60]}")
+    if params.get("is_replicate"):
+        portrait_url: str | None = None  # replicate 不用 portrait，避免真人肖像被 Seedance 拒
+        log_info("script_to_video: replicate 模式跳过 portrait（避免真人肖像拦截）")
     else:
         portrait_url = None  # 非 replicate：在 try 块中与 TTS 并行生成
 
