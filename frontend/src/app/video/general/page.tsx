@@ -765,7 +765,7 @@ export default function VideoGeneralPage() {
                   onChange={async e => {
                     const f = e.target.files?.[0]; if (!f) return;
                     if (f.size > 100 * 1024 * 1024) { setError("视频不能超过 100MB"); return; }
-                    setRefVid({ file: f, uploading: true, url: "" }); setError("");
+                    setRefVid({ file: f, uploading: true, url: "", duration_sec: 0 }); setError("");
                     try {
                       const fd = new FormData(); fd.append("file", f);
                       const r = await fetch(`${API_BASE}/api/video/general/upload/video`, {
@@ -778,7 +778,7 @@ export default function VideoGeneralPage() {
                       setDuration(_dur);
                     } catch (err) {
                       setError((err as Error).message || "视频上传失败");
-                      setRefVid({ file: null, uploading: false, url: "" });
+                      setRefVid({ file: null, uploading: false, url: "", duration_sec: 0 });
                     }
                     e.target.value = "";
                   }} />
