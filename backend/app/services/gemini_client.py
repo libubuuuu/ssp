@@ -156,8 +156,8 @@ async def ask_gemini(
         log_info(f"gemini_client: OK output_len={len(text)}")
         return text
     except Exception as e:
-        log_error(f"gemini_client: {primary_model} 调用失败，尝试降级 gpt-4o: {e}")
-        # gemini 模型失败时降级到 gpt-4o，必须换 LINGMENG_API_KEY（sk-Z6C2...）
+        log_error(f"gemini_client: {primary_model} 调用失败，尝试降级 gpt-5.5: {e}")
+        # gemini 模型失败时降级到 gpt-5.5，必须换 LINGMENG_API_KEY（sk-Z6C2...，qicunshang 渠道）
         if not use_gemini_key:
             raise RuntimeError(f"Gemini API 调用失败: {str(e)[:300]}")
         try:
@@ -166,14 +166,14 @@ async def ask_gemini(
                 api_key=settings.LINGMENG_API_KEY,
             )
             response = await fallback_client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-5.5",
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
             text = response.choices[0].message.content or ""
-            log_info(f"gemini_client: gpt-4o fallback OK output_len={len(text)}")
+            log_info(f"gemini_client: gpt-5.5 fallback OK output_len={len(text)}")
             return text
         except Exception as e2:
-            log_error(f"gemini_client: gpt-4o fallback 也失败: {e2}")
+            log_error(f"gemini_client: gpt-5.5 fallback 也失败: {e2}")
             raise RuntimeError(f"Gemini API 及降级均失败: {str(e2)[:300]}")

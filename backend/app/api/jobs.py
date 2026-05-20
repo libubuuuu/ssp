@@ -2387,16 +2387,16 @@ async def _run_skill_analyze_job(params: dict) -> dict:
                     raise RuntimeError(f"qwen-vl 返回错误: {r['error'][:200]}")
                 return (r.get("text") or "").strip()
             except Exception as _qe:
-                log_error(f"skill_analyze qwen-vl 失败,降级 gpt-4o: {_qe}")
+                log_error(f"skill_analyze qwen-vl 失败,降级 gpt-5.5: {_qe}")
                 from app.services.gemini_client import ask_gemini
                 t = _t.time()
                 _fb = await ask_gemini(
                     prompt=instruction,
                     image_urls=grid_urls,
-                    model="gpt-4o",
+                    model="gpt-5.5",
                     max_tokens=4096,
                 )
-                log_info(f"skill_analyze gpt-4o fallback elapsed={_t.time()-t:.1f}s")
+                log_info(f"skill_analyze gpt-5.5 fallback elapsed={_t.time()-t:.1f}s")
                 return (_fb or "").strip()
 
         async def _speech():

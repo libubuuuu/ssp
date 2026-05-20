@@ -40,7 +40,7 @@ VIDEO_MIMES = ("video/mp4", "video/quicktime", "video/webm", "video/x-msvideo")
 MAX_VIDEO_SIZE = 100 * 1024 * 1024  # 100 MB
 MAX_IMAGE_SIZE = 10 * 1024 * 1024   # 10 MB
 
-_FALLBACK_MODELS = ["gpt-5.5", "gpt-4o", "gpt-4.1"]
+_FALLBACK_MODELS = ["gpt-5.5", "gpt-5.4"]
 
 
 async def _chat_with_fallback(client, messages, max_tokens=2000, **kwargs):
