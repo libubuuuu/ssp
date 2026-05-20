@@ -3435,14 +3435,18 @@ def _sanitize_for_seedance(text: str) -> str:
         ("吊带背心",    "sleeveless top"),
         ("吊带",        "sleeveless"),
         ("肩带",        "shoulder strap"),
-        # 走光 → 面料覆盖描述
-        ("无走光",      "full coverage"),
-        ("不走光",      "full coverage"),
-        ("走光",        "sheer coverage"),
+        # 走光 → 面料覆盖描述（注意：sheer=透明，不能用 sheer coverage）
+        ("无走光",      "opaque fabric"),
+        ("不走光",      "opaque fabric"),
+        ("走光",        "fabric coverage"),
+        # 露出/显露 → 展示（中性动作描述）
+        ("露出",        "展示"),
         # 身体部位 → 中性描述
         ("副乳",        "side silhouette"),
-        ("胸垫",        "interior padding"),      # 先于"胸"匹配，防止变成 front panel垫
-        ("front panel垫","interior padding"),     # 兜底：胸→front panel 后遗留的"front panel垫"
+        ("胸垫",        "built-in support"),      # 先于"胸"匹配，防止变成 front panel垫
+        ("front panel垫","built-in support"),     # 兜底：胸→front panel 后遗留的"front panel垫"
+        ("interior padding轮廓", "built-in support structure"),
+        ("interior padding", "built-in support"),
         ("胸",          "front panel"),
         ("cleavage",    "neckline"),
         # 皮肤可见描述 → 中性外观
