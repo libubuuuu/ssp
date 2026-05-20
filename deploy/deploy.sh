@@ -48,7 +48,17 @@ done
 chown -R ssp-app:ssp-app $STANDBY_DIR/backend/app $STANDBY_DIR/frontend/src \
     $STANDBY_DIR/frontend/public $STANDBY_DIR/frontend/package.json \
     $STANDBY_DIR/frontend/tsconfig.json 2>/dev/null || true
-echo "✅ rsync 完成" | tee -a $LOG
+
+# 确保 standby slot 的 db 是 symlink，指向真实生产库（防止旧快照覆盖用户数据）
+REAL_DB="/opt/ssp/backend/dev.db"
+SLOT_DB="$STANDBY_DIR/backend/dev.db"
+if [ ! -L "$SLOT_DB" ] || [ "$(readlink "$SLOT_DB")" != "$REAL_DB" ]; then
+    echo "⚠️  修正 db symlink: $SLOT_DB → $REAL_DB" | tee -a $LOG
+    rm -f "$SLOT_DB"
+    ln -s "$REAL_DB" "$SLOT_DB"
+    chown -h ssp-app:ssp-app "$SLOT_DB"
+fi
+echo "✅ rsync 完成，db symlink 已验证" | tee -a $LOG
 
 # ── 2. 前端 build（在 /root/ssp/frontend，有真实 node_modules）────────
 # Turbopack 不允许 symlink 指向 project 外，故在 git 工作树里 build，
