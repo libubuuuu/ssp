@@ -447,6 +447,7 @@ async def analyze_video(
     duration: int = 15,
     model_info: str = "AI 自动生成模特",
     user_idea: str = "",
+    user_id: str = "anon",
 ) -> str:
     """分析参考视频，拆解分镜后替换产品生成新脚本。
 
@@ -499,8 +500,16 @@ async def analyze_video(
     svc = get_aliyun_qwenvl_service()
     if not svc.is_available():
         raise RuntimeError(f"video_analyze 所有路径失败(Qwen-VL 亦不可用): {gemini_exc}")
-    # 把视频 + 产品图 + prompt 一起传给 Qwen-VL
-    content: list = [{"video": video_url}]
+    # Qwen-VL 在国内，fal.media 在美国，直接传 fal URL 跨境下载超时 → 模型看不到视频
+    # 先归档到国内服务器，再传给 Qwen-VL
+    qwen_video_url = video_url
+    try:
+        from app.services.media_archiver import archive_url
+        qwen_video_url = await archive_url(video_url, user_id, "video")
+        log_info(f"video_analyze: Qwen-VL 视频归档完成 -> {qwen_video_url[:80]}")
+    except Exception as ae:
+        log_error(f"video_analyze: 视频归档失败,直接传 fal URL(Qwen-VL 可能看不到视频): {ae}")
+    content: list = [{"video": qwen_video_url}]
     for img_url in list(product_image_urls[:4]):
         content.append({"image": img_url})
     content.append({"text": prompt})

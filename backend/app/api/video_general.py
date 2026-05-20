@@ -793,6 +793,7 @@ async def video_analyze_submit(
             duration=body.duration,
             model_info=body.model_info,
             user_idea=body.user_idea,
+            user_id=user_id,
         )
     except Exception as e:
         add_credits(user_id, cost, reason="task_refund",
