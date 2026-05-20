@@ -20,12 +20,12 @@ def get_db():
     PRAGMA 说明:
     - journal_mode=WAL: 写不阻塞读,生产并发写场景必开;一次设置文件级生效持久
     - synchronous=NORMAL: 配合 WAL 平衡耐久性和性能(满 fsync 太慢,WAL 自带保障)
-    - busy_timeout=5000: 撞锁等 5 秒再放弃,避免高并发下偶发 "database is locked"
+    - busy_timeout=30000: 撞锁等 30 秒再放弃，Python connect(timeout=30) 与 PRAGMA 对齐
     """
-    conn = sqlite3.connect(DATABASE_PATH)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=30)  # Python 层 30s，与 PRAGMA 对齐
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA busy_timeout=30000")
     conn.row_factory = sqlite3.Row
     try:
         yield conn
