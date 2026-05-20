@@ -70,6 +70,85 @@ class FalImageService:
     async def generate_with_image(self, image_url: str, prompt: str, image_size: str = "1024x1024", model_key: str = "gpt-image-2") -> dict:
         return await self._generate_fal(prompt, image_size, model_key, image_url)
 
+    # ── 图片编辑（九宫格替换/分镜图）──────────────────────────────────────
+    _SIZE_TO_WH = {
+        "square_hd": "1024x1024",
+        "portrait_16_9": "1024x1792",
+        "landscape_16_9": "1792x1024",
+        "portrait_4_3": "768x1024",
+        "landscape_4_3": "1024x768",
+    }
+
+    async def _edit_subrouter(self, image_urls: list, prompt: str, image_size: str) -> dict:
+        import base64, io, os, tempfile
+        import httpx
+        from openai import AsyncOpenAI
+        from app.config import get_settings
+        s = get_settings()
+        client = AsyncOpenAI(base_url=s.IMAGE_API_BASE_URL, api_key=s.IMAGE_API_KEY)
+        size = self._SIZE_TO_WH.get(image_size, image_size if "x" in str(image_size) else "1024x1024")
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as hc:
+            imgs = []
+            for url in image_urls:
+                resp = await hc.get(url)
+                resp.raise_for_status()
+                imgs.append(io.BytesIO(resp.content))
+        image_param = imgs if len(imgs) > 1 else imgs[0]
+        r = await asyncio.wait_for(
+            client.images.edit(model="gpt-image-2", image=image_param, prompt=prompt, n=1, size=size),
+            timeout=120,
+        )
+        b64 = r.data[0].b64_json
+        if not b64:
+            raise RuntimeError("subrouter edit 返回空 base64")
+        img_bytes = base64.b64decode(b64)
+        fd, tmp_path = tempfile.mkstemp(suffix=".png")
+        try:
+            os.write(fd, img_bytes)
+            os.close(fd)
+            img_url = await fal_upload_with_retry(tmp_path)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+        return {"image_url": img_url}
+
+    async def _edit_fal(self, image_urls: list, prompt: str, image_size: str, output_format: str = "png") -> dict:
+        result = await asyncio.wait_for(
+            fal_client.run_async(
+                "openai/gpt-image-2/edit",
+                arguments={
+                    "prompt": prompt,
+                    "image_urls": image_urls,
+                    "image_size": image_size,
+                    "quality": "medium",
+                    "num_images": 1,
+                    "output_format": output_format,
+                },
+            ),
+            timeout=420,
+        )
+        images = result.get("images", [])
+        if not images:
+            raise Exception("no image generated (fal edit)")
+        return {"image_url": images[0].get("url")}
+
+    async def generate_edit(self, image_urls: list, prompt: str,
+                             image_size: str = "square_hd",
+                             output_format: str = "png") -> dict:
+        """图片编辑：subrouter.ai 主力，fal 备选。"""
+        from app.config import get_settings
+        from app.services.logger import log_info, log_error
+        if get_settings().IMAGE_API_KEY:
+            try:
+                result = await self._edit_subrouter(image_urls, prompt, image_size)
+                log_info(f"image_edit subrouter OK n_imgs={len(image_urls)}")
+                return result
+            except Exception as e:
+                log_error(f"image_edit subrouter 失败,降级 fal: {e}")
+        return await self._edit_fal(image_urls, prompt, image_size, output_format)
+
     async def _generate_fal(self, prompt: str, image_size: str, model_key: str, image_url: Optional[str] = None) -> dict:
         # 全站只剩 gpt-image-2 一个模型,被熔断就直接报错(无 fallback)
         if model_key != "gpt-image-2":

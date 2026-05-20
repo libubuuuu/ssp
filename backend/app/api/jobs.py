@@ -157,24 +157,10 @@ async def _run_image_job(params: dict):
         image_size = _GPT_IMAGE_SIZE_MAP.get(size, "square_hd")
 
     if refs:
-        result = await asyncio.wait_for(
-            fal_client.run_async(
-                "openai/gpt-image-2/edit",
-                arguments={
-                    "prompt": params["prompt"],
-                    "image_urls": refs,
-                    "image_size": image_size,
-                    "quality": "medium",
-                    "num_images": 1,
-                    "output_format": "png",
-                },
-            ),
-            timeout=360,
-        )
-        images = result.get("images", [])
-        if not images:
-            raise Exception("no image generated")
-        return {"image_url": images[0].get("url"), "type": "image",
+        result = await service.generate_edit(refs, params["prompt"], image_size, "png")
+        if "error" in result:
+            raise Exception(result["error"])
+        return {"image_url": result["image_url"], "type": "image",
                 "model": "openai/gpt-image-2/edit"}
 
     result = await service.generate(params["prompt"], size, "gpt-image-2")
@@ -1020,28 +1006,23 @@ async def _run_ad_video_job(params: dict):
         if len(scenes) <= 1 and "kling" in talking_endpoint:
             try:
                 log_info("ad_video P115 Kling 通道:GPT-Image 2 reframe → portrait(单段兜底)")
-                _kontext = await _fc.run_async(
-                    "openai/gpt-image-2/edit",
-                    arguments={
-                        "prompt": (
-                            "Adjust the camera framing of this image to make the model's face clearly visible "
-                            "in the upper-center of the frame, while KEEPING the original background scene "
-                            "EXACTLY as it is (do NOT replace background with studio or any other scene), "
-                            "and KEEPING the product visible and recognizable in the frame "
-                            "(worn naturally on the body or held in hands as in the original). "
-                            "Only zoom/recompose the framing — do not change colors, lighting, "
-                            "background elements, or the product. Model facing camera with a relaxed "
-                            "neutral expression (NO open mouth, NO shocked face). Photorealistic."
-                        ),
-                        "image_urls": [base_image_url],
-                        "image_size": "portrait_16_9",
-                        "num_images": 1,
-                        "output_format": "jpeg",
-                    },
+                _kontext = await get_image_service().generate_edit(
+                    [base_image_url],
+                    (
+                        "Adjust the camera framing of this image to make the model's face clearly visible "
+                        "in the upper-center of the frame, while KEEPING the original background scene "
+                        "EXACTLY as it is (do NOT replace background with studio or any other scene), "
+                        "and KEEPING the product visible and recognizable in the frame "
+                        "(worn naturally on the body or held in hands as in the original). "
+                        "Only zoom/recompose the framing — do not change colors, lighting, "
+                        "background elements, or the product. Model facing camera with a relaxed "
+                        "neutral expression (NO open mouth, NO shocked face). Photorealistic."
+                    ),
+                    "portrait_16_9",
+                    "jpeg",
                 )
-                _imgs = _kontext.get("images") or []
-                if _imgs and _imgs[0].get("url"):
-                    talking_image_url = _imgs[0]["url"]
+                if _kontext.get("image_url"):
+                    talking_image_url = _kontext["image_url"]
                     log_info(f"ad_video P115 GPT-Image-2 reframe OK url={talking_image_url[:80]}")
                 else:
                     log_warning("ad_video P115 reframe 无 image,继续用 base_image")
@@ -2755,40 +2736,23 @@ NO TEXT OVERLAYS other than the original number labels. NO new words, signs, bra
             log_info(f"skill_replace [{idx+1}/{n_grids}] 提交 GPT-2 edit grid={grid_url[:60]}")
             t = _t.time()
 
-            async def _call_gpt2(prompt: str, urls: list) -> dict:
-                return await asyncio.wait_for(
-                    _fc.run_async(
-                        "openai/gpt-image-2/edit",
-                        arguments={
-                            "prompt": prompt,
-                            "image_urls": urls,
-                            "image_size": "square_hd",
-                            "num_images": 1,
-                            "output_format": "png",
-                        },
-                    ),
-                    timeout=420,
-                )
-
-            # 尝试 1：完整 prompt
+            # 尝试 1：完整 prompt（subrouter 主力，fal 备选）
             try:
-                result = await _call_gpt2(base_prompt, image_urls)
+                result = await get_image_service().generate_edit(image_urls, base_prompt, "square_hd", "png")
             except asyncio.TimeoutError:
-                raise RuntimeError(f"GPT-Image 2 edit 第 {idx+1} 张超时 420s")
+                raise RuntimeError(f"GPT-Image 2 edit 第 {idx+1} 张超时")
             except Exception as e:
                 err_str = str(e)
                 if "content_policy" in err_str or "content_checker" in err_str:
-                    # 内容审核拒绝：不重试（重试也会被拒，白等 5 分钟）
                     log_error(f"skill_replace [{idx+1}] 内容审核拒绝，不重试直接失败")
                     raise RuntimeError(f"GPT-Image 2 第 {idx+1} 张被内容审核拒绝（产品图含敏感内容）")
                 else:
-                    log_error(f"skill_replace [{idx+1}] fal 异常: {e}")
+                    log_error(f"skill_replace [{idx+1}] 异常: {e}")
                     raise RuntimeError(f"GPT-Image 2 edit 第 {idx+1} 张失败: {str(e)[:200]}")
 
-            images = result.get("images", []) if isinstance(result, dict) else []
-            if not images or not images[0].get("url"):
+            if not result.get("image_url"):
                 raise RuntimeError(f"GPT-Image 2 第 {idx+1} 张未返回图片: {str(result)[:200]}")
-            url = images[0]["url"]
+            url = result["image_url"]
             log_info(f"skill_replace [{idx+1}/{n_grids}] OK ({_t.time()-t:.1f}s) {url[:80]}")
             return (idx, url)
 
