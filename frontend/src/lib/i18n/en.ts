@@ -250,7 +250,7 @@ export const en = {
     accountMgmt: "Account",
     topup: "Top Up",
     center: "Center",
-    subtitle: "50 credits = ¥1 · Video ¥1-1.3/sec · Image ¥0.4/img · Script ¥0.1/call",
+    subtitle: "",
     currentBalance: "Balance: ",
     creditsLabel: "credits",
     tabPackage: "Packages",

@@ -250,7 +250,7 @@ export const zh = {
     accountMgmt: "账户管理",
     topup: "充值",
     center: "中心",
-    subtitle: "50 积分 = 1 元 · 视频 ¥1-1.3/秒 · 图片 ¥0.4/张 · 文案 ¥0.1/次",
+    subtitle: "",
     currentBalance: "当前余额：",
     creditsLabel: "积分",
     tabPackage: "订阅套餐",
