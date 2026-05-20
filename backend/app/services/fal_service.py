@@ -36,7 +36,15 @@ class FalImageService:
         b64 = r.data[0].b64_json
         if not b64:
             raise RuntimeError("subrouter 返回空 base64")
+        import io as _io
+        from PIL import Image as _Image
         img_bytes = base64.b64decode(b64)
+        _img = _Image.open(_io.BytesIO(img_bytes))
+        _iw, _ih = _img.size
+        _img = _img.resize((_iw * 2, _ih * 2), _Image.LANCZOS)
+        _buf = _io.BytesIO()
+        _img.save(_buf, format="PNG")
+        img_bytes = _buf.getvalue()
         fd, tmp_path = tempfile.mkstemp(suffix=".png")
         try:
             os.write(fd, img_bytes)
@@ -51,7 +59,7 @@ class FalImageService:
             w, h = (int(x) for x in size.split("x"))
         except Exception:
             w, h = 1024, 1024
-        return {"image_url": img_url, "width": w, "height": h,
+        return {"image_url": img_url, "width": w * 2, "height": h * 2,
                 "model": "gpt-image-2/subrouter", "model_label": "专业模式"}
 
     async def generate(self, prompt: str, image_size: str = "1024x1024", model_key: str = "gpt-image-2") -> dict:
@@ -101,7 +109,14 @@ class FalImageService:
         b64 = r.data[0].b64_json
         if not b64:
             raise RuntimeError("subrouter edit 返回空 base64")
+        from PIL import Image as _Image
         img_bytes = base64.b64decode(b64)
+        _img = _Image.open(io.BytesIO(img_bytes))
+        _iw, _ih = _img.size
+        _img = _img.resize((_iw * 2, _ih * 2), _Image.LANCZOS)
+        _buf = io.BytesIO()
+        _img.save(_buf, format="PNG")
+        img_bytes = _buf.getvalue()
         fd, tmp_path = tempfile.mkstemp(suffix=".png")
         try:
             os.write(fd, img_bytes)
