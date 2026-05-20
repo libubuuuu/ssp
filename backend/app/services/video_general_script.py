@@ -476,32 +476,13 @@ async def analyze_video(
         f"n_product_imgs={len(product_image_urls)} video={video_url[:60]}"
     )
 
-    gemini_exc: Exception | None = None
-    try:
-        script = await asyncio.wait_for(
-            ask_gemini(
-                prompt=prompt,
-                video_url=video_url,
-                image_urls=list(product_image_urls[:4]),
-                max_tokens=8192,
-                temperature=0.7,
-                model="gemini-2.5-flash-lite",
-            ),
-            timeout=60,  # 60s 超时，立即切 Qwen-VL，不等 subrouter 多次重试
-        )
-        log_info(f"video_analyze: 脚本生成完成 output_len={len(script)}")
-        return script.strip()
-    except Exception as e:
-        gemini_exc = e
-        log_error(f"video_analyze: gemini 失败/超时,立即降级 Qwen-VL: {e}")
-
-    # Qwen-VL 兜底（subrouter 全挂时由阿里云接住）
+    # subrouter.ai 的 Gemini 端点不支持 video_url 作为 image_url 传入（挂死不返回，60s 白等）
+    # 已通过实测证实：传 MP4 URL 给 gemini-2.5-flash-lite → 60s timeout，exit 124
+    # 直接走 Qwen-VL（阿里云），先归档视频到国内 CDN，避免跨境下载超时
     from app.services.fal_service import get_aliyun_qwenvl_service
     svc = get_aliyun_qwenvl_service()
     if not svc.is_available():
-        raise RuntimeError(f"video_analyze 所有路径失败(Qwen-VL 亦不可用): {gemini_exc}")
-    # Qwen-VL 在国内，fal.media 在美国，直接传 fal URL 跨境下载超时 → 模型看不到视频
-    # 先归档到国内服务器，再传给 Qwen-VL
+        raise RuntimeError("video_analyze: Qwen-VL 不可用(DASHSCOPE_API_KEY 未配置)")
     qwen_video_url = video_url
     try:
         from app.services.media_archiver import archive_url
