@@ -8,14 +8,19 @@
 
 依赖:scenedetect[opencv] >= 0.6
 """
-import logging
 import os
 from dataclasses import dataclass
 from typing import List
 
 from .exceptions import SceneDetectionError
 
-_log = logging.getLogger(__name__)
+
+def _log_info(msg: str) -> None:
+    try:
+        from app.services.logger import log_info
+        log_info(msg)
+    except Exception:
+        pass
 
 
 @dataclass
@@ -85,7 +90,7 @@ def detect_scenes(
             video_path,
             AdaptiveDetector(adaptive_threshold=3.0, min_scene_len=min_scene_len),
         )
-        _log.info(f"scene_detect AdaptiveDetector: {len(scene_list)} cuts in {video_path[-40:]}")
+        _log_info(f"scene_detect AdaptiveDetector: {len(scene_list)} cuts in {video_path[-40:]}")
 
         # 兜底：场景太少时再用 ContentDetector(threshold=12) 补一次
         if len(scene_list) < 3:
@@ -93,7 +98,7 @@ def detect_scenes(
                 video_path,
                 ContentDetector(threshold=12.0, min_scene_len=min_scene_len),
             )
-            _log.info(f"scene_detect ContentDetector fallback: {len(scene_list2)} cuts")
+            _log_info(f"scene_detect ContentDetector fallback: {len(scene_list2)} cuts")
             if len(scene_list2) > len(scene_list):
                 scene_list = scene_list2
 
@@ -106,7 +111,7 @@ def detect_scenes(
             dur = _probe_duration(video_path)
             if dur <= 0:
                 raise SceneDetectionError(f"video has 0 frames: {video_path}")
-            _log.info(f"scene_detect: no cuts found, 1 scene duration={dur:.1f}s")
+            _log_info(f"scene_detect: no cuts found, 1 scene duration={dur:.1f}s")
             return [Scene(idx=0, start_seconds=0.0, end_seconds=dur)]
         except SceneDetectionError:
             raise
