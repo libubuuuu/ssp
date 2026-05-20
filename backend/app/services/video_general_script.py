@@ -479,7 +479,7 @@ async def analyze_video(
         image_urls=list(product_image_urls[:4]),
         max_tokens=8192,
         temperature=0.7,
-        model="gemini-2.5-flash-all",
+        model="gemini-2.5-flash-lite",
     )
 
     log_info(f"video_analyze: 脚本生成完成 output_len={len(script)}")
