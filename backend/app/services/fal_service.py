@@ -19,7 +19,52 @@ class FalImageService:
     def __init__(self, fal_key: str):
         self.fal_key = fal_key
 
+    async def _generate_subrouter(self, prompt: str, image_size: str) -> dict:
+        """subrouter.ai gpt-image-2 主力路径：base64 → 临时文件 → fal storage URL。"""
+        import base64, os, tempfile
+        from openai import AsyncOpenAI
+        from app.config import get_settings
+        s = get_settings()
+        if not s.IMAGE_API_KEY:
+            raise RuntimeError("IMAGE_API_KEY 未配置")
+        client = AsyncOpenAI(base_url=s.IMAGE_API_BASE_URL, api_key=s.IMAGE_API_KEY)
+        size = image_size if ("x" in str(image_size)) else "1024x1024"
+        r = await asyncio.wait_for(
+            client.images.generate(model="gpt-image-2", prompt=prompt, n=1, size=size),
+            timeout=120,
+        )
+        b64 = r.data[0].b64_json
+        if not b64:
+            raise RuntimeError("subrouter 返回空 base64")
+        img_bytes = base64.b64decode(b64)
+        fd, tmp_path = tempfile.mkstemp(suffix=".png")
+        try:
+            os.write(fd, img_bytes)
+            os.close(fd)
+            img_url = await fal_upload_with_retry(tmp_path)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+        try:
+            w, h = (int(x) for x in size.split("x"))
+        except Exception:
+            w, h = 1024, 1024
+        return {"image_url": img_url, "width": w, "height": h,
+                "model": "gpt-image-2/subrouter", "model_label": "专业模式"}
+
     async def generate(self, prompt: str, image_size: str = "1024x1024", model_key: str = "gpt-image-2") -> dict:
+        """先试 subrouter.ai，失败降级 fal。"""
+        from app.config import get_settings
+        from app.services.logger import log_info, log_error
+        if get_settings().IMAGE_API_KEY:
+            try:
+                result = await self._generate_subrouter(prompt, image_size)
+                log_info(f"image_gen subrouter OK size={image_size}")
+                return result
+            except Exception as e:
+                log_error(f"image_gen subrouter 失败,降级 fal: {e}")
         return await self._generate_fal(prompt, image_size, model_key, None)
 
     async def generate_with_image(self, image_url: str, prompt: str, image_size: str = "1024x1024", model_key: str = "gpt-image-2") -> dict:

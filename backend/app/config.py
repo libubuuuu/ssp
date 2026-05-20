@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # FAL AI (最低成本配置)
     FAL_KEY: str = ""
     FAL_IMAGE_MODEL: str = "fal-ai/nano-banana-2"
+    # 图片生成主力渠道（subrouter.ai gpt-image-2，比 fal 便宜）
+    IMAGE_API_KEY: str = ""
+    IMAGE_API_BASE_URL: str = "https://subrouter.ai/v1"
     FAL_VIDEO_MODEL: str = "fal-ai/kling-video/o3/standard/image-to-video"
 
     # 七十六续:长视频工作台模型可切换(env 留空 = 用代码默认值,行为不变)
