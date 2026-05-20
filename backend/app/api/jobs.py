@@ -3429,6 +3429,14 @@ def _sanitize_for_seedance(text: str) -> str:
         ("lingerie",    "intimate apparel collection"),
         ("panties",     "comfort shorts"),
         ("内裤",        "seamless bottom"),
+        # 吊带/肩带 → 中性
+        ("吊带背心",    "sleeveless top"),
+        ("吊带",        "sleeveless"),
+        ("肩带",        "shoulder strap"),
+        # 走光 → 面料覆盖描述
+        ("无走光",      "full coverage"),
+        ("不走光",      "full coverage"),
+        ("走光",        "sheer coverage"),
         # 身体部位 → 中性描述
         ("副乳",        "side silhouette"),
         ("胸",          "front panel"),
