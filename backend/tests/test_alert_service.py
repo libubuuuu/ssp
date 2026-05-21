@@ -93,7 +93,7 @@ def _make_request(path="/api/test", method="GET"):
 
 
 @pytest.mark.asyncio
-async def test_spike_five_consecutive_5xx_triggers_alert(spike_state, monkeypatch):
+async def test_spike_three_consecutive_5xx_triggers_alert(spike_state, monkeypatch):
     from app.middleware.error_spike import ErrorSpikeMiddleware
 
     alerts = []
@@ -107,11 +107,11 @@ async def test_spike_five_consecutive_5xx_triggers_alert(spike_state, monkeypatc
         resp.status_code = 500
         return resp
 
-    for _ in range(5):
+    for _ in range(3):
         await middleware.dispatch(req, make_500)
 
     assert len(alerts) == 1
-    assert "5" in alerts[0]
+    assert "3" in alerts[0]
 
 
 @pytest.mark.asyncio
@@ -134,14 +134,14 @@ async def test_spike_2xx_resets_counter(spike_state, monkeypatch):
         resp.status_code = 200
         return resp
 
-    # 4次5xx
-    for _ in range(4):
+    # 2次5xx（未到阈值3）
+    for _ in range(2):
         await middleware.dispatch(req, make_500)
     # 1次200 → 计数清零
     await middleware.dispatch(req, make_200)
     assert _counters.get("GET /api/test", 0) == 0
-    # 再4次5xx，不到5次，不告警
-    for _ in range(4):
+    # 再2次5xx，不到阈值3，不告警
+    for _ in range(2):
         await middleware.dispatch(req, make_500)
     assert len(alerts) == 0  # 没有告警
 

@@ -52,6 +52,8 @@ echo "  [4.5/5] 冒烟测试（6 项核心接口）"
 echo "  [5/5] 关闭 $ACTIVE（旧代码保留可 rollback）"
 echo ""
 
+ALERT_SCRIPT="$(dirname "$0")/push-alert.sh"
+
 # ── 0. 预部署测试关卡（失败立即中止，保护用户）────────────────────────
 echo "[0/5] 预部署测试（积分/认证/任务/退款核心路径）" | tee -a $LOG
 cd /root/ssp/backend
@@ -65,6 +67,9 @@ PYTHONPATH=/root/ssp/backend /opt/ssp/backend/venv/bin/pytest \
     -q --tb=short 2>&1 | tee -a $LOG
 if [ "${PIPESTATUS[0]}" -ne 0 ]; then
     echo "❌ 预部署测试失败，部署中止。请修复测试后重试。" | tee -a $LOG
+    TS=$(date '+%Y-%m-%d %H:%M:%S')
+    [ -x "$ALERT_SCRIPT" ] && bash "$ALERT_SCRIPT" "🔴 部署失败（测试未通过）" \
+        "🕐 时间: $TS\n❌ 问题: 预部署核心测试失败，部署已中止\n🎯 功能: 积分/认证/任务/退款核心路径\n📋 详情: 请修复失败测试后重新部署\n日志: $LOG" || true
     exit 1
 fi
 echo "✅ 预部署测试通过" | tee -a $LOG
@@ -118,6 +123,9 @@ done
 if [ "$HEALTH_OK" != "1" ]; then
     echo "❌ $STANDBY 启动失败，停止 standby，$ACTIVE 继续在线" | tee -a $LOG
     supervisorctl stop ssp-backend-$STANDBY ssp-frontend-$STANDBY 2>/dev/null || true
+    TS=$(date '+%Y-%m-%d %H:%M:%S')
+    [ -x "$ALERT_SCRIPT" ] && bash "$ALERT_SCRIPT" "🔴 部署失败（新 slot 启动超时）" \
+        "🕐 时间: $TS\n❌ 问题: $STANDBY slot 60s 内未通过健康检查\n🎯 功能: 所有功能（服务未成功启动）\n📋 详情: $ACTIVE 仍在线，用户未受影响\n请检查: supervisorctl status + /var/log/ssp-backend-${STANDBY}.log" || true
     exit 1
 fi
 
@@ -132,7 +140,6 @@ echo "✅ 流量已切换到 $STANDBY" | tee -a $LOG
 # ── 4.5 部署后冒烟测试（流量已切，验证新 slot 对外可用）────────────────────
 echo "[4.5/5] 冒烟测试 $STANDBY (backend=$STANDBY_BACKEND frontend=$STANDBY_FRONTEND)" | tee -a $LOG
 SMOKE_SCRIPT="$(dirname "$0")/smoke-test.sh"
-ALERT_SCRIPT="$(dirname "$0")/push-alert.sh"
 
 if [ -x "$SMOKE_SCRIPT" ]; then
     if bash "$SMOKE_SCRIPT" "$STANDBY_BACKEND" "$STANDBY_FRONTEND" 2>&1 | tee -a $LOG; then

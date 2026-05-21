@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
         if n:
             log_info(f"启动清理: {n} 个孤儿 job 标 failed + 退积分")
     except Exception as e:
-        print(f"orphan cleanup failed at startup: {e}")
+        log_error(f"orphan cleanup failed at startup: {e}")
     # 启动时跑一次超时订单取消，再启后台 10 分钟循环
     try:
         from app.services.order_gc import cancel_expired_pending_orders, order_gc_loop
@@ -80,7 +80,7 @@ async def lifespan(app: FastAPI):
         import asyncio as _asyncio
         _asyncio.create_task(order_gc_loop())
     except Exception as e:
-        print(f"order_gc startup failed: {e}")
+        log_error(f"order_gc startup failed: {e}")
     # 启动时跑一次数据库备份 + 对账，再启后台 24 小时循环
     try:
         from app.services.db_backup import run_backup_and_reconcile, db_backup_loop
@@ -88,14 +88,22 @@ async def lifespan(app: FastAPI):
         run_backup_and_reconcile()
         _asyncio.create_task(db_backup_loop())
     except Exception as e:
-        print(f"db_backup startup failed: {e}")
+        log_error(f"db_backup startup failed: {e}")
     # 启动趋势更新后台循环（每天凌晨3点）
     try:
         from app.services.trend_updater import trend_updater_loop
         import asyncio as _asyncio
         _asyncio.create_task(trend_updater_loop())
     except Exception as e:
-        print(f"trend_updater startup failed: {e}")
+        log_error(f"trend_updater startup failed: {e}")
+    # 启动实时监控循环（每2分钟检查数据库健康）
+    try:
+        from app.services.monitoring import monitoring_loop
+        import asyncio as _asyncio
+        _asyncio.create_task(monitoring_loop())
+        log_info("实时监控循环已启动（DB健康检查间隔2分钟）")
+    except Exception as e:
+        log_error(f"monitoring startup failed: {e}")
     yield
     # 关闭:等所有后台任务完成再退出（最多 10 分钟）
     log_info("AI 创意平台 正在关闭...")
