@@ -486,44 +486,13 @@ async def analyze_video(
         f"n_product_imgs={len(product_image_urls)} video={video_url[:60]}"
     )
 
-    # 主路：Qwen-VL（阿里云），先归档到国内 CDN 避免跨境下载超时
-    from app.services.fal_service import get_aliyun_qwenvl_service
-    svc = get_aliyun_qwenvl_service()
-    qwen_err: Exception | None = None
-    if svc.is_available():
-        qwen_video_url = video_url
-        try:
-            from app.services.media_archiver import archive_url
-            qwen_video_url = await archive_url(video_url, user_id, "video")
-            log_info(f"video_analyze: Qwen-VL 视频归档完成 -> {qwen_video_url[:80]}")
-        except Exception as ae:
-            log_error(f"video_analyze: 视频归档失败,直接传 fal URL: {ae}")
-        try:
-            content: list = [{"video": qwen_video_url}]
-            for img_url in list(product_image_urls[:4]):
-                content.append({"image": img_url})
-            content.append({"text": prompt})
-            res = await svc._analyze_raw(content)
-            if "error" in res:
-                raise RuntimeError(f"Qwen-VL error: {res['error']}")
-            text = (res.get("text") or "").strip()
-            if not text:
-                raise RuntimeError("Qwen-VL 返回空内容")
-            log_info(f"video_analyze: Qwen-VL 成功 output_len={len(text)}")
-            return text
-        except Exception as e:
-            qwen_err = e
-            log_error(f"video_analyze: Qwen-VL 失败，启动 GPT-5.5 抽帧兜底: {e}")
-    else:
-        qwen_err = RuntimeError("Qwen-VL 不可用(DASHSCOPE_API_KEY 未配置)")
-        log_error(f"video_analyze: {qwen_err}")
-
-    # 备路：ffmpeg 抽帧 → fal upload → GPT-5.5 图片分析
+    # 主路：GPT-5.5 抽帧（约 35-60s，低延迟可靠，避免 Cloudflare 100s 超时）
     import subprocess as _sp, tempfile as _tmp, os as _os, shutil as _shutil
     import httpx as _httpx
     from app.services.fal_service import fal_upload_with_retry
     tmp_path: str | None = None
     frame_dir: str | None = None
+    gpt_err: Exception | None = None
     try:
         log_info("video_analyze: 下载视频并 ffmpeg 抽帧 → GPT-5.5")
         # 1. 下载视频到临时文件
@@ -571,10 +540,9 @@ async def analyze_video(
             raise RuntimeError("GPT-5.5 帧分析返回空")
         log_info(f"video_analyze: GPT-5.5 帧分析成功 output_len={len(gpt_text)}")
         return gpt_text
-    except Exception as fallback_err:
-        raise RuntimeError(
-            f"video_analyze 全部路径失败 — Qwen-VL: {qwen_err}; GPT-5.5帧: {fallback_err}"
-        )
+    except Exception as e:
+        gpt_err = e
+        log_error(f"video_analyze: GPT-5.5 失败，尝试 Qwen-VL 兜底: {e}")
     finally:
         try:
             if tmp_path:
@@ -586,6 +554,38 @@ async def analyze_video(
                 _shutil.rmtree(frame_dir, ignore_errors=True)
         except Exception:
             pass
+
+    # 备路：Qwen-VL（阿里云），先归档到国内 CDN
+    from app.services.fal_service import get_aliyun_qwenvl_service
+    svc = get_aliyun_qwenvl_service()
+    if not svc.is_available():
+        raise RuntimeError(
+            f"video_analyze 全部路径失败 — GPT-5.5: {gpt_err}; Qwen-VL: 不可用(DASHSCOPE_API_KEY 未配置)"
+        )
+    qwen_video_url = video_url
+    try:
+        from app.services.media_archiver import archive_url
+        qwen_video_url = await archive_url(video_url, user_id, "video")
+        log_info(f"video_analyze: Qwen-VL 视频归档完成 -> {qwen_video_url[:80]}")
+    except Exception as ae:
+        log_error(f"video_analyze: 视频归档失败,直接传 fal URL: {ae}")
+    try:
+        content: list = [{"video": qwen_video_url}]
+        for img_url in list(product_image_urls[:4]):
+            content.append({"image": img_url})
+        content.append({"text": prompt})
+        res = await svc._analyze_raw(content)
+        if "error" in res:
+            raise RuntimeError(f"Qwen-VL error: {res['error']}")
+        text = (res.get("text") or "").strip()
+        if not text:
+            raise RuntimeError("Qwen-VL 返回空内容")
+        log_info(f"video_analyze: Qwen-VL 成功 output_len={len(text)}")
+        return text
+    except Exception as qwen_e:
+        raise RuntimeError(
+            f"video_analyze 全部路径失败 — GPT-5.5: {gpt_err}; Qwen-VL: {qwen_e}"
+        )
 
 
 def parse_script(text: str) -> list[dict]:
