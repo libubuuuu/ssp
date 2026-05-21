@@ -112,11 +112,10 @@ def test_run_image_job_propagates_error(monkeypatch):
 
 
 def test_run_image_job_multi_reference_path(monkeypatch):
-    """有 reference_images:走 fal_client.run_async"""
-    fake_fal = MagicMock()
-    fake_fal.run_async = AsyncMock(return_value={"images": [{"url": "https://multi.png"}]})
-    # patch 让 import fal_client 时拿到 fake
-    monkeypatch.setitem(__import__("sys").modules, "fal_client", fake_fal)
+    """有 reference_images:走 service.generate_edit"""
+    mock_service = MagicMock()
+    mock_service.generate_edit = AsyncMock(return_value={"image_url": "https://multi.png"})
+    monkeypatch.setattr(jobs_module, "get_image_service", lambda: mock_service)
 
     result = _run(jobs_module._run_image_job({
         "prompt": "merged",
@@ -127,9 +126,10 @@ def test_run_image_job_multi_reference_path(monkeypatch):
 
 
 def test_run_image_job_multi_reference_no_images_raises(monkeypatch):
-    fake_fal = MagicMock()
-    fake_fal.run_async = AsyncMock(return_value={"images": []})  # 空
-    monkeypatch.setitem(__import__("sys").modules, "fal_client", fake_fal)
+    """generate_edit 返回 error → 抛异常"""
+    mock_service = MagicMock()
+    mock_service.generate_edit = AsyncMock(return_value={"error": "no image generated"})
+    monkeypatch.setattr(jobs_module, "get_image_service", lambda: mock_service)
 
     with pytest.raises(Exception, match="no image generated"):
         _run(jobs_module._run_image_job({"prompt": "x", "reference_images": ["a"]}))
