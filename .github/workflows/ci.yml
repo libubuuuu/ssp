@@ -49,7 +49,8 @@ jobs:
           # conftest 也会 setdefault,但显式给一份避免未来配置漂移
           JWT_SECRET: ci-test-jwt-secret-not-for-prod
           FAL_KEY: ci-test-fake-fal-key
-        run: pytest -v
+        run: pytest -v --tb=short
+        # 任何测试失败 → CI 红 → 不应部署。deploy.sh 也有独立预部署测试关卡。
 
   frontend-lint:
     name: Frontend - lint

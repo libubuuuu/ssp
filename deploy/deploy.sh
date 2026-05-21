@@ -43,12 +43,31 @@ done
 echo "✅ 双槽 db symlink 验证通过" | tee -a $LOG
 echo "" | tee -a $LOG
 echo "📋 部署步骤："
+echo "  [0/5] 预部署测试（核心路径）"
 echo "  [1/5] rsync 代码 → $STANDBY_DIR"
 echo "  [2/5] 构建前端"
 echo "  [3/5] 启动 $STANDBY"
 echo "  [4/5] nginx 切换流量"
 echo "  [5/5] 关闭 $ACTIVE（旧代码保留可 rollback）"
 echo ""
+
+# ── 0. 预部署测试关卡（失败立即中止，保护用户）────────────────────────
+echo "[0/5] 预部署测试（积分/认证/任务/退款核心路径）" | tee -a $LOG
+cd /root/ssp/backend
+PYTHONPATH=/root/ssp/backend /opt/ssp/backend/venv/bin/pytest \
+    tests/test_billing.py \
+    tests/test_refund_tracker.py \
+    tests/test_jobs_internals.py \
+    tests/test_audit.py \
+    tests/test_auth.py \
+    tests/test_payment.py \
+    -q --tb=short 2>&1 | tee -a $LOG
+if [ "${PIPESTATUS[0]}" -ne 0 ]; then
+    echo "❌ 预部署测试失败，部署中止。请修复测试后重试。" | tee -a $LOG
+    exit 1
+fi
+echo "✅ 预部署测试通过" | tee -a $LOG
+cd /root/ssp
 
 # ── 1. rsync 代码到 standby slot（不动 active slot）─────────────────
 echo "[1/5] rsync /root/ssp → $STANDBY_DIR" | tee -a $LOG
