@@ -48,6 +48,7 @@ echo "  [1/5] rsync 代码 → $STANDBY_DIR"
 echo "  [2/5] 构建前端"
 echo "  [3/5] 启动 $STANDBY"
 echo "  [4/5] nginx 切换流量"
+echo "  [4.5/5] 冒烟测试（6 项核心接口）"
 echo "  [5/5] 关闭 $ACTIVE（旧代码保留可 rollback）"
 echo ""
 
@@ -127,6 +128,21 @@ sed -i "s|proxy_pass http://127.0.0.1:$ACTIVE_FRONTEND;|proxy_pass http://127.0.
 nginx -t 2>&1 | tee -a $LOG
 nginx -s reload
 echo "✅ 流量已切换到 $STANDBY" | tee -a $LOG
+
+# ── 4.5 部署后冒烟测试（流量已切，验证新 slot 对外可用）────────────────────
+echo "[4.5/5] 冒烟测试 $STANDBY (backend=$STANDBY_BACKEND frontend=$STANDBY_FRONTEND)" | tee -a $LOG
+SMOKE_SCRIPT="$(dirname "$0")/smoke-test.sh"
+if [ -x "$SMOKE_SCRIPT" ]; then
+    if bash "$SMOKE_SCRIPT" "$STANDBY_BACKEND" "$STANDBY_FRONTEND" 2>&1 | tee -a $LOG; then
+        echo "✅ 冒烟测试通过" | tee -a $LOG
+    else
+        echo "⚠️  冒烟测试发现问题，但部署已切换；请检查日志后决定是否回滚" | tee -a $LOG
+        echo "   回滚命令: bash /root/rollback.sh" | tee -a $LOG
+        # 不阻塞部署（流量已切，强制退出比继续 drain 更差）
+    fi
+else
+    echo "⚠️  smoke-test.sh 不存在，跳过" | tee -a $LOG
+fi
 
 # ── 5. drain：查旧进程内存中的活跃任务数，等完成后再停（最多 15 分钟）──
 echo "[5/5] 关闭 $ACTIVE（先 drain 进行中任务）" | tee -a $LOG
