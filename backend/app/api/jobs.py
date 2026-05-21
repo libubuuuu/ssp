@@ -103,7 +103,7 @@ def cleanup_orphan_jobs_on_startup() -> int:
     try:
         from app.services.billing import add_credits  # 延迟 import 避开循环
     except Exception as e:
-        print(f"cleanup_orphan_jobs: import billing failed: {e}")
+        log_error(f"cleanup_orphan_jobs: import billing failed: {e}")
         return 0
     n = 0
     for jid, j in list(JOBS.items()):
@@ -116,13 +116,15 @@ def cleanup_orphan_jobs_on_startup() -> int:
             uid = j.get("user_numeric_id") or j.get("user_id")
             cost = j.get("cost", 0) or 0
             if uid and cost > 0:
-                add_credits(uid, cost, reason="task_refund", ref_id=jid, module=j.get("module") or j.get("type"))
+                ok = add_credits(uid, cost, reason="task_refund", ref_id=jid, module=j.get("module") or j.get("type"))
+                if not ok:
+                    log_error(f"[启动退款失败] job={jid} uid={uid} cost={cost} add_credits 返回 False")
         except Exception as e:
-            print(f"cleanup_orphan_jobs: refund {jid} failed: {e}")
+            log_error(f"[启动退款异常] job={jid} uid={j.get('user_numeric_id')} cost={j.get('cost')}: {e}", exc_info=True)
         n += 1
     if n:
         _save_jobs()
-        print(f"[startup] cleanup_orphan_jobs: 标 failed + 退积分 {n} 个孤儿")
+        log_info(f"[startup] cleanup_orphan_jobs: 标 failed + 退积分 {n} 个孤儿")
     return n
 
 
