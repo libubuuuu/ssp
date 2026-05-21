@@ -738,7 +738,7 @@ export default function VideoGeneralPage() {
         {/* ── 标签页 ── */}
         <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0", marginBottom: "1.4rem" }}>
           <button style={TAB_STYLE(tab === "replicate")} onClick={() => setTab("replicate")}>视频拆解</button>
-          <button style={TAB_STYLE(tab === "ai_video")}  onClick={() => setTab("ai_video")}>AI 爆款视频</button>
+          <button style={TAB_STYLE(tab === "ai_video")}  onClick={() => { setTab("ai_video"); setDuration(10); }}>AI 爆款视频</button>
         </div>
 
         {/* ── 标签A：视频复刻 ── */}
