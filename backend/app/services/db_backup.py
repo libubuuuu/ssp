@@ -73,23 +73,43 @@ def backup_database() -> str:
     return dest
 
 
+def _push_alert(title: str, body: str) -> None:
+    """调用 push-alert.sh 发微信推送，失败静默（不影响对账主流程）。"""
+    import subprocess
+    script = "/root/ssp/deploy/push-alert.sh"
+    if not os.path.exists(script):
+        return
+    try:
+        subprocess.run(
+            ["bash", script, title, body],
+            timeout=15,
+            capture_output=True,
+        )
+    except Exception:
+        pass
+
+
 def reconcile_credits() -> int:
     """对账：SUM(credits_ledger.delta) 应等于 users.credits。
 
-    发现不一致的用户写 log_error 报警，不修改任何数据。
+    发现不一致写 log_error + 微信推送，不修改任何数据。
+    同时检测有积分但无 ledger 记录的用户（老用户或系统漏洞）。
     Returns:
-        不一致用户数量。
+        不一致用户数量（含无 ledger 用户）。
     """
     from .logger import log_info, log_error
 
     db_path = _get_db_path()
     mismatches = 0
+    mismatch_lines: list[str] = []
+    no_ledger_lines: list[str] = []
+
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
-        # 所有有 ledger 记录的用户的 SUM(delta)
+        # ── 1. ledger sum vs actual credits ─────────────────────────────
         cursor.execute("""
             SELECT l.user_id,
                    COALESCE(SUM(l.delta), 0) AS ledger_sum,
@@ -100,22 +120,49 @@ def reconcile_credits() -> int:
              GROUP BY l.user_id
         """)
         rows = cursor.fetchall()
-        conn.close()
 
         for row in rows:
             diff = row["actual_credits"] - row["ledger_sum"]
             if diff != 0:
                 mismatches += 1
-                log_error(
-                    f"credits_reconcile 不一致: user={row['email']} "
+                msg = (
+                    f"user={row['email']} "
                     f"ledger_sum={row['ledger_sum']} actual={row['actual_credits']} "
                     f"diff={diff:+d}"
                 )
+                log_error(f"credits_reconcile 不一致: {msg}")
+                mismatch_lines.append(msg)
 
+        # ── 2. 有积分但完全没有 ledger 记录（游离用户）──────────────────
+        cursor.execute("""
+            SELECT u.id, u.email, u.credits
+              FROM users u
+         LEFT JOIN credits_ledger l ON u.id = l.user_id
+             WHERE l.user_id IS NULL
+               AND u.credits > 0
+        """)
+        orphan_rows = cursor.fetchall()
+        conn.close()
+
+        for row in orphan_rows:
+            mismatches += 1
+            msg = f"user={row['email']} credits={row['credits']} (无任何 ledger 记录)"
+            log_error(f"credits_reconcile 无 ledger 用户: {msg}")
+            no_ledger_lines.append(msg)
+
+        # ── 3. 汇总日志 + 推送 ───────────────────────────────────────────
+        checked = len(rows)
         if mismatches == 0:
-            log_info(f"credits_reconcile OK: 检查 {len(rows)} 个用户，全部一致")
+            log_info(f"credits_reconcile OK: 检查 {checked} 个用户，全部一致")
         else:
-            log_error(f"credits_reconcile 发现 {mismatches} 个用户余额不一致，请人工核查")
+            log_error(f"credits_reconcile 发现 {mismatches} 个问题，请人工核查")
+            parts: list[str] = []
+            if mismatch_lines:
+                parts.append(f"【余额不一致 {len(mismatch_lines)} 人】\n" + "\n".join(mismatch_lines))
+            if no_ledger_lines:
+                parts.append(f"【无 ledger 用户 {len(no_ledger_lines)} 人】\n" + "\n".join(no_ledger_lines))
+            body = "\n\n".join(parts)
+            _push_alert("🚨 积分对账异常", body)
 
     except Exception as e:
         log_error(f"credits_reconcile 运行异常: {e}")
