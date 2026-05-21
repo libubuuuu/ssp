@@ -48,6 +48,19 @@ else:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期:取代 deprecated @app.on_event('startup'/'shutdown')"""
+    # ── 启动前：数据库完整性校验（防止蓝绿切槽时读到孤立数据库导致用户数据丢失）
+    _db_path = os.environ.get("DATABASE_PATH", "./dev.db")
+    _is_test = "tmp" in _db_path or "test" in _db_path
+    if not _is_test:
+        _PROD_DB = "/opt/ssp/backend/dev.db"
+        _real = os.path.realpath(_db_path)
+        if _real != _PROD_DB:
+            # 数据库不是生产库，拒绝启动，健康检查不通过，nginx 不会切流量
+            import sys
+            msg = f"[CRITICAL] 数据库路径异常！期望 {_PROD_DB}，实际解析为 {_real}。拒绝启动，保护用户数据。"
+            print(msg, flush=True)
+            sys.exit(1)
+        log_info(f"数据库校验通过: {_db_path} → {_real}")
     # 启动
     log_info("AI 创意平台 启动成功")
     # P163: 服务重启时把 jobs.json 里 status=running 的孤儿 job 标 failed + 退积分
