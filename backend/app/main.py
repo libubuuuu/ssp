@@ -121,6 +121,9 @@ app.add_middleware(RateLimitMiddleware)
 from app.middleware.request_id import RequestIdMiddleware
 app.add_middleware(RequestIdMiddleware)
 
+from app.middleware.error_spike import ErrorSpikeMiddleware
+app.add_middleware(ErrorSpikeMiddleware)
+
 from app.database import init_db
 from app.services.fal_service import init_fal_services
 from app.services.circuit_breaker import init_circuit_breaker

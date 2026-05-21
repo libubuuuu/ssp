@@ -132,13 +132,35 @@ echo "✅ 流量已切换到 $STANDBY" | tee -a $LOG
 # ── 4.5 部署后冒烟测试（流量已切，验证新 slot 对外可用）────────────────────
 echo "[4.5/5] 冒烟测试 $STANDBY (backend=$STANDBY_BACKEND frontend=$STANDBY_FRONTEND)" | tee -a $LOG
 SMOKE_SCRIPT="$(dirname "$0")/smoke-test.sh"
+ALERT_SCRIPT="$(dirname "$0")/push-alert.sh"
+
 if [ -x "$SMOKE_SCRIPT" ]; then
     if bash "$SMOKE_SCRIPT" "$STANDBY_BACKEND" "$STANDBY_FRONTEND" 2>&1 | tee -a $LOG; then
         echo "✅ 冒烟测试通过" | tee -a $LOG
     else
-        echo "⚠️  冒烟测试发现问题，但部署已切换；请检查日志后决定是否回滚" | tee -a $LOG
-        echo "   回滚命令: bash /root/rollback.sh" | tee -a $LOG
-        # 不阻塞部署（流量已切，强制退出比继续 drain 更差）
+        echo "❌ 冒烟测试失败！自动回滚到 $ACTIVE..." | tee -a $LOG
+
+        # ── 自动回滚：把 nginx 切回 ACTIVE，停掉有问题的 STANDBY ──────────
+        sed -i "s|proxy_pass http://127.0.0.1:$STANDBY_BACKEND;|proxy_pass http://127.0.0.1:$ACTIVE_BACKEND;|g" /etc/nginx/sites-enabled/default
+        sed -i "s|proxy_pass http://127.0.0.1:$STANDBY_FRONTEND;|proxy_pass http://127.0.0.1:$ACTIVE_FRONTEND;|g" /etc/nginx/sites-enabled/default
+        nginx -t 2>&1 | tee -a $LOG && nginx -s reload
+        echo "✅ 流量已切回 $ACTIVE（旧代码）" | tee -a $LOG
+
+        supervisorctl stop ssp-backend-$STANDBY ssp-frontend-$STANDBY 2>&1 | tee -a $LOG || true
+        echo "✅ 停止 $STANDBY（问题新代码）" | tee -a $LOG
+
+        # 推送告警
+        if [ -x "$ALERT_SCRIPT" ]; then
+            bash "$ALERT_SCRIPT" "🔴 部署自动回滚" \
+                "冒烟测试失败，已自动切回 $ACTIVE（旧代码）\n请检查日志：/var/log/deploy.log\n及 /var/log/ssp-backend-${STANDBY}.log" || true
+        fi
+
+        echo "========================================" | tee -a $LOG
+        echo "🔄 自动回滚完成: $STANDBY → $ACTIVE" | tee -a $LOG
+        echo "   激活：$ACTIVE（旧代码，用户不受影响）" | tee -a $LOG
+        echo "   请修复代码后重新部署" | tee -a $LOG
+        echo "========================================" | tee -a $LOG
+        exit 1
     fi
 else
     echo "⚠️  smoke-test.sh 不存在，跳过" | tee -a $LOG

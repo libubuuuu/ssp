@@ -1715,7 +1715,7 @@ async def _execute_job(job_id: str):
             job["status"] = "failed"
             job["error"] = str(e)
             job["finished_at"] = time.time()
-            # 退还积分——失败必须记录，不能静默丢失
+            # 退还积分——失败必须记录 + 立即推送，不能静默丢失
             try:
                 uid = job.get("user_numeric_id")
                 if uid and job.get("cost", 0) > 0:
@@ -1723,8 +1723,16 @@ async def _execute_job(job_id: str):
                                 ref_id=job.get("id"), module=job.get("module") or job.get("type"))
                     if not ok:
                         log_error(f"[积分退款失败] job={job.get('id')} uid={uid} cost={job.get('cost')} add_credits 返回 False")
+                        from app.services.alert_service import push_alert
+                        push_alert("🚨 积分退款失败",
+                                   f"job={job.get('id')}\nuid={uid}\ncost={job.get('cost')}\nadd_credits 返回 False，用户积分未退还！",
+                                   alert_key=f"refund_fail:{job.get('id')}", cooldown=0)
             except Exception as refund_err:
                 log_error(f"[积分退款异常] job={job.get('id')} uid={job.get('user_numeric_id')} cost={job.get('cost')}: {refund_err}", exc_info=True)
+                from app.services.alert_service import push_alert
+                push_alert("🚨 积分退款异常",
+                           f"job={job.get('id')}\nuid={job.get('user_numeric_id')}\ncost={job.get('cost')}\n{refund_err}",
+                           alert_key=f"refund_err:{job.get('id')}", cooldown=0)
         except BaseException as e:
             # CancelledError 等 BaseException 也要保存状态，防止 job 永远卡在 running
             if job.get("status") == "running":
@@ -1738,8 +1746,16 @@ async def _execute_job(job_id: str):
                                     ref_id=job.get("id"), module=job.get("module") or job.get("type"))
                         if not ok:
                             log_error(f"[积分退款失败] job={job.get('id')} uid={uid} cost={job.get('cost')} add_credits 返回 False (BaseException path)")
+                            from app.services.alert_service import push_alert
+                            push_alert("🚨 积分退款失败(中断)",
+                                       f"job={job.get('id')}\nuid={uid}\ncost={job.get('cost')}\n任务被中断且退款失败！",
+                                       alert_key=f"refund_fail_be:{job.get('id')}", cooldown=0)
                 except Exception as refund_err:
                     log_error(f"[积分退款异常] job={job.get('id')} uid={job.get('user_numeric_id')} cost={job.get('cost')}: {refund_err} (BaseException path)", exc_info=True)
+                    from app.services.alert_service import push_alert
+                    push_alert("🚨 积分退款异常(中断)",
+                               f"job={job.get('id')}\nuid={job.get('user_numeric_id')}\ncost={job.get('cost')}\n{refund_err}",
+                               alert_key=f"refund_err_be:{job.get('id')}", cooldown=0)
             raise
         finally:
             _save_jobs()
