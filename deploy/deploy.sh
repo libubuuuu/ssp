@@ -24,7 +24,23 @@ else
 fi
 
 STANDBY_DIR=/opt/ssp-${STANDBY}
+ACTIVE_DIR=/opt/ssp-${ACTIVE}
 echo "当前激活：$ACTIVE  部署目标：$STANDBY ($STANDBY_DIR)" | tee -a $LOG
+
+# ── 0.5 双槽 db symlink 强制校验（防止孤立数据库导致用户积分丢失）────
+REAL_DB="/opt/ssp/backend/dev.db"
+for SLOT_LABEL in "$ACTIVE:$ACTIVE_DIR" "$STANDBY:$STANDBY_DIR"; do
+    LABEL="${SLOT_LABEL%%:*}"
+    DIR="${SLOT_LABEL##*:}"
+    SLOT_DB="$DIR/backend/dev.db"
+    if [ ! -L "$SLOT_DB" ] || [ "$(readlink "$SLOT_DB")" != "$REAL_DB" ]; then
+        echo "⚠️  [$LABEL] db 不是正确 symlink，立即修正: $SLOT_DB → $REAL_DB" | tee -a $LOG
+        rm -f "$SLOT_DB"
+        ln -s "$REAL_DB" "$SLOT_DB"
+        chown -h ssp-app:ssp-app "$SLOT_DB"
+    fi
+done
+echo "✅ 双槽 db symlink 验证通过" | tee -a $LOG
 echo "" | tee -a $LOG
 echo "📋 部署步骤："
 echo "  [1/5] rsync 代码 → $STANDBY_DIR"
@@ -49,16 +65,7 @@ chown -R ssp-app:ssp-app $STANDBY_DIR/backend/app $STANDBY_DIR/frontend/src \
     $STANDBY_DIR/frontend/public $STANDBY_DIR/frontend/package.json \
     $STANDBY_DIR/frontend/tsconfig.json 2>/dev/null || true
 
-# 确保 standby slot 的 db 是 symlink，指向真实生产库（防止旧快照覆盖用户数据）
-REAL_DB="/opt/ssp/backend/dev.db"
-SLOT_DB="$STANDBY_DIR/backend/dev.db"
-if [ ! -L "$SLOT_DB" ] || [ "$(readlink "$SLOT_DB")" != "$REAL_DB" ]; then
-    echo "⚠️  修正 db symlink: $SLOT_DB → $REAL_DB" | tee -a $LOG
-    rm -f "$SLOT_DB"
-    ln -s "$REAL_DB" "$SLOT_DB"
-    chown -h ssp-app:ssp-app "$SLOT_DB"
-fi
-echo "✅ rsync 完成，db symlink 已验证" | tee -a $LOG
+echo "✅ rsync 完成" | tee -a $LOG
 
 # ── 2. 前端 build（在 /root/ssp/frontend，有真实 node_modules）────────
 # Turbopack 不允许 symlink 指向 project 外，故在 git 工作树里 build，
