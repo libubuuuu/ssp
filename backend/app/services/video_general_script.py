@@ -513,9 +513,8 @@ async def analyze_video(
         all_frames = sorted(f for f in _os.listdir(frame_dir) if f.endswith(".jpg"))
         if not all_frames:
             raise RuntimeError("ffmpeg 抽帧失败：无帧图片")
-        # 均匀选最多 6 帧
-        step = max(1, len(all_frames) // 6)
-        selected = all_frames[::step][:6]
+        # 取前 15 帧（已 1fps 逐秒抽取，保留时序连续性）
+        selected = all_frames[:15]
         log_info(f"video_analyze: 抽帧 {len(selected)}/{len(all_frames)} 张")
         # 3. 上传帧图片到 fal storage
         frame_urls = []
@@ -524,16 +523,23 @@ async def analyze_video(
             frame_urls.append(url)
         log_info(f"video_analyze: 帧上传完成 n={len(frame_urls)}")
         # 4. GPT-5.5 分析（帧图片 + 产品图 + prompt）
+        # 时间标记前缀：让 GPT-5.5 知道每张截图对应哪一秒
+        time_labels = "、".join(f"第{i + 1}秒" for i in range(len(frame_urls)))
+        n_product = min(len(product_image_urls), 4)
+        frame_prefix = (
+            f"以下图片按顺序为视频的逐秒截图（共{len(frame_urls)}帧：{time_labels}），"
+            f"之后{n_product}张为产品参考图。请根据这些逐秒画面分析视频内容。\n\n"
+        )
         all_img_urls = frame_urls + list(product_image_urls[:4])
         gpt_text = await asyncio.wait_for(
             ask_gemini(
-                prompt=prompt,
+                prompt=frame_prefix + prompt,
                 image_urls=all_img_urls,
                 model="gpt-5.5",
                 max_tokens=8192,
                 temperature=0.7,
             ),
-            timeout=60,
+            timeout=90,
         )
         gpt_text = (gpt_text or "").strip()
         if not gpt_text:
