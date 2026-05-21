@@ -301,28 +301,24 @@ async def admin_adjust_credits(user_id: str, delta: int, request: Request, curre
 
     with get_db() as conn:
         cursor = conn.cursor()
-        # P156 原子 UPDATE:并发安全(SQLite WAL 模式下 UPDATE 是序列化的)
+        # 先读旧余额，计算实际 delta（MAX(0,...) 可能让实扣小于请求值）
+        cursor.execute("SELECT credits FROM users WHERE id = ?", (user_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        old_credits = row[0]
         cursor.execute(
             "UPDATE users SET credits = MAX(0, credits + ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (delta, user_id),
         )
-        if cursor.rowcount == 0:
-            raise HTTPException(status_code=404, detail="用户不存在")
-        # 拿新余额(post-UPDATE 读保证看到本事务的写入)
         cursor.execute("SELECT credits FROM users WHERE id = ?", (user_id,))
         new_credits = cursor.fetchone()[0]
+        actual_delta = new_credits - old_credits  # 真实变动量，对账准确
+        # ledger 与积分变动同一事务，两者原子提交
+        from app.services.billing import _ledger_in_tx
+        _ledger_in_tx(cursor, user_id, actual_delta, new_credits,
+                      "admin_adjust", current_user.get("id"), "admin/adjust-credits")
         conn.commit()
-
-    # P157 ledger 流水(P156 的同事务里写,确保对账)
-    from app.services.credits_ledger import record_credits_change
-    record_credits_change(
-        user_id=user_id,
-        delta=delta,
-        balance_after=new_credits,
-        reason="admin_adjust",
-        ref_id=current_user.get("id"),  # actor admin id
-        module="admin/adjust-credits",
-    )
 
     # 审计日志(失败不阻塞业务)
     from app.services.audit import log_admin_action, ACTION_ADJUST_CREDITS
@@ -332,11 +328,12 @@ async def admin_adjust_credits(user_id: str, delta: int, request: Request, curre
         action=ACTION_ADJUST_CREDITS,
         target_type="user",
         target_id=user_id,
-        details={"delta": delta, "new_credits": new_credits},
+        details={"delta": actual_delta, "requested_delta": delta, "new_credits": new_credits},
         ip=request.client.host if request.client else None,
     )
 
-    return {"success": True, "user_id": user_id, "new_credits": new_credits, "delta": delta}
+    return {"success": True, "user_id": user_id, "new_credits": new_credits,
+            "delta": actual_delta, "requested_delta": delta}
 
 
 @router.get("/diagnose-history")

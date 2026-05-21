@@ -92,7 +92,7 @@ def try_refund(task_id: str) -> int:
         return 0
     user_id, cost = row[0], int(row[1])
     from .billing import add_credits
-    add_credits(user_id, cost)
+    add_credits(user_id, cost, reason="task_refund", ref_id=task_id)
     return cost
 
 

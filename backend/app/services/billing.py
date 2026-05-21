@@ -4,9 +4,20 @@
 - 任务失败返还
 - 额度不足拦截
 """
+import time
+import uuid
 from typing import Optional, Dict
 from ..database import get_db
 from .auth import get_user_by_id
+
+
+def _ledger_in_tx(cursor, user_id: str, delta: int, balance_after: int,
+                  reason: str, ref_id: Optional[str], module: Optional[str]) -> None:
+    """同一事务内写 credits_ledger，由调用方负责 commit。"""
+    cursor.execute("""
+        INSERT INTO credits_ledger (id, user_id, delta, balance_after, reason, ref_id, module, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (uuid.uuid4().hex, user_id, int(delta), int(balance_after), reason, ref_id, module, time.time()))
 
 # 各功能定价(积分/次)
 # 2026-05-13 老板重定:50 积分 = 1 元,视频 50 积分/秒,图片 20 积分/张,文案 5 积分/次
@@ -25,6 +36,12 @@ PRICING: Dict[str, int] = {
     "video/editor/regenerate": 50,
     "video/editor/compose": 50,
     "video/replicate": 0,  # 真正定价按时长 replicate.py 算 (* 50)
+
+    # 口播 ad_video 系列
+    "ad_video/analyze":     5,   # 视频拆解分析
+    "ad_video/preview":    20,   # 首帧预览图,等同一张图片
+    "ad_video/generate":   50,   # 完整视频生成(提交到 jobs 队列)
+    "ad_video/scene_regen": 5,   # 单场景重新生成
 
     # 通用 video_general / frame-extract / replicate
     "video/general/analyze":      5,
@@ -61,10 +78,10 @@ def check_user_credits(user_id: str, required: int) -> bool:
 
 
 def deduct_credits(user_id: str, amount: int, *, ref_id: str = None, module: str = None) -> bool:
-    """原子扣减用户额度 + 写 credits_ledger(P158)。
+    """原子扣减用户额度 + 在同一事务写 credits_ledger。
 
-    保留 bool 返回接口(21 处调用方不用改)。需要 new_credits 用 get_user_credits()。
-    SQL 层 ``WHERE credits >= ?`` 保证"检查 + 扣减"原子。
+    SQL 层 ``WHERE credits >= ?`` 保证"检查 + 扣减"原子，不存在竞态窗口。
+    ledger 写入与扣费在同一 commit，两者要么同时成功要么同时回滚。
     """
     if amount <= 0:
         return False
@@ -75,52 +92,37 @@ def deduct_credits(user_id: str, amount: int, *, ref_id: str = None, module: str
                SET credits = credits - ?, updated_at = CURRENT_TIMESTAMP
              WHERE id = ? AND credits >= ?
         """, (amount, user_id, amount))
-        success = cursor.rowcount == 1
-        if success:
-            cursor.execute("SELECT credits FROM users WHERE id = ?", (user_id,))
-            row = cursor.fetchone()
-            new_credits = row[0] if row else 0
+        if cursor.rowcount != 1:
+            conn.commit()
+            return False
+        cursor.execute("SELECT credits FROM users WHERE id = ?", (user_id,))
+        new_credits = cursor.fetchone()[0]
+        _ledger_in_tx(cursor, user_id, -amount, new_credits, "task_charge", ref_id, module)
         conn.commit()
-
-    if success:
-        # P157 ledger 埋点
-        from .credits_ledger import record_credits_change
-        record_credits_change(
-            user_id=user_id, delta=-amount, balance_after=new_credits,
-            reason="task_charge", ref_id=ref_id, module=module,
-        )
-    return success
+    return True
 
 
 def add_credits(user_id: str, amount: int, *, reason: str = "task_refund", ref_id: str = None, module: str = None) -> bool:
-    """增加用户额度 + 写 credits_ledger(P158 原子,防 race)。
+    """原子增加用户额度 + 在同一事务写 credits_ledger。
 
-    Args:
-        reason: 'task_refund' / 'recharge_wx' / 'recharge_alipay' / 'system_compensation'
+    ledger 写入与加费在同一 commit，两者要么同时成功要么同时回滚。
     """
     if amount <= 0:
         return False
     with get_db() as conn:
         cursor = conn.cursor()
-        # P158 原子加(防 race,替代之前 update_user_credits 的 SET)
         cursor.execute(
             "UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (amount, user_id),
         )
-        success = cursor.rowcount == 1
-        if success:
-            cursor.execute("SELECT credits FROM users WHERE id = ?", (user_id,))
-            row = cursor.fetchone()
-            new_credits = row[0] if row else 0
+        if cursor.rowcount != 1:
+            conn.commit()
+            return False
+        cursor.execute("SELECT credits FROM users WHERE id = ?", (user_id,))
+        new_credits = cursor.fetchone()[0]
+        _ledger_in_tx(cursor, user_id, amount, new_credits, reason, ref_id, module)
         conn.commit()
-
-    if success:
-        from .credits_ledger import record_credits_change
-        record_credits_change(
-            user_id=user_id, delta=amount, balance_after=new_credits,
-            reason=reason, ref_id=ref_id, module=module,
-        )
-    return success
+    return True
 
 
 def get_user_credits(user_id: str) -> int:

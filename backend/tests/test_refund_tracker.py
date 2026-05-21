@@ -132,17 +132,15 @@ def test_concurrent_refund_only_once():
     assert get_user_credits(user["id"]) == 120
 
 
-# === TTL ===
+# === 无 TTL：无论等多久都退款 ===
 
-def test_ttl_expired_returns_zero(monkeypatch):
-    user = _mk_user("rt-ttl@example.com", 50)
-    monkeypatch.setattr(refund_tracker, "_TTL_SECONDS", 1)
-    refund_tracker.register("fal_ttl", user["id"], 10)
-
-    time.sleep(1.1)
-    refunded = refund_tracker.try_refund("fal_ttl")
-    assert refunded == 0
-    assert get_user_credits(user["id"]) == 50  # TTL 过期不退
+def test_no_ttl_always_refunds(monkeypatch):
+    """refund_tracker 已无 TTL 限制：只要任务最终失败，无论多久都退款。"""
+    user = _mk_user("rt-nottl@example.com", 50)
+    refund_tracker.register("fal_no_ttl", user["id"], 10)
+    refunded = refund_tracker.try_refund("fal_no_ttl")
+    assert refunded == 10
+    assert get_user_credits(user["id"]) == 60  # 50 + 10 退款
 
 
 # === 装饰器集成 ===

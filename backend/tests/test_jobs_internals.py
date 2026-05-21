@@ -252,7 +252,7 @@ def test_execute_job_failure_refunds_credits(monkeypatch):
         AsyncMock(side_effect=Exception("fal returned error"))
     )
     refund_calls = []
-    monkeypatch.setattr(jobs_module, "add_credits", lambda uid, amt: refund_calls.append((uid, amt)) or True)
+    monkeypatch.setattr(jobs_module, "add_credits", lambda uid, amt, **kw: refund_calls.append((uid, amt)) or True)
 
     _run(jobs_module._execute_job_original(job_id))
 

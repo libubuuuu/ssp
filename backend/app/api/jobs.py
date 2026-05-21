@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from app.services.fal_service import get_image_service, get_video_service, fal_upload_with_retry
 from app.services.billing import get_task_cost, check_user_credits, deduct_credits, add_credits, create_consumption_record
-from app.services.logger import log_info, log_warning  # P101: ad_video TTS+lipsync 日志
+from app.services.logger import log_info, log_warning, log_error  # P101: ad_video TTS+lipsync 日志
 from app.api.auth import get_current_user
 
 router = APIRouter()
@@ -1713,14 +1713,16 @@ async def _execute_job(job_id: str):
             job["status"] = "failed"
             job["error"] = str(e)
             job["finished_at"] = time.time()
-            # 退还积分
+            # 退还积分——失败必须记录，不能静默丢失
             try:
                 uid = job.get("user_numeric_id")
                 if uid and job.get("cost", 0) > 0:
-                    add_credits(uid, job.get("cost", 0), reason="task_refund",
+                    ok = add_credits(uid, job.get("cost", 0), reason="task_refund",
                                 ref_id=job.get("id"), module=job.get("module") or job.get("type"))
-            except:
-                pass
+                    if not ok:
+                        log_error(f"[积分退款失败] job={job.get('id')} uid={uid} cost={job.get('cost')} add_credits 返回 False")
+            except Exception as refund_err:
+                log_error(f"[积分退款异常] job={job.get('id')} uid={job.get('user_numeric_id')} cost={job.get('cost')}: {refund_err}", exc_info=True)
         except BaseException as e:
             # CancelledError 等 BaseException 也要保存状态，防止 job 永远卡在 running
             if job.get("status") == "running":
@@ -1730,10 +1732,12 @@ async def _execute_job(job_id: str):
                 try:
                     uid = job.get("user_numeric_id")
                     if uid and job.get("cost", 0) > 0:
-                        add_credits(uid, job.get("cost", 0), reason="task_refund",
+                        ok = add_credits(uid, job.get("cost", 0), reason="task_refund",
                                     ref_id=job.get("id"), module=job.get("module") or job.get("type"))
-                except:
-                    pass
+                        if not ok:
+                            log_error(f"[积分退款失败] job={job.get('id')} uid={uid} cost={job.get('cost')} add_credits 返回 False (BaseException path)")
+                except Exception as refund_err:
+                    log_error(f"[积分退款异常] job={job.get('id')} uid={job.get('user_numeric_id')} cost={job.get('cost')}: {refund_err} (BaseException path)", exc_info=True)
             raise
         finally:
             _save_jobs()

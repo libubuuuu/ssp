@@ -62,8 +62,9 @@ def require_credits(module: str):
             task_id = str(uuid.uuid4())
 
             # P158 扣减额度 + 埋 ledger(传 ref_id=task_id)
+            # 并发竞争导致 deduct 失败时返 402（不是 500）：两个请求同时通过 check，原子扣费只有一个能成功
             if not deduct_credits(user_id, cost, ref_id=task_id, module=module):
-                raise HTTPException(status_code=500, detail="扣费失败，请重试")
+                raise HTTPException(status_code=402, detail=f"积分不足，需要 {cost} 积分")
 
             try:
                 result = await func(*args, **kwargs)
