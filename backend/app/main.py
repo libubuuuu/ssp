@@ -50,7 +50,7 @@ async def lifespan(app: FastAPI):
     """应用生命周期:取代 deprecated @app.on_event('startup'/'shutdown')"""
     # ── 启动前：数据库完整性校验（防止蓝绿切槽时读到孤立数据库导致用户数据丢失）
     _db_path = os.environ.get("DATABASE_PATH", "./dev.db")
-    _is_test = "tmp" in _db_path or "test" in _db_path
+    _is_test = "tmp" in _db_path or "test" in _db_path or "dev-" in _db_path
     _is_dev  = os.environ.get("SKIP_EMAIL_VERIFY", "").lower() in ("1", "true")
     if not _is_test and not _is_dev:
         _PROD_DB = "/opt/ssp/backend/dev.db"
