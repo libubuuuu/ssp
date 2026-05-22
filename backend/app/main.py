@@ -117,21 +117,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AI 创意平台", version="1.0.0", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
-# allow_origins=["*"] 与 allow_credentials=True 不兼容（CORS 规范禁止）。
-# 开发模式：["*"] + allow_credentials=False，Authorization header 仍可用，cookie 不传。
-# 生产模式：显式白名单 + allow_credentials=True，cookie 正常。
-_dev_mode = os.environ.get("ENVIRONMENT", "").lower() == "development"
-if _dev_mode:
-    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
-else:
-    ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "")
-    origins_list = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
-    if not origins_list:
-        origins_list = ["https://ailixiao.com", "https://www.ailixiao.com", "https://admin.ailixiao.com"]
-    for _o in ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000"]:
-        if _o not in origins_list:
-            origins_list.append(_o)
-    app.add_middleware(CORSMiddleware, allow_origins=origins_list, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+# 前端 AuthFetchInterceptor 对所有 /api/* 请求自动加 credentials:include，
+# 因此必须用显式 origins + allow_credentials=True，不能用 ["*"]（浏览器会拒绝）。
+# localhost 三个地址无条件追加，本地开发无需任何额外配置。
+ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "")
+origins_list = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
+if not origins_list:
+    origins_list = ["https://ailixiao.com", "https://www.ailixiao.com", "https://admin.ailixiao.com"]
+for _o in ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000"]:
+    if _o not in origins_list:
+        origins_list.append(_o)
+app.add_middleware(CORSMiddleware, allow_origins=origins_list, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 from app.services.rate_limiter import RateLimitMiddleware
 app.add_middleware(RateLimitMiddleware)
