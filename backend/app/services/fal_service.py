@@ -36,15 +36,7 @@ class FalImageService:
         b64 = r.data[0].b64_json
         if not b64:
             raise RuntimeError("subrouter 返回空 base64")
-        import io as _io
-        from PIL import Image as _Image
         img_bytes = base64.b64decode(b64)
-        _img = _Image.open(_io.BytesIO(img_bytes))
-        _iw, _ih = _img.size
-        _img = _img.resize((_iw * 2, _ih * 2), _Image.LANCZOS)
-        _buf = _io.BytesIO()
-        _img.save(_buf, format="PNG")
-        img_bytes = _buf.getvalue()
         fd, tmp_path = tempfile.mkstemp(suffix=".png")
         try:
             os.write(fd, img_bytes)
@@ -59,7 +51,7 @@ class FalImageService:
             w, h = (int(x) for x in size.split("x"))
         except Exception:
             w, h = 1024, 1024
-        return {"image_url": img_url, "width": w * 2, "height": h * 2,
+        return {"image_url": img_url, "width": w, "height": h,
                 "model": "gpt-image-2/subrouter", "model_label": "专业模式"}
 
     async def generate(self, prompt: str, image_size: str = "1024x1024", model_key: str = "gpt-image-2") -> dict:
@@ -131,14 +123,7 @@ class FalImageService:
         b64 = r.data[0].b64_json
         if not b64:
             raise RuntimeError("subrouter edit 返回空 base64")
-        from PIL import Image as _Image
         img_bytes = base64.b64decode(b64)
-        _img = _Image.open(io.BytesIO(img_bytes))
-        _iw, _ih = _img.size
-        _img = _img.resize((_iw * 2, _ih * 2), _Image.LANCZOS)
-        _buf = io.BytesIO()
-        _img.save(_buf, format="PNG")
-        img_bytes = _buf.getvalue()
         fd, tmp_path = tempfile.mkstemp(suffix=".png")
         try:
             os.write(fd, img_bytes)
@@ -174,16 +159,8 @@ class FalImageService:
     async def generate_edit(self, image_urls: list, prompt: str,
                              image_size: str = "square_hd",
                              output_format: str = "png") -> dict:
-        """图片编辑：subrouter.ai 主力，fal 备选。"""
-        from app.config import get_settings
-        from app.services.logger import log_info, log_error
-        if get_settings().IMAGE_API_KEY:
-            try:
-                result = await self._edit_subrouter(image_urls, prompt, image_size)
-                log_info(f"image_edit subrouter OK n_imgs={len(image_urls)}")
-                return result
-            except Exception as e:
-                log_error(f"image_edit subrouter 失败,降级 fal: {e}")
+        """图片编辑：直接走 fal openai/gpt-image-2/edit。
+        subrouter 路径因 multipart 兼容问题始终 400，已停用。"""
         return await self._edit_fal(image_urls, prompt, image_size, output_format)
 
     async def _generate_fal(self, prompt: str, image_size: str, model_key: str, image_url: Optional[str] = None) -> dict:
