@@ -202,13 +202,23 @@ async def _run_image_job(params: dict):
         image_size = _GPT_IMAGE_SIZE_MAP.get(size, "square_hd")
 
     if refs:
-        result = await service.generate_edit(refs, params["prompt"], image_size, "png")
+        try:
+            result = await service.generate_edit(refs, params["prompt"], image_size, "png")
+        except Exception as e:
+            if "content_policy_violation" in str(e):
+                raise Exception("图片内容被安全审核拦截，请修改描述重试（建议：减少人物动作描述，或改用英文关键词）")
+            raise
         if "error" in result:
             raise Exception(result["error"])
         return {"image_url": result["image_url"], "type": "image",
                 "model": "openai/gpt-image-2/edit"}
 
-    result = await service.generate(params["prompt"], size, "gpt-image-2")
+    try:
+        result = await service.generate(params["prompt"], size, "gpt-image-2")
+    except Exception as e:
+        if "content_policy_violation" in str(e):
+            raise Exception("图片内容被安全审核拦截，请修改描述重试（建议：减少人物动作描述，或改用英文关键词）")
+        raise
     if "error" in result:
         raise Exception(result["error"])
     result["type"] = "image"

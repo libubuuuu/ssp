@@ -114,9 +114,17 @@ export default function ImagePage(){
         if(j.status==="completed"&&j.result?.image_url){
           const ud=localStorage.getItem("user")||"{}";let uid="anonymous";try{uid=JSON.parse(ud).id||"anonymous";}catch{}
           saveGallery([{url:j.result.image_url,prompt:jobPrompt,time:Date.now()},...JSON.parse(localStorage.getItem(`img_gallery_${uid}`)||"[]")]);
-          return;
+          setLoading(false);return;
         }
-        if(j.status==="failed")return;
+        if(j.status==="failed"){
+          const raw=j.error||"";
+          if(raw.includes("content_policy_violation")||raw.includes("安全审核")){
+            setError("内容被安全审核拦截，请修改描述后重试（建议：减少人物动作描述，或改用英文）");
+          }else{
+            setError(raw.slice(0,120)||"生图失败，请重试");
+          }
+          setLoading(false);return;
+        }
       }catch{}
     }
   };
