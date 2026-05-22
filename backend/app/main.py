@@ -121,6 +121,12 @@ ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "")
 origins_list = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
 if not origins_list:
     origins_list = ["http://localhost:3000"]
+# SKIP_EMAIL_VERIFY=true(本地开发模式)时，无论 ALLOWED_ORIGINS 怎么设，
+# 都追加 localhost 前端地址，避免 CORS 拦截。生产不设此变量，此块不执行。
+if os.environ.get("SKIP_EMAIL_VERIFY", "").lower() in ("1", "true"):
+    for _o in ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000"]:
+        if _o not in origins_list:
+            origins_list.append(_o)
 
 app.add_middleware(CORSMiddleware, allow_origins=origins_list, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
