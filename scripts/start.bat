@@ -95,6 +95,7 @@ if not exist node_modules (
 echo.
 echo [启动] 后端 API 服务（端口 8001）...
 set "SKIP_EMAIL_VERIFY=true"
+set "ENVIRONMENT=development"
 start "后端 API :8001" cmd /k "cd /d "%ROOT%\backend" && venv\Scripts\uvicorn app.main:app --reload --port 8001 --host 127.0.0.1 && pause"
 
 :: 等待后端启动
