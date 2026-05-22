@@ -6,7 +6,27 @@ import threading
 import uuid
 import time
 import asyncio
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    # Windows: fcntl 不可用，用 threading.Lock 做进程内锁替代。
+    # 生产(Linux)始终走真实 fcntl 文件锁，此分支只走本地开发。
+    _win_flock = threading.Lock()
+    _SH, _EX, _UN = 1, 2, 8
+
+    class _FcntlShim:
+        LOCK_SH = _SH
+        LOCK_EX = _EX
+        LOCK_UN = _UN
+
+        @staticmethod
+        def flock(fd, operation):
+            if operation in (_SH, _EX):
+                _win_flock.acquire()
+            else:
+                _win_flock.release()
+
+    fcntl = _FcntlShim()
 from datetime import datetime as _datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
