@@ -77,12 +77,18 @@ def clear_auth_cookies(response: Response) -> None:
     response.delete_cookie(REFRESH_COOKIE_NAME, domain=domain, path="/api/auth")
 
 
+import os as _os
+# SKIP_EMAIL_VERIFY=true → 本地开发跳过邮箱验证码。生产环境永不设置此变量。
+DEV_SKIP_EMAIL_VERIFY: bool = _os.environ.get("SKIP_EMAIL_VERIFY", "").lower() in ("1", "true")
+
+
 class RegisterRequest(BaseModel):
     email: str = Field(..., min_length=1, max_length=254)
     password: str = Field(..., min_length=6, max_length=128)
     name: Optional[str] = Field(None, max_length=50)
     # P3-2: 注册必须先 /api/auth/send-code 拿到 6 位邮箱码再附在请求里
-    code: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
+    # dev 模式(SKIP_EMAIL_VERIFY=true)下 code 可省略，端点不做验证
+    code: str = Field("" if DEV_SKIP_EMAIL_VERIFY else ..., max_length=6)
 
 
 class LoginRequest(BaseModel):
@@ -164,19 +170,22 @@ async def register(req: RegisterRequest, request: Request, response: Response):
     assert_register_ip_quota(ip)          # P3-3: 成功硬配额(羊毛党)
 
     # 2. 邮箱码校验(必须在创建用户前,失败永不落库;失败计入 IP 失败配额)
-    cache = _EMAIL_CODES.get(req.email)
-    if not cache:
-        record_register_ip_failure(ip, "no_code")
-        raise HTTPException(status_code=400, detail="请先发送邮箱验证码")
-    if cache["expires_at"] < _time.time():
+    if DEV_SKIP_EMAIL_VERIFY:
+        print(f"[DEV] SKIP_EMAIL_VERIFY=true, 跳过邮箱验证: {req.email}")
+    else:
+        cache = _EMAIL_CODES.get(req.email)
+        if not cache:
+            record_register_ip_failure(ip, "no_code")
+            raise HTTPException(status_code=400, detail="请先发送邮箱验证码")
+        if cache["expires_at"] < _time.time():
+            _EMAIL_CODES.pop(req.email, None)
+            record_register_ip_failure(ip, "expired_code")
+            raise HTTPException(status_code=400, detail="验证码已过期,请重新发送")
+        if cache["code"] != req.code:
+            record_register_ip_failure(ip, "wrong_code")
+            raise HTTPException(status_code=400, detail="验证码错误")
+        # 通过 — 立刻作废,防重放
         _EMAIL_CODES.pop(req.email, None)
-        record_register_ip_failure(ip, "expired_code")
-        raise HTTPException(status_code=400, detail="验证码已过期,请重新发送")
-    if cache["code"] != req.code:
-        record_register_ip_failure(ip, "wrong_code")
-        raise HTTPException(status_code=400, detail="验证码错误")
-    # 通过 — 立刻作废,防重放
-    _EMAIL_CODES.pop(req.email, None)
 
     # 3. 检查邮箱是否已存在
     existing = get_user_by_email(req.email)
