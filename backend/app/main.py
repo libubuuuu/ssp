@@ -51,7 +51,8 @@ async def lifespan(app: FastAPI):
     # ── 启动前：数据库完整性校验（防止蓝绿切槽时读到孤立数据库导致用户数据丢失）
     _db_path = os.environ.get("DATABASE_PATH", "./dev.db")
     _is_test = "tmp" in _db_path or "test" in _db_path
-    if not _is_test:
+    _is_dev  = os.environ.get("SKIP_EMAIL_VERIFY", "").lower() in ("1", "true")
+    if not _is_test and not _is_dev:
         _PROD_DB = "/opt/ssp/backend/dev.db"
         _real = os.path.realpath(_db_path)
         if _real != _PROD_DB:
