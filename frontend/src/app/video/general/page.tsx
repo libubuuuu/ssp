@@ -767,9 +767,17 @@ export default function VideoGeneralPage() {
                     if (f.size > 100 * 1024 * 1024) { setError("视频不能超过 100MB"); return; }
                     setRefVid({ file: f, uploading: true, url: "", duration_sec: 0, model_image_url: "" }); setError("");
                     try {
-                      const fd = new FormData(); fd.append("file", f);
-                      const r = await fetch(`${API_BASE}/api/video/general/upload/video`, {
-                        method: "POST", headers: { Authorization: `Bearer ${getToken()}` }, body: fd,
+                      const stsR = await fetch(`${API_BASE}/api/storage/presigned-put`, {
+                        method: "POST", headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
+                        body: JSON.stringify({ filename: f.name }),
+                      });
+                      if (!stsR.ok) throw new Error("获取上传凭证失败");
+                      const { upload_url, object_key, public_url } = await stsR.json();
+                      const putR = await fetch(upload_url, { method: "PUT", body: f });
+                      if (!putR.ok) throw new Error("视频上传 COS 失败");
+                      const r = await fetch(`${API_BASE}/api/video/general/notify-video`, {
+                        method: "POST", headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
+                        body: JSON.stringify({ cos_url: public_url, object_key }),
                       });
                       if (!r.ok) throw new Error(await r.text());
                       const d = await r.json();
@@ -1017,8 +1025,18 @@ export default function VideoGeneralPage() {
                             const f = e.target.files?.[0]; if (!f) return;
                             setModelVid({ file: f, uploading: true }); setError("");
                             try {
-                              const fd = new FormData(); fd.append("file", f);
-                              const r = await fetch(`${API_BASE}/api/video/general/upload/video`, { method: "POST", headers: { Authorization: `Bearer ${getToken()}` }, body: fd });
+                              const stsR = await fetch(`${API_BASE}/api/storage/presigned-put`, {
+                                method: "POST", headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
+                                body: JSON.stringify({ filename: f.name }),
+                              });
+                              if (!stsR.ok) throw new Error("获取上传凭证失败");
+                              const { upload_url, object_key, public_url } = await stsR.json();
+                              const putR = await fetch(upload_url, { method: "PUT", body: f });
+                              if (!putR.ok) throw new Error("视频上传 COS 失败");
+                              const r = await fetch(`${API_BASE}/api/video/general/notify-video`, {
+                                method: "POST", headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
+                                body: JSON.stringify({ cos_url: public_url, object_key }),
+                              });
                               if (!r.ok) throw new Error(await r.text());
                               const d = await r.json(); setModelVidUrl(d.video_url || ""); setModelVid({ file: f, uploading: false });
                             } catch (err) { setError((err as Error).message || "视频上传失败"); setModelVid({ file: null, uploading: false }); }

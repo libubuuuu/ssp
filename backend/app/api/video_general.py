@@ -1408,3 +1408,103 @@ async def chat_with_mentor(
     if copy_data and copy_data.get("title"):
         result["copy"] = copy_data
     return result
+
+
+# ---------------------------------------------------------------------------
+# COS 直传完成通知
+# ---------------------------------------------------------------------------
+
+class NotifyVideoRequest(BaseModel):
+    cos_url: str = Field(..., description="COS 公开 URL（前端直传完成后的文件地址）")
+    object_key: str = Field(..., description="COS object key，用于 SDK 鉴权下载")
+
+
+@router.post("/notify-video")
+async def notify_cos_video(body: NotifyVideoRequest, current_user: dict = Depends(get_current_user)):
+    """COS 直传完成通知：后端从 COS 下载→ffprobe→抽中间帧→上传帧到 fal。
+    返回与 /upload/video 相同的结构，前端无感切换。
+    """
+    import subprocess as _sp
+    import json as _j
+    from app.config import get_settings
+
+    user_id = str(current_user.get("user_id", current_user.get("id", "?")))
+    s = get_settings()
+    object_key = body.object_key
+
+    suffix = ("." + object_key.rsplit(".", 1)[-1]) if "." in object_key.rsplit("/", 1)[-1] else ".mp4"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        video_path = tmp.name
+
+    # 从 COS 下载（SDK 鉴权，支持私有桶，不依赖 IAM GetObject）
+    try:
+        from qcloud_cos import CosConfig, CosS3Client
+        config = CosConfig(
+            Region=s.STORAGE_REGION,
+            SecretId=s.STORAGE_SECRET_ID,
+            SecretKey=s.STORAGE_SECRET_KEY,
+        )
+        cos_client = CosS3Client(config)
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            lambda: cos_client.get_object(
+                Bucket=s.STORAGE_BUCKET, Key=object_key
+            )["Body"].get_stream_to_file(video_path),
+        )
+    except Exception as e:
+        try: os.unlink(video_path)
+        except Exception: pass
+        log_error(f"notify_cos_video 下载失败: user={user_id} key={object_key} err={e}")
+        raise HTTPException(502, "从 COS 下载视频失败，请稍后重试")
+
+    video_url = body.cos_url
+    model_image_url = ""
+    duration = 5.0
+
+    try:
+        rr = _sp.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", video_path],
+            capture_output=True, text=True, timeout=30,
+        )
+        try:
+            duration = float(_j.loads(rr.stdout).get("format", {}).get("duration", 5.0))
+        except Exception:
+            pass
+        log_info(f"notify_cos_video ffprobe: user={user_id} duration={duration:.2f}s")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mid_path = os.path.join(tmpdir, "mid.jpg")
+            seek_ss = f"{duration * 0.5:.2f}"
+            cp = _sp.run(
+                ["ffmpeg", "-y", "-ss", seek_ss, "-i", video_path, "-vframes", "1", "-q:v", "3", mid_path],
+                capture_output=True, timeout=30,
+            )
+            if cp.returncode != 0 or not os.path.exists(mid_path):
+                cp2 = _sp.run(
+                    ["ffmpeg", "-y", "-i", video_path, "-vframes", "1", "-q:v", "3", mid_path],
+                    capture_output=True, timeout=30,
+                )
+                if cp2.returncode != 0 or not os.path.exists(mid_path):
+                    raise HTTPException(422, "视频帧抽取失败，请确认视频包含画面且格式为 mp4/mov/webm")
+            try:
+                model_image_url = await fal_upload_with_retry(mid_path)
+            except Exception as e:
+                log_error(f"notify_cos_video fal frame upload failed: user={user_id} err={e}")
+                raise HTTPException(500, "封面图上传失败，请稍后重试")
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback as _tb
+        log_error(f"notify_cos_video unexpected: user={user_id} err={str(e)[:300]}\n{_tb.format_exc()[-800:]}")
+        raise HTTPException(500, "视频处理失败，请稍后重试")
+    finally:
+        try: os.unlink(video_path)
+        except Exception: pass
+
+    log_info(f"notify_cos_video ok: user={user_id} duration={duration:.2f}s")
+    return {
+        "video_url": video_url,
+        "model_image_url": model_image_url,
+        "duration_sec": duration,
+    }

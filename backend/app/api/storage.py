@@ -48,15 +48,9 @@ async def issue_sts(req: STSRequest, current_user: dict = Depends(get_current_us
 
 @router.post("/presigned-put")
 async def issue_presigned_put(req: STSRequest, current_user: dict = Depends(get_current_user)):
-    """八十四续 P5:签发 COS PUT presigned URL,浏览器 zero-deps fetch PUT 直传。
-
-    P22 暂停:子账号 ssp-sts-signer 没 GetObject 权限 → backend finalize-cos
-    阶段拉文件 403 → 前端 fallback chunk 再传一次,反而**双倍流量更慢**。
-    禁用 COS 直传 → 前端立刻 fallback chunk(单次上传)。
-    彻底修:用户去腾讯云 CAM 给子账号加 cos:GetObject 权限,删除本 raise 即可。
+    """签发 COS PUT presigned URL，浏览器 zero-deps fetch PUT 直传。
+    后端通过 SDK 鉴权下载文件，不依赖 GetObject IAM 权限。
     """
-    raise HTTPException(503, "COS 直传暂停(子账号待补 GetObject 权限,前端会自动 fallback 分片上传)")
-    # 下面代码保留待权限补齐后启用
     from qcloud_cos import CosConfig, CosS3Client
     from app.config import get_settings
     from app.services.storage_sts import _check_enabled, _build_resource_path
@@ -76,8 +70,7 @@ async def issue_presigned_put(req: STSRequest, current_user: dict = Depends(get_
     )
     client = CosS3Client(config)
     try:
-        # 签 PUT presigned URL,15min 有效
-        url = client.get_presigned_url(
+        upload_url = client.get_presigned_url(
             Method="PUT",
             Bucket=s.STORAGE_BUCKET,
             Key=object_key,
@@ -87,10 +80,12 @@ async def issue_presigned_put(req: STSRequest, current_user: dict = Depends(get_
         log_error("presigned PUT 签发失败", exc_info=True, error=str(e))
         raise HTTPException(502, f"presigned URL 签发失败: {str(e)[:200]}")
 
+    public_url = f"https://{s.STORAGE_BUCKET}.cos.{s.STORAGE_REGION}.myqcloud.com/{object_key}"
     log_info(f"presigned PUT 签发: user={user_id} key={object_key}")
     return {
-        "upload_url": url,
+        "upload_url": upload_url,
         "object_key": object_key,
+        "public_url": public_url,
         "bucket": s.STORAGE_BUCKET,
         "region": s.STORAGE_REGION,
         "expires_in": 900,
