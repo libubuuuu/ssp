@@ -79,6 +79,13 @@ cd /root/ssp
 cp /opt/ssp/backend/dev.db /root/backups/pre_deploy_$(date +%Y%m%d_%H%M%S).db
 echo "✅ 部署前 db 已备份到 /root/backups/pre_deploy_*.db" | tee -a $LOG
 
+DB_SIZE=$(wc -c < /opt/ssp/backend/dev.db)
+if [ "$DB_SIZE" -lt 300000 ]; then
+    echo "❌ 数据库异常：dev.db 仅 ${DB_SIZE} 字节（阈值 300000），疑似被意外替换，部署中止！" | tee -a $LOG
+    exit 1
+fi
+echo "✅ db 大小校验通过：${DB_SIZE} 字节" | tee -a $LOG
+
 # ── 1. rsync 代码到 standby slot（不动 active slot）─────────────────
 echo "[1/5] rsync /root/ssp → $STANDBY_DIR" | tee -a $LOG
 rsync -a --exclude='*.pyc' --exclude='__pycache__/' \
