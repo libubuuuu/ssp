@@ -32,6 +32,8 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, hashed: str) -> bool:
     """验证密码"""
+    if not hashed:
+        return False
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
 
