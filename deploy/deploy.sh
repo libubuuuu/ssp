@@ -75,6 +75,10 @@ fi
 echo "✅ 预部署测试通过" | tee -a $LOG
 cd /root/ssp
 
+# ── pre-1. 部署前强制备份数据库（防止 rsync/init 意外覆盖）────────────
+cp /opt/ssp/backend/dev.db /root/backups/pre_deploy_$(date +%Y%m%d_%H%M%S).db
+echo "✅ 部署前 db 已备份到 /root/backups/pre_deploy_*.db" | tee -a $LOG
+
 # ── 1. rsync 代码到 standby slot（不动 active slot）─────────────────
 echo "[1/5] rsync /root/ssp → $STANDBY_DIR" | tee -a $LOG
 rsync -a --exclude='*.pyc' --exclude='__pycache__/' \
