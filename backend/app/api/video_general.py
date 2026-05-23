@@ -83,10 +83,14 @@ async def upload_model_video(
     current_user: dict = Depends(get_current_user),
 ):
     """上传模特参考视频(可选,后端会抽中间帧作模特图)"""
+    user_id = current_user.get("user_id", "?")
+    file_size = 0
     contents = await read_bounded(file, MAX_VIDEO_SIZE, VIDEO_MIMES, "模特视频")
+    file_size = len(contents)
     suffix = ".mp4"
     if file.filename and "." in file.filename:
         suffix = "." + file.filename.rsplit(".", 1)[-1]
+    log_info(f"upload_video start: user={user_id} size={file_size} mime={file.content_type} suffix={suffix}")
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(contents)
         video_path = tmp.name
@@ -103,20 +107,45 @@ async def upload_model_video(
             duration = float(_j.loads(rr.stdout).get("format", {}).get("duration", 5.0))
         except Exception:
             pass
-        # 抽中间帧
+        log_info(f"upload_video ffprobe: user={user_id} duration={duration:.2f}s")
+        # 抽中间帧：先试中间点，失败降级到第一帧
         with tempfile.TemporaryDirectory() as tmpdir:
             mid_path = os.path.join(tmpdir, "model_mid.jpg")
+            seek_ss = f"{duration * 0.5:.2f}"
             cp = _sp.run(
-                ["ffmpeg", "-y", "-ss", f"{duration*0.5:.2f}", "-i", video_path, "-vframes", "1", "-q:v", "3", mid_path],
+                ["ffmpeg", "-y", "-ss", seek_ss, "-i", video_path, "-vframes", "1", "-q:v", "3", mid_path],
                 capture_output=True, timeout=30,
             )
             if cp.returncode != 0 or not os.path.exists(mid_path):
-                raise HTTPException(500, "中间帧抽取失败")
-            video_url = await fal_upload_with_retry(video_path)
-            model_image_url = await fal_upload_with_retry(mid_path)
+                # 降级：抽第一帧（不带 -ss，最兼容）
+                log_error(
+                    f"upload_video ffmpeg mid-frame failed: user={user_id} ss={seek_ss} "
+                    f"rc={cp.returncode} stderr={cp.stderr[-300:] if cp.stderr else ''}"
+                )
+                cp2 = _sp.run(
+                    ["ffmpeg", "-y", "-i", video_path, "-vframes", "1", "-q:v", "3", mid_path],
+                    capture_output=True, timeout=30,
+                )
+                if cp2.returncode != 0 or not os.path.exists(mid_path):
+                    log_error(
+                        f"upload_video ffmpeg first-frame also failed: user={user_id} "
+                        f"rc={cp2.returncode} stderr={cp2.stderr[-300:] if cp2.stderr else ''}"
+                    )
+                    raise HTTPException(422, "视频帧抽取失败，请确认视频包含画面且格式为 mp4/mov/webm")
+            try:
+                video_url = await fal_upload_with_retry(video_path)
+            except Exception as e:
+                log_error(f"upload_video fal upload video failed: user={user_id} err={str(e)[:200]}")
+                raise HTTPException(500, f"视频上传至 CDN 失败，请稍后重试")
+            try:
+                model_image_url = await fal_upload_with_retry(mid_path)
+            except Exception as e:
+                log_error(f"upload_video fal upload frame failed: user={user_id} err={str(e)[:200]}")
+                raise HTTPException(500, f"封面图上传至 CDN 失败，请稍后重试")
     finally:
         try: os.unlink(video_path)
         except Exception: pass
+    log_info(f"upload_video ok: user={user_id} duration={duration:.2f}s")
     return {
         "video_url": video_url,
         "model_image_url": model_image_url,
