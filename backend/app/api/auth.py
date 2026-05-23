@@ -32,7 +32,7 @@ router = APIRouter()
 # Cookie 名固定,不要更名(前端依赖)
 ACCESS_COOKIE_NAME = "access_token"
 REFRESH_COOKIE_NAME = "refresh_token"
-ACCESS_COOKIE_MAX_AGE = 3600          # 1 小时,跟 access JWT TTL 对齐
+ACCESS_COOKIE_MAX_AGE = 24 * 3600     # 24 小时,跟 access JWT TTL 对齐
 REFRESH_COOKIE_MAX_AGE = 30 * 86400   # 30 天,跟 refresh JWT TTL 对齐
 
 

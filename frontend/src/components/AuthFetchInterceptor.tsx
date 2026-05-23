@@ -4,7 +4,7 @@
  *
  * 触发场景(全部覆盖,前端代码无需改):
  *   - JWT_SECRET 轮换 → 旧 token 签名验证失败
- *   - access token 自然过期(1 小时,主动续期阈值 10 分钟)
+ *   - access token 自然过期(24 小时,主动续期阈值 10 分钟)
  *   - 改密码 / 强制下线 / 用户主动登出所有设备 → 用户级吊销
  *
  * P8 阶段 2 改动:
@@ -170,7 +170,9 @@ export default function AuthFetchInterceptor() {
       if (isProactiveRefreshing) return;
       const token = localStorage.getItem("token");
       const refresh = localStorage.getItem("refresh_token");
-      if (!token || !refresh) return;
+      // 没有 access token 就无法解出 exp — 跳过(reactive 401 拦截兜底)
+      // 不再要求 refresh 也在 localStorage: cookie 里有 refresh token 同样能续签
+      if (!token) return;
 
       const exp = getTokenExp(token);
       if (exp === null) return;
@@ -186,7 +188,8 @@ export default function AuthFetchInterceptor() {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",  // P8: 带 refresh cookie
-            body: JSON.stringify({ refresh_token: refresh }),
+            // refresh 在 localStorage → 走 body; 只在 cookie → 走 cookie(服务端自动降级)
+            body: JSON.stringify(refresh ? { refresh_token: refresh } : {}),
           });
           if (r.ok) {
             const data = await r.json();
