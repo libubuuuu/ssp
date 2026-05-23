@@ -94,6 +94,8 @@ async def upload_model_video(
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(contents)
         video_path = tmp.name
+    video_url = ""
+    model_image_url = ""
     try:
         # ffprobe 拿时长
         import subprocess as _sp
@@ -142,6 +144,15 @@ async def upload_model_video(
             except Exception as e:
                 log_error(f"upload_video fal upload frame failed: user={user_id} err={str(e)[:200]}")
                 raise HTTPException(500, f"封面图上传至 CDN 失败，请稍后重试")
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback as _tb
+        log_error(
+            f"upload_video unexpected: user={user_id} err={str(e)[:300]}\n"
+            f"{_tb.format_exc()[-800:]}"
+        )
+        raise HTTPException(500, "视频上传处理失败，请稍后重试")
     finally:
         try: os.unlink(video_path)
         except Exception: pass
