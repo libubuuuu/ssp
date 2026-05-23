@@ -127,8 +127,6 @@ if not origins_list:
 for _o in ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000"]:
     if _o not in origins_list:
         origins_list.append(_o)
-app.add_middleware(CORSMiddleware, allow_origins=origins_list, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
-
 from app.services.rate_limiter import RateLimitMiddleware
 app.add_middleware(RateLimitMiddleware)
 
@@ -137,6 +135,8 @@ app.add_middleware(RequestIdMiddleware)
 
 from app.middleware.error_spike import ErrorSpikeMiddleware
 app.add_middleware(ErrorSpikeMiddleware)
+
+app.add_middleware(CORSMiddleware, allow_origins=origins_list, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 from app.database import init_db
 from app.services.fal_service import init_fal_services
