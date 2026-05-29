@@ -1,4 +1,5 @@
 "use client";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import { useLang } from "@/lib/i18n/LanguageContext";
@@ -31,6 +32,7 @@ interface RawCardDef {
   preview: Preview;
   aspect: string;
 }
+const HIDDEN_REPRODUCE_CARDS = new Set<RawCardDef["i18nKey"]>(["frame", "image"]);
 const RAW_CARDS: RawCardDef[] = [
   {
     i18nKey: "frame",
@@ -74,7 +76,11 @@ const PlayIcon = () => (
 export default function VideoReproduceHub() {
   const router = useRouter();
   const { t } = useLang();
-  const CARDS: CardDef[] = RAW_CARDS.map((c) => ({
+  const visibleCards = RAW_CARDS.filter((c) => !HIDDEN_REPRODUCE_CARDS.has(c.i18nKey));
+  const soleRoute = visibleCards.length === 1 ? visibleCards[0].route : null;
+  useEffect(() => { if (soleRoute) router.replace(soleRoute); }, [soleRoute, router]);
+  if (soleRoute) return null;
+  const CARDS: CardDef[] = visibleCards.map((c) => ({
     title: t(`videoReproduce.cards.${c.i18nKey}.title`),
     desc: [
       t(`videoReproduce.cards.${c.i18nKey}.desc1`),

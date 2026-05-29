@@ -66,7 +66,7 @@ export const en = {
     },
     cards: {
       imageGen: { title: "Image Generation", desc: "Product · Model · Multi-Reference" },
-      videoClone: { title: "Video Reproduction", desc: "Frame Split · Image-to-Video · Video-to-Video" },
+      videoClone: { title: "Video Reproduction", desc: "Swap product in reference video" },
       videoGen: { title: "Video Generation", desc: "Upload an image · Write a prompt · AI films a 5-10s clip" },
     },
     popupStudio: "One-Click Studio",
@@ -198,7 +198,7 @@ export const en = {
     downloadBtn: "⬇ Download",
   },
   videoReproduce: {
-    crumb: "Frame · Image · Video — Reproduction",
+    crumb: "Video Reproduction",
     title: "Video Reproduction",
     footer: "Click any card to enter. Previews are from real example cases.",
     cards: {

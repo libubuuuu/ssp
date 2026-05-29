@@ -66,7 +66,7 @@ export const zh = {
     },
     cards: {
       imageGen: { title: "图片生成", desc: "电商主图 · 模特图 · 多图参考" },
-      videoClone: { title: "视频拆解", desc: "分镜复刻 · 图片复刻 · 视频复刻" },
+      videoClone: { title: "视频拆解", desc: "参考视频一键换产品" },
       videoGen: { title: "视频生成", desc: "上传一张图 · 写提示词 · AI 拍 5-10s 短片" },
     },
     popupStudio: "一键生图工作室",
@@ -198,7 +198,7 @@ export const zh = {
     downloadBtn: "⬇ 下载视频",
   },
   videoReproduce: {
-    crumb: "分镜复刻 · 图片复刻 · 视频复刻",
+    crumb: "视频复刻",
     title: "视频拆解",
     footer: "每张卡片均可点击,真实预览图来自示例案例",
     cards: {
