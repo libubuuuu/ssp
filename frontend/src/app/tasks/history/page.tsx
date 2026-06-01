@@ -15,6 +15,8 @@ export default function HistoryPage() {
     videos?: string[];
     cost?: number;
     created_at?: string;
+    status?: string;
+    credits_refunded?: number;
   }
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -22,12 +24,51 @@ export default function HistoryPage() {
 
   useEffect(() => {
     const token = localStorage.getItem("token") || "";
-    fetch(`${API_BASE}/api/tasks/history`, {
-      headers: { "Authorization": `Bearer ${token}` }
-    })
-      .then(r => r.json())
-      .then(data => { setHistory(data.history || []); setLoading(false); })
-      .catch(() => setLoading(false));
+    const headers = { "Authorization": `Bearer ${token}` };
+
+    Promise.all([
+      fetch(`${API_BASE}/api/tasks/history`, { headers })
+        .then(r => r.ok ? r.json() : { history: [] })
+        .then(data => (data.history || []) as HistoryItem[])
+        .catch(() => [] as HistoryItem[]),
+
+      fetch(`${API_BASE}/api/video/clone-v2/jobs`, { headers })
+        .then(r => r.ok ? r.json() : { items: [] })
+        .then(data => {
+          const typeLabel: Record<string, string> = {
+            single: "单段复刻", ultimate: "多段复刻",
+          };
+          const modeLabel: Record<string, string> = {
+            full: "全替换", partial: "局部替换",
+          };
+          return ((data.items || []) as Record<string, unknown>[]).map(job => ({
+            id: job.id as string,
+            module: "video/clone-v2",
+            prompt: [
+              typeLabel[job.type as string] || (job.type as string),
+              modeLabel[job.replacement_mode as string] || (job.replacement_mode as string),
+            ].filter(Boolean).join(" · "),
+            videos: job.final_video_url_watermarked
+              ? [job.final_video_url_watermarked as string]
+              : job.final_video_url_raw
+              ? [job.final_video_url_raw as string]
+              : [],
+            cost: (job.total_credits_charged as number) ?? 0,
+            created_at: job.created_at as string,
+            status: job.status as string,
+            credits_refunded: (job.total_credits_refunded as number) ?? 0,
+          } as HistoryItem));
+        })
+        .catch(() => [] as HistoryItem[]),
+    ]).then(([general, v2]) => {
+      const merged = [...general, ...v2].sort((a, b) => {
+        const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return tb - ta;
+      });
+      setHistory(merged);
+      setLoading(false);
+    });
   }, []);
 
   const moduleLabel: Record<string, string> = {
@@ -42,7 +83,34 @@ export default function HistoryPage() {
     "voice/tts": t("tasks.mod_tts"),
     "video/editor/compose": t("tasks.mod_editor_compose"),
     "video/replicate": t("tasks.mod_replicate"),
+    "video/clone-v2": "视频复刻",
   };
+
+  function StatusBadge({ item }: { item: HistoryItem }) {
+    if (!item.status) return null;
+    if (item.status === "completed") {
+      return (
+        <span style={{ fontSize: "0.7rem", padding: "2px 7px", borderRadius: "20px", background: "#e6f9ee", color: "#1a7a40", fontWeight: 500 }}>
+          ✅ 成功
+        </span>
+      );
+    }
+    if (item.status === "failed") {
+      return (
+        <span style={{ fontSize: "0.7rem", padding: "2px 7px", borderRadius: "20px", background: "#fdecea", color: "#b71c1c", fontWeight: 500 }}>
+          ❌ 失败{item.credits_refunded ? `（已退 ${item.credits_refunded} 积分）` : ""}
+        </span>
+      );
+    }
+    if (item.status === "processing" || item.status === "pending") {
+      return (
+        <span style={{ fontSize: "0.7rem", padding: "2px 7px", borderRadius: "20px", background: "#f0f0f0", color: "#666", fontWeight: 500 }}>
+          ⏳ 处理中
+        </span>
+      );
+    }
+    return null;
+  }
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "#edeae4", fontFamily: "-apple-system,BlinkMacSystemFont,sans-serif" }}>
@@ -61,7 +129,7 @@ export default function HistoryPage() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "1rem" }}>
           {history.map((item) => (
             <div key={item.id} onClick={() => setSelected(item)}
-              style={{ background: "#fff", borderRadius: "14px", overflow: "hidden", boxShadow: "0 4px 12px rgba(0,0,0,0.06)", cursor: "pointer", transition: "transform 0.15s", }}
+              style={{ background: "#fff", borderRadius: "14px", overflow: "hidden", boxShadow: "0 4px 12px rgba(0,0,0,0.06)", cursor: "pointer", transition: "transform 0.15s" }}
               onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
               onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}>
               {item.videos?.[0] && (
@@ -76,7 +144,10 @@ export default function HistoryPage() {
                 </div>
               )}
               <div style={{ padding: "0.75rem 1rem" }}>
-                <div style={{ fontSize: "0.85rem", fontWeight: 500, color: "#333", marginBottom: "0.3rem" }}>{moduleLabel[item.module] || item.module}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.3rem", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: "0.85rem", fontWeight: 500, color: "#333" }}>{moduleLabel[item.module] || item.module}</span>
+                  <StatusBadge item={item} />
+                </div>
                 <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: "0.4rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.prompt}</div>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "#999" }}>
                   <span>{item.created_at?.slice(0, 16)}</span>
@@ -95,7 +166,10 @@ export default function HistoryPage() {
           <div onClick={e => e.stopPropagation()}
             style={{ background: "#fff", borderRadius: "20px", maxWidth: "700px", width: "100%", maxHeight: "90vh", overflow: "auto", padding: "2rem" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
-              <h2 style={{ margin: 0, fontSize: "1.2rem", fontWeight: 500 }}>{moduleLabel[selected.module] || selected.module}</h2>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                <h2 style={{ margin: 0, fontSize: "1.2rem", fontWeight: 500 }}>{moduleLabel[selected.module] || selected.module}</h2>
+                <StatusBadge item={selected} />
+              </div>
               <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", fontSize: "1.5rem", cursor: "pointer", color: "#999" }}>×</button>
             </div>
 
