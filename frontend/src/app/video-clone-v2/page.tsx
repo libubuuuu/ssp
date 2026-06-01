@@ -259,7 +259,13 @@ export default function VideoCloneV2Page() {
         video_url: video.url,
       }),
     })
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.detail || "视频时长不符合要求,请控制在 4-15 秒内");
+        }
+        return r.json();
+      })
       .then((d: CheckDurationResp) => {
         if (d.needs_trim) {
           setTrimPopup(d);
@@ -268,7 +274,7 @@ export default function VideoCloneV2Page() {
           fetchPreview(video.url, video.duration);
         }
       })
-      .catch((e) => setError(`check-duration 失败:${e}`));
+      .catch((e) => setError(e instanceof Error ? e.message : e));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [video]);
 
@@ -657,7 +663,7 @@ export default function VideoCloneV2Page() {
               {t("videoCloneV2.titleMain")}<span style={{ fontStyle: "italic" }}> {t("videoCloneV2.titleAccent")}</span>
             </h1>
             <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
-              支持 4-64 秒视频 · 标准版 55 / 高质量 60 积分/秒 · 以原视频风格为参考生成含你产品的新视频 · 输出默认含水印
+              支持 4-15 秒视频 · 标准版 55 / 高质量 60 积分/秒 · 以原视频风格为参考生成含你产品的新视频 · 输出默认含水印
             </div>
           </div>
           <button
