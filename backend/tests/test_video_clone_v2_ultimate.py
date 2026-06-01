@@ -948,3 +948,106 @@ class TestUnionDuration:
         assert abs(self._union_total([(0, 5)]) - 5.0) < 0.01
         # 7. 空 = 0
         assert abs(self._union_total([]) - 0.0) < 0.01
+
+
+# ─── /upload/video + /upload/image 端点测试(COS 路径)────────────────────
+
+class TestV2UploadCos:
+    """Gate 3:upload_video / upload_image 端点切 COS 后的 mock 测试。
+
+    只验证 HTTP 层 + cos_upload.upload_to_cos 被调用,不真打 COS。
+    """
+
+    def _make_v2_client(self, monkeypatch):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from app.api import video_clone_v2 as v2_module
+        from app.api.auth import create_jwt_token
+        from app.services.auth import create_user
+
+        monkeypatch.setenv("ENABLE_VIDEO_CLONE_V2", "true")
+        from app.config import get_settings
+        get_settings.cache_clear()
+
+        app = FastAPI()
+        app.include_router(v2_module.router, prefix="/api/video/clone-v2")
+        c = TestClient(app)
+        em = f"u{uuid.uuid4().hex[:8]}@cos.test"
+        u = create_user(email=em, password="x" * 8)
+        token = create_jwt_token(u["id"], em, "user")
+        return c, token
+
+    def test_upload_video_calls_cos(self, monkeypatch):
+        """upload_video 端点:mock upload_to_cos 返 COS URL → 200 + url 字段正确。"""
+        import subprocess
+        from app.api import video_clone_v2 as v2_module
+
+        c, token = self._make_v2_client(monkeypatch)
+        fake_url = "https://ailixiao-uploads-1421174544.cos.ap-guangzhou.myqcloud.com/uploads/abc.mp4"
+
+        def _fake_subprocess_run(cmd, **kw):
+            m = MagicMock()
+            m.stdout = '{"format":{"duration":"5.0"}}'
+            m.returncode = 0
+            return m
+
+        monkeypatch.setattr(subprocess, "run", _fake_subprocess_run)
+        monkeypatch.setattr(v2_module, "upload_to_cos", lambda p: fake_url)
+        monkeypatch.setattr(v2_module, "cache_store", lambda sha, p: False)
+        monkeypatch.setattr(v2_module, "cache_clean_old", lambda: None)
+        # 模块 load 时 STORAGE_BUCKET 未设 → 测试里手动补白名单
+        v2_module._ALLOWED_VIDEO_HOSTS.add("ailixiao-uploads-1421174544.cos.ap-guangzhou.myqcloud.com")
+
+        data = b"\x00\x00\x00\x18ftypisom" + b"\x00" * 100  # fake mp4 magic
+        files = {"file": ("test.mp4", data, "video/mp4")}
+        r = c.post("/api/video/clone-v2/upload/video", files=files,
+                   headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["video_url"] == fake_url
+        assert "sha256" in body
+
+    def test_upload_video_ssrf_guard_rejects_bad_url(self, monkeypatch):
+        """upload_to_cos 若返回非白名单域名 → validate_video_url 应拦截 → 500/400。"""
+        import subprocess
+        from app.api import video_clone_v2 as v2_module
+
+        c, token = self._make_v2_client(monkeypatch)
+
+        def _fake_subprocess_run(cmd, **kw):
+            m = MagicMock()
+            m.stdout = '{"format":{"duration":"3.0"}}'
+            m.returncode = 0
+            return m
+
+        monkeypatch.setattr(subprocess, "run", _fake_subprocess_run)
+        monkeypatch.setattr(v2_module, "upload_to_cos", lambda p: "https://evil.com/steal.mp4")
+        monkeypatch.setattr(v2_module, "cache_store", lambda sha, p: False)
+        monkeypatch.setattr(v2_module, "cache_clean_old", lambda: None)
+
+        data = b"\x00\x00\x00\x18ftypisom" + b"\x00" * 100
+        files = {"file": ("test.mp4", data, "video/mp4")}
+        r = c.post("/api/video/clone-v2/upload/video", files=files,
+                   headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 400, f"非白名单 URL 应被 SSRF 守卫拦截,实际:{r.status_code}"
+
+    def test_upload_image_calls_cos(self, monkeypatch):
+        """upload_image 端点:mock upload_to_cos 返 COS URL → 200。"""
+        from app.api import video_clone_v2 as v2_module
+
+        c, token = self._make_v2_client(monkeypatch)
+        fake_url = "https://ailixiao-uploads-1421174544.cos.ap-guangzhou.myqcloud.com/uploads/img.jpg"
+        monkeypatch.setattr(v2_module, "upload_to_cos", lambda p: fake_url)
+
+        from PIL import Image
+        import io
+        buf = io.BytesIO()
+        Image.new("RGB", (100, 100), color=(128, 128, 128)).save(buf, format="JPEG")
+        img_bytes = buf.getvalue()
+
+        files = {"file": ("ok.jpg", img_bytes, "image/jpeg")}
+        data = {"role": "product"}
+        r = c.post("/api/video/clone-v2/upload/image", files=files, data=data,
+                   headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 200, r.text
+        assert r.json()["image_url"] == fake_url

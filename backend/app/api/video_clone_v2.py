@@ -32,7 +32,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.services.billing import check_user_credits, deduct_credits
 from app.services.content_filter import check_prompt
-from app.services.fal_service import fal_upload_with_retry
+from app.services.cos_upload import upload_to_cos
 from app.services.logger import log_info, log_error
 from app.api.jobs import create_tracked_task
 from app.services.upload_guard import read_bounded
@@ -76,11 +76,16 @@ def _guard_enabled() -> None:
 # ── SSRF 守卫:video_url 域名白名单(商用 SaaS 必须)─────────────────────────
 # fal.media 是 fal.ai 文件存储 CDN(实际生产 host 形如 v3.fal.media)
 # ailixiao.com / cdn.ailixiao.com 是我们自家 CDN(后续接 OSS 用)
-_ALLOWED_VIDEO_HOSTS = frozenset({
+_ALLOWED_VIDEO_HOSTS = set({
     "fal.media",
     "ailixiao.com",
     "cdn.ailixiao.com",
 })
+import os as _os
+_cos_bucket = _os.environ.get("STORAGE_BUCKET", "").strip()
+_cos_region = (_os.environ.get("STORAGE_REGION", "") or "ap-guangzhou").strip()
+if _cos_bucket:
+    _ALLOWED_VIDEO_HOSTS.add(f"{_cos_bucket}.cos.{_cos_region}.myqcloud.com")
 _ALLOWED_VIDEO_HOST_SUFFIXES = (
     ".fal.media",
     ".fal.ai",
@@ -343,10 +348,8 @@ async def upload_video(
             dur = 0
         # ⭐ 红线 3:文件本体 SHA256
         file_sha256 = sha256_file(video_path)
-        url = await fal_upload_with_retry(video_path)
-        # 防御性校验:fal storage 应该返 *.fal.media,但万一返了别的 host
-        # 也不能直接信任 — 同一个 allowlist 把关,失败就是 fal 自己 schema 变了
-        validate_video_url(url, field_name="fal_storage_url")
+        url = await asyncio.to_thread(upload_to_cos, video_path)
+        validate_video_url(url, field_name="cos_storage_url")
         # Path B 缓存:把临时文件搬到 /tmp/v2_cache/{sha256}.mp4
         # 让 check-duration 直读本地(省去跨境读 fal CDN 的 6-9s)
         # store 内部成功会把 video_path 移走;失败/dedupe 时也会清掉源文件
@@ -390,7 +393,7 @@ async def upload_image(
         tmp.write(contents)
         tmp_path = tmp.name
     try:
-        url = await fal_upload_with_retry(tmp_path)
+        url = await asyncio.to_thread(upload_to_cos, tmp_path)
     finally:
         try: os.unlink(tmp_path)
         except Exception: pass
