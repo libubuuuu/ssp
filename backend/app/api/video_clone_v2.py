@@ -681,16 +681,9 @@ async def create(
     if not check_user_credits(user_id, total_credits):
         raise HTTPException(402, f"积分不足,需 {total_credits} 积分")
     job_id = str(uuid.uuid4())
-    # 对账单:扣费时直接带上"接口:模型"(原子记账,扣费即记,绝不会漏)
-    # 格式统一为 "{接口}:{模型}",冒号前是接口/供应商,一眼区分:
-    #   aiview:seedance-2-0-fast  = 走【新接口 aiview】
-    #   fal:seedance-r2v          = 走【fal 接口】
     _vc2_provider = (settings.VIDEO_CLONE_V2_PROVIDER or "fal").lower()
-    # 模型用【用户本单所选】(fast / 标准版2.0),不再用全局 .env 默认
     _vc2_model_name = req.video_model if _vc2_provider == "aiview" else "seedance-r2v"
-    _vc2_model = f"{_vc2_provider}:{_vc2_model_name}"
-    if not deduct_credits(user_id, total_credits, ref_id=job_id, module="video/clone-v2",
-                          model=_vc2_model):
+    if not deduct_credits(user_id, total_credits, ref_id=job_id, module="video/clone-v2"):
         raise HTTPException(402, "扣费失败(并发竞争)")
 
     # 6. build_prompt(⭐ 功能 3)
