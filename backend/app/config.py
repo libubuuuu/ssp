@@ -36,7 +36,17 @@ class Settings(BaseSettings):
     # FAL AI (最低成本配置)
     FAL_KEY: str = ""
     FAL_IMAGE_MODEL: str = "fal-ai/nano-banana-2"
+    # 图片生成主力渠道（subrouter.ai gpt-image-2，比 fal 便宜）
+    IMAGE_API_KEY: str = ""
+    IMAGE_API_BASE_URL: str = "https://subrouter.ai/v1"
+    IMAGE_API_FALLBACK_URL: str = "https://aiapi.up.railway.app/v1"  # subrouter 挂时自动切
     FAL_VIDEO_MODEL: str = "fal-ai/kling-video/o3/standard/image-to-video"
+
+    # 七十六续:长视频工作台模型可切换(env 留空 = 用代码默认值,行为不变)
+    # OVERRIDE 非空时,无视 mode 全部用 OVERRIDE(灰度/全量切换的开关);失败 3 次自动回退对应 mode 默认值
+    STUDIO_VIDEO_MODEL_EDIT: str = ""           # 默认 fal-ai/kling-video/o1/video-to-video/edit
+    STUDIO_VIDEO_MODEL_EDIT_O3: str = ""        # 默认 fal-ai/kling-video/o3/pro/video-to-video/edit
+    STUDIO_VIDEO_MODEL_OVERRIDE: str = ""       # 灰度/全量开关,非空时所有 mode 都走它
 
     # 阿里云短信
     ALIYUN_ACCESS_KEY_ID: str = ""
@@ -46,6 +56,75 @@ class Settings(BaseSettings):
 
     # JWT 认证（必须从环境变量设置，无默认值）
     JWT_SECRET: str = ""
+
+    # P5: Sentry 错误监控(可选 — 空时不启用)
+    SENTRY_DSN: str = ""
+    ENVIRONMENT: str = "production"  # 也用于 Sentry 标签;dev/staging/production
+
+    # P8: httpOnly Cookie 配置
+    # 生产推荐:COOKIE_DOMAIN=".ailixiao.com",COOKIE_SECURE=True
+    # 本地/测试:COOKIE_DOMAIN="",COOKIE_SECURE=False(http 也能 set)
+    COOKIE_DOMAIN: str = ""        # 空字符串 = 不设 Domain 属性(浏览器默认 exact host)
+    COOKIE_SECURE: bool = True     # production 必 True;dev http 设 False
+
+    # 七十二续:对象存储直传(B 方案 — 用户上传走前端 → COS 直传,服务器只签 STS 凭证)
+    # 默认关,启用前 /api/storage/sts 返 503;启用后所有上传端点应改走 OSS URL
+    STORAGE_DIRECT_UPLOAD_ENABLED: bool = False
+    STORAGE_PROVIDER: str = "tencent_cos"        # 当前只实现 tencent_cos,留接口给 aliyun_oss 等
+    STORAGE_BUCKET: str = ""                     # COS bucket 名,如 "ssp-uploads-1300000000"
+    STORAGE_REGION: str = ""                     # 区域,如 "ap-guangzhou"
+    STORAGE_SECRET_ID: str = ""                  # 子账号 SecretId(读 STS 权限即可,不用 root)
+    STORAGE_SECRET_KEY: str = ""                 # 子账号 SecretKey
+    STORAGE_DURATION_SECONDS: int = 900          # 临时凭证有效期(15 分钟,够大文件上传)
+    STORAGE_BUCKET_PREFIX: str = "uploads/"      # 限制 STS 凭证只能写这个前缀,防越权
+
+    # P219 (2026-05-09) /video-clone 旧 Seedance 链路开关
+    # 默认关:已被 /video-clone-v2(双版本下载)取代
+    # /api/video/clone/generate 在关闭时返 503,引导用户走 /video-clone-v2
+    # 1 个月观察期后(2026-06-09 之后)再决定是否删除全部 Seedance 代码
+    ENABLE_SEEDANCE_VIDEO_CLONE: bool = False
+
+    # P221 (2026-05-09) 视频复刻 V2(Seedance 2.0 fast/reference-to-video + 双版本下载)
+    # 默认关:阶段 A 灰度未开,代码骨架就位但所有端点返 503
+    # 详见 docs/P221-API-SCHEMA.md / docs/P221-MIGRATION.sql / docs/legal/*
+    ENABLE_VIDEO_CLONE_V2: bool = False
+    # 三道工程保险阈值(用户最终决议锁定,改要走 PR)
+    VC2_MAX_SEGMENT_COST_USD: float = 1.50    # 单段 fal 实扣超 → 全额退 + 报警
+    VC2_MAX_ORDER_COST_USD: float = 15.0      # 单订单估算超 → 拒收
+    VC2_DAILY_FAL_BUDGET_USD: float = 100.0   # 每日累计超 → 自动 disable v2
+
+    # 六十八续:微信支付 V3(默认关,等用户开商户号 + 配 cert 后启用)
+    WECHAT_PAY_ENABLED: bool = False
+    WECHAT_PAY_MCH_ID: str = ""                  # 商户号(10 位数字)
+    WECHAT_PAY_APP_ID: str = ""                  # 公众号 / 小程序 / 开放平台 AppID
+    WECHAT_PAY_API_V3_KEY: str = ""              # APIv3 密钥(32 位,商户后台设置)
+    WECHAT_PAY_CERT_SERIAL: str = ""             # 商户 API 证书序列号
+    WECHAT_PAY_PRIVATE_KEY_PATH: str = ""        # 商户 API 私钥 PEM 文件路径
+    WECHAT_PAY_NOTIFY_URL: str = ""              # 异步回调 URL,如 https://ailixiao.com/api/wechat-pay/notify
+
+    # 灵梦 API(Gemini,OpenAI 兼容接口)
+    LINGMENG_BASE_URL: str = "https://subrouter.ai/v1"
+    LINGMENG_FALLBACK_URL: str = "https://aiapi.up.railway.app/v1"  # subrouter 挂时自动切
+    LINGMENG_MODEL: str = "gpt-5.5"
+    LINGMENG_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
+    # 联网搜索专用 key（gpt-4o-search-preview，独立渠道）
+    SEARCH_API_KEY: str = ""
+    SEARCH_BASE_URL: str = "https://1189.xin/v1"
+
+    # 虎皮椒支付
+    HUPIJIAO_APPID: str = "201906180392"
+    HUPIJIAO_SECRET: str = ""  # 从 .env.enc 读取
+
+    # aiview.club Open API(文生图新模型"专业版模式") — 第三方对接
+    # 所有调用走服务端 + HMAC-SHA256 签名;AppSecret 敏感,绝不进前端/git
+    AIVIEW_API_KEY: str = ""       # AppKey, 形如 ak_xxx
+    AIVIEW_API_SECRET: str = ""    # AppSecret, 形如 sk_xxx(敏感)
+    AIVIEW_BASE_URL: str = "https://www.aiview.club"
+    # 视频复刻(video-clone-v2)用哪个通道出视频:"fal"=原 FAL Seedance / "aiview"=第三方
+    # 默认 fal(不改配置则行为不变);设为 aiview 即切到第三方,可随时切回
+    VIDEO_CLONE_V2_PROVIDER: str = "fal"
+    AIVIEW_VIDEO_MODEL: str = "seedance-2-0-fast"  # aiview 视频模型
 
     class Config:
         env_file = str(_ENV_PATH)

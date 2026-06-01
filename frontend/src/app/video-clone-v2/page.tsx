@@ -1,0 +1,1975 @@
+"use client";
+import { Fragment, useEffect, useRef, useState } from "react";
+import Sidebar from "@/components/Sidebar";
+import { useLang } from "@/lib/i18n/LanguageContext";
+import { adjustLocalUserCredits } from "@/lib/userState";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
+
+// 多段 drop 区颜色(最多 4 区)
+const RANGE_COLORS = ["#dc2626", "#f97316", "#9333ea", "#06b6d4"] as const;
+const MAX_RANGES = 4;
+
+// 2026-05-10 砍单档:Tier type 删除
+type Role = "product" | "person" | "scene" | "reference";
+type SourceType = "ai" | "original";
+type ReplacementMode = "partial" | "full";
+type Status =
+  | "idle"
+  | "uploading"
+  | "ready"
+  | "submitting"
+  | "processing"
+  | "completed"
+  | "partial_completed"
+  | "failed";
+
+interface SegmentChoice {
+  idx: number;
+  start: number;
+  duration: number;
+  thumbnail_url: string | null;
+  // 2026-05-10 砍单档:allowed_tiers 字段删除(后端 SegmentChoice 模型同步删)
+}
+interface PreviewResp {
+  type: "single" | "ultimate";
+  segments: SegmentChoice[];
+  preview_token: string;
+  scene_count: number;
+}
+interface EstimateResp {
+  type: string;
+  ai_segments_count: number;
+  total_segments: number;
+  total_credits: number;
+  total_rmb_display: string;
+  estimated_minutes: number;
+}
+interface ImageItem {
+  url: string;
+  role: Role;
+  filename: string;
+}
+interface Template {
+  id: string;
+  label: string;
+  template: string;
+}
+interface TrimCandidate {
+  label: string;
+  position: "head" | "middle" | "tail";
+  start: number;
+  end: number;
+  motion_score: number;
+  recommended: boolean;
+}
+interface CheckDurationResp {
+  needs_trim: boolean;
+  current_duration: number;
+  target_duration: number;
+  drop_seconds: number;
+  suggestions: TrimCandidate[];
+}
+interface JobView {
+  job_id: string;
+  type: string;
+  replacement_mode: string;
+  status: string;
+  created_at?: string;
+  progress: { completed: number; total_ai: number; total_original: number };
+  segments: Array<{ idx: number; source_type: string; status: string; stage?: string; output_url: string | null; watermarked_url?: string | null; raw_url?: string | null; error?: string | null }>;
+  final_video_url: string | null;
+  final_video_url_watermarked: string | null;
+  final_video_url_raw: string | null;
+  total_credits_charged: number;
+  total_credits_refunded: number;
+  error: string | null;
+}
+
+const ROLE_LABELS: Record<Role, string> = {
+  product: "产品",
+  person: "人物",
+  scene: "场景",
+  reference: "参考",
+};
+
+// 傻瓜化:每张图选"用途"(按角色给不同选项),系统据此自动拼提示词。用户不用打 @、不用写句子。
+const PURPOSE_BY_ROLE: Record<string, { v: string; label: string }[]> = {
+  product: [
+    { v: "top", label: "换上衣" }, { v: "bottom", label: "换裤子/下装" },
+    { v: "shoes", label: "换鞋" }, { v: "full", label: "换整套穿搭" }, { v: "product", label: "换产品" },
+  ],
+  person: [{ v: "face", label: "换脸 / 换人物" }],
+  scene: [{ v: "bg", label: "换背景" }],
+  reference: [],
+};
+const DEFAULT_PURPOSE: Record<string, string> = { product: "full", person: "face", scene: "bg", reference: "" };
+const PURPOSE_TEXT: Record<string, (ref: string) => string> = {
+  top: (r) => `把视频里人物的上衣换成 ${r}`,
+  bottom: (r) => `把视频里人物的下装换成 ${r}`,
+  shoes: (r) => `把视频里人物的鞋换成 ${r}`,
+  full: (r) => `把视频里人物的整套穿搭换成 ${r}`,
+  product: (r) => `把视频里的产品换成 ${r}`,
+  face: (r) => `把视频里人物的脸和头部换成 ${r} 的人物`,
+  bg: (r) => `把视频的背景换成 ${r}`,
+};
+
+// 2026-05-10 砍单档:TIER_DISPLAY 删除,改 SEGMENT_PRICE 单档常量
+// 占位定价用原 standard 档值,commit 5 真测后基于 fal cost 重定
+const SEGMENT_PRICE = {
+  rmb: "19.9",
+  credits: 20,
+  label: "AI 复刻视频",
+} as const;
+
+// 每段独立选择
+interface SegmentSelection {
+  source_type: SourceType;
+  // 2026-05-10 砍单档:tier 字段删除
+}
+
+export default function VideoCloneV2Page() {
+  const { t } = useLang();
+  // 上传状态
+  const [video, setVideo] = useState<{ url: string; duration: number; sha256: string } | null>(null);
+  const [uploadingVideo, setUploadingVideo] = useState(false);
+  const [images, setImages] = useState<ImageItem[]>([]);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [pendingRole, setPendingRole] = useState<Role>("product");
+
+  // ─── B+ 阶段:check-duration 弹窗 + 多段 drop ranges ───
+  // 用户可任意选 N 段非连续要丢弃的区间,总和 = drop_seconds 才能确认
+  const [trimPopup, setTrimPopup] = useState<CheckDurationResp | null>(null);
+  // 完成后传给 /create:trim 字段保留主段(legacy)+ trim_drop_ranges 数组(全段)
+  const [trim, setTrim] = useState<{
+    start: number; end: number; trimmed: number;
+    ranges: Array<{ start: number; end: number }>
+  } | null>(null);
+  // 弹窗打开时的多段编辑状态
+  const [dropRanges, setDropRanges] = useState<Array<{ start: number; end: number }>>([]);
+
+  // 切片预览(post-trim)
+  const [preview, setPreview] = useState<PreviewResp | null>(null);
+
+  // 2026-05-10 砍单档:全局 tier state 删除(single 模式无需选档位)
+
+  // ultimate 模式:每段独立选择
+  const [segSelections, setSegSelections] = useState<Record<number, SegmentSelection>>({});
+
+  // ultimate 模式:replacement_mode
+  const [replacementMode, setReplacementMode] = useState<ReplacementMode>("full");
+
+  // 视频模型(用户自选):极速版 fast(55积分/秒) / 标准版 2.0(60积分/秒)
+  const [videoModel, setVideoModel] = useState<"seedance-2-0-fast" | "seedance-2-0">("seedance-2-0-fast");
+
+  // 提示词 @ 提及:打 @ 弹出图片/视频选择(像大厂)。pos = @ 在文本里的位置
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+  const [atMenu, setAtMenu] = useState<{ open: boolean; query: string; pos: number }>({ open: false, query: "", pos: -1 });
+
+  // 傻瓜模式:每张图的用途(key=图片url) + 去掉原视频台词开关
+  const [imagePurpose, setImagePurpose] = useState<Record<string, string>>({});
+  const [removeOriginalSpeech, setRemoveOriginalSpeech] = useState(false);
+
+  // prompt + 模板
+  const [prompt, setPrompt] = useState("");
+  const [speechText, setSpeechText] = useState("");  // 口播文案(选填):填了让人物改说
+  const [aiOptimizing, setAiOptimizing] = useState(false);
+  // 2026-05-11:目标市场 toggle(CN 国内 / Global 海外),影响 AI prompt 优化的语言风格
+  const [region, setRegion] = useState<"CN" | "Global">("CN");
+  const [templates, setTemplates] = useState<Template[]>([]);
+
+  // 估价
+  const [estimate, setEstimate] = useState<EstimateResp | null>(null);
+
+  // 提交
+  const [disclaimerChecked, setDisclaimerChecked] = useState(false);
+  const [submitStatus, setSubmitStatus] = useState<Status>("idle");
+  const [error, setError] = useState("");
+
+  // 任务追踪
+  const [job, setJob] = useState<JobView | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // 无标识版下载二次确认
+  const [showRawConfirm, setShowRawConfirm] = useState(false);
+  const [rawAck1, setRawAck1] = useState(false);
+  const [rawAck2, setRawAck2] = useState(false);
+  const [rawAck3, setRawAck3] = useState(false);
+
+  function token(): Record<string, string> {
+    const t = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    return t ? { Authorization: `Bearer ${t}` } : {};
+  }
+
+  // ─── 页面加载:恢复未完成任务 ───
+  useEffect(() => {
+    const saved = typeof window !== "undefined" ? localStorage.getItem("vc2_active_job") : null;
+    if (!saved) return;
+    fetch(`${API_BASE}/api/video/clone-v2/jobs/${saved}`, { credentials: "include", headers: token() })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d: JobView | null) => {
+        if (!d) { localStorage.removeItem("vc2_active_job"); return; }
+        setJob(d);
+        if (["completed", "partial_completed", "failed", "refunded", "cancelled"].includes(d.status)) {
+          localStorage.removeItem("vc2_active_job");
+          if (d.status === "completed") {
+            setSubmitStatus("completed");
+          } else if (d.status === "partial_completed") {
+            setSubmitStatus("partial_completed");
+            if (d.total_credits_refunded > 0) adjustLocalUserCredits(+d.total_credits_refunded);
+            setError(d.error || `部分段失败,已退还 ${d.total_credits_refunded} 积分`);
+          } else {
+            setSubmitStatus("failed");
+            if (d.total_credits_refunded > 0) adjustLocalUserCredits(+d.total_credits_refunded);
+            setError(d.error || `任务 ${d.status}`);
+          }
+        } else {
+          setSubmitStatus("processing");
+          pollJob(saved);
+        }
+      })
+      .catch(() => localStorage.removeItem("vc2_active_job"));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ─── 拉模板 ───
+  useEffect(() => {
+    fetch(`${API_BASE}/api/video/clone-v2/prompt-templates`, {
+      credentials: "include",
+      headers: token(),
+    })
+      .then((r) => r.json())
+      .then((d) => setTemplates(d.templates || []))
+      .catch(() => {});
+  }, []);
+
+  // ─── 视频上传后 → check-duration → 必要时弹 trim,否则直接 preview-segments ───
+  useEffect(() => {
+    if (!video) return;
+    setError("");
+    fetch(`${API_BASE}/api/video/clone-v2/check-duration`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json", ...token() },
+      body: JSON.stringify({
+        video_duration_sec: video.duration,
+        video_sha256: video.sha256,
+        video_url: video.url,
+      }),
+    })
+      .then((r) => r.json())
+      .then((d: CheckDurationResp) => {
+        if (d.needs_trim) {
+          setTrimPopup(d);
+        } else {
+          setTrim(null);
+          fetchPreview(video.url, video.duration);
+        }
+      })
+      .catch((e) => setError(`check-duration 失败:${e}`));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [video]);
+
+  function fetchPreview(url: string, duration: number) {
+    fetch(`${API_BASE}/api/video/clone-v2/preview-segments`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json", ...token() },
+      body: JSON.stringify({ video_url: url, video_duration_sec: duration }),
+    })
+      .then((r) => r.json())
+      .then((d: PreviewResp) => {
+        setPreview(d);
+        if (d.type === "single") {
+          // 单档:不需要 tier 推断,single 模式段卡片直接走
+          setSegSelections({});
+        } else {
+          // ultimate:每段默认 ai(单档无 tier)
+          const init: Record<number, SegmentSelection> = {};
+          for (const s of d.segments) {
+            init[s.idx] = { source_type: "ai" };
+          }
+          setSegSelections(init);
+        }
+      })
+      .catch((e) => setError(`切片预览失败:${e}`));
+  }
+
+  // ─── trim 弹窗:多段 drop ranges 提交 ───
+  // 推荐 radio / 自由编辑都通过 dropRanges 状态,确认时一并提交
+  function applyMultiTrim(ranges: Array<{ start: number; end: number }>) {
+    if (!video || !trimPopup) return;
+    const total = ranges.reduce((s, r) => s + (r.end - r.start), 0);
+    setTrim({
+      start: ranges[0].start,
+      end: ranges[0].end,
+      trimmed: total,
+      ranges: ranges.slice(),
+    });
+    setTrimPopup(null);
+    setDropRanges([]);
+    const effective = video.duration - total;
+    fetchPreview(video.url, effective);
+  }
+  // 推荐位置 = 把 dropRanges 重置成单段(用户还能继续编辑/加段)
+  function pickRecommended(picked: TrimCandidate) {
+    setDropRanges([{ start: picked.start, end: picked.end }]);
+  }
+
+  // ─── 拉估价(single + ultimate 共用)───
+  useEffect(() => {
+    if (!preview) return;
+    // 单档:body segments 不传 tier(后端 SegmentPlanItem 已加 extra="forbid",传 tier 会被拒 422)
+    const segments = preview.type === "single"
+      ? [{ idx: preview.segments[0].idx, source_type: "ai" }]
+      : preview.segments.map((s) => {
+          const sel = segSelections[s.idx];
+          if (!sel || sel.source_type === "ai") {
+            return { idx: s.idx, source_type: "ai" };
+          }
+          return { idx: s.idx, source_type: "original" };
+        });
+    // 2026-05-13:加 video_duration_sec 让后端按段 duration × 50 算积分
+    const totalDur = preview.segments.reduce((acc, s) => acc + (s.duration || 0), 0);
+    fetch(`${API_BASE}/api/video/clone-v2/estimate`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json", ...token() },
+      body: JSON.stringify({
+        type: preview.type,
+        replacement_mode: preview.type === "ultimate" ? replacementMode : "full",
+        video_model: videoModel,
+        segments,
+        video_duration_sec: totalDur,
+      }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.detail) { setError(d.detail); return; }
+        setError("");
+        setEstimate(d);
+      })
+      .catch(() => {});
+  }, [preview, segSelections, replacementMode, videoModel]);
+
+  // ─── 视频上传 handler ───
+  async function handleVideoUpload(file: File) {
+    setUploadingVideo(true);
+    setError("");
+    setTrim(null);
+    setTrimPopup(null);
+    setDropRanges([]);
+    setPreview(null);
+    setEstimate(null);
+    setSegSelections({});
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await fetch(`${API_BASE}/api/video/clone-v2/upload/video`, {
+        method: "POST",
+        credentials: "include",
+        headers: token(),
+        body: fd,
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || "上传失败");
+      setVideo({ url: d.video_url, duration: d.duration_sec, sha256: d.sha256 || "" });
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUploadingVideo(false);
+    }
+  }
+
+  // ─── 图片上传 handler ───
+  async function handleImageUpload(file: File, role: Role) {
+    setUploadingImage(true);
+    setError("");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("role", role);
+      const r = await fetch(`${API_BASE}/api/video/clone-v2/upload/image`, {
+        method: "POST",
+        credentials: "include",
+        headers: token(),
+        body: fd,
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || "上传失败");
+      setImages((arr) => [...arr, { url: d.image_url, role: d.role, filename: file.name }].slice(0, 6));  // 参考图总上限 6 张(对齐 aiview Seedance 2.0)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUploadingImage(false);
+    }
+  }
+
+  function applyTemplate(t: Template) { setPrompt(t.template); }
+
+  // ─── 提示词 @ 提及:打 @ 弹出"图片/视频"选择(像大厂那样)───
+  // 选项 = 每张参考图按 role 编号(产品1/人物1/场景1...) + 参考视频(视频1)
+  function buildMentionOptions() {
+    const counts: Record<string, number> = {};
+    const opts = images.map((img) => {
+      counts[img.role] = (counts[img.role] || 0) + 1;
+      return { label: `${ROLE_LABELS[img.role]}${counts[img.role]}`, thumb: img.url, sub: img.filename || "", isVideo: false };
+    });
+    if (video) opts.push({ label: "视频1", thumb: video.url, sub: "参考视频", isVideo: true });
+    return opts;
+  }
+  function onPromptChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    const val = e.target.value;
+    setPrompt(val);
+    const cursor = e.target.selectionStart ?? val.length;
+    const m = val.slice(0, cursor).match(/@([^\s@]*)$/);   // 光标前最近一个 @ 后面跟的字
+    if (m) setAtMenu({ open: true, query: m[1], pos: cursor - m[1].length - 1 });
+    else if (atMenu.open) setAtMenu({ open: false, query: "", pos: -1 });
+  }
+  function insertMention(label: string) {
+    const ta = promptRef.current;
+    const cursor = ta?.selectionStart ?? prompt.length;
+    const before = prompt.slice(0, atMenu.pos);   // @ 之前的原文
+    const after = prompt.slice(cursor);           // 光标之后的原文
+    const inserted = `@${label} `;
+    setPrompt(before + inserted + after);
+    setAtMenu({ open: false, query: "", pos: -1 });
+    requestAnimationFrame(() => {
+      if (ta) { const p = (before + inserted).length; ta.focus(); ta.setSelectionRange(p, p); }
+    });
+  }
+
+  // 傻瓜模式:把每张图的"用途"自动拼成 @ 格式提示词(填进提示词框,用户可再改)
+  function composeAutoPrompt() {
+    const counts: Record<string, number> = {};
+    const parts: string[] = [];
+    for (const img of images) {
+      counts[img.role] = (counts[img.role] || 0) + 1;
+      const ref = `@${ROLE_LABELS[img.role]}${counts[img.role]}`;  // 如 @产品1 / @人物1
+      const purpose = imagePurpose[img.url] || DEFAULT_PURPOSE[img.role] || "";
+      const fn = PURPOSE_TEXT[purpose];
+      if (fn) parts.push(fn(ref));
+    }
+    let text = "以 @视频1 为参考视频,保持其运动、构图和节奏。";
+    if (parts.length) text += parts.join(",") + "。";
+    if (removeOriginalSpeech) text += "新视频中不要保留原视频里的台词、字幕和旁白。";
+    else text += "新视频中保留原视频里的台词和声音、字幕和旁白。";
+    setPrompt(text);
+  }
+
+  async function handleAiOptimize() {
+    const desc = prompt.trim();
+    if (!desc) {
+      setError("请先写一下你的想法,再点 AI 优化");
+      return;
+    }
+    setError(null);
+    setAiOptimizing(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/video/clone-v2/generate-prompt`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...token() },
+        body: JSON.stringify({ user_description: desc, region }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        throw new Error(`HTTP ${r.status}: ${txt.slice(0, 200)}`);
+      }
+      const data = await r.json();
+      if (data.generated_prompt) {
+        setPrompt(data.generated_prompt);
+      }
+    } catch (e) {
+      setError(`AI 优化失败:${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setAiOptimizing(false);
+    }
+  }
+
+  // ─── ultimate 段更新 helper ───
+  function updateSeg(idx: number, patch: Partial<SegmentSelection>) {
+    setSegSelections((prev) => ({
+      ...prev,
+      [idx]: { ...prev[idx], ...patch } as SegmentSelection,
+    }));
+  }
+
+  // ─── 提交 ───
+  async function handleSubmit() {
+    if (!video || !preview || preview.segments.length === 0) {
+      setError("请先上传视频"); return;
+    }
+    if (!disclaimerChecked) { setError("请勾选《视频复刻 V2 上传声明书》"); return; }
+
+    // 构造 segments(single / ultimate 不同)
+    // 单档:body segments 不传 tier(后端 forbid 会拒)
+    let segments: Array<{ idx: number; source_type: SourceType }>;
+    if (preview.type === "single") {
+      segments = [{ idx: preview.segments[0].idx, source_type: "ai" }];
+    } else {
+      segments = preview.segments.map((s) => {
+        const sel = segSelections[s.idx];
+        if (!sel || sel.source_type === "ai") {
+          return { idx: s.idx, source_type: "ai" };
+        }
+        return { idx: s.idx, source_type: "original" };
+      });
+      // ultimate 必须至少 1 段 ai(后端校验,前端先卡)
+      if (!segments.some((s) => s.source_type === "ai")) {
+        setError("至少要有 1 段选 AI 生成"); return;
+      }
+    }
+
+    setSubmitStatus("submitting");
+    setError("");
+    try {
+      const body: Record<string, unknown> = {
+        type: preview.type,
+        replacement_mode: preview.type === "ultimate" ? replacementMode : "full",
+        video_model: videoModel,
+        segments,
+        video_url: video.url,
+        video_duration_sec: video.duration,
+        video_sha256: video.sha256,
+        image_urls: images.map((i) => ({ url: i.url, role: i.role })),
+        prompt,
+        speech_text: speechText,
+        disclaimer_acknowledged: true,
+      };
+      if (trim) {
+        body.trim_drop_ranges = trim.ranges.map((r) => [r.start, r.end]);
+        body.trimmed_seconds = trim.trimmed;
+        // legacy 字段保留(后端会自动转,但前端也写一份方便审计)
+        body.trim_start = trim.start;
+        body.trim_end = trim.end;
+      }
+      const r = await fetch(`${API_BASE}/api/video/clone-v2/create`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...token() },
+        body: JSON.stringify(body),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || "提交失败");
+      if (typeof window !== "undefined") localStorage.setItem("vc2_active_job", d.job_id);
+      if (estimate?.total_credits) adjustLocalUserCredits(-estimate.total_credits);
+      setSubmitStatus("processing");
+      pollJob(d.job_id);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+      setSubmitStatus("idle");
+    }
+  }
+
+  // ─── 轮询 job ───
+  function pollJob(jobId: string) {
+    if (pollRef.current) clearInterval(pollRef.current);
+    let pollFails = 0;
+    const tick = async () => {
+      try {
+        const r = await fetch(`${API_BASE}/api/video/clone-v2/jobs/${jobId}`, {
+          credentials: "include",
+          headers: token(),
+        });
+        const d: JobView = await r.json();
+        if (!r.ok) {
+          setError(`任务查询失败:${(d as unknown as { detail: string }).detail}`);
+          if (pollRef.current) clearInterval(pollRef.current);
+          return;
+        }
+        setJob(d);
+        if (["completed", "partial_completed", "failed", "refunded", "cancelled"].includes(d.status)) {
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = null;
+          if (typeof window !== "undefined") localStorage.removeItem("vc2_active_job");
+          if (d.status === "completed") {
+            setSubmitStatus("completed");
+          } else if (d.status === "partial_completed") {
+            setSubmitStatus("partial_completed");
+            if (d.total_credits_refunded > 0) adjustLocalUserCredits(+d.total_credits_refunded);
+            setError(d.error || `部分段失败,已退还 ${d.total_credits_refunded} 积分`);
+          } else {
+            setSubmitStatus("failed");
+            if (d.total_credits_refunded > 0) adjustLocalUserCredits(+d.total_credits_refunded);
+            const errMsg = d.error || `任务 ${d.status}`;
+            const isNsfw = errMsg.toLowerCase().includes("nsfw") || errMsg.includes("content_policy") || errMsg.includes("content_checker");
+            setError(isNsfw
+              ? `生成失败：内衣/敏感品类被 fal 拒绝，已退还 ${d.total_credits_refunded} 积分。建议换用普通服装类产品图重试。`
+              : (d.total_credits_refunded > 0 ? `${errMsg}（已退还 ${d.total_credits_refunded} 积分）` : errMsg)
+            );
+          }
+        }
+      } catch {
+        if (++pollFails >= 5) {
+          if (pollRef.current) clearInterval(pollRef.current);
+          setError("任务状态查询失败,请刷新页面重试");
+          setSubmitStatus("failed");
+        }
+      }
+    };
+    tick();
+    pollRef.current = setInterval(tick, 4000);
+  }
+
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+
+  // 经过时间计时器 — processing 期间每秒 +1
+  useEffect(() => {
+    if (submitStatus === "processing" && job?.created_at) {
+      if (elapsedRef.current) clearInterval(elapsedRef.current);
+      const startMs = new Date(
+        job.created_at.endsWith("Z") ? job.created_at : job.created_at + "Z"
+      ).getTime();
+      elapsedRef.current = setInterval(() => {
+        setElapsedSec(Math.floor((Date.now() - startMs) / 1000));
+      }, 1000);
+    } else {
+      if (elapsedRef.current) { clearInterval(elapsedRef.current); elapsedRef.current = null; }
+    }
+    return () => { if (elapsedRef.current) { clearInterval(elapsedRef.current); elapsedRef.current = null; } };
+  }, [submitStatus, job?.created_at]);
+
+  function reset() {
+    if (pollRef.current) clearInterval(pollRef.current);
+    if (elapsedRef.current) { clearInterval(elapsedRef.current); elapsedRef.current = null; }
+    setElapsedSec(0);
+    if (typeof window !== "undefined") localStorage.removeItem("vc2_active_job");
+    setVideo(null); setImages([]); setPrompt(""); setEstimate(null);
+    setPreview(null); setSubmitStatus("idle"); setError("");
+    setDisclaimerChecked(false); setJob(null); setShowRawConfirm(false);
+    setRawAck1(false); setRawAck2(false); setRawAck3(false);
+    setTrim(null); setTrimPopup(null); setDropRanges([]); setSegSelections({});
+    setReplacementMode("full");
+  }
+
+  // ─── UI ───
+  return (
+    <div style={{ display: "flex", minHeight: "100vh", background: "#edeae4", fontFamily: "-apple-system,BlinkMacSystemFont,sans-serif" }}>
+      <Sidebar />
+      <main style={{ flex: 1, padding: "2rem 2.5rem", overflowY: "auto", maxWidth: 1100, width: "100%", margin: "0 auto" }}>
+        <div style={{ marginBottom: "1.5rem", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+          <div>
+            <div style={{ fontSize: "0.85rem", color: "#999", marginBottom: "0.3rem" }}>AI 创作工具</div>
+            <h1 style={{ fontSize: "1.8rem", fontWeight: 400, margin: 0, fontFamily: "Georgia,serif" }}>
+              {t("videoCloneV2.titleMain")}<span style={{ fontStyle: "italic" }}> {t("videoCloneV2.titleAccent")}</span>
+            </h1>
+            <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
+              支持 4-64 秒视频 · 标准版 55 / 高质量 60 积分/秒 · 以原视频风格为参考生成含你产品的新视频 · 输出默认含水印
+            </div>
+          </div>
+          <button
+            onClick={() => window.open("/video-clone-v2", "_blank", "noopener")}
+            title="开新窗口并行批量生成"
+            style={{ background: "#fff", border: "1px solid #d1d5db", borderRadius: 8, padding: "0.55rem 0.95rem", fontSize: "0.85rem", fontWeight: 500, color: "#374151", cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0 }}
+          >
+            🆕 新建窗口(批量生成)
+          </button>
+        </div>
+
+        {/* Step 1:上传视频 */}
+        <Section title="1. 上传参考视频(MP4/MOV,≤50MB,4-15 秒)">
+          {!video && (
+            <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 8, padding: "0.7rem 1rem", marginBottom: 12, fontSize: "0.85rem", color: "#075985", lineHeight: 1.6 }}>
+              <b>💡 效果说明</b>:本工具以上传视频的<b>运动节奏、构图和风格</b>为参考,生成包含你产品的全新视频。建议使用<b>单镜头视频</b>,效果最稳定。
+              <br />
+              <b>⏱ 单次复刻最长 15 秒</b>。视频较长?可按以下方式实现长视频复刻:① 将原视频分段截取,每段不超过 15 秒;② 逐段上传并分别复刻;③ 将各段成片拼接为完整视频。
+            </div>
+          )}
+          {!video ? (
+            <FileInput
+              accept="video/*"
+              disabled={uploadingVideo}
+              label={uploadingVideo ? "上传中..." : "选择视频"}
+              onFile={handleVideoUpload}
+            />
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <video src={video.url} controls style={{ width: 200, borderRadius: 8, background: "#000" }} />
+              <div style={{ fontSize: "0.85rem", color: "#666" }}>
+                时长:{video.duration.toFixed(1)} 秒
+                {trim && (
+                  <div style={{ fontSize: "0.78rem", color: "#a16207", marginTop: 4 }}>
+                    已裁剪保留 [{trim.start.toFixed(1)}s, {trim.end.toFixed(1)}s]<br />
+                    丢弃 {trim.trimmed.toFixed(1)} 秒
+                  </div>
+                )}
+                <br />
+                <button onClick={() => { setVideo(null); setPreview(null); setTrim(null); setTrimPopup(null); }} style={btnLink}>更换</button>
+              </div>
+            </div>
+          )}
+        </Section>
+
+        {/* Step 2:上传参考图(产品 / 人物 / 场景 各 0-3 张,总上限 9 张对齐 fal) */}
+        <Section title="2. 上传参考图(产品 / 人物 / 场景,合计最多 6 张)">
+          <div style={{ fontSize: "0.78rem", color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "0.45rem 0.75rem", marginBottom: 12 }}>
+            ⚠️ 内衣 / 泳装 / 情趣类产品图暂不支持
+          </div>
+          <div style={{ fontSize: "0.78rem", color: images.length >= 6 ? "#dc2626" : "#6b7280", marginBottom: 12 }}>
+            参考图合计 {images.length}/6 张{images.length >= 6 ? "(已达上限)" : ",可在产品 / 人物 / 场景间自由分配"}
+          </div>
+          {(["product", "person", "scene"] as Role[]).map((role) => {
+            const roleImages = images.map((img, idx) => ({ img, idx })).filter((x) => x.img.role === role);
+            return (
+              <div key={role} style={{ marginBottom: 16, paddingBottom: 12, borderBottom: "1px dashed #e5e7eb" }}>
+                <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "#374151", marginBottom: 8 }}>
+                  {ROLE_LABELS[role]}图 <span style={{ fontWeight: 400, color: "#9ca3af", fontSize: "0.78rem" }}>(已传 {roleImages.length} 张)</span>
+                </div>
+                {role === "person" && (
+                  <div style={{ fontSize: "0.75rem", color: "#9ca3af", marginBottom: 8, lineHeight: 1.5 }}>
+                    上传人物<b>正脸照片</b>,用于复刻 / 替换视频中的人物形象(换脸)。
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+                  {roleImages.map((x, i) => (
+                    <div key={x.idx} style={{ position: "relative" }}>
+                      <img src={x.img.url} alt={x.img.filename} style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 8, border: "1px solid #ddd" }} />
+                      <div style={{ fontSize: "0.7rem", color: "#666", marginTop: 4, textAlign: "center" }}>@{ROLE_LABELS[role]}{i + 1}</div>
+                      {PURPOSE_BY_ROLE[role].length > 1 && (
+                        <select
+                          value={imagePurpose[x.img.url] || DEFAULT_PURPOSE[role]}
+                          onChange={(e) => setImagePurpose((p) => ({ ...p, [x.img.url]: e.target.value }))}
+                          style={{ width: 80, marginTop: 4, fontSize: "0.7rem", padding: "2px 4px", border: "1px solid #ddd", borderRadius: 6, cursor: "pointer" }}
+                        >
+                          {PURPOSE_BY_ROLE[role].map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+                        </select>
+                      )}
+                      <button onClick={() => setImages((arr) => arr.filter((_, j) => j !== x.idx))} style={{ position: "absolute", top: -6, right: -6, background: "#fff", border: "1px solid #ddd", borderRadius: "50%", width: 20, height: 20, cursor: "pointer", fontSize: "0.7rem" }}>✕</button>
+                    </div>
+                  ))}
+                  {images.length < 6 && (
+                    <FileInput
+                      accept="image/*"
+                      disabled={uploadingImage}
+                      label={uploadingImage ? "上传中..." : `+ 添加${ROLE_LABELS[role]}图`}
+                      onFile={(f) => handleImageUpload(f, role)}
+                    />
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </Section>
+
+        {/* 2026-05-10 砍单档:single 模式不再需要档位选择 UI(整段删除)
+            用户上传 ≤ 8s 视频走 single → 直接进 Step 4 prompt + 模板
+            单价显示在 Step 4 价格预估里(SEGMENT_PRICE.rmb)
+            Step 编号重排留给 commit 3.5 单独 commit */}
+
+        {/* Step 3 - ultimate:多段独立选档 + replacement_mode */}
+        {preview && preview.type === "ultimate" && preview.segments.length > 0 && (
+          <Section title={`3. 切片预览(${preview.segments.length} 段)+ 每段独立选档`}>
+            <div style={{ marginBottom: 12, display: "flex", gap: 16, alignItems: "center", fontSize: "0.85rem", color: "#666" }}>
+              <span>替换模式:</span>
+              {(["full", "partial"] as ReplacementMode[]).map((m) => (
+                <label key={m} style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+                  <input
+                    type="radio"
+                    checked={replacementMode === m}
+                    onChange={() => setReplacementMode(m)}
+                  />
+                  <span>{m === "full" ? "全方位(产品+模特+场景全替换)" : "局部(仅产品/部分细节)"}</span>
+                </label>
+              ))}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
+              {preview.segments.map((s) => {
+                const sel = segSelections[s.idx] ?? { source_type: "ai" as SourceType };
+                return (
+                  <div key={s.idx} style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: 12 }}>
+                    {/* ⭐ 缩略图:点播放该 8s 段,直观看每段是啥再决定 AI/原 */}
+                    {/* effective_time → original_time 映射:plan 用 effective 0-based,
+                        视频元素需要 original 时间(因为 video.url 是用户上传的整片) */}
+                    {video && (
+                      <div style={{ marginBottom: 8 }}>
+                        <SegmentPreview
+                          src={video.url}
+                          start={effectiveToOriginalTime(s.start, trim)}
+                          duration={s.duration}
+                          maxHeight={200}
+                          fillWidth
+                        />
+                      </div>
+                    )}
+
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+                      <div style={{ fontWeight: 500, color: "#1e40af" }}>段 {s.idx + 1}</div>
+                      <div style={{ fontSize: "0.78rem", color: "#999" }}>
+                        {s.start.toFixed(1)}-{(s.start + s.duration).toFixed(1)}s · {s.duration.toFixed(1)}秒
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+                      {(["ai", "original"] as SourceType[]).map((st) => {
+                        const selected = sel.source_type === st;
+                        return (
+                          <button
+                            key={st}
+                            onClick={() => updateSeg(s.idx, { source_type: st })}
+                            style={{
+                              flex: 1,
+                              padding: "0.4rem 0.6rem",
+                              border: selected ? "1.5px solid #2563eb" : "1px solid #ddd",
+                              borderRadius: 6,
+                              background: selected ? "#eff6ff" : "#fff",
+                              cursor: "pointer",
+                              fontSize: "0.78rem",
+                            }}
+                          >
+                            {st === "ai" ? "AI 生成" : "原视频保留"}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* 2026-05-10 砍单档:档位选择 UI 删除,改成动态单价显示 */}
+                    <div style={{ fontSize: "0.78rem", marginTop: 4 }}>
+                      {sel.source_type === "ai" ? (
+                        <span style={{ color: "#666" }}>
+                          {SEGMENT_PRICE.label} · 60 积分/秒
+                        </span>
+                      ) : (
+                        <span style={{ color: "#999" }}>
+                          保留原视频 · 免费
+                        </span>
+                      )}
+                    </div>
+
+                    {sel.source_type === "original" && (
+                      <div style={{ fontSize: "0.75rem", color: "#999", marginTop: 4 }}>
+                        段保留原视频,不调 AI,不扣积分
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </Section>
+        )}
+
+        {/* Step 4:Prompt */}
+        {video && (
+          <Section title="4. 提示词(可选 · 按需要写,不写也能生成)">
+            {/* 视频模型选择:极速版 / 标准版,影响画质与价格 */}
+            <div style={{ marginBottom: 14, padding: "10px 12px", background: "#f8fafc", border: "1px solid #e5e7eb", borderRadius: 10 }}>
+              <label style={{ fontSize: "0.85rem", color: "#444", fontWeight: 600, display: "block", marginBottom: 8 }}>视频模型:</label>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {([
+                  { v: "seedance-2-0-fast", name: "标准版", desc: "Seedance 2.0 Fast · 出片更快", price: 55 },
+                  { v: "seedance-2-0", name: "高质量", desc: "Seedance 2.0 · 画质更稳", price: 60 },
+                ] as const).map((m) => (
+                  <button key={m.v} onClick={() => setVideoModel(m.v)}
+                    style={{
+                      flex: "1 1 220px", textAlign: "left", padding: "10px 12px", cursor: "pointer",
+                      border: videoModel === m.v ? "2px solid #2563eb" : "1px solid #d1d5db",
+                      background: videoModel === m.v ? "#eff6ff" : "#fff", borderRadius: 8,
+                    }}>
+                    <div style={{ fontWeight: 600, fontSize: "0.9rem", color: "#111" }}>
+                      {m.name} <span style={{ color: "#2563eb", fontSize: "0.82rem" }}>{m.price} 积分/秒</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "#666", marginTop: 2 }}>{m.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* 2026-05-11 目标市场 toggle:CN 国内→中文 prompt / Global 海外→英文 prompt */}
+            <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
+              <label style={{ fontSize: "0.85rem", color: "#444", fontWeight: 500 }}>目标市场:</label>
+              <div style={{ display: "flex", gap: 0, border: "1px solid #d1d5db", borderRadius: 8, overflow: "hidden" }}>
+                {(["CN", "Global"] as const).map((r) => (
+                  <button
+                    key={r}
+                    onClick={() => setRegion(r)}
+                    style={{
+                      padding: "0.4rem 0.9rem",
+                      border: "none",
+                      background: region === r ? "#2563eb" : "#fff",
+                      color: region === r ? "#fff" : "#374151",
+                      cursor: "pointer",
+                      fontSize: "0.85rem",
+                      fontWeight: region === r ? 500 : 400,
+                    }}
+                  >
+                    {r === "CN" ? "国内抖音(中文)" : "海外 TikTok(英文)"}
+                  </button>
+                ))}
+              </div>
+              <span style={{ fontSize: "0.78rem", color: "#9ca3af" }}>
+                AI 优化时会按此切换 prompt 语言
+              </span>
+            </div>
+            {/* 傻瓜模式:一键根据"每张图用途"自动生成提示词,用户不用写、不用打 @ */}
+            <div style={{ marginBottom: 10, padding: "10px 12px", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 10 }}>
+              <div style={{ fontSize: "0.82rem", color: "#0369a1", marginBottom: 8 }}>
+                💡 不会写?在上面第 2 步给每张图选好"用途",勾选下面需要的,点按钮自动生成 ↓
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.85rem", color: "#374151", marginBottom: 8, cursor: "pointer" }}>
+                <input type="checkbox" checked={removeOriginalSpeech} onChange={(e) => setRemoveOriginalSpeech(e.target.checked)} />
+                去掉原视频里的台词 / 字幕(新视频不保留)
+              </label>
+              <button onClick={composeAutoPrompt}
+                style={{ padding: "0.5rem 1rem", borderRadius: 8, border: "none", background: "#0284c7", color: "#fff", cursor: "pointer", fontSize: "0.85rem", fontWeight: 500 }}>
+                ✨ 一键生成提示词
+              </button>
+            </div>
+            <div style={{ position: "relative" }}>
+              <textarea
+                ref={promptRef}
+                value={prompt}
+                onChange={onPromptChange}
+                onKeyDown={(e) => { if (e.key === "Escape" && atMenu.open) setAtMenu({ open: false, query: "", pos: -1 }); }}
+                onBlur={() => setTimeout(() => setAtMenu((m) => ({ ...m, open: false })), 150)}
+                placeholder="写大白话:想要视频里什么换成什么。打 @ 可引用上传的图片/视频(如 @产品1)。点 ✨ AI 优化 自动转成专业 prompt"
+                style={{ width: "100%", minHeight: 80, padding: 10, border: "1px solid #ddd", borderRadius: 8, fontSize: "0.9rem", fontFamily: "inherit", resize: "vertical" }}
+              />
+              {atMenu.open && (() => {
+                const opts = buildMentionOptions().filter((o) => o.label.includes(atMenu.query));
+                if (opts.length === 0) return null;
+                return (
+                  <div style={{ position: "absolute", left: 10, top: "100%", zIndex: 30, marginTop: 2, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", padding: 6, minWidth: 230, maxHeight: 270, overflowY: "auto" }}>
+                    <div style={{ fontSize: "0.72rem", color: "#9ca3af", padding: "2px 8px 6px" }}>选择要引用的图片 / 视频</div>
+                    {opts.map((o) => (
+                      <div key={o.label}
+                        onMouseDown={(e) => { e.preventDefault(); insertMention(o.label); }}
+                        style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", borderRadius: 8, cursor: "pointer" }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "#f3f4f6")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
+                        <div style={{ width: 40, height: 40, borderRadius: 6, overflow: "hidden", background: "#000", flexShrink: 0 }}>
+                          {o.isVideo
+                            ? <video src={o.thumb} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted />
+                            : <img src={o.thumb} alt={o.label} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "#111" }}>@{o.label}</div>
+                          <div style={{ fontSize: "0.72rem", color: "#9ca3af", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}>{o.sub}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+              <button
+                onClick={handleAiOptimize}
+                disabled={aiOptimizing || !prompt.trim()}
+                style={{
+                  padding: "0.5rem 1rem",
+                  borderRadius: 8,
+                  border: "none",
+                  background: aiOptimizing || !prompt.trim() ? "#94a3b8" : "#7c3aed",
+                  color: "#fff",
+                  cursor: aiOptimizing || !prompt.trim() ? "not-allowed" : "pointer",
+                  fontSize: "0.85rem",
+                  fontWeight: 500,
+                }}
+              >
+                {aiOptimizing ? "优化中..." : "✨ AI 优化"}
+              </button>
+              <span style={{ fontSize: "0.78rem", color: "#9ca3af" }}>
+                写完想法,点这里让 AI 帮你转成最佳 prompt
+              </span>
+            </div>
+
+          </Section>
+        )}
+
+        {/* Step 5:价格汇总 + 声明 + 提交 */}
+        {estimate && (
+          <Section title="5. 价格汇总 + 上传声明">
+            <div style={{ background: "#f0f7fb", padding: "1rem 1.2rem", borderRadius: 10, fontSize: "0.95rem", color: "#456", marginBottom: 12 }}>
+              <div>段数:<b>{estimate.total_segments}</b> · AI 段:<b>{estimate.ai_segments_count}</b></div>
+              <div style={{ fontSize: "1.3rem", color: "#2563eb", margin: "8px 0" }}>
+                消耗 <b>{estimate.total_credits} 积分</b>
+              </div>
+              <div style={{ fontSize: "0.8rem", color: "#789" }}>预计耗时:{estimate.estimated_minutes} 分钟</div>
+            </div>
+
+            <div style={{ background: "#fffbea", border: "1px solid #fde68a", padding: "1rem 1.2rem", borderRadius: 10, marginBottom: 12, fontSize: "0.85rem", lineHeight: 1.7 }}>
+              <div style={{ fontWeight: 500, marginBottom: 6 }}>📜 视频复刻 V2 上传声明书(摘要)</div>
+              <div style={{ color: "#666" }}>
+                提交即承诺:上传内容合法合规、不涉及禁止类别(明星脸/政治人物/未成年人/品牌侵权/违禁商品/恶意 deepfake);若使用他人形象已取得书面同意;平台不做技术审核,我是合规第一责任人;违规导致行政/民事/刑事责任全额自担。
+              </div>
+              <div style={{ marginTop: 6 }}>
+                完整条款:<a href="/legal/video-clone-v2-disclaimer" target="_blank" style={{ color: "#2563eb" }}>查看完整声明书 →</a>
+              </div>
+            </div>
+
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: "0.9rem", marginBottom: 14, cursor: "pointer" }}>
+              <input type="checkbox" checked={disclaimerChecked} onChange={(e) => setDisclaimerChecked(e.target.checked)} style={{ marginTop: 4 }} />
+              <span>我已阅读并同意《视频复刻 V2 上传声明书》全部 7 项承诺 + 5 项告知</span>
+            </label>
+
+            {error && (
+              <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", color: "#991b1b", padding: "0.8rem 1rem", borderRadius: 8, marginBottom: 12, fontSize: "0.85rem" }}>{error}</div>
+            )}
+
+            <button
+              onClick={handleSubmit}
+              disabled={submitStatus !== "idle" || !disclaimerChecked || !estimate}
+              style={{
+                ...primaryBtn,
+                opacity: submitStatus === "idle" && disclaimerChecked ? 1 : 0.4,
+                cursor: submitStatus === "idle" && disclaimerChecked ? "pointer" : "not-allowed",
+              }}
+            >
+              {submitStatus === "submitting" ? "提交中..." :
+                submitStatus === "processing" ? "生成中..." :
+                  `确认生成(消耗 ${estimate.total_credits} 积分)`}
+            </button>
+          </Section>
+        )}
+
+        {/* Step 6:任务进度 */}
+        {job && submitStatus === "processing" && (() => {
+          const totalSegs = job.progress.total_ai + job.progress.total_original;
+          const completedSegs = job.progress.completed;
+          // 预估总时长:每段 ~130s(fal ~120s + 上传/下载 ~10s)
+          const estimatedTotal = Math.max(130, job.progress.total_ai * 130);
+          const timeRatio = Math.min(0.97, elapsedSec / estimatedTotal);
+          const realRatio = totalSegs > 0 ? completedSegs / totalSegs : 0;
+          const barPct = Math.max(realRatio, timeRatio) * 100;
+          const remaining = Math.max(0, estimatedTotal - elapsedSec);
+          const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+          const stageLabel = (stage?: string) => {
+            if (stage === "uploading") return "上传中…";
+            if (stage === "fal_processing") return "AI 处理中…";
+            if (stage === "completed") return "✓ 完成";
+            if (stage === "failed") return "✗ 失败";
+            return "等待中";
+          };
+          return (
+            <Section title="6. 生成中">
+              <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "0.65rem 0.9rem", fontSize: "0.8rem", color: "#1e40af", marginBottom: 12 }}>
+                ✅ 任务已提交，预计3-8分钟完成。你可以关闭此页面去做其他事，生成完成后在右上角「我的任务」查看结果。
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.85rem", color: "#555", marginBottom: 6 }}>
+                <span>已完成 {completedSegs} / {totalSegs} 段</span>
+                <span style={{ color: "#999" }}>
+                  已用 {fmt(elapsedSec)}
+                  {remaining > 0 && completedSegs < totalSegs ? ` · 预计还需 ${fmt(remaining)}` : ""}
+                </span>
+              </div>
+              <div style={{ height: 8, background: "#e5e7eb", borderRadius: 4, overflow: "hidden" }}>
+                <div style={{
+                  width: `${barPct}%`,
+                  height: "100%", background: "#2563eb",
+                  transition: "width 1s linear",
+                }} />
+              </div>
+              <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>
+                {job.segments.map(s => (
+                  <div key={s.idx} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.8rem", color: "#555" }}>
+                    <span style={{
+                      width: 10, height: 10, borderRadius: "50%", flexShrink: 0,
+                      background: s.stage === "completed" ? "#16a34a"
+                        : s.stage === "failed" ? "#dc2626"
+                          : s.stage === "fal_processing" ? "#2563eb"
+                            : s.stage === "uploading" ? "#f59e0b"
+                              : "#d1d5db",
+                    }} />
+                    <span>
+                      {s.source_type === "original" ? "原视频段" : `AI 段 ${s.idx + 1}`}
+                      {" — "}
+                      {s.source_type === "original" ? "保留" : stageLabel(s.stage)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </Section>
+          );
+        })()}
+
+        {/* Step 7:完成,双版本下载 */}
+        {job && submitStatus === "completed" && (
+          <Section title="✅ 生成完成">
+            <video src={job.final_video_url_watermarked || job.final_video_url || ""} controls style={{ width: "100%", maxWidth: 480, borderRadius: 10, background: "#000", marginBottom: 16 }} />
+
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 8, alignItems: "center" }}>
+              <a href={job.final_video_url_watermarked || ""} download style={primaryBtn}>
+                ⬇ 下载视频(带 AI 水印)
+              </a>
+              <button onClick={reset} style={btnLink}>重新生成</button>
+            </div>
+            {!showRawConfirm && (
+              <div style={{ marginBottom: 16 }}>
+                <button
+                  onClick={() => setShowRawConfirm(true)}
+                  style={{ background: "none", border: "none", color: "#9ca3af", fontSize: "0.78rem", cursor: "pointer", padding: 0, textDecoration: "underline" }}
+                >
+                  下载无水印版需声明 →
+                </button>
+              </div>
+            )}
+
+            {showRawConfirm && (
+              <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", padding: "1rem 1.2rem", borderRadius: 10, fontSize: "0.85rem", lineHeight: 1.7, marginTop: 8 }}>
+                <div style={{ fontWeight: 500, marginBottom: 8, color: "#991b1b" }}>⚠️ 下载无水印版前请逐项勾选声明</div>
+                <label style={{ display: "flex", gap: 6, marginBottom: 6, cursor: "pointer" }}>
+                  <input type="checkbox" checked={rawAck1} onChange={(e) => setRawAck1(e.target.checked)} />
+                  <span>我理解此视频不含 AI 标识水印</span>
+                </label>
+                <label style={{ display: "flex", gap: 6, marginBottom: 6, cursor: "pointer" }}>
+                  <input type="checkbox" checked={rawAck2} onChange={(e) => setRawAck2(e.target.checked)} />
+                  <span>我承诺在传播时自行添加 AI 标识符合《互联网信息服务深度合成管理规定》第 17 条</span>
+                </label>
+                <label style={{ display: "flex", gap: 6, marginBottom: 10, cursor: "pointer" }}>
+                  <input type="checkbox" checked={rawAck3} onChange={(e) => setRawAck3(e.target.checked)} />
+                  <span>因未加标识公开传播产生的行政、民事、刑事责任由我全额承担,平台不负任何连带责任</span>
+                </label>
+                <a
+                  href={rawAck1 && rawAck2 && rawAck3 ? job.final_video_url_raw || undefined : undefined}
+                  download={rawAck1 && rawAck2 && rawAck3}
+                  onClick={(e) => { if (!(rawAck1 && rawAck2 && rawAck3)) e.preventDefault(); }}
+                  style={{
+                    ...primaryBtn,
+                    background: rawAck1 && rawAck2 && rawAck3 ? "#dc2626" : "#999",
+                    pointerEvents: rawAck1 && rawAck2 && rawAck3 ? "auto" : "none",
+                    opacity: rawAck1 && rawAck2 && rawAck3 ? 1 : 0.5,
+                  }}
+                >
+                  确认下载无水印版
+                </a>
+              </div>
+            )}
+          </Section>
+        )}
+
+        {job && submitStatus === "partial_completed" && (
+          <Section title="⚠️ 部分段生成失败,成功段已分别归档">
+            <div style={{ background: "#fef3c7", border: "1px solid #fbbf24", color: "#92400e", padding: "0.8rem 1rem", borderRadius: 8, fontSize: "0.85rem", marginBottom: 16 }}>
+              {error || "部分段生成失败,失败段已退款,其余段独立下载"}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {job.segments.map((s) => (
+                <div key={s.idx} style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: "0.9rem 1rem", background: s.status === "completed" ? "#fff" : "#fef2f2" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                    <span style={{ fontWeight: 600, fontSize: "0.95rem" }}>段 {s.idx + 1}</span>
+                    {s.status === "completed" ? (
+                      <span style={{ background: "#dcfce7", color: "#166534", padding: "2px 8px", borderRadius: 4, fontSize: "0.75rem" }}>✓ 已生成</span>
+                    ) : (
+                      <span style={{ background: "#fee2e2", color: "#991b1b", padding: "2px 8px", borderRadius: 4, fontSize: "0.75rem" }}>✗ 失败(已退款)</span>
+                    )}
+                  </div>
+                  {s.status === "completed" && s.watermarked_url ? (
+                    <>
+                      <video src={s.watermarked_url} controls style={{ width: "100%", maxWidth: 360, borderRadius: 8, background: "#000", marginBottom: 10 }} />
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <a href={s.watermarked_url} download style={{ ...primaryBtn, padding: "0.5rem 0.9rem", fontSize: "0.85rem" }}>
+                          ⬇ 下载本段(带水印)
+                        </a>
+                        {s.raw_url && (
+                          <button
+                            onClick={() => alert("无水印版需先在主下载区勾选 3 项声明")}
+                            style={{ background: "none", border: "none", color: "#9ca3af", fontSize: "0.75rem", cursor: "pointer", textDecoration: "underline" }}
+                          >
+                            下载无水印版需声明 →
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ fontSize: "0.8rem", color: "#991b1b" }}>{s.error || "AI 生成失败"}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <button onClick={reset} style={{ ...primaryBtn, marginTop: 16, background: "#666" }}>重新生成</button>
+          </Section>
+        )}
+
+        {submitStatus === "failed" && (
+          <Section title="❌ 生成失败">
+            <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", color: "#991b1b", padding: "0.8rem 1rem", borderRadius: 8, fontSize: "0.85rem" }}>
+              {error || "任务失败,积分已退还"}
+            </div>
+            <button onClick={reset} style={{ ...primaryBtn, marginTop: 12 }}>重试</button>
+          </Section>
+        )}
+
+        {error && submitStatus === "idle" && !trimPopup && (
+          <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", color: "#991b1b", padding: "0.8rem 1rem", borderRadius: 8, fontSize: "0.85rem", marginTop: 12 }}>{error}</div>
+        )}
+
+        {/* check-duration trim 弹窗:多段 drop ranges 编辑 */}
+        {trimPopup && (
+          <TrimMultiPopup
+            trimPopup={trimPopup}
+            video={video}
+            dropRanges={dropRanges}
+            setDropRanges={setDropRanges}
+            onPickRecommended={pickRecommended}
+            onConfirm={applyMultiTrim}
+            onCancel={() => { setTrimPopup(null); setDropRanges([]); }}
+          />
+        )}
+
+      </main>
+    </div>
+  );
+}
+
+// ─── 小组件 ─────────────────────────────────────────────────────────────
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ background: "#fff", borderRadius: 14, padding: "1.4rem 1.6rem", marginBottom: "1.2rem" }}>
+      <div style={{ fontSize: "0.92rem", color: "#333", marginBottom: "0.9rem", fontWeight: 500 }}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+// 把切片后的 effective 时间映射回原视频时间(用于 <video currentTime>)
+// trim 是 DROP 区间 [trim.start, trim.end]
+//   - 无 trim:effective = original
+//   - effective time < drop_start:落在第一段 keep [0, drop_start],original = effective
+//   - effective time >= drop_start:落在第二段 keep [drop_end, full],original = effective - drop_start + drop_end
+function effectiveToOriginalTime(
+  t: number,
+  trim: { start: number; end: number; trimmed: number } | null,
+): number {
+  if (!trim) return t;
+  if (t < trim.start) return t;
+  return t - trim.start + trim.end;
+}
+
+// 视频预览:HTML5 video 同步到指定 start 时间,点击播放该段(duration 秒后自动暂停回首帧)
+// 保持原始宽高比:objectFit=contain 保不变形;
+// fillWidth=true → 容器固定撑满父级宽度,9:16 加 letterbox 黑边(段卡片用,网格视觉一致)
+// fillWidth=false → 容器跟视频原生宽度走(主预览弹窗用,无黑边)
+function SegmentPreview({
+  src, start, duration, maxHeight = 200, fillWidth = false,
+}: { src: string; start: number; duration: number; maxHeight?: number; fillWidth?: boolean }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [playing, setPlaying] = useState(false);
+
+  // 视频元数据加载完(或已加载) → 把 currentTime 跳到 start
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const setStart = () => { try { v.currentTime = start; } catch {} };
+    if (v.readyState >= 1) {
+      setStart();
+    } else {
+      v.addEventListener("loadedmetadata", setStart, { once: true });
+      return () => v.removeEventListener("loadedmetadata", setStart);
+    }
+  }, [src, start]);
+
+  function togglePlay() {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) {
+      try { v.currentTime = start; } catch {}
+      v.play().catch(() => {});
+      setPlaying(true);
+      if (stopTimerRef.current) clearTimeout(stopTimerRef.current);
+      stopTimerRef.current = setTimeout(() => {
+        v.pause();
+        try { v.currentTime = start; } catch {}
+        setPlaying(false);
+      }, Math.max(500, duration * 1000));
+    } else {
+      v.pause();
+      try { v.currentTime = start; } catch {}
+      setPlaying(false);
+      if (stopTimerRef.current) clearTimeout(stopTimerRef.current);
+    }
+  }
+
+  useEffect(() => () => {
+    if (stopTimerRef.current) clearTimeout(stopTimerRef.current);
+  }, []);
+
+  return (
+    <div
+      onClick={togglePlay}
+      style={{
+        position: "relative", cursor: "pointer", borderRadius: 6,
+        overflow: "hidden", background: "#000",
+        display: "flex", justifyContent: "center", alignItems: "center",
+        // 防 metadata 没加载完时容器塌缩,给个 min-height
+        minHeight: 60,
+      }}
+    >
+      <video
+        ref={videoRef}
+        src={src}
+        muted
+        preload="metadata"
+        playsInline
+        style={{
+          width: fillWidth ? "100%" : "auto",
+          maxWidth: "100%",
+          height: fillWidth ? "auto" : "auto",
+          maxHeight,
+          objectFit: "contain",
+          display: "block",
+          background: "#000",
+        }}
+      />
+      {!playing && (
+        <div style={{
+          position: "absolute", inset: 0, display: "flex",
+          alignItems: "center", justifyContent: "center", pointerEvents: "none",
+        }}>
+          <div style={{
+            background: "rgba(0,0,0,0.6)", color: "#fff", borderRadius: "50%",
+            width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 13, paddingLeft: 3,
+          }}>▶</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 多段 drop ranges 弹窗:剪映/Premiere 风格 — 时间轴拖圆点画选区,多颜色,选中跟预览
+function TrimMultiPopup({
+  trimPopup, video, dropRanges, setDropRanges, onPickRecommended, onConfirm, onCancel,
+}: {
+  trimPopup: CheckDurationResp;
+  video: { url: string; duration: number; sha256: string } | null;
+  dropRanges: Array<{ start: number; end: number }>;
+  setDropRanges: (r: Array<{ start: number; end: number }>) => void;
+  onPickRecommended: (picked: TrimCandidate) => void;
+  onConfirm: (ranges: Array<{ start: number; end: number }>) => void;
+  onCancel: () => void;
+}) {
+  const totalDuration = trimPopup.current_duration;
+  const targetDrop = trimPopup.drop_seconds;
+  const TOL = 0.05;
+
+  // 当前选中的区(预览跟着这个;拖动 / 点列表行 / 点时间轴红块都会切)
+  const [selectedIdx, setSelectedIdx] = useState(0);
+
+  // 弹窗首次打开:默认单段(对齐"推荐位置")
+  useEffect(() => {
+    if (dropRanges.length === 0) {
+      const recommended = trimPopup.suggestions.find((s) => s.recommended) ?? trimPopup.suggestions[0];
+      if (recommended) {
+        setDropRanges([{ start: recommended.start, end: recommended.end }]);
+      } else {
+        const start = Math.max(0, (totalDuration - targetDrop) / 2);
+        setDropRanges([{ start, end: start + targetDrop }]);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 区数量缩了 → selectedIdx 修复
+  useEffect(() => {
+    if (selectedIdx >= dropRanges.length && dropRanges.length > 0) {
+      setSelectedIdx(0);
+    }
+  }, [dropRanges.length, selectedIdx]);
+
+  // 重叠允许 — 总丢弃按并集算(重叠部分只算一次),跟后端 /create 内联实现等价
+  const totalDropped = totalDroppedAsUnion(dropRanges);
+  const isValid =
+    dropRanges.length > 0
+    && Math.abs(totalDropped - targetDrop) < TOL
+    && dropRanges.every((r) => r.end > r.start && r.start >= 0 && r.end <= totalDuration + TOL);
+
+  function deleteRange(i: number) {
+    if (dropRanges.length <= 1) return;
+    const next = dropRanges.filter((_, idx) => idx !== i);
+    setDropRanges(next);
+    if (selectedIdx >= next.length) setSelectedIdx(Math.max(0, next.length - 1));
+  }
+  function addRange() {
+    if (dropRanges.length >= MAX_RANGES) return;
+    // 计算所有 gap(包含首尾),挑最宽的那个,新区域占其中部
+    const sorted = [...dropRanges].sort((a, b) => a.start - b.start);
+    const gaps: Array<{ start: number; end: number }> = [];
+    let cur = 0;
+    for (const r of sorted) {
+      if (r.start - cur > 0.05) gaps.push({ start: cur, end: r.start });
+      cur = Math.max(cur, r.end);
+    }
+    if (totalDuration - cur > 0.05) gaps.push({ start: cur, end: totalDuration });
+    if (gaps.length === 0) return; // 整片已被 drop 占满,不允许再加
+    const widest = gaps.reduce((a, b) => (b.end - b.start > a.end - a.start ? b : a));
+    const gapW = widest.end - widest.start;
+    const remaining = Math.max(0, targetDrop - totalDropped);
+    // 默认 1 秒,但夹紧到 gap 宽度的 80%(留 0.1 边)和剩余还需丢弃额度
+    const want = Math.min(1.0, Math.max(0.3, remaining));
+    const w = Math.min(want, gapW - 0.2);
+    if (w < 0.2) return; // gap 太窄
+    const start = widest.start + 0.1 + (gapW - 0.2 - w) / 2;
+    setDropRanges([...dropRanges, { start, end: start + w }]);
+    setSelectedIdx(dropRanges.length);
+  }
+
+  // 预览跟选中区
+  const sel = dropRanges[selectedIdx] ?? dropRanges[0];
+  const previewStart = sel?.start ?? 0;
+  const previewDuration = sel ? Math.max(0, sel.end - sel.start) : 0;
+  const selColor = RANGE_COLORS[selectedIdx % RANGE_COLORS.length];
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)",
+      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100,
+      padding: "1rem",
+    }}>
+      <div style={{ background: "#fff", borderRadius: 14, padding: "1.6rem 1.8rem", maxWidth: 760, width: "100%", maxHeight: "92vh", overflowY: "auto" }}>
+        <div style={{ fontSize: "1.05rem", fontWeight: 500, marginBottom: 6 }}>
+          视频 {totalDuration.toFixed(1)} 秒不是 8 秒整数倍
+        </div>
+        <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: 14, lineHeight: 1.5 }}>
+          需要丢弃 <b>{targetDrop.toFixed(1)} 秒</b> 让总时长 = <b>{trimPopup.target_duration.toFixed(0)} 秒</b>
+          <br /><span style={{ color: "#999", fontSize: "0.78rem" }}>时间轴上拖圆点画选区,可加多段(最多 {MAX_RANGES} 段),总和等于 {targetDrop.toFixed(1)} 秒就行</span>
+        </div>
+
+        {/* 视频预览:跟选中区同步,保持原始比例 */}
+        {video && previewDuration > 0 && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: "0.82rem", color: "#666", marginBottom: 5 }}>
+              当前预览:
+              <span style={{ color: selColor, fontWeight: 500, marginLeft: 4 }}>
+                ● 区 {selectedIdx + 1}
+              </span>
+              <span style={{ color: "#666", marginLeft: 6 }}>
+                ({sel.start.toFixed(1)}s – {sel.end.toFixed(1)}s · {previewDuration.toFixed(1)}s)
+              </span>
+            </div>
+            <SegmentPreview
+              key={selectedIdx}  // 切区时强制重挂载,避免 video tag 旧 currentTime 残留
+              src={video.url}
+              start={previewStart}
+              duration={previewDuration}
+              maxHeight={280}
+            />
+          </div>
+        )}
+
+        {/* ⭐ 时间轴 + 拖动圆点 */}
+        <DraggableTimeline
+          totalDuration={totalDuration}
+          ranges={dropRanges}
+          selectedIdx={selectedIdx}
+          onChange={setDropRanges}
+          onSelect={setSelectedIdx}
+        />
+
+        {/* 推荐位置(一键预填,替换为单段) */}
+        <div style={{ marginTop: 14, marginBottom: 12 }}>
+          <div style={{ fontSize: "0.82rem", color: "#666", marginBottom: 6 }}>
+            推荐位置(一键替换为单段;再继续编辑/加段):
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {trimPopup.suggestions.map((s, i) => (
+              <button
+                key={i}
+                onClick={() => { onPickRecommended(s); setSelectedIdx(0); }}
+                style={{
+                  padding: "0.45rem 0.8rem",
+                  border: s.recommended ? "1.5px solid #16a34a" : "1px solid #ddd",
+                  borderRadius: 6,
+                  background: s.recommended ? "#f0fdf4" : "#fff",
+                  fontSize: "0.78rem", cursor: "pointer",
+                }}
+              >
+                {s.label}{s.recommended ? " 👍" : ""}
+                <span style={{ color: "#999", marginLeft: 4 }}>
+                  {s.motion_score >= 0 ? `${s.motion_score.toFixed(1)}` : "—"}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* 区域列表 — 点行切换选中,删除按钮 */}
+        <div style={{ background: "#f7f7f5", border: "1px solid #d4d4d4", padding: "0.9rem 1.1rem", borderRadius: 10, marginBottom: 14 }}>
+          <div style={{ fontSize: "0.82rem", color: "#666", marginBottom: 8 }}>
+            丢弃区域列表(点行切换预览):
+          </div>
+          {dropRanges.map((r, i) => {
+            const color = RANGE_COLORS[i % RANGE_COLORS.length];
+            const isSel = selectedIdx === i;
+            return (
+              <div
+                key={i}
+                onClick={() => setSelectedIdx(i)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  background: isSel ? "#eff6ff" : "#fff",
+                  border: isSel ? "2px solid #2563eb" : "1px solid #e5e7eb",
+                  borderRadius: 8, padding: "0.55rem 0.8rem", marginBottom: 6,
+                  cursor: "pointer",
+                  fontSize: "0.85rem",
+                }}
+              >
+                <span style={{
+                  display: "inline-block", width: 12, height: 12, borderRadius: "50%",
+                  background: color, flexShrink: 0,
+                }} />
+                <span style={{ fontWeight: 500, color, minWidth: 36 }}>区 {i + 1}</span>
+                <span style={{ flex: 1, color: "#444" }}>
+                  {r.start.toFixed(1)}s – {r.end.toFixed(1)}s
+                  <span style={{ color: "#999", marginLeft: 6 }}>· 宽 {(r.end - r.start).toFixed(1)}s</span>
+                </span>
+                {dropRanges.length > 1 && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); deleteRange(i); }}
+                    style={{ ...btnLink, padding: "0.2rem 0.5rem", color: "#dc2626", fontSize: "0.78rem" }}
+                  >
+                    删除
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          {dropRanges.length < MAX_RANGES && (
+            <button
+              onClick={addRange}
+              style={{
+                ...btnLink, padding: "0.45rem 0.8rem", border: "1px dashed #999",
+                color: "#444", display: "block", width: "100%", textAlign: "center",
+                marginTop: 4,
+              }}
+            >
+              + 添加新区域(还可加 {MAX_RANGES - dropRanges.length} 个)
+            </button>
+          )}
+        </div>
+
+        {/* 总数显示 */}
+        <div style={{
+          padding: "0.7rem 1rem", borderRadius: 8, marginBottom: 14,
+          background: isValid ? "#f0fdf4" : "#fef3c7",
+          border: `1px solid ${isValid ? "#86efac" : "#fde68a"}`,
+          fontSize: "0.85rem",
+        }}>
+          总丢弃:<b>{totalDropped.toFixed(1)} 秒</b> / 目标 <b>{targetDrop.toFixed(1)} 秒</b>
+          {" "}
+          {isValid ? "✅" : (totalDropped < targetDrop
+            ? `(还差 ${(targetDrop - totalDropped).toFixed(1)} 秒)`
+            : `(超 ${(totalDropped - targetDrop).toFixed(1)} 秒)`)}
+        </div>
+
+        {/* 操作 */}
+        <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
+          <button onClick={onCancel} style={{ ...btnLink, padding: "0.65rem 1.1rem" }}>
+            取消(换个视频)
+          </button>
+          <button
+            onClick={() => isValid && onConfirm(dropRanges)}
+            disabled={!isValid}
+            style={{
+              ...primaryBtn,
+              background: "#dc2626",
+              opacity: isValid ? 1 : 0.5,
+              cursor: isValid ? "pointer" : "not-allowed",
+            }}
+          >
+            确认丢弃这 {targetDrop.toFixed(1)} 秒
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 剪映风格的可拖动时间轴:每段一对圆点 + 中间填充色,拖圆点改起止
+function DraggableTimeline({
+  totalDuration, ranges, selectedIdx, onChange, onSelect,
+}: {
+  totalDuration: number;
+  ranges: Array<{ start: number; end: number }>;
+  selectedIdx: number;
+  onChange: (r: Array<{ start: number; end: number }>) => void;
+  onSelect: (i: number) => void;
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ rangeIdx: number; endpoint: "start" | "end" } | null>(null);
+  // 用 ref 持最新 ranges/onChange,避免 pointermove 监听每帧重绑导致 race
+  const rangesRef = useRef(ranges);
+  const onChangeRef = useRef(onChange);
+  const totalDurationRef = useRef(totalDuration);
+  useEffect(() => { rangesRef.current = ranges; }, [ranges]);
+  useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
+  useEffect(() => { totalDurationRef.current = totalDuration; }, [totalDuration]);
+
+  function clientXToTime(clientX: number): number {
+    const t = trackRef.current;
+    if (!t) return 0;
+    const rect = t.getBoundingClientRect();
+    if (rect.width <= 0) return 0;
+    const rel = (clientX - rect.left) / rect.width;
+    const td = totalDurationRef.current;
+    return Math.max(0, Math.min(td, rel * td));
+  }
+
+  // 全局 pointer 监听(用户可能拖出时间轴范围)— 挂一次,通过 ref 读最新值
+  // 重叠允许 → 不再拦邻区,只夹在自己 start/end 间 + track [0, totalDuration]
+  useEffect(() => {
+    function handleMove(e: PointerEvent) {
+      const d = dragRef.current;
+      if (!d) return;
+      e.preventDefault();
+      const t = clientXToTime(e.clientX);
+      const cur = rangesRef.current;
+      const next = cur.map((r, idx) => {
+        if (idx !== d.rangeIdx) return r;
+        if (d.endpoint === "start") {
+          // 起点:0 ↗ 自己 end-0.1
+          return { ...r, start: Math.max(0, Math.min(t, r.end - 0.1)) };
+        } else {
+          // 终点:自己 start+0.1 ↘ totalDuration
+          return { ...r, end: Math.max(r.start + 0.1, Math.min(t, totalDurationRef.current)) };
+        }
+      });
+      onChangeRef.current(next);
+    }
+    function handleUp() { dragRef.current = null; }
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointercancel", handleUp);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleUp);
+    };
+  }, []);
+
+  function handleDotDown(rangeIdx: number, endpoint: "start" | "end", e: React.PointerEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    try { (e.target as HTMLElement).setPointerCapture(e.pointerId); } catch {}
+    dragRef.current = { rangeIdx, endpoint };
+    onSelect(rangeIdx);
+  }
+
+  const HEIGHT = 70;
+  const TOP = 12;
+  const BOTTOM_AXIS = 18;
+  const tickStep = 4;
+  const tickCount = Math.floor(totalDuration / tickStep);
+
+  return (
+    <div
+      ref={trackRef}
+      style={{
+        position: "relative",
+        width: "100%",
+        height: HEIGHT,
+        background: "#e5e7eb",
+        borderRadius: 8,
+        userSelect: "none",
+        touchAction: "none",
+      }}
+    >
+      {/* 4s 间隔刻度线 + 数字标尺 */}
+      {Array.from({ length: tickCount + 1 }).map((_, i) => {
+        const t = i * tickStep;
+        // 末刻度跟"终点"距离 < 1.5s 时省掉,避免数字重叠
+        const tooCloseToEnd = totalDuration - t < 1.5 && t > 0;
+        if (tooCloseToEnd) return null;
+        const leftPct = (t / totalDuration) * 100;
+        return (
+          <Fragment key={`tick-${i}`}>
+            <div style={{
+              position: "absolute",
+              left: `${leftPct}%`,
+              top: TOP, bottom: BOTTOM_AXIS,
+              width: 1, background: "#cbd5e1",
+              pointerEvents: "none",
+            }} />
+            <div style={{
+              position: "absolute",
+              left: `${leftPct}%`,
+              bottom: 2,
+              transform: i === 0 ? "translateX(0)" : "translateX(-50%)",
+              fontSize: 10, color: "#999",
+              pointerEvents: "none",
+              whiteSpace: "nowrap",
+            }}>
+              {t}s
+            </div>
+          </Fragment>
+        );
+      })}
+      {/* "终点"标签:固定在最右,跟最近的 4s 刻度让位 */}
+      <div style={{
+        position: "absolute",
+        right: 2, bottom: 2,
+        fontSize: 10, color: "#666",
+        pointerEvents: "none",
+        whiteSpace: "nowrap",
+      }}>
+        {totalDuration.toFixed(1)}s 终
+      </div>
+
+      {/* 各 drop 区:填充色块 + 起/止圆点 */}
+      {ranges.map((r, i) => {
+        const color = RANGE_COLORS[i % RANGE_COLORS.length];
+        const startPct = Math.max(0, Math.min(100, (r.start / totalDuration) * 100));
+        const endPct   = Math.max(0, Math.min(100, (r.end   / totalDuration) * 100));
+        const widthPct = Math.max(0, endPct - startPct);
+        const isSel = selectedIdx === i;
+        return (
+          <Fragment key={`r-${i}`}>
+            {/* 填充色块(可点切换选中) */}
+            <div
+              onClick={() => onSelect(i)}
+              style={{
+                position: "absolute",
+                left: `${startPct}%`,
+                width: `${widthPct}%`,
+                top: TOP, bottom: BOTTOM_AXIS,
+                background: color,
+                opacity: isSel ? 0.95 : 0.55,
+                outline: isSel ? "2px solid #fff" : "none",
+                cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                color: "#fff", fontSize: "0.78rem", fontWeight: 600,
+              }}
+            >
+              {i + 1}
+            </div>
+
+            {/* 起点圆点 */}
+            <div
+              onPointerDown={(e) => handleDotDown(i, "start", e)}
+              title={`区 ${i + 1} 起点`}
+              style={{
+                position: "absolute",
+                left: `${startPct}%`,
+                top: `${TOP + (HEIGHT - TOP - BOTTOM_AXIS) / 2 - 8}px`,
+                marginLeft: -8,
+                width: 16, height: 16,
+                borderRadius: "50%",
+                background: color,
+                border: "2.5px solid #fff",
+                boxShadow: "0 2px 4px rgba(0,0,0,0.45)",
+                cursor: "grab",
+                touchAction: "none",
+                zIndex: 10,
+              }}
+            />
+
+            {/* 终点圆点 */}
+            <div
+              onPointerDown={(e) => handleDotDown(i, "end", e)}
+              title={`区 ${i + 1} 终点`}
+              style={{
+                position: "absolute",
+                left: `${endPct}%`,
+                top: `${TOP + (HEIGHT - TOP - BOTTOM_AXIS) / 2 - 8}px`,
+                marginLeft: -8,
+                width: 16, height: 16,
+                borderRadius: "50%",
+                background: color,
+                border: "2.5px solid #fff",
+                boxShadow: "0 2px 4px rgba(0,0,0,0.45)",
+                cursor: "grab",
+                touchAction: "none",
+                zIndex: 10,
+              }}
+            />
+          </Fragment>
+        );
+      })}
+
+    </div>
+  );
+}
+
+// 总丢弃 = ranges 的并集时长(重叠部分只算一次),
+// 跟后端 /create 内联实现(merge 后 sum)等价 — 两端口径必须一致
+function totalDroppedAsUnion(ranges: Array<{ start: number; end: number }>): number {
+  if (ranges.length === 0) return 0;
+  const sorted = [...ranges].sort((a, b) => a.start - b.start);
+  const merged: Array<{ start: number; end: number }> = [];
+  for (const r of sorted) {
+    if (merged.length === 0 || r.start > merged[merged.length - 1].end + 0.05) {
+      merged.push({ ...r });
+    } else {
+      merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, r.end);
+    }
+  }
+  return merged.reduce((s, r) => s + (r.end - r.start), 0);
+}
+
+// 时间轴 + 滑块:可视化丢弃区间位置,native range slider 控制(触屏+键盘免费)
+function DragTrack({
+  totalDuration, dropDuration, value, onChange,
+}: {
+  totalDuration: number;
+  dropDuration: number;
+  value: { start: number; end: number } | null;
+  onChange: (v: { start: number; end: number }) => void;
+}) {
+  // 首次挂载:把丢弃区间放在视频中间(中性默认)
+  useEffect(() => {
+    if (!value) {
+      const start = Math.max(0, (totalDuration - dropDuration) / 2);
+      onChange({ start, end: start + dropDuration });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (!value) return <div style={{ height: 80 }} />;
+
+  const TRACK_HEIGHT = 44;
+  const startPct = (value.start / totalDuration) * 100;
+  const widthPct = (dropDuration / totalDuration) * 100;
+  const tickStep = 4;
+  const tickCount = Math.floor(totalDuration / tickStep);
+  const startMax = Math.max(0, totalDuration - dropDuration);
+
+  return (
+    <div>
+      {/* 视觉时间轴(只读显示当前选区位置) */}
+      <div
+        style={{
+          position: "relative",
+          width: "100%",
+          height: TRACK_HEIGHT,
+          background: "#e5e7eb",
+          borderRadius: 8,
+          overflow: "hidden",
+          userSelect: "none",
+        }}
+      >
+        {/* 4s 间隔刻度线(对齐 8s 段切片节奏) */}
+        {Array.from({ length: tickCount + 1 }).map((_, i) => (
+          <div key={i} style={{
+            position: "absolute",
+            left: `${((i * tickStep) / totalDuration) * 100}%`,
+            top: 0, bottom: 16, width: 1, background: "#cbd5e1",
+          }} />
+        ))}
+
+        {/* 红色丢弃区(只读显示 — 拖滑块来移动) */}
+        <div
+          style={{
+            position: "absolute",
+            left: `${startPct}%`,
+            width: `${widthPct}%`,
+            top: 0, bottom: 16,
+            background: "#dc2626",
+            opacity: 0.85,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#fff",
+            fontSize: "0.78rem",
+            fontWeight: 500,
+            transition: "left 0.1s linear",
+          }}
+        >
+          丢弃
+        </div>
+
+        {/* 时间轴底注 */}
+        <div style={{
+          position: "absolute", bottom: 0, left: 0, right: 0,
+          height: 16, display: "flex", justifyContent: "space-between",
+          padding: "0 6px", fontSize: "0.7rem", color: "#666",
+          pointerEvents: "none", alignItems: "center",
+        }}>
+          <span>0s</span>
+          <span>{totalDuration.toFixed(1)}s</span>
+        </div>
+      </div>
+
+      {/* 滑块:native range,触屏+键盘+鼠标全免费 */}
+      <input
+        type="range"
+        min={0}
+        max={startMax}
+        step={0.1}
+        value={value.start}
+        onChange={(e) => {
+          const s = parseFloat(e.target.value);
+          onChange({ start: s, end: s + dropDuration });
+        }}
+        style={{ width: "100%", marginTop: 10, accentColor: "#dc2626" }}
+        aria-label="拖动选择丢弃区间起点"
+      />
+    </div>
+  );
+}
+
+function FileInput({
+  accept, disabled, label, onFile,
+}: {
+  accept: string; disabled: boolean; label: string; onFile: (f: File) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <button
+        onClick={() => ref.current?.click()}
+        disabled={disabled}
+        style={{
+          padding: "0.6rem 1.2rem",
+          border: "1px solid #ddd",
+          borderRadius: 8,
+          background: "#fff",
+          cursor: disabled ? "not-allowed" : "pointer",
+          fontSize: "0.9rem",
+        }}
+      >
+        {label}
+      </button>
+      <input
+        ref={ref}
+        type="file"
+        accept={accept}
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) onFile(f);
+          e.target.value = "";
+        }}
+      />
+    </>
+  );
+}
+
+const primaryBtn: React.CSSProperties = {
+  padding: "0.7rem 1.4rem",
+  border: "none",
+  borderRadius: 10,
+  background: "#2563eb",
+  color: "#fff",
+  fontSize: "0.95rem",
+  fontWeight: 500,
+  cursor: "pointer",
+  textDecoration: "none",
+  display: "inline-block",
+};
+const btnLink: React.CSSProperties = {
+  padding: "0.4rem 0.8rem",
+  border: "1px solid transparent",
+  borderRadius: 6,
+  background: "transparent",
+  color: "#2563eb",
+  fontSize: "0.85rem",
+  cursor: "pointer",
+};
+const chipBtn: React.CSSProperties = {
+  padding: "0.4rem 0.9rem",
+  border: "1px solid #ddd",
+  borderRadius: 16,
+  background: "#fff",
+  fontSize: "0.82rem",
+  cursor: "pointer",
+};
+const selectStyle: React.CSSProperties = {
+  padding: "0.4rem 0.6rem",
+  border: "1px solid #ddd",
+  borderRadius: 6,
+  fontSize: "0.9rem",
+  background: "#fff",
+};
