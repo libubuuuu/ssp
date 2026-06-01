@@ -17,8 +17,17 @@ from typing import Final, Mapping, Sequence
 #
 # 2026-05-14 视频复刻定价:60 积分/秒(¥1.2/s)。按段 duration 计费,
 # 不再 "每段固定 20"(老规则等于 4s 段 5 积分/秒、8s 段 2.5 积分/秒,跟新口径不一致)。
-CREDITS_PER_SEC:       Final[int] = 60      # 60 积分 / 秒(¥1.2/秒,视频复刻,2026-05-14 重定)
+CREDITS_PER_SEC:       Final[int] = 55      # 默认/fast 费率:55 积分 / 秒(¥1.1/秒)
 CREDITS_PER_YUAN:      Final[int] = 50      # 50 积分 = 1 元(2026-05-13 锁定汇率)
+
+# 2026-05-31 用户加双模型:用户选 fast=55/秒、标准版 2.0=60/秒。按所选模型取费率。
+CREDITS_PER_SEC_BY_MODEL: Final[dict] = {
+    "seedance-2-0-fast": 55,   # 极速版
+    "seedance-2-0":      60,   # 标准版(更贵)
+}
+def rate_for_model(model: str) -> int:
+    """按所选视频模型取"积分/秒"费率,认不出的回落到默认 55(fast 价)。"""
+    return CREDITS_PER_SEC_BY_MODEL.get((model or "").lower(), CREDITS_PER_SEC)
 SEGMENT_LABEL:         Final[str] = "AI 替换"  # 前端段卡片显示名
 SEGMENT_INPUT_SECONDS_MAX: Final[int] = 8   # worst-case 估算上限,实际段长 4-8s
 
@@ -90,16 +99,17 @@ WATERMARK_POSITION:           Final[str]   = "bottom-right"
 WATERMARK_FONT_FAMILY:        Final[str]   = "Noto Sans CJK SC Bold"  # 六审升级到 Bold
 
 
-def calc_segment_credits(duration_sec: float) -> int:
-    """单段积分 = round(duration_sec × CREDITS_PER_SEC),下限 1 秒。"""
+def calc_segment_credits(duration_sec: float, rate: int = CREDITS_PER_SEC) -> int:
+    """单段积分 = round(duration_sec × rate),下限 1 秒。rate 默认 55(fast),标准版传 60。"""
     if duration_sec <= 0:
         return 0
-    return max(CREDITS_PER_SEC, int(round(float(duration_sec) * CREDITS_PER_SEC)))
+    return max(rate, int(round(float(duration_sec) * rate)))
 
 
 def calc_total_credits(
     segments: Sequence[Mapping],
     plan: Sequence[Mapping] | None = None,
+    rate: int = CREDITS_PER_SEC,
 ) -> int:
     """算订单总积分:只对 source_type='ai' 段按 duration × CREDITS_PER_SEC 计。
 
@@ -131,10 +141,10 @@ def calc_total_credits(
                 dur = plan_by_idx.get(int(seg["idx"]), 0.0)
             except (KeyError, TypeError, ValueError):
                 dur = 0.0
-        total += calc_segment_credits(dur)
+        total += calc_segment_credits(dur, rate)
 
     # 至少 1 秒下限,避免空订单走通
-    return max(CREDITS_PER_SEC, total) if total > 0 else 0
+    return max(rate, total) if total > 0 else 0
 
 
 # alias 对齐 A2 任务清单命名("calc_credits");新代码调用方推荐用 calc_credits

@@ -93,6 +93,27 @@ const ROLE_LABELS: Record<Role, string> = {
   reference: "参考",
 };
 
+// 傻瓜化:每张图选"用途"(按角色给不同选项),系统据此自动拼提示词。用户不用打 @、不用写句子。
+const PURPOSE_BY_ROLE: Record<string, { v: string; label: string }[]> = {
+  product: [
+    { v: "top", label: "换上衣" }, { v: "bottom", label: "换裤子/下装" },
+    { v: "shoes", label: "换鞋" }, { v: "full", label: "换整套穿搭" }, { v: "product", label: "换产品" },
+  ],
+  person: [{ v: "face", label: "换脸 / 换人物" }],
+  scene: [{ v: "bg", label: "换背景" }],
+  reference: [],
+};
+const DEFAULT_PURPOSE: Record<string, string> = { product: "full", person: "face", scene: "bg", reference: "" };
+const PURPOSE_TEXT: Record<string, (ref: string) => string> = {
+  top: (r) => `把视频里人物的上衣换成 ${r}`,
+  bottom: (r) => `把视频里人物的下装换成 ${r}`,
+  shoes: (r) => `把视频里人物的鞋换成 ${r}`,
+  full: (r) => `把视频里人物的整套穿搭换成 ${r}`,
+  product: (r) => `把视频里的产品换成 ${r}`,
+  face: (r) => `把视频里人物的脸和头部换成 ${r} 的人物`,
+  bg: (r) => `把视频的背景换成 ${r}`,
+};
+
 // 2026-05-10 砍单档:TIER_DISPLAY 删除,改 SEGMENT_PRICE 单档常量
 // 占位定价用原 standard 档值,commit 5 真测后基于 fal cost 重定
 const SEGMENT_PRICE = {
@@ -138,8 +159,20 @@ export default function VideoCloneV2Page() {
   // ultimate 模式:replacement_mode
   const [replacementMode, setReplacementMode] = useState<ReplacementMode>("full");
 
+  // 视频模型(用户自选):极速版 fast(55积分/秒) / 标准版 2.0(60积分/秒)
+  const [videoModel, setVideoModel] = useState<"seedance-2-0-fast" | "seedance-2-0">("seedance-2-0-fast");
+
+  // 提示词 @ 提及:打 @ 弹出图片/视频选择(像大厂)。pos = @ 在文本里的位置
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+  const [atMenu, setAtMenu] = useState<{ open: boolean; query: string; pos: number }>({ open: false, query: "", pos: -1 });
+
+  // 傻瓜模式:每张图的用途(key=图片url) + 去掉原视频台词开关
+  const [imagePurpose, setImagePurpose] = useState<Record<string, string>>({});
+  const [removeOriginalSpeech, setRemoveOriginalSpeech] = useState(false);
+
   // prompt + 模板
   const [prompt, setPrompt] = useState("");
+  const [speechText, setSpeechText] = useState("");  // 口播文案(选填):填了让人物改说
   const [aiOptimizing, setAiOptimizing] = useState(false);
   // 2026-05-11:目标市场 toggle(CN 国内 / Global 海外),影响 AI prompt 优化的语言风格
   const [region, setRegion] = useState<"CN" | "Global">("CN");
@@ -307,6 +340,7 @@ export default function VideoCloneV2Page() {
       body: JSON.stringify({
         type: preview.type,
         replacement_mode: preview.type === "ultimate" ? replacementMode : "full",
+        video_model: videoModel,
         segments,
         video_duration_sec: totalDur,
       }),
@@ -318,7 +352,7 @@ export default function VideoCloneV2Page() {
         setEstimate(d);
       })
       .catch(() => {});
-  }, [preview, segSelections, replacementMode]);
+  }, [preview, segSelections, replacementMode, videoModel]);
 
   // ─── 视频上传 handler ───
   async function handleVideoUpload(file: File) {
@@ -365,7 +399,7 @@ export default function VideoCloneV2Page() {
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || "上传失败");
-      setImages((arr) => [...arr, { url: d.image_url, role: d.role, filename: file.name }].slice(0, 3));
+      setImages((arr) => [...arr, { url: d.image_url, role: d.role, filename: file.name }].slice(0, 6));  // 参考图总上限 6 张(对齐 aiview Seedance 2.0)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -374,6 +408,56 @@ export default function VideoCloneV2Page() {
   }
 
   function applyTemplate(t: Template) { setPrompt(t.template); }
+
+  // ─── 提示词 @ 提及:打 @ 弹出"图片/视频"选择(像大厂那样)───
+  // 选项 = 每张参考图按 role 编号(产品1/人物1/场景1...) + 参考视频(视频1)
+  function buildMentionOptions() {
+    const counts: Record<string, number> = {};
+    const opts = images.map((img) => {
+      counts[img.role] = (counts[img.role] || 0) + 1;
+      return { label: `${ROLE_LABELS[img.role]}${counts[img.role]}`, thumb: img.url, sub: img.filename || "", isVideo: false };
+    });
+    if (video) opts.push({ label: "视频1", thumb: video.url, sub: "参考视频", isVideo: true });
+    return opts;
+  }
+  function onPromptChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    const val = e.target.value;
+    setPrompt(val);
+    const cursor = e.target.selectionStart ?? val.length;
+    const m = val.slice(0, cursor).match(/@([^\s@]*)$/);   // 光标前最近一个 @ 后面跟的字
+    if (m) setAtMenu({ open: true, query: m[1], pos: cursor - m[1].length - 1 });
+    else if (atMenu.open) setAtMenu({ open: false, query: "", pos: -1 });
+  }
+  function insertMention(label: string) {
+    const ta = promptRef.current;
+    const cursor = ta?.selectionStart ?? prompt.length;
+    const before = prompt.slice(0, atMenu.pos);   // @ 之前的原文
+    const after = prompt.slice(cursor);           // 光标之后的原文
+    const inserted = `@${label} `;
+    setPrompt(before + inserted + after);
+    setAtMenu({ open: false, query: "", pos: -1 });
+    requestAnimationFrame(() => {
+      if (ta) { const p = (before + inserted).length; ta.focus(); ta.setSelectionRange(p, p); }
+    });
+  }
+
+  // 傻瓜模式:把每张图的"用途"自动拼成 @ 格式提示词(填进提示词框,用户可再改)
+  function composeAutoPrompt() {
+    const counts: Record<string, number> = {};
+    const parts: string[] = [];
+    for (const img of images) {
+      counts[img.role] = (counts[img.role] || 0) + 1;
+      const ref = `@${ROLE_LABELS[img.role]}${counts[img.role]}`;  // 如 @产品1 / @人物1
+      const purpose = imagePurpose[img.url] || DEFAULT_PURPOSE[img.role] || "";
+      const fn = PURPOSE_TEXT[purpose];
+      if (fn) parts.push(fn(ref));
+    }
+    let text = "以 @视频1 为参考视频,保持其运动、构图和节奏。";
+    if (parts.length) text += parts.join(",") + "。";
+    if (removeOriginalSpeech) text += "新视频中不要保留原视频里的台词、字幕和旁白。";
+    else text += "新视频中保留原视频里的台词和声音、字幕和旁白。";
+    setPrompt(text);
+  }
 
   async function handleAiOptimize() {
     const desc = prompt.trim();
@@ -445,12 +529,14 @@ export default function VideoCloneV2Page() {
       const body: Record<string, unknown> = {
         type: preview.type,
         replacement_mode: preview.type === "ultimate" ? replacementMode : "full",
+        video_model: videoModel,
         segments,
         video_url: video.url,
         video_duration_sec: video.duration,
         video_sha256: video.sha256,
         image_urls: images.map((i) => ({ url: i.url, role: i.role })),
         prompt,
+        speech_text: speechText,
         disclaimer_acknowledged: true,
       };
       if (trim) {
@@ -571,7 +657,7 @@ export default function VideoCloneV2Page() {
               {t("videoCloneV2.titleMain")}<span style={{ fontStyle: "italic" }}> {t("videoCloneV2.titleAccent")}</span>
             </h1>
             <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
-              支持 4-64 秒视频 · 60 积分/秒 · 以原视频风格为参考生成含你产品的新视频 · 输出默认含水印
+              支持 4-64 秒视频 · 标准版 55 / 高质量 60 积分/秒 · 以原视频风格为参考生成含你产品的新视频 · 输出默认含水印
             </div>
           </div>
           <button
@@ -584,12 +670,12 @@ export default function VideoCloneV2Page() {
         </div>
 
         {/* Step 1:上传视频 */}
-        <Section title="1. 上传参考视频(MP4/MOV,≤50MB,4-64 秒)">
+        <Section title="1. 上传参考视频(MP4/MOV,≤50MB,4-15 秒)">
           {!video && (
             <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 8, padding: "0.7rem 1rem", marginBottom: 12, fontSize: "0.85rem", color: "#075985", lineHeight: 1.6 }}>
               <b>💡 效果说明</b>:本工具以上传视频的<b>运动节奏、构图和风格</b>为参考,生成包含你产品的全新视频。建议使用<b>单镜头视频</b>,效果最稳定。
               <br />
-              <b>📏 时长建议</b>:最长支持 64 秒,<b>超过 60 秒建议分段上传</b>,分别复刻后拼接,画质更好。
+              <b>⏱ 单次复刻最长 15 秒</b>。视频较长?可按以下方式实现长视频复刻:① 将原视频分段截取,每段不超过 15 秒;② 逐段上传并分别复刻;③ 将各段成片拼接为完整视频。
             </div>
           )}
           {!video ? (
@@ -618,26 +704,43 @@ export default function VideoCloneV2Page() {
         </Section>
 
         {/* Step 2:上传参考图(产品 / 人物 / 场景 各 0-3 张,总上限 9 张对齐 fal) */}
-        <Section title="2. 上传参考图(产品 / 人物 / 场景 各 0-3 张)">
+        <Section title="2. 上传参考图(产品 / 人物 / 场景,合计最多 6 张)">
           <div style={{ fontSize: "0.78rem", color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "0.45rem 0.75rem", marginBottom: 12 }}>
             ⚠️ 内衣 / 泳装 / 情趣类产品图暂不支持
+          </div>
+          <div style={{ fontSize: "0.78rem", color: images.length >= 6 ? "#dc2626" : "#6b7280", marginBottom: 12 }}>
+            参考图合计 {images.length}/6 张{images.length >= 6 ? "(已达上限)" : ",可在产品 / 人物 / 场景间自由分配"}
           </div>
           {(["product", "person", "scene"] as Role[]).map((role) => {
             const roleImages = images.map((img, idx) => ({ img, idx })).filter((x) => x.img.role === role);
             return (
               <div key={role} style={{ marginBottom: 16, paddingBottom: 12, borderBottom: "1px dashed #e5e7eb" }}>
                 <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "#374151", marginBottom: 8 }}>
-                  {ROLE_LABELS[role]}图 <span style={{ fontWeight: 400, color: "#9ca3af", fontSize: "0.78rem" }}>({roleImages.length}/3)</span>
+                  {ROLE_LABELS[role]}图 <span style={{ fontWeight: 400, color: "#9ca3af", fontSize: "0.78rem" }}>(已传 {roleImages.length} 张)</span>
                 </div>
+                {role === "person" && (
+                  <div style={{ fontSize: "0.75rem", color: "#9ca3af", marginBottom: 8, lineHeight: 1.5 }}>
+                    上传人物<b>正脸照片</b>,用于复刻 / 替换视频中的人物形象(换脸)。
+                  </div>
+                )}
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
                   {roleImages.map((x, i) => (
                     <div key={x.idx} style={{ position: "relative" }}>
                       <img src={x.img.url} alt={x.img.filename} style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 8, border: "1px solid #ddd" }} />
                       <div style={{ fontSize: "0.7rem", color: "#666", marginTop: 4, textAlign: "center" }}>@{ROLE_LABELS[role]}{i + 1}</div>
+                      {PURPOSE_BY_ROLE[role].length > 1 && (
+                        <select
+                          value={imagePurpose[x.img.url] || DEFAULT_PURPOSE[role]}
+                          onChange={(e) => setImagePurpose((p) => ({ ...p, [x.img.url]: e.target.value }))}
+                          style={{ width: 80, marginTop: 4, fontSize: "0.7rem", padding: "2px 4px", border: "1px solid #ddd", borderRadius: 6, cursor: "pointer" }}
+                        >
+                          {PURPOSE_BY_ROLE[role].map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+                        </select>
+                      )}
                       <button onClick={() => setImages((arr) => arr.filter((_, j) => j !== x.idx))} style={{ position: "absolute", top: -6, right: -6, background: "#fff", border: "1px solid #ddd", borderRadius: "50%", width: 20, height: 20, cursor: "pointer", fontSize: "0.7rem" }}>✕</button>
                     </div>
                   ))}
-                  {roleImages.length < 3 && (
+                  {images.length < 6 && (
                     <FileInput
                       accept="image/*"
                       disabled={uploadingImage}
@@ -751,6 +854,28 @@ export default function VideoCloneV2Page() {
         {/* Step 4:Prompt */}
         {video && (
           <Section title="4. 提示词(可选 · 按需要写,不写也能生成)">
+            {/* 视频模型选择:极速版 / 标准版,影响画质与价格 */}
+            <div style={{ marginBottom: 14, padding: "10px 12px", background: "#f8fafc", border: "1px solid #e5e7eb", borderRadius: 10 }}>
+              <label style={{ fontSize: "0.85rem", color: "#444", fontWeight: 600, display: "block", marginBottom: 8 }}>视频模型:</label>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {([
+                  { v: "seedance-2-0-fast", name: "标准版", desc: "Seedance 2.0 Fast · 出片更快", price: 55 },
+                  { v: "seedance-2-0", name: "高质量", desc: "Seedance 2.0 · 画质更稳", price: 60 },
+                ] as const).map((m) => (
+                  <button key={m.v} onClick={() => setVideoModel(m.v)}
+                    style={{
+                      flex: "1 1 220px", textAlign: "left", padding: "10px 12px", cursor: "pointer",
+                      border: videoModel === m.v ? "2px solid #2563eb" : "1px solid #d1d5db",
+                      background: videoModel === m.v ? "#eff6ff" : "#fff", borderRadius: 8,
+                    }}>
+                    <div style={{ fontWeight: 600, fontSize: "0.9rem", color: "#111" }}>
+                      {m.name} <span style={{ color: "#2563eb", fontSize: "0.82rem" }}>{m.price} 积分/秒</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "#666", marginTop: 2 }}>{m.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
             {/* 2026-05-11 目标市场 toggle:CN 国内→中文 prompt / Global 海外→英文 prompt */}
             <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
               <label style={{ fontSize: "0.85rem", color: "#444", fontWeight: 500 }}>目标市场:</label>
@@ -777,17 +902,57 @@ export default function VideoCloneV2Page() {
                 AI 优化时会按此切换 prompt 语言
               </span>
             </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-              {templates.map((t) => (
-                <button key={t.id} onClick={() => applyTemplate(t)} style={chipBtn}>{t.label}</button>
-              ))}
+            {/* 傻瓜模式:一键根据"每张图用途"自动生成提示词,用户不用写、不用打 @ */}
+            <div style={{ marginBottom: 10, padding: "10px 12px", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 10 }}>
+              <div style={{ fontSize: "0.82rem", color: "#0369a1", marginBottom: 8 }}>
+                💡 不会写?在上面第 2 步给每张图选好"用途",勾选下面需要的,点按钮自动生成 ↓
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.85rem", color: "#374151", marginBottom: 8, cursor: "pointer" }}>
+                <input type="checkbox" checked={removeOriginalSpeech} onChange={(e) => setRemoveOriginalSpeech(e.target.checked)} />
+                去掉原视频里的台词 / 字幕(新视频不保留)
+              </label>
+              <button onClick={composeAutoPrompt}
+                style={{ padding: "0.5rem 1rem", borderRadius: 8, border: "none", background: "#0284c7", color: "#fff", cursor: "pointer", fontSize: "0.85rem", fontWeight: 500 }}>
+                ✨ 一键生成提示词
+              </button>
             </div>
-            <textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="写大白话:想要视频里什么换成什么。例:想把视频里的裤子换成上传的款式 / 把人物换掉。点 ✨ AI 优化 自动转成专业 prompt"
-              style={{ width: "100%", minHeight: 80, padding: 10, border: "1px solid #ddd", borderRadius: 8, fontSize: "0.9rem", fontFamily: "inherit", resize: "vertical" }}
-            />
+            <div style={{ position: "relative" }}>
+              <textarea
+                ref={promptRef}
+                value={prompt}
+                onChange={onPromptChange}
+                onKeyDown={(e) => { if (e.key === "Escape" && atMenu.open) setAtMenu({ open: false, query: "", pos: -1 }); }}
+                onBlur={() => setTimeout(() => setAtMenu((m) => ({ ...m, open: false })), 150)}
+                placeholder="写大白话:想要视频里什么换成什么。打 @ 可引用上传的图片/视频(如 @产品1)。点 ✨ AI 优化 自动转成专业 prompt"
+                style={{ width: "100%", minHeight: 80, padding: 10, border: "1px solid #ddd", borderRadius: 8, fontSize: "0.9rem", fontFamily: "inherit", resize: "vertical" }}
+              />
+              {atMenu.open && (() => {
+                const opts = buildMentionOptions().filter((o) => o.label.includes(atMenu.query));
+                if (opts.length === 0) return null;
+                return (
+                  <div style={{ position: "absolute", left: 10, top: "100%", zIndex: 30, marginTop: 2, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", padding: 6, minWidth: 230, maxHeight: 270, overflowY: "auto" }}>
+                    <div style={{ fontSize: "0.72rem", color: "#9ca3af", padding: "2px 8px 6px" }}>选择要引用的图片 / 视频</div>
+                    {opts.map((o) => (
+                      <div key={o.label}
+                        onMouseDown={(e) => { e.preventDefault(); insertMention(o.label); }}
+                        style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", borderRadius: 8, cursor: "pointer" }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "#f3f4f6")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "")}>
+                        <div style={{ width: 40, height: 40, borderRadius: 6, overflow: "hidden", background: "#000", flexShrink: 0 }}>
+                          {o.isVideo
+                            ? <video src={o.thumb} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted />
+                            : <img src={o.thumb} alt={o.label} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "#111" }}>@{o.label}</div>
+                          <div style={{ fontSize: "0.72rem", color: "#9ca3af", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}>{o.sub}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
               <button
                 onClick={handleAiOptimize}
@@ -809,6 +974,7 @@ export default function VideoCloneV2Page() {
                 写完想法,点这里让 AI 帮你转成最佳 prompt
               </span>
             </div>
+
           </Section>
         )}
 

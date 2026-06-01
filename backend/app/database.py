@@ -65,6 +65,8 @@ def _patch_video_clone_v2_columns(cursor):
         # B 阶段:多段 drop 的 JSON([[s1,e1],[s2,e2],...]) processor 实际读这个字段
         # legacy trim_start/end 仅作单段 drop 兼容(/create 自动转成 1-elem JSON)
         ("trim_drop_ranges_json", "ALTER TABLE video_clone_v2_jobs ADD COLUMN trim_drop_ranges_json TEXT"),
+        # aiview 切换:记录本单使用的视频模型(fast / 标准版 2.0),用于按模型费率退款
+        ("video_model", "ALTER TABLE video_clone_v2_jobs ADD COLUMN video_model TEXT DEFAULT 'seedance-2-0-fast'"),
     ]
     for col_name, sql in patches:
         try:

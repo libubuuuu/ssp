@@ -116,6 +116,16 @@ class Settings(BaseSettings):
     HUPIJIAO_APPID: str = "201906180392"
     HUPIJIAO_SECRET: str = ""  # 从 .env.enc 读取
 
+    # aiview.club Open API(文生图新模型"专业版模式") — 第三方对接
+    # 所有调用走服务端 + HMAC-SHA256 签名;AppSecret 敏感,绝不进前端/git
+    AIVIEW_API_KEY: str = ""       # AppKey, 形如 ak_xxx
+    AIVIEW_API_SECRET: str = ""    # AppSecret, 形如 sk_xxx(敏感)
+    AIVIEW_BASE_URL: str = "https://www.aiview.club"
+    # 视频复刻(video-clone-v2)用哪个通道出视频:"fal"=原 FAL Seedance / "aiview"=第三方
+    # 默认 fal(不改配置则行为不变);设为 aiview 即切到第三方,可随时切回
+    VIDEO_CLONE_V2_PROVIDER: str = "fal"
+    AIVIEW_VIDEO_MODEL: str = "seedance-2-0-fast"  # aiview 视频模型
+
     class Config:
         env_file = str(_ENV_PATH)
         extra = "ignore"

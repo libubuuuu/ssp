@@ -49,6 +49,9 @@ _FONT_REGULAR_CANDIDATES = (
     "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",   # 黑体类 fallback
     "/System/Library/Fonts/PingFang.ttc",
+    # Windows 本地开发 fallback(生产 Ubuntu 上这些路径不存在,os.path.exists 自动跳过)
+    "C:/Windows/Fonts/msyh.ttc",      # 微软雅黑
+    "C:/Windows/Fonts/simsun.ttc",    # 宋体兜底
 )
 
 # Bold 字体(futuristic / gold 风格)
@@ -58,7 +61,20 @@ _FONT_BOLD_CANDIDATES = (
     "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
     "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",   # wqy 没单独 Bold,降级用 Regular
     "/System/Library/Fonts/PingFang.ttc",
+    # Windows 本地开发 fallback(生产 Ubuntu 上这些路径不存在,os.path.exists 自动跳过)
+    "C:/Windows/Fonts/msyhbd.ttc",    # 微软雅黑 Bold
+    "C:/Windows/Fonts/simhei.ttf",    # 黑体(本身粗)兜底
 )
+
+
+def _escape_fontfile_for_ffmpeg(path: str) -> str:
+    """把字体路径转成 ffmpeg filtergraph 安全形式。
+
+    filtergraph 里 ':' 是选项分隔符、'\\' 是转义引导符,Windows 盘符路径
+    (C:\\Windows\\...)直接塞进 drawtext fontfile 会被解析错。统一成正斜杠
+    再转义冒号。Linux/Mac 路径无这两个字符,转义后原样不变 → 不影响生产。
+    """
+    return path.replace("\\", "/").replace(":", r"\:")
 
 
 def _resolve_font_file(weight: Literal["regular", "bold"] = "regular") -> str:
@@ -182,19 +198,23 @@ def _vf_logo(font_size: int, pad: int, font_file: str) -> str:
 
 
 def _build_filter(style: WatermarkStyle, font_size: int, pad: int) -> tuple[str, str]:
-    """根据 style 返 (filter_string, font_file_used)。"""
+    """根据 style 返 (filter_string, font_file_used)。
+
+    filter_string 里用转义后的字体路径(ffmpeg 安全);返回的 font_file 仍是
+    原始绝对路径(给日志 / 返回 dict 用)。
+    """
     if style == "simple":
         ff = _resolve_font_file("bold")    # 六审升级 Regular → Bold
-        return _vf_simple(font_size, pad, ff), ff
+        return _vf_simple(font_size, pad, _escape_fontfile_for_ffmpeg(ff)), ff
     if style == "futuristic":
         ff = _resolve_font_file("bold")
-        return _vf_futuristic(font_size, pad, ff), ff
+        return _vf_futuristic(font_size, pad, _escape_fontfile_for_ffmpeg(ff)), ff
     if style == "gold":
         ff = _resolve_font_file("bold")
-        return _vf_gold(font_size, pad, ff), ff
+        return _vf_gold(font_size, pad, _escape_fontfile_for_ffmpeg(ff)), ff
     if style == "logo":
         ff = _resolve_font_file("regular")
-        return _vf_logo(font_size, pad, ff), ff
+        return _vf_logo(font_size, pad, _escape_fontfile_for_ffmpeg(ff)), ff
     raise ValueError(f"未知 style:{style!r}(允许 simple|futuristic|gold|logo)")
 
 

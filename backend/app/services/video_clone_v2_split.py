@@ -34,17 +34,26 @@ def plan_segments_v2(total_sec: float) -> List[Dict[str, Any]]:
     """
     if total_sec < 4:
         raise ValueError("视频太短,最少 4 秒")
+    # ── 单段化(新模型单次最长 15 秒,不再自动切段拼接)─────────────────────
+    # >15s 直接拦下,引导用户自己分段截取后分别复刻;≤15s 整段一次复刻。
+    # 下方多段切片逻辑保留(当前阈值下不会执行),日后要恢复多段把这里的上限调高即可。
+    _SINGLE_PASS_MAX = 15.0
+    if total_sec > _SINGLE_PASS_MAX:
+        raise ValueError(
+            "单次复刻最长 15 秒。视频较长时,请分段截取(每段 ≤15 秒)后分别复刻,"
+            "再拼接为完整视频,以保证生成质量。"
+        )
+    return [{
+        "idx": 0,
+        "start": 0.0,
+        "duration": float(total_sec),
+    }]
+
+    # ── 以下多段切片逻辑(dormant:>15s 已在上方拦截,不会触达)─────────────
     if total_sec > MAX_ULTIMATE_SECONDS:
         raise ValueError(
             f"视频太长,最多 {MAX_ULTIMATE_SECONDS} 秒(请截取 60 秒以内视频)"
         )
-
-    if total_sec <= 8:
-        return [{
-            "idx": 0,
-            "start": 0.0,
-            "duration": float(total_sec),
-        }]
 
     segments: List[Dict[str, Any]] = []
     idx = 0
@@ -94,44 +103,14 @@ def check_duration(duration_sec: float) -> Dict[str, Any]:
     """
     if duration_sec < 4.0:
         raise ValueError(f"视频太短(<4 秒),最少 4 秒")
-    if duration_sec > MAX_ULTIMATE_SECONDS:
-        raise ValueError(f"视频太长,最多 {MAX_ULTIMATE_SECONDS} 秒")
-
-    # 模拟切段,检查末段是否合法
-    segments: list[float] = []
-    cur = 0.0
-    while cur < duration_sec - _TARGET_TOLERANCE:
-        seg = min(8.0, duration_sec - cur)
-        segments.append(seg)
-        cur += seg
-
-    if not segments:
-        return {"needs_trim": False, "current_duration": round(duration_sec, 2),
-                "target_duration": round(duration_sec, 2)}
-
-    last = segments[-1]
-
-    # 末段 ≥ 4s → 合法，无需 trim
-    if last >= 4.0 - _TARGET_TOLERANCE:
-        return {"needs_trim": False, "current_duration": round(duration_sec, 2),
-                "target_duration": round(duration_sec, 2)}
-
-    # 末段 < 4s → 并入前段（最多 12s，在 fal 15s 内）
-    if len(segments) >= 2:
-        merged = segments[-2] + last
-        if merged <= 15.0 + _TARGET_TOLERANCE:
-            # 合并后合法，无需 trim
-            return {"needs_trim": False, "current_duration": round(duration_sec, 2),
-                    "target_duration": round(duration_sec, 2)}
-
-    # 合并后 > 15s（极端情况）→ 需要丢弃末段
-    target = duration_sec - last
-    return {
-        "needs_trim": True,
-        "current_duration": round(duration_sec, 2),
-        "target_duration": round(target, 2),
-        "drop_seconds": round(last, 2),
-    }
+    # 单段化:单次复刻最长 15 秒。>15s 拦下引导用户分段;≤15s 整段一次复刻,无需 trim。
+    if duration_sec > 15.0:
+        raise ValueError(
+            "单次复刻最长 15 秒。视频较长时,请分段截取(每段 ≤15 秒)后分别复刻,"
+            "再拼接为完整视频,以保证生成质量。"
+        )
+    return {"needs_trim": False, "current_duration": round(duration_sec, 2),
+            "target_duration": round(duration_sec, 2)}
 
 
 # ─── ffmpeg 运动量计算(motion_score)───────────────────────────────────

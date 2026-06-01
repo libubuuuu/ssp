@@ -48,6 +48,7 @@ from app.services.video_clone_v2_pricing import (
     build_prompt,
     calc_credits,
     calc_segment_credits,
+    rate_for_model,
     sha256_file,
 )
 from app.services.video_clone_v2_split import (
@@ -177,6 +178,8 @@ class EstimateRequest(BaseModel):
     model_config = {"extra": "forbid"}
     type: Literal["single", "ultimate"]
     replacement_mode: Literal["partial", "full"]
+    # 用户自选视频模型,估价按所选模型费率(fast=55/秒, 标准版=60/秒)
+    video_model: Literal["seedance-2-0-fast", "seedance-2-0"] = "seedance-2-0-fast"
     segments: List[SegmentPlanItem]
     # 2026-05-13:新计价模型按段 duration × CREDITS_PER_SEC,需要 plan_segments_v2 还原 duration
     # 兼容:Optional,缺省时 ai 段按 worst-case 8s 估算(老前端兜底,只多报不少报)
@@ -199,6 +202,8 @@ class CreateRequest(BaseModel):
     model_config = {"extra": "forbid"}
     type: Literal["single", "ultimate"]
     replacement_mode: Literal["partial", "full"]
+    # 用户自选视频模型:fast=极速版(55积分/秒) / seedance-2-0=标准版(60积分/秒)
+    video_model: Literal["seedance-2-0-fast", "seedance-2-0"] = "seedance-2-0-fast"
     segments: List[SegmentPlanItem]
     video_url: str
     video_duration_sec: float = Field(..., gt=0)
@@ -206,6 +211,10 @@ class CreateRequest(BaseModel):
     # 2026-05-11:产品/人物/场景 各 0-3 张,总上限 9 张(对齐 fal seedance r2v image_urls 上限)
     image_urls: List[ImageRef] = Field(default_factory=list, max_length=9)
     prompt: str = Field("", max_length=2000, description="可选;空时 build_prompt 用默认参考生成提示")
+    speech_text: Optional[str] = Field(
+        None, max_length=1000,
+        description="可选口播文案;非空=让人物改说此内容(后端用 seedance-2.0 + 生成新配音);留空=保留原视频口播"
+    )
     disclaimer_acknowledged: bool
     # B 阶段:check-duration 弹窗用户选完丢段位置后传回(可选,默认不裁剪整片用)
     # B+ 阶段:trim_drop_ranges 多段丢弃 [[s,e],[s,e],...],总和 = drop_seconds
@@ -485,7 +494,7 @@ async def preview_segments(
         plan = plan_segments_v2(req.video_duration_sec)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    type_ = "single" if req.video_duration_sec <= 8 else "ultimate"
+    type_ = "single"  # 单段化:≤15s 整段一次复刻(>15s 已在 plan_segments_v2 拦截)
     segments = [
         SegmentChoice(
             idx=p["idx"], start=p["start"], duration=p["duration"],
@@ -530,11 +539,12 @@ async def estimate(
             plan_for_estimate = plan_segments_v2(req.video_duration_sec)
         except ValueError as e:
             raise HTTPException(400, str(e))
-    total_credits = calc_credits(seg_dicts, plan_for_estimate or None)
-    # 兼容老前端:没传 video_duration_sec 时按 ai 段 × worst-case 8s × CREDITS_PER_SEC 估算
+    _rate = rate_for_model(req.video_model)  # fast=55/秒, 标准版2.0=60/秒
+    total_credits = calc_credits(seg_dicts, plan_for_estimate or None, rate=_rate)
+    # 兼容老前端:没传 video_duration_sec 时按 ai 段 × worst-case 8s × 费率 估算
     if total_credits == 0:
         ai_count_for_fallback = sum(1 for s in req.segments if s.source_type == "ai")
-        total_credits = ai_count_for_fallback * SEGMENT_INPUT_SECONDS_MAX * CREDITS_PER_SEC
+        total_credits = ai_count_for_fallback * SEGMENT_INPUT_SECONDS_MAX * _rate
 
     # 估算 fal 成本(check 保险 2)— worst-case 8s × $0.0925 × 1.3 / ai 段
     settings = get_settings()
@@ -656,7 +666,8 @@ async def create(
     # 4. 算总积分 + 保险 2(2026-05-13:按 ai 段 duration × CREDITS_PER_SEC,plan_back 提供 duration)
     settings = get_settings()
     seg_dicts = [s.model_dump() for s in req.segments]
-    total_credits = calc_credits(seg_dicts, plan_back)
+    _rate = rate_for_model(req.video_model)  # fast=55/秒, 标准版2.0=60/秒
+    total_credits = calc_credits(seg_dicts, plan_back, rate=_rate)
     ai_count = sum(1 for s in req.segments if s.source_type == "ai")
     estimated_usd = ai_count * SEGMENT_INPUT_SECONDS_MAX * 0.0925 * 1.3
     if estimated_usd > settings.VC2_MAX_ORDER_COST_USD:
@@ -667,12 +678,28 @@ async def create(
     if not check_user_credits(user_id, total_credits):
         raise HTTPException(402, f"积分不足,需 {total_credits} 积分")
     job_id = str(uuid.uuid4())
-    if not deduct_credits(user_id, total_credits, ref_id=job_id, module="video/clone-v2"):
+    # 对账单:扣费时直接带上"接口:模型"(原子记账,扣费即记,绝不会漏)
+    # 格式统一为 "{接口}:{模型}",冒号前是接口/供应商,一眼区分:
+    #   aiview:seedance-2-0-fast  = 走【新接口 aiview】
+    #   fal:seedance-r2v          = 走【fal 接口】
+    _vc2_provider = (settings.VIDEO_CLONE_V2_PROVIDER or "fal").lower()
+    # 模型用【用户本单所选】(fast / 标准版2.0),不再用全局 .env 默认
+    _vc2_model_name = req.video_model if _vc2_provider == "aiview" else "seedance-r2v"
+    _vc2_model = f"{_vc2_provider}:{_vc2_model_name}"
+    if not deduct_credits(user_id, total_credits, ref_id=job_id, module="video/clone-v2",
+                          model=_vc2_model):
         raise HTTPException(402, "扣费失败(并发竞争)")
 
     # 6. build_prompt(⭐ 功能 3)
     image_urls_obj = [img.model_dump() for img in req.image_urls]
     prompt_compiled = build_prompt(req.prompt, image_urls_obj)
+    # 口播文案(可选):非空时让人物改说新内容。用「【口播】」标记,processor 据此切到
+    # seedance-2.0 + 生成新配音(详见 call_aiview_seedance)。不新增数据库字段,随提示词带走。
+    if (req.speech_text or "").strip():
+        prompt_compiled += (
+            "\n\n【口播】请让画面中的人物清晰、自然地说出以下内容,并对齐口型;"
+            "不要保留原视频中原有的台词/旁白:\n" + req.speech_text.strip()
+        )
 
     # 7. segments_plan 合并前端 segments + 后端 plan_back(单档:不再有 tier 字段)
     # input_seconds 字段保留作 fallback,跟段实际秒数对齐(memory: feedback_ssp_verify_before_delete)
@@ -714,8 +741,8 @@ async def create(
                 image_urls, prompt, prompt_compiled,
                 segments_plan, segments_count, segments_results,
                 total_credits_charged, status,
-                trim_start, trim_end, trimmed_seconds, trim_drop_ranges_json
-            ) VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, 'processing', ?, ?, ?, ?)
+                trim_start, trim_end, trimmed_seconds, trim_drop_ranges_json, video_model
+            ) VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, 'processing', ?, ?, ?, ?, ?)
         """, (
             job_id, user_id, req.type, req.replacement_mode,
             req.video_url, req.video_duration_sec, video_sha256,
@@ -725,6 +752,7 @@ async def create(
             len(segments_plan),
             total_credits,
             trim_start, trim_end, trimmed_seconds, trim_drop_ranges_json,
+            req.video_model,
         ))
         conn.execute("""
             INSERT INTO video_clone_v2_disclaimer_log (
@@ -1076,6 +1104,19 @@ async def generate_v2_prompt(
     text = text.strip('"').strip("'").strip()
     # 2026-05-11:8 元素丰富 prompt 可能跨多行,合并空白(不再 split[0] 截首行)
     text = _re.sub(r"\s+", " ", text).strip()
+
+    # 2026-06-01 用户要求:一键生成的提示词固定追加"保留原视频台词/声音/字幕/旁白",
+    # 配合 generate_audio=True 让 seedance 在新视频里保留原始口播、字幕与旁白。
+    keep_clause = (
+        "Keep the original video's dialogue, voice, subtitles and narration in the new video."
+        if is_en
+        else "新视频中保留原视频里的台词、声音、字幕和旁白。"
+    )
+    if text and keep_clause not in text:
+        if is_en:
+            text = (text.rstrip().rstrip(".") + ". " + keep_clause).strip()
+        else:
+            text = (text.rstrip().rstrip("。") + "。" + keep_clause).strip()
 
     log_info(
         f"v2 generate-prompt user={current_user.get('id')} region={region} "

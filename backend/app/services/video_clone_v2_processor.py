@@ -31,8 +31,10 @@ from .video_clone_v2_pricing import (
     FAL_RESOLUTION,
     FAL_OUTPUT_DURATION,
     FAL_GENERATE_AUDIO,
+    ROLE_TO_AT_LABEL,
     build_prompt,
     calc_segment_credits,
+    rate_for_model,
     sha256_file,
     sha256_url_first8,
 )
@@ -284,6 +286,130 @@ async def call_fal_seedance(
     }
 
 
+_AIVIEW_RATIO_OK = {"16:9", "9:16", "1:1", "4:3", "3:4"}
+# 角色图固定排序(产品→人物→场景→其它),决定 @imageN 的编号
+_AIVIEW_ROLE_ORDER = ("product", "person", "scene", "reference")
+
+
+def _aiview_order_and_refs(image_urls: List[Dict[str, Any]]):
+    """把角色图按固定顺序排好,返回:
+       (ordered_urls, ref_map)
+    ordered_urls: 传给 aiview image_urls 的有序 URL 列表
+    ref_map:      {"@产品1": "@image1", "@人物1": "@image2", ...} 用于改写用户提示词
+    Seedance 的 @imageN 靠"顺序"对应,所以编号 = 在 ordered_urls 里的位置。
+    """
+    grouped: Dict[str, list] = {}
+    for img in image_urls:
+        role = img.get("role") or "reference"
+        grouped.setdefault(role, []).append(img)
+    ordered_urls: List[str] = []
+    ref_map: Dict[str, str] = {}
+    roles_seen = list(_AIVIEW_ROLE_ORDER) + [r for r in grouped if r not in _AIVIEW_ROLE_ORDER]
+    for role in roles_seen:
+        label = ROLE_TO_AT_LABEL.get(role, "图")
+        for i, img in enumerate(grouped.get(role, []), start=1):
+            ordered_urls.append(img["url"])
+            ref_map[f"@{label}{i}"] = f"@image{len(ordered_urls)}"
+    return ordered_urls, ref_map
+
+
+def _rewrite_prompt_for_aiview(prompt: str, ref_map: Dict[str, str]) -> str:
+    """把用户提示词里的中文 @ 引用(@产品1 / @视频1 等)改写成 Seedance 认的英文 @imageN / @video1。
+    按 key 长度降序替换,避免 @产品10 被 @产品1 提前截断。
+    """
+    out = prompt or ""
+    # 原视频 = @video1(用户可能写 @视频1 / 视频1)
+    out = out.replace("@视频1", "@video1").replace("@视频 1", "@video1")
+    for old in sorted(ref_map, key=len, reverse=True):
+        out = out.replace(old, ref_map[old])
+    return out
+
+
+async def call_aiview_seedance(
+    video_url: str,
+    image_urls: List[str],
+    prompt_compiled: str,
+    seed: int,
+    aspect_ratio: str = "auto",
+    *,
+    job_id: str = "",
+    seg_idx: int = -1,
+    input_duration_sec: float = 8.0,
+    model: str = "",
+) -> Dict[str, Any]:
+    """走第三方 aiview.club 的 Seedance 参考视频复刻(异步 提交→轮询)。
+    返回结构与 call_fal_seedance 一致:{"video_url", "actual_cost_usd", "raw_response"}。
+    """
+    from app.services.aiview_service import get_aiview_image_service
+    service = get_aiview_image_service()
+    if not service.is_available():
+        raise RuntimeError("aiview 未配置(缺 AppKey/AppSecret)")
+
+    input_hash = sha256_url_first8(video_url)
+    out_dur = max(4, min(15, round(input_duration_sec)))
+    ratio = aspect_ratio if aspect_ratio in _AIVIEW_RATIO_OK else "adaptive"
+    # 视频复刻只用 2.0 / 2.0-fast(支持参考视频+多图);其它(如 1.5 Pro 不支持参考视频)强制回退
+    # 优先用本单【用户所选模型】:① 显式传入 → ② 按 job_id 查库 → ③ 回落 .env 默认
+    if not model and job_id:
+        try:
+            from app.database import get_db
+            with get_db() as _c:
+                _row = _c.execute(
+                    "SELECT video_model FROM video_clone_v2_jobs WHERE id = ?", (job_id,)
+                ).fetchone()
+            if _row and _row[0]:
+                model = _row[0]
+        except Exception:
+            pass
+    model = (model or get_settings().AIVIEW_VIDEO_MODEL or "seedance-2-0-fast").lower()
+    if model not in ("seedance-2-0", "seedance-2-0-fast"):
+        model = "seedance-2-0-fast"
+    # 口播模式:提示词含「【口播】」= 用户要换台词 → 用完整版 2.0(口型/配音最好)+ 生成新配音。
+    # 普通复刻 generate_audio=False(保留原声);口播 generate_audio=True,
+    # _build_segment_clip 检测到模型自带音轨会自动保留(即新台词的声音,不会被原声覆盖)。
+    is_speech = "【口播】" in (prompt_compiled or "")
+    if is_speech:
+        model = "seedance-2-0"
+    # 2026-06-01:普通复刻也开模型配音(用户要"模型生成的声音",不要贴原声)。
+    # 旧 FAL_GENERATE_AUDIO=False 的理由是 fal 会审核生成音频 → 已换 aiview,是否审核待实测。
+    # 兜底:万一模型某次没出音轨,_build_segment_clip 仍会 mux 原声,保证成片不哑。
+    gen_audio = True
+    log_info(
+        f"[V2-AIVIEW] job={job_id} seg={seg_idx} input_hash={input_hash} "
+        f"prompt={prompt_compiled[:50]!r} seed={seed} model={model} "
+        f"input_dur={input_duration_sec:.1f}s out_dur={out_dur} ratio={ratio}"
+    )
+    sub = await service.submit_video(
+        reference_video_url=video_url,
+        image_urls=image_urls,
+        dynamic_prompt=prompt_compiled,
+        input_video_duration=round(input_duration_sec),
+        duration=out_dur,
+        model=model,
+        resolution=FAL_RESOLUTION,       # 与 FAL 路径一致:480p
+        ratio=ratio,
+        seed=seed,
+        generate_audio=gen_audio,  # 口播=True(模型出新配音) / 普通复刻=False(保留原声)
+    )
+    if sub.get("error"):
+        raise RuntimeError(f"aiview 视频提交失败:{sub['error']}")
+    rid = sub["request_id"]
+    # 轮询最多 120 次 × 5s = 10 分钟(与 FAL 单段 300s 同量级,留足余量)
+    for _ in range(120):
+        await asyncio.sleep(5)
+        st = await service.query_video(rid)
+        if st.get("status") == "completed" and st.get("video_url"):
+            out_url = st["video_url"]
+            log_info(
+                f"[V2-AIVIEW-OK] job={job_id} seg={seg_idx} "
+                f"input_hash={input_hash} → output={out_url[:80]}"
+            )
+            return {"video_url": out_url, "actual_cost_usd": None, "raw_response": st.get("raw") or {}}
+        if st.get("status") == "failed":
+            raise RuntimeError(f"aiview 视频失败:{st.get('error', '未知')}")
+    raise RuntimeError("aiview 视频超时(>10min)")
+
+
 def _estimate_cost_usd(duration_sec: float = SEGMENT_INPUT_SECONDS_MAX) -> float:
     """fallback:fal 不返 cost 时按实际段长估算。
     fal 按 token 计费(token ≈ 分辨率×帧数),帧数与时长线性相关,故用实际秒数代替 worst-case 8s。
@@ -323,11 +449,24 @@ async def _run_one_ai_segment(
         # 段实际秒数 — fal duration 跟它对齐,避免 input < output 触发 hallucinate
         prepared_dur = await _ffprobe_duration(prepared)
         fal_called_at = time.strftime("%Y-%m-%d %H:%M:%S")
-        result = await call_fal_seedance(
-            input_url, url_only, prompt_compiled, seed, aspect_ratio,
-            job_id=job_id, seg_idx=idx,
-            input_duration_sec=prepared_dur,
-        )
+        # 通道开关:aiview=第三方 Seedance / 其它=原 FAL Seedance(可随时切回)
+        _provider = (get_settings().VIDEO_CLONE_V2_PROVIDER or "fal").lower()
+        if _provider == "aiview":
+            # Seedance @imageN 靠顺序对应:按角色固定排序图,并把提示词里的
+            # @产品1/@人物1/@视频1 改写成 @image1/@image2/@video1
+            ordered_urls, _ref_map = _aiview_order_and_refs(image_urls)
+            aiview_prompt = _rewrite_prompt_for_aiview(prompt_compiled, _ref_map)
+            result = await call_aiview_seedance(
+                input_url, ordered_urls, aiview_prompt, seed, aspect_ratio,
+                job_id=job_id, seg_idx=idx,
+                input_duration_sec=prepared_dur,
+            )
+        else:
+            result = await call_fal_seedance(
+                input_url, url_only, prompt_compiled, seed, aspect_ratio,
+                job_id=job_id, seg_idx=idx,
+                input_duration_sec=prepared_dur,
+            )
         actual_cost = result["actual_cost_usd"]
         if actual_cost is None:
             actual_cost = _estimate_cost_usd(prepared_dur)
@@ -703,6 +842,9 @@ async def _process_v2_job_inner(job_id: str) -> None:
     # 4. 归档(双版本)
     try:
         if seg["source_type"] == "ai":
+            # 单段 AI:直接用 aiview 输出归档。generate_audio=True 时模型自带声音,
+            # emit_dual_versions 的 -c:a copy 会保留模型声音。声音完全由模型+prompt 决定,
+            # 后端不贴原视频原声(用户决议 2026-06-01)。模型没出声 = 成片无声,由 prompt 调。
             urls = await archive_dual_versions(result["output_url"], job_id)
         else:
             # original 段 — 没 fal URL,直接把 seg_files[0] 拷到归档目录 + 加水印
@@ -1199,9 +1341,10 @@ async def _process_ultimate(
     if ai_failed and not ai_completed:
         # 2026-05-13 改按段实际 duration × CREDITS_PER_SEC 积分退,不再固定 SEGMENT_CREDITS
         plan_by_idx_for_refund = {p["idx"]: p for p in plan}
+        _rate_rf = rate_for_model(job.get("video_model"))  # 按本单所选模型费率退,跟扣费一致
         for r in ai_failed:
             dur = float(plan_by_idx_for_refund.get(r["idx"], {}).get("duration") or 0)
-            await _refund_partial(job, r["idx"], calc_segment_credits(dur))
+            await _refund_partial(job, r["idx"], calc_segment_credits(dur, _rate_rf))
         fail_summary = "; ".join(
             f"seg {r['idx']}: {(r.get('error') or '未知')[:80]}" for r in ai_failed
         )
@@ -1226,9 +1369,10 @@ async def _process_ultimate(
 
         # 3a. 失败段 per-seg 退款(2026-05-13 按段 duration × CREDITS_PER_SEC)
         plan_by_idx_for_refund = {p["idx"]: p for p in plan}
+        _rate_rf = rate_for_model(job.get("video_model"))  # 按本单所选模型费率退,跟扣费一致
         for r in ai_failed:
             dur = float(plan_by_idx_for_refund.get(r["idx"], {}).get("duration") or 0)
-            await _refund_partial(job, r["idx"], calc_segment_credits(dur))
+            await _refund_partial(job, r["idx"], calc_segment_credits(dur, _rate_rf))
 
         # 3b. 成功段(AI + original)每段单独归档双版本
         plan_by_idx = {p["idx"]: p for p in plan}
