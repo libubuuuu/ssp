@@ -994,6 +994,10 @@ class GenerateV2PromptRequest(BaseModel):
                                   description="用户大白话需求,会被 LLM 优化成简短 prompt")
     # 2026-05-11:目标市场 toggle,影响输出语言(CN 中文 / Global 英文)
     region: Literal["CN", "Global"] = Field("CN", description="CN 国内中文 / Global 海外英文")
+    # 2026-06-03:一键生成看图分类模式
+    image_urls: list[str] = Field(default_factory=list, max_length=6,
+                                  description="可选,已上传参考图URL(最多6张),一键生成看图分类用")
+    compact: bool = Field(False, description="True=一键生成简洁模式(看图分类+固定模板)")
 
 
 class GenerateV2PromptResponse(BaseModel):
@@ -1042,6 +1046,36 @@ async def _call_deepseek_optimize(user_description: str, region: str = "CN") -> 
         return None
 
 
+async def _vision_classify_swap(image_urls, region: str = "CN") -> str:
+    """看参考图判断"换什么":服装穿戴类→'整套穿搭';其他实物→'画面主体产品'。失败返空。"""
+    if not image_urls:
+        return ""
+    instruction = (
+        "看这些参考图里的产品,判断它是不是【可穿戴的服装 / 鞋帽 / 配饰】。"
+        "是服装穿戴类 → 只回答:整套穿搭。"
+        "其他实物产品(电子设备 / 食品 / 日用品 / 玩具等非穿戴)→ 只回答:画面主体产品。"
+        "只回这一个短语,不要其他文字。"
+    )
+    for attempt in range(2):  # 看图服务不稳,失败重试一次
+        try:
+            result = await asyncio.wait_for(
+                fal_client.run_async(
+                    "openrouter/router/vision",
+                    arguments={"image_urls": list(image_urls)[:3], "prompt": instruction,
+                               "model": "qwen/qwen3-vl-235b-a22b-instruct", "temperature": 0.1},
+                ),
+                timeout=45,
+            )
+            out = (result.get("output") or "").strip() if isinstance(result, dict) else ""
+            if "穿搭" in out or "服装" in out or "衣" in out:
+                return "整套穿搭"
+            if out:
+                return "画面主体产品"
+        except Exception as e:
+            log_error(f"v2 看图分类失败(第{attempt+1}次): {str(e)[:120]}")
+    return ""
+
+
 @router.post("/generate-prompt", response_model=GenerateV2PromptResponse)
 async def generate_v2_prompt(
     req: GenerateV2PromptRequest,
@@ -1052,6 +1086,19 @@ async def generate_v2_prompt(
     import re as _re
 
     region = req.region
+
+    # 2026-06-03 新增:一键生成「看图分类」简洁模式 — 早返回,不触达下方任何原有逻辑/扣费
+    if req.compact:
+        _swap = await _vision_classify_swap(req.image_urls, region=req.region)
+        if _swap:
+            _keep = ("新视频中不要保留原视频里的台词、字幕和旁白。"
+                     if ("不要保留" in req.user_description or "不保留" in req.user_description)
+                     else "新视频中保留原视频里的台词和声音、字幕和旁白。")
+            _text = f"以 @视频1 为参考视频,保持其运动、构图和节奏。把视频里人物的{_swap}换成 @产品1。{_keep}"
+        else:
+            _text = req.user_description  # 看图失败:用前端拼的基础模板兜底
+        return GenerateV2PromptResponse(generated_prompt=_text, model="vision-compact", region=req.region)
+
     is_en = region == "Global"
     text = ""
     used_model = ""

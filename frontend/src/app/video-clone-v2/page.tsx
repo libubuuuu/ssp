@@ -448,7 +448,7 @@ export default function VideoCloneV2Page() {
   }
 
   // 傻瓜模式:把每张图的"用途"自动拼成 @ 格式提示词(填进提示词框,用户可再改)
-  function composeAutoPrompt() {
+  async function composeAutoPrompt() {
     const counts: Record<string, number> = {};
     const parts: string[] = [];
     for (const img of images) {
@@ -463,6 +463,17 @@ export default function VideoCloneV2Page() {
     if (removeOriginalSpeech) text += "新视频中不要保留原视频里的台词、字幕和旁白。";
     else text += "新视频中保留原视频里的台词和声音、字幕和旁白。";
     setPrompt(text);
+    // 2026-06-03:有参考图 → 调后端看图分类,把"换什么"换成贴合实际产品的词;无图/失败保留基础模板
+    if (images.length === 0) return;
+    setAiOptimizing(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/video/clone-v2/generate-prompt`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json", ...token() },
+        body: JSON.stringify({ user_description: text, region, image_urls: images.map((img) => img.url).slice(0, 6), compact: true }),
+      });
+      if (r.ok) { const data = await r.json(); if (data.generated_prompt) setPrompt(data.generated_prompt); }
+    } catch {} finally { setAiOptimizing(false); }
   }
 
   async function handleAiOptimize() {
