@@ -19,7 +19,7 @@ export default function ImagePage(){
   const [model, setModel] = useState("gpt-image-2");
   const MODEL_OPTIONS = [
     { key: "gpt-image-2", label: "标准模式", cost: "20 积分/张" },
-    { key: "aiview-pro",  label: "豆包",     cost: "25 积分/张" },
+    { key: "aiview-pro",  label: "专业版",   cost: "25 积分/张" },
   ];
   const [size,setSize]=useState("1:1");
   const [refImages,setRefImages]=useState<string[]>([]);
