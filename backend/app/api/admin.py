@@ -1530,12 +1530,13 @@ async def admin_billing_user_detail(
 
     with get_db() as conn:
         total = conn.execute(
-            "SELECT COUNT(*) FROM credits_ledger WHERE reason='task_charge' AND user_id=?",
+            """SELECT COUNT(*) FROM credits_ledger
+               WHERE user_id=? AND reason IN ('task_charge','register_bonus','init_ledger_backfill')""",
             (user_id,)
         ).fetchone()[0]
 
         rows = conn.execute("""
-            SELECT cl.delta, cl.ref_id, cl.module, cl.created_at,
+            SELECT cl.delta, cl.ref_id, cl.module, cl.reason, cl.created_at,
                    v.video_model, v.type AS vc2_type,
                    COALESCE((
                        SELECT SUM(r.delta) FROM credits_ledger r
@@ -1543,7 +1544,8 @@ async def admin_billing_user_detail(
                    ), 0) AS total_refund
             FROM credits_ledger cl
             LEFT JOIN video_clone_v2_jobs v ON v.id = cl.ref_id
-            WHERE cl.reason = 'task_charge' AND cl.user_id = ?
+            WHERE cl.user_id = ?
+              AND cl.reason IN ('task_charge','register_bonus','init_ledger_backfill')
             ORDER BY cl.created_at DESC
             LIMIT ? OFFSET ?
         """, (user_id, actual_limit, actual_offset)).fetchall()
@@ -1558,18 +1560,32 @@ async def admin_billing_user_detail(
 
     result = []
     for r in rows:
-        gross = abs(int(r["delta"]))
-        refund = int(r["total_refund"])
-        net = gross - refund
-        result.append({
-            "时间":    _ts(r["created_at"]),
-            "状态":    "失败" if net == 0 and refund > 0 else "成功",
-            "供应商":  _provider(r["module"] or ""),
-            "模型/接口": _model(r),
-            "扣积分":  gross,
-            "退积分":  refund,
-            "净消耗":  net,
-        })
+        reason = r["reason"]
+        if reason in ("register_bonus", "init_ledger_backfill"):
+            result.append({
+                "时间":    _ts(r["created_at"]),
+                "状态":    "赠送",
+                "供应商":  "system",
+                "模型/接口": "注册赠送" if reason == "register_bonus" else "历史补录",
+                "扣积分":  0,
+                "退积分":  0,
+                "净消耗":  0,
+                "赠送积分": int(r["delta"]),
+            })
+        else:
+            gross = abs(int(r["delta"]))
+            refund = int(r["total_refund"])
+            net = gross - refund
+            result.append({
+                "时间":    _ts(r["created_at"]),
+                "状态":    "失败" if net == 0 and refund > 0 else "成功",
+                "供应商":  _provider(r["module"] or ""),
+                "模型/接口": _model(r),
+                "扣积分":  gross,
+                "退积分":  refund,
+                "净消耗":  net,
+                "赠送积分": 0,
+            })
     return {"rows": result, "total": total, "page": page}
 
 
