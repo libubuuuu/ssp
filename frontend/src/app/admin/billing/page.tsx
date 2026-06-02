@@ -9,6 +9,7 @@ interface Row { [key: string]: string | number | null | undefined; }
 
 interface UserStat {
   user_id: string; email: string; name: string;
+  current_balance: number;
   total_charges: number; success_count: number; failed_count: number;
   gross_credits: number; refunded_credits: number; net_credits: number;
 }
@@ -231,6 +232,7 @@ export default function AdminBillingPage() {
                 : <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.88rem" }}>
                     <thead><tr>
                       <TH>用户</TH>
+                      <TH right>当前余额</TH>
                       <TH right>成功次数</TH>
                       <TH right>失败次数</TH>
                       <TH right>净消耗积分</TH>
@@ -244,6 +246,7 @@ export default function AdminBillingPage() {
                             <div style={{ fontWeight: 500 }}>{u.email}</div>
                             {u.name && u.name !== "—" && <div style={{ fontSize: "0.75rem", color: "#999" }}>{u.name}</div>}
                           </TD>
+                          <TD right><strong style={{ color: u.current_balance < 50 ? "#c33" : "#0d0d0d" }}>{u.current_balance.toLocaleString()}</strong></TD>
                           <TD right><span style={{ color: "#0a7" }}>{u.success_count}</span></TD>
                           <TD right><span style={{ color: u.failed_count > 0 ? "#c33" : "#bbb" }}>{u.failed_count}</span></TD>
                           <TD right><strong>{u.net_credits.toLocaleString()}</strong></TD>

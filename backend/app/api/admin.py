@@ -1459,6 +1459,7 @@ async def admin_billing_users(_admin: dict = Depends(require_admin)):
                 cl.user_id,
                 u.email,
                 u.name,
+                u.credits AS current_balance,
                 COUNT(*) AS total_charges,
                 SUM(CASE WHEN EXISTS(
                     SELECT 1 FROM credits_ledger r
@@ -1481,6 +1482,7 @@ async def admin_billing_users(_admin: dict = Depends(require_admin)):
                 "user_id":        r["user_id"],
                 "email":          r["email"] or "—",
                 "name":           r["name"] or "—",
+                "current_balance": r["current_balance"] or 0,
                 "total_charges":  r["total_charges"],
                 "failed_count":   r["failed_count"],
                 "success_count":  r["total_charges"] - r["failed_count"],
