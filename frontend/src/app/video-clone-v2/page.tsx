@@ -462,9 +462,10 @@ export default function VideoCloneV2Page() {
     if (parts.length) text += parts.join(",") + "。";
     if (removeOriginalSpeech) text += "新视频中不要保留原视频里的台词、字幕和旁白。";
     else text += "新视频中保留原视频里的台词和声音、字幕和旁白。";
-    setPrompt(text);
-    // 2026-06-03:有参考图 → 调后端看图分类,把"换什么"换成贴合实际产品的词;无图/失败保留基础模板
-    if (images.length === 0) return;
+    // 无图:直接本地拼接(行为不变)
+    if (images.length === 0) { setPrompt(text); return; }
+    // 有图:先占位,不蹦本地猜的词;看图返回再填正确结果
+    setPrompt("正在识别产品并生成提示词…");
     setAiOptimizing(true);
     try {
       const r = await fetch(`${API_BASE}/api/video/clone-v2/generate-prompt`, {
@@ -472,8 +473,15 @@ export default function VideoCloneV2Page() {
         headers: { "Content-Type": "application/json", ...token() },
         body: JSON.stringify({ user_description: text, region, image_urls: images.map((img) => img.url).slice(0, 6), compact: true }),
       });
-      if (r.ok) { const data = await r.json(); if (data.generated_prompt) setPrompt(data.generated_prompt); }
-    } catch {} finally { setAiOptimizing(false); }
+      if (r.ok) {
+        const data = await r.json();
+        setPrompt(data.generated_prompt || text);  // 成功用看图结果,异常空回本地拼接
+      } else {
+        setPrompt(text);  // 失败兜底:回本地拼接
+      }
+    } catch {
+      setPrompt(text);  // 异常兜底
+    } finally { setAiOptimizing(false); }
   }
 
   async function handleAiOptimize() {
