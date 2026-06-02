@@ -853,6 +853,182 @@ async def admin_v2_cost_report(_admin: dict = Depends(require_admin)):
     }
 
 
+@router.get("/model-usage")
+async def admin_model_usage(_admin: dict = Depends(require_admin)):
+    """对账单：jobs.json 模型用量 + video_clone_v2 分层 + credits_ledger 全量汇总。
+
+    全程只读，不触碰计费/积分/表结构。
+    """
+    import json as _json
+    from pathlib import Path as _Path
+    from collections import defaultdict as _defaultdict
+
+    # ── 1. jobs.json 读取与聚合 ──────────────────────────────────────────
+    _jobs_file = _Path(os.environ.get(
+        "JOBS_FILE",
+        str(_Path(__file__).resolve().parents[3] / "jobs_data" / "jobs.json"),
+    ))
+    jobs_raw: dict = {}
+    if _jobs_file.exists():
+        try:
+            import fcntl as _fcntl
+            with open(_jobs_file, "r", encoding="utf-8") as _f:
+                _fcntl.flock(_f.fileno(), _fcntl.LOCK_SH)
+                try:
+                    jobs_raw = _json.loads(_f.read() or "{}")
+                finally:
+                    _fcntl.flock(_f.fileno(), _fcntl.LOCK_UN)
+        except Exception as _e:
+            print(f"admin model-usage: load jobs failed: {_e}")
+
+    def _model_label(job: dict) -> str:
+        jtype = job.get("type", "unknown")
+        if jtype == "image":
+            p = job.get("params") or {}
+            m = (p.get("model") or "").strip() if isinstance(p, dict) else ""
+            return m if m else "image/未标注"
+        if jtype == "video_i2v":
+            return "图生视频/未标注"
+        if jtype in ("script_to_video", "video_general"):
+            return "AI爆款视频"
+        if jtype == "video_general_analyze":
+            return "AI爆款/分析"
+        if jtype == "video_general_storyboard":
+            return "AI爆款/分镜"
+        if jtype in ("replicate_analyze", "skill_analyze"):
+            return "分镜复刻/分析"
+        if jtype == "skill_replace":
+            return "分镜复刻/替换"
+        if jtype == "skill_generate":
+            return "分镜复刻/生成"
+        if jtype in ("replicate", "video_clone"):
+            return "视频复刻V1"
+        if jtype == "ad_video":
+            return "广告视频"
+        return job.get("module") or jtype
+
+    groups: dict = _defaultdict(lambda: {
+        "count": 0, "success": 0, "failed": 0, "cost_credits": 0, "users": set(),
+    })
+    for _job in jobs_raw.values():
+        if not isinstance(_job, dict):
+            continue
+        _label = _model_label(_job)
+        _g = groups[_label]
+        _g["count"] += 1
+        _st = _job.get("status", "")
+        if _st == "completed":
+            _g["success"] += 1
+        elif _st in ("failed", "error"):
+            _g["failed"] += 1
+        _g["cost_credits"] += int(_job.get("cost") or 0)
+        _uid = _job.get("user_id") or ""
+        if _uid:
+            _g["users"].add(_uid)
+
+    jobs_usage = [
+        {
+            "model_label": _lbl,
+            "count": _g["count"],
+            "success": _g["success"],
+            "failed": _g["failed"],
+            "cost_credits": _g["cost_credits"],
+            "unique_users": len(_g["users"]),
+        }
+        for _lbl, _g in sorted(groups.items(), key=lambda x: -x[1]["count"])
+    ]
+
+    # ── 2. video_clone_v2 + credits_ledger ──────────────────────────────
+    with get_db() as conn:
+        vc2_rows = conn.execute("""
+            SELECT
+                COALESCE(video_model, 'seedance-2-0-fast') AS video_model,
+                COUNT(*) AS count,
+                SUM(CASE WHEN status IN ('completed','partial_completed') THEN 1 ELSE 0 END) AS completed,
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+                SUM(total_credits_charged)  AS credits_charged,
+                SUM(total_credits_refunded) AS credits_refunded,
+                ROUND(SUM(fal_cost_total_usd), 4) AS fal_usd,
+                COUNT(DISTINCT user_id) AS unique_users
+            FROM video_clone_v2_jobs
+            GROUP BY video_model
+            ORDER BY count DESC
+        """).fetchall()
+
+        ledger_rows = conn.execute("""
+            SELECT
+                cl.user_id,
+                u.email   AS user_email,
+                u.name    AS user_name,
+                u.credits AS current_balance,
+                SUM(CASE WHEN cl.delta < 0 THEN cl.delta ELSE 0 END) AS consumed,
+                SUM(CASE WHEN cl.reason LIKE 'task_refund%' THEN cl.delta ELSE 0 END) AS refunded,
+                SUM(CASE WHEN cl.reason LIKE 'recharge%'   THEN cl.delta ELSE 0 END) AS recharged,
+                SUM(CASE WHEN cl.delta > 0
+                         AND cl.reason NOT LIKE 'task_refund%'
+                         AND cl.reason NOT LIKE 'recharge%'
+                    THEN cl.delta ELSE 0 END) AS admin_adjusted,
+                SUM(cl.delta) AS net,
+                COUNT(*)      AS tx_count
+            FROM credits_ledger cl
+            LEFT JOIN users u ON u.id = cl.user_id
+            GROUP BY cl.user_id
+            ORDER BY ABS(SUM(cl.delta)) DESC
+        """).fetchall()
+
+    _vc2_labels = {
+        "seedance-2-0-fast":     "极速",
+        "seedance-2-0-standard": "标准",
+        "seedance-1-0-fast":     "极速(v1)",
+        "seedance-1-0-standard": "标准(v1)",
+    }
+    vc2_usage = [
+        {
+            "video_model":       r["video_model"],
+            "display_name":      _vc2_labels.get(r["video_model"], r["video_model"]),
+            "count":             r["count"],
+            "completed":         r["completed"],
+            "failed":            r["failed"],
+            "credits_charged":   r["credits_charged"] or 0,
+            "credits_refunded":  r["credits_refunded"] or 0,
+            "fal_estimated_usd": r["fal_usd"] or 0,
+            "unique_users":      r["unique_users"],
+        }
+        for r in vc2_rows
+    ]
+
+    ledger_summary = [
+        {
+            "user_id":        r["user_id"],
+            "user_email":     r["user_email"] or "—",
+            "user_name":      r["user_name"] or "—",
+            "current_balance": r["current_balance"] or 0,
+            "consumed":       r["consumed"] or 0,
+            "refunded":       r["refunded"] or 0,
+            "recharged":      r["recharged"] or 0,
+            "admin_adjusted": r["admin_adjusted"] or 0,
+            "net":            r["net"] or 0,
+            "tx_count":       r["tx_count"],
+        }
+        for r in ledger_rows
+    ]
+
+    # ── 3. 全局汇总 ─────────────────────────────────────────────────────
+    return {
+        "jobs_usage":  jobs_usage,
+        "vc2_usage":   vc2_usage,
+        "ledger_summary": ledger_summary,
+        "totals": {
+            "total_jobs":              len(jobs_raw),
+            "jobs_cost_credits":       sum(_g["cost_credits"] for _g in groups.values()),
+            "vc2_net_cost_credits":    sum(r["credits_charged"] - r["credits_refunded"] for r in vc2_usage),
+            "total_recharged_credits": sum(r["recharged"] for r in ledger_summary),
+            "total_consumed_credits":  sum(abs(r["consumed"]) for r in ledger_summary),
+            "total_refunded_credits":  sum(r["refunded"] for r in ledger_summary),
+        },
+    }
+
+
 @router.post("/update-trends")
 async def manual_update_trends(_admin: dict = Depends(require_admin)):
     """手动触发每日趋势更新（不用等凌晨3点）。"""

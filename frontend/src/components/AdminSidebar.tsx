@@ -36,12 +36,13 @@ export default function AdminSidebar({ isOpen = true, onClose }: Props) {
   };
 
   const menuItems = [
-    { path: "/admin/users", icon: "👥", zh: "用户管理", en: "Users" },
-    { path: "/admin/orders", icon: "💰", zh: "订单管理", en: "Orders" },
-    { path: "/admin/dashboard", icon: "📊", zh: "系统监控", en: "Monitor" },
-    { path: "/admin/audit", icon: "📜", zh: "审计日志", en: "Audit Log" },
-    { path: "/admin/diagnose", icon: "🩺", zh: "诊断历史", en: "Diagnose" },
-    { path: "/admin/settings", icon: "⚙", zh: "管理员设置", en: "Settings" },
+    { path: "/admin/users",    icon: "👥", zh: "用户管理", en: "Users"          },
+    { path: "/admin/orders",   icon: "💰", zh: "订单管理", en: "Orders"         },
+    { path: "/admin/billing",  icon: "📋", zh: "对账单",   en: "Billing Report" },
+    { path: "/admin/dashboard",icon: "📊", zh: "系统监控", en: "Monitor"        },
+    { path: "/admin/audit",    icon: "📜", zh: "审计日志", en: "Audit Log"      },
+    { path: "/admin/diagnose", icon: "🩺", zh: "诊断历史", en: "Diagnose"       },
+    { path: "/admin/settings", icon: "⚙",  zh: "管理员设置",en: "Settings"     },
   ];
 
   if (!user) return null;
