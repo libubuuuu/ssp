@@ -1531,10 +1531,7 @@ async def admin_billing_user_detail(
     with get_db() as conn:
         total = conn.execute(
             """SELECT COUNT(*) FROM credits_ledger
-               WHERE user_id=? AND reason IN (
-                   'task_charge','register_bonus','init_ledger_backfill','recharge_hupijiao',
-                   'recharge_wx','recharge_alipay','recharge'
-               )""",
+               WHERE user_id=? AND reason != 'task_refund'""",
             (user_id,)
         ).fetchone()[0]
 
@@ -1547,11 +1544,7 @@ async def admin_billing_user_detail(
                    ), 0) AS total_refund
             FROM credits_ledger cl
             LEFT JOIN video_clone_v2_jobs v ON v.id = cl.ref_id
-            WHERE cl.user_id = ?
-              AND cl.reason IN (
-                   'task_charge','register_bonus','init_ledger_backfill','recharge_hupijiao',
-                   'recharge_wx','recharge_alipay','recharge'
-              )
+            WHERE cl.user_id = ? AND cl.reason != 'task_refund'
             ORDER BY cl.created_at DESC
             LIMIT ? OFFSET ?
         """, (user_id, actual_limit, actual_offset)).fetchall()
@@ -1564,32 +1557,33 @@ async def admin_billing_user_detail(
             return m.split("/", 1)[1]
         return m or "—"
 
+    def _reason_label(reason: str) -> tuple:
+        """返回 (状态, 说明文字, 是入账)"""
+        if reason == "register_bonus":           return ("赠送", "注册赠送", True)
+        if reason == "init_ledger_backfill":     return ("赠送", "历史补录", True)
+        if reason.startswith("recharge"):        return ("充值", "虎皮椒充值" if "hupijiao" in reason else "充值", True)
+        if reason.startswith("admin_restore"):   return ("管理员补偿", "DB崩溃恢复", True)
+        if reason.startswith("ledger_correct"):  return ("账本修正", "账本修正", True)
+        if reason.startswith("admin"):           return ("管理员调整", reason, True)
+        return ("", "", False)
+
     result = []
     for r in rows:
         reason = r["reason"]
-        if reason in ("register_bonus", "init_ledger_backfill"):
+        status, desc, is_credit = _reason_label(reason)
+
+        if is_credit:
             result.append({
                 "时间":    _ts(r["created_at"]),
-                "状态":    "赠送",
+                "状态":    status,
                 "供应商":  "system",
-                "模型/接口": "注册赠送" if reason == "register_bonus" else "历史补录",
+                "模型/接口": desc,
                 "扣积分":  0,
                 "退积分":  0,
                 "净消耗":  0,
-                "赠送积分": int(r["delta"]),
-                "充值积分": 0,
-            })
-        elif reason.startswith("recharge"):
-            result.append({
-                "时间":    _ts(r["created_at"]),
-                "状态":    "充值",
-                "供应商":  "system",
-                "模型/接口": "虎皮椒充值" if "hupijiao" in reason else "充值",
-                "扣积分":  0,
-                "退积分":  0,
-                "净消耗":  0,
-                "赠送积分": 0,
-                "充值积分": int(r["delta"]),
+                "赠送积分": int(r["delta"]) if status == "赠送" else 0,
+                "充值积分": int(r["delta"]) if status == "充值" else 0,
+                "其他入账": int(r["delta"]) if status not in ("赠送", "充值") else 0,
             })
         else:
             gross = abs(int(r["delta"]))
@@ -1605,6 +1599,7 @@ async def admin_billing_user_detail(
                 "净消耗":  net,
                 "赠送积分": 0,
                 "充值积分": 0,
+                "其他入账": 0,
             })
     return {"rows": result, "total": total, "page": page}
 
