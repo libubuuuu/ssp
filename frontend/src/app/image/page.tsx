@@ -16,7 +16,11 @@ export default function ImagePage(){
   const { t } = useLang();
   const [prompt,setPrompt]=useState("");
   const [style,setStyle]=useState("advertising");
-  const model = "gpt-image-2";
+  const [model, setModel] = useState("gpt-image-2");
+  const MODEL_OPTIONS = [
+    { key: "gpt-image-2", label: "标准模式", cost: "20 积分/张" },
+    { key: "aiview-pro",  label: "豆包",     cost: "25 积分/张" },
+  ];
   const [size,setSize]=useState("1:1");
   const [refImages,setRefImages]=useState<string[]>([]);
   const [refPreviews,setRefPreviews]=useState<string[]>([]);
@@ -179,6 +183,18 @@ export default function ImagePage(){
         </div>
       </main>
       <aside style={{width:"340px",background:"#fff",borderLeft:"1px solid rgba(0,0,0,0.06)",padding:"2rem 1.75rem",display:"flex",flexDirection:"column",gap:"1.25rem",height:"100vh",position:"sticky",top:0,overflowY:"auto"}}>
+        <div>
+          <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>模型</div>
+          <div style={{display:"flex",gap:"0.4rem"}}>
+            {MODEL_OPTIONS.map(o=>(
+              <button key={o.key} onClick={()=>setModel(o.key)}
+                style={{flex:1,padding:"0.55rem 0.5rem",border:model===o.key?"2px solid #0d0d0d":"1px solid #e5e5e5",background:model===o.key?"#f9f7f2":"#fff",borderRadius:"10px",cursor:"pointer",fontSize:"0.82rem",color:"#333",textAlign:"center"}}>
+                <div style={{fontWeight:500}}>{o.label}</div>
+                <div style={{fontSize:"0.7rem",color:model===o.key?"#555":"#aaa",marginTop:"0.15rem"}}>{o.cost}</div>
+              </button>
+            ))}
+          </div>
+        </div>
         <div>
           <div style={{fontSize:"0.72rem",color:"#999",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:"0.6rem"}}>{t("image.section.reference")}</div>
           <div style={{display:"flex",gap:"0.4rem",flexWrap:"wrap"}}>

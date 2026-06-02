@@ -206,8 +206,72 @@ _GPT_IMAGE_SIZE_MAP = {
 }
 
 
+AIVIEW_IMAGE_MODELS = {"aiview-pro", "专业版模式"}
+
+
+async def _shrink_ref_for_aiview(url: str) -> str:
+    """传 aiview 前把参考图转存 COS(国内,aiview 才拉得到)+ 转 PNG。失败返回原 url 不阻断。"""
+    import io, os, tempfile, asyncio
+    import httpx
+    from PIL import Image
+    from app.services.cos_upload import upload_to_cos
+    MAX_SIDE = 2048
+    try:
+        async with httpx.AsyncClient(timeout=30) as cli:
+            r = await cli.get(url); r.raise_for_status()
+        img = Image.open(io.BytesIO(r.content))
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        w, h = img.size; m = max(w, h)
+        if m > MAX_SIDE:
+            s = MAX_SIDE / m
+            img = img.resize((max(1, int(w*s)), max(1, int(h*s))))
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        tmp_path = tmp.name; tmp.close()
+        img.save(tmp_path, format="PNG")
+        try:
+            new_url = await asyncio.to_thread(upload_to_cos, tmp_path)
+        finally:
+            try: os.unlink(tmp_path)
+            except Exception: pass
+        log_info(f"[AIVIEW-IMG] 参考图预处理 {w}x{h} -> COS PNG url={str(new_url)[:80]}")
+        return new_url or url
+    except Exception as e:
+        log_error(f"[AIVIEW-IMG] 参考图预处理失败,回退原图: {type(e).__name__}: {str(e)[:160]}")
+        return url
+
+
+async def _run_aiview_image_job(params: dict):
+    """走 aiview.club 文生图(seedream,异步 提交→轮询)。"""
+    import asyncio
+    from app.services.aiview_service import get_aiview_image_service
+    service = get_aiview_image_service()
+    if not service.is_available():
+        raise Exception("aiview 暂未配置")
+    refs = params.get("reference_images") or []
+    log_info(f"[AIVIEW-IMG] seedream refs={len(refs)} prompt={(params.get('prompt') or '')[:40]!r}")
+    if refs:
+        refs = [await _shrink_ref_for_aiview(u) for u in refs]
+    sub = await service.submit(params["prompt"], image_urls=refs or None)
+    if sub.get("error"):
+        raise Exception(sub["error"])
+    rid = sub["request_id"]
+    for _ in range(120):  # 10 分钟
+        await asyncio.sleep(5)
+        st = await service.query(rid)
+        if st.get("status") == "completed" and st.get("image_url"):
+            return {"image_url": st["image_url"], "type": "image", "model": "aiview-pro"}
+        if st.get("status") == "failed":
+            raise Exception(st.get("error", "生成失败"))
+    raise Exception("timeout (10 min)")
+
+
 async def _run_image_job(params: dict):
     import asyncio, fal_client
+    # 2026-06-03:豆包(seedream) → aiview;gpt-image-2 继续走下方 fal,不碰
+    _m = (params.get("model") or "").lower()
+    if _m in AIVIEW_IMAGE_MODELS:
+        return await _run_aiview_image_job(params)
     service = get_image_service()
     refs = params.get("reference_images") or []
     aspect_ratio = params.get("aspect_ratio", "")
@@ -1861,6 +1925,8 @@ async def _execute_job(job_id: str):
 
 def _module_from_type(job_type: str, params: dict) -> str:
     if job_type == "image":
+        if (params.get("model") or "").lower() in AIVIEW_IMAGE_MODELS:
+            return "aiview:aiview-pro"
         return "image/multi-reference" if params.get("reference_images") else "image/style"
     if job_type == "video_i2v":
         return "video/image-to-video"
@@ -1879,8 +1945,11 @@ async def submit_job(req: SubmitJobRequest, current_user: dict = Depends(get_cur
     user_id_str = str(user_id)
 
     module = _module_from_type(req.type, req.params)
+    # 2026-06-03:豆包(aiview seedream)25 积分/张
+    if req.type == "image" and (req.params.get("model") or "").lower() in AIVIEW_IMAGE_MODELS:
+        cost = 25
     # 2026-05-13 动态定价:视频类按 duration_sec × 50 计,clamp 到端点限制
-    if req.type == "video_i2v":
+    elif req.type == "video_i2v":
         # kling o3 standard image-to-video 支持 3/5/10/15s
         safe_dur = max(3, min(15, int(req.params.get("duration_sec") or 5)))
         cost = safe_dur * 40

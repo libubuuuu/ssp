@@ -133,8 +133,12 @@ class AiviewImageService:
             urls = d.get("image_urls") or []
             if not urls:
                 return {"status": "failed", "error": "已完成但未返回图片"}
+            from .logger import log_info as _li
+            _li(f"[AIVIEW-IMG] query completed rid={request_id} url={urls[0][:80]}")
             return {"status": "completed", "image_url": urls[0], "image_urls": urls}
         if status in ("FAILED", "ERROR"):
+            from .logger import log_info as _li
+            _li(f"[AIVIEW-IMG] query failed rid={request_id} msg={d.get('message','')[:80]}")
             return {"status": "failed", "error": d.get("message") or "生成失败"}
         return {"status": "processing"}
 
