@@ -1469,7 +1469,12 @@ async def admin_billing_users(_admin: dict = Depends(require_admin)):
                 SUM(COALESCE((
                     SELECT SUM(r.delta) FROM credits_ledger r
                     WHERE r.ref_id = cl.ref_id AND r.reason='task_refund'
-                ), 0)) AS refunded_credits
+                ), 0)) AS refunded_credits,
+                COALESCE((
+                    SELECT SUM(g.delta) FROM credits_ledger g
+                    WHERE g.user_id = cl.user_id
+                    AND g.reason IN ('register_bonus','init_ledger_backfill')
+                ), 0) AS gift_credits
             FROM credits_ledger cl
             LEFT JOIN users u ON u.id = cl.user_id
             WHERE cl.reason = 'task_charge'
@@ -1486,6 +1491,7 @@ async def admin_billing_users(_admin: dict = Depends(require_admin)):
                 "total_charges":  r["total_charges"],
                 "failed_count":   r["failed_count"],
                 "success_count":  r["total_charges"] - r["failed_count"],
+                "gift_credits":   int(r["gift_credits"] or 0),
                 "gross_credits":  r["gross_credits"] or 0,
                 "refunded_credits": abs(int(r["refunded_credits"] or 0)),
                 "net_credits":    (r["gross_credits"] or 0) - abs(int(r["refunded_credits"] or 0)),
