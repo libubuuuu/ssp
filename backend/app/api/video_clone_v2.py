@@ -683,7 +683,8 @@ async def create(
     job_id = str(uuid.uuid4())
     _vc2_provider = (settings.VIDEO_CLONE_V2_PROVIDER or "fal").lower()
     _vc2_model_name = req.video_model if _vc2_provider == "aiview" else "seedance-r2v"
-    if not deduct_credits(user_id, total_credits, ref_id=job_id, module="video/clone-v2"):
+    _module_tag = f"aiview/{_vc2_model_name}" if _vc2_provider == "aiview" else f"fal/seedance-r2v"
+    if not deduct_credits(user_id, total_credits, ref_id=job_id, module=_module_tag):
         raise HTTPException(402, "扣费失败(并发竞争)")
 
     # 6. build_prompt(⭐ 功能 3)

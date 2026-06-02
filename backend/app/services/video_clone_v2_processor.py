@@ -943,7 +943,7 @@ async def _refund_full(job: Dict[str, Any]) -> None:
         if not row or row[0] == 1:
             log_info(f"refund 已退过或不存在:job_id={job_id}")
             return
-    add_credits(user_id, credits, reason="task_refund", ref_id=job_id, module="video/clone-v2")
+    add_credits(user_id, credits, reason="task_refund", ref_id=job_id, module="aiview/seedance-v2")
     with get_db() as conn:
         conn.execute(
             "UPDATE pending_refunds SET refunded = 1 WHERE task_id = ? AND refunded = 0",

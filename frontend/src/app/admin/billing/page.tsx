@@ -202,24 +202,38 @@ export default function AdminBillingPage() {
                   <thead><tr>
                     <TH>时间</TH>
                     <TH>用户</TH>
-                    <TH>接口 / 模型</TH>
+                    <TH>供应商</TH>
+                    <TH>模型 / 接口</TH>
                     <TH right>消耗积分</TH>
                     <TH>任务ID</TH>
                   </tr></thead>
                   <tbody>
-                    {consumption.rows.map((r, i) => (
+                    {consumption.rows.map((r, i) => {
+                      const providerColor: Record<string, {bg:string;color:string}> = {
+                        aiview: { bg: "#e6f4ea", color: "#137333" },
+                        fal:    { bg: "#e8f0fe", color: "#1a56db" },
+                        system: { bg: "#f1f1f1", color: "#888" },
+                      };
+                      const pStyle = providerColor[String(r["供应商"])] ?? { bg: "#f5f5f5", color: "#999" };
+                      return (
                       <tr key={i}>
                         <TD><span style={{ color: "#888" }}>{r["时间"]}</span></TD>
                         <TD>{r["用户"]}</TD>
                         <TD>
-                          {String(r["接口/模型"]) !== "—"
-                            ? <span style={{ padding: "0.15rem 0.5rem", borderRadius: "6px", background: "#f0f7ff", color: "#1a56db", fontSize: "0.78rem", fontFamily: "monospace" }}>{r["接口/模型"]}</span>
+                          {String(r["供应商"]) !== "—"
+                            ? <span style={{ padding: "0.15rem 0.5rem", borderRadius: "999px", fontSize: "0.75rem", fontWeight: 500, background: pStyle.bg, color: pStyle.color }}>{r["供应商"]}</span>
+                            : <span style={{ color: "#ccc" }}>—</span>}
+                        </TD>
+                        <TD mono>
+                          {String(r["模型/接口"]) !== "—"
+                            ? <span style={{ fontSize: "0.8rem", color: "#444" }}>{r["模型/接口"]}</span>
                             : <span style={{ color: "#ccc" }}>—</span>}
                         </TD>
                         <TD right><strong style={{ color: "#c33" }}>{Number(r["消耗积分"]).toLocaleString()}</strong></TD>
                         <TD mono>{r["任务ID"] || "—"}</TD>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
                 {/* Pagination */}

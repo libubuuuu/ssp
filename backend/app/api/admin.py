@@ -1291,6 +1291,16 @@ async def admin_billing_consumption(
         where += " AND cl.user_id = ?"
         params.append(user_id)
 
+    def _provider(module: str) -> str:
+        if not module or module == "—": return "—"
+        if module.startswith("aiview/"): return "aiview"
+        if module.startswith("fal/"): return "fal"
+        if module.startswith("image/"): return "fal"
+        if "clone-v2" in module: return "aiview"
+        if module.startswith("video/"): return "fal"
+        if module == "register": return "system"
+        return "—"
+
     with get_db() as conn:
         total = conn.execute(
             f"SELECT COUNT(*) FROM credits_ledger cl WHERE {where}", params
@@ -1301,22 +1311,34 @@ async def admin_billing_consumption(
 
         rows = conn.execute(f"""
             SELECT cl.delta, cl.ref_id, cl.module, cl.created_at,
-                   u.email, u.name
+                   u.email, u.name,
+                   v.video_model, v.type AS vc2_type
             FROM credits_ledger cl
             LEFT JOIN users u ON u.id = cl.user_id
+            LEFT JOIN video_clone_v2_jobs v ON v.id = cl.ref_id
             WHERE {where}
             ORDER BY cl.created_at DESC
             LIMIT ? OFFSET ?
         """, params + [actual_limit, actual_offset]).fetchall()
 
+    def _model(r) -> str:
+        # 优先用 video_clone_v2_jobs 的精确模型名
+        if r["video_model"]:
+            return f"{r['video_model']}({r['vc2_type'] or ''})"
+        m = r["module"] or ""
+        if "/" in m:
+            return m.split("/", 1)[1]
+        return m or "—"
+
     return {
         "rows": [
             {
-                "时间":    _ts(r["created_at"]),
-                "用户":    r["email"] or "—",
-                "接口/模型": r["module"] or "—",
-                "消耗积分":  abs(int(r["delta"])),
-                "任务ID":   (r["ref_id"] or "")[:20],
+                "时间":   _ts(r["created_at"]),
+                "用户":   r["email"] or "—",
+                "供应商":  _provider(r["module"] or ""),
+                "模型/接口": _model(r),
+                "消耗积分": abs(int(r["delta"])),
+                "任务ID":  (r["ref_id"] or "")[:20],
             }
             for r in rows
         ],
