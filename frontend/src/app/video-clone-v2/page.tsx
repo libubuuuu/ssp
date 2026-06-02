@@ -259,7 +259,14 @@ export default function VideoCloneV2Page() {
         video_url: video.url,
       }),
     })
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) {
+          // 后端 400(如视频 >15 秒)→ 取 detail 友好提示,别让错误体继续往下导致 .map 崩溃
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.detail || "视频时长不符合要求,请控制在 4-15 秒内");
+        }
+        return r.json();
+      })
       .then((d: CheckDurationResp) => {
         if (d.needs_trim) {
           setTrimPopup(d);
@@ -268,7 +275,7 @@ export default function VideoCloneV2Page() {
           fetchPreview(video.url, video.duration);
         }
       })
-      .catch((e) => setError(`check-duration 失败:${e}`));
+      .catch((e) => setError(`${e instanceof Error ? e.message : e}`));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [video]);
 
@@ -442,7 +449,7 @@ export default function VideoCloneV2Page() {
   }
 
   // 傻瓜模式:把每张图的"用途"自动拼成 @ 格式提示词(填进提示词框,用户可再改)
-  function composeAutoPrompt() {
+  async function composeAutoPrompt() {
     const counts: Record<string, number> = {};
     const parts: string[] = [];
     for (const img of images) {
@@ -457,6 +464,26 @@ export default function VideoCloneV2Page() {
     if (removeOriginalSpeech) text += "新视频中不要保留原视频里的台词、字幕和旁白。";
     else text += "新视频中保留原视频里的台词和声音、字幕和旁白。";
     setPrompt(text);
+    // 有参考图 → 调后端 qwen3-vl 看图,把基础模板优化成"贴合实际产品"的提示词;
+    // 没参考图 / 看图失败 → 保留上面填好的基础模板,不打断。
+    if (images.length === 0) return;
+    setAiOptimizing(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/video/clone-v2/generate-prompt`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...token() },
+        body: JSON.stringify({ user_description: text, region, image_urls: images.map((img) => img.url).slice(0, 6), compact: true }),
+      });
+      if (r.ok) {
+        const data = await r.json();
+        if (data.generated_prompt) setPrompt(data.generated_prompt);
+      }
+    } catch {
+      // 看图失败:保留基础模板,不报错
+    } finally {
+      setAiOptimizing(false);
+    }
   }
 
   async function handleAiOptimize() {
@@ -472,7 +499,7 @@ export default function VideoCloneV2Page() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json", ...token() },
-        body: JSON.stringify({ user_description: desc, region }),
+        body: JSON.stringify({ user_description: desc, region, image_urls: images.map((img) => img.url).slice(0, 6) }),
       });
       if (!r.ok) {
         const txt = await r.text();
@@ -657,7 +684,7 @@ export default function VideoCloneV2Page() {
               {t("videoCloneV2.titleMain")}<span style={{ fontStyle: "italic" }}> {t("videoCloneV2.titleAccent")}</span>
             </h1>
             <div style={{ fontSize: "0.85rem", color: "#999", marginTop: 4 }}>
-              支持 4-64 秒视频 · 标准版 55 / 高质量 60 积分/秒 · 以原视频风格为参考生成含你产品的新视频 · 输出默认含水印
+              支持 4-15 秒视频 · 标准版 55 / 高质量 60 积分/秒 · 以原视频风格为参考生成含你产品的新视频 · 输出默认含水印
             </div>
           </div>
           <button

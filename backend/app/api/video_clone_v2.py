@@ -32,7 +32,8 @@ from app.config import get_settings
 from app.database import get_db
 from app.services.billing import check_user_credits, deduct_credits
 from app.services.content_filter import check_prompt
-from app.services.fal_service import fal_upload_with_retry
+from app.services.fal_service import fal_upload_with_retry  # noqa: F401 保留以便随时回退到 fal
+from app.services.cos_upload import upload_to_cos
 from app.services.logger import log_info, log_error
 from app.api.jobs import create_tracked_task
 from app.services.upload_guard import read_bounded
@@ -76,11 +77,19 @@ def _guard_enabled() -> None:
 # ── SSRF 守卫:video_url 域名白名单(商用 SaaS 必须)─────────────────────────
 # fal.media 是 fal.ai 文件存储 CDN(实际生产 host 形如 v3.fal.media)
 # ailixiao.com / cdn.ailixiao.com 是我们自家 CDN(后续接 OSS 用)
-_ALLOWED_VIDEO_HOSTS = frozenset({
+_ALLOWED_VIDEO_HOSTS = {
     "fal.media",
     "ailixiao.com",
     "cdn.ailixiao.com",
-})
+}
+# 自家腾讯云 COS 桶(上传从 fal 切到 COS 后,预签名 URL 的 host 必须在白名单内)。
+# 只放行【本项目自己的桶】精确域名,不放行整个 *.myqcloud.com —— 否则任意他人桶
+# 都能当 reference_video_url 喂进来,等于开了 SSRF 后门。桶名/区域从 env 动态取,换桶只改 env。
+import os as _os
+_cos_bucket = _os.environ.get("STORAGE_BUCKET", "").strip()
+_cos_region = (_os.environ.get("STORAGE_REGION", "") or "ap-guangzhou").strip()
+if _cos_bucket:
+    _ALLOWED_VIDEO_HOSTS.add(f"{_cos_bucket}.cos.{_cos_region}.myqcloud.com")
 _ALLOWED_VIDEO_HOST_SUFFIXES = (
     ".fal.media",
     ".fal.ai",
@@ -343,10 +352,12 @@ async def upload_video(
             dur = 0
         # ⭐ 红线 3:文件本体 SHA256
         file_sha256 = sha256_file(video_path)
-        url = await fal_upload_with_retry(video_path)
-        # 防御性校验:fal storage 应该返 *.fal.media,但万一返了别的 host
-        # 也不能直接信任 — 同一个 allowlist 把关,失败就是 fal 自己 schema 变了
-        validate_video_url(url, field_name="fal_storage_url")
+        # 上传到自家腾讯云 COS(脱离 fal)。upload_to_cos 是同步阻塞,放线程池跑,别堵 event loop。
+        # 返回 24h 预签名 URL → aiview 凭签名直接拉取(桶保持私有)。
+        import asyncio as _aio
+        url = await _aio.to_thread(upload_to_cos, video_path)
+        # SSRF 守卫:上传返回的 host 必须命中白名单(已含本项目 COS 桶);异常 host 一律拒
+        validate_video_url(url, field_name="cos_storage_url")
         # Path B 缓存:把临时文件搬到 /tmp/v2_cache/{sha256}.mp4
         # 让 check-duration 直读本地(省去跨境读 fal CDN 的 6-9s)
         # store 内部成功会把 video_path 移走;失败/dedupe 时也会清掉源文件
@@ -390,7 +401,10 @@ async def upload_image(
         tmp.write(contents)
         tmp_path = tmp.name
     try:
-        url = await fal_upload_with_retry(tmp_path)
+        # 图片同样上传到自家 COS(脱离 fal),返回 24h 预签名 URL 喂给 aiview
+        import asyncio as _aio
+        url = await _aio.to_thread(upload_to_cos, tmp_path)
+        validate_video_url(url, field_name="cos_storage_url")
     finally:
         try: os.unlink(tmp_path)
         except Exception: pass
@@ -997,6 +1011,13 @@ class GenerateV2PromptRequest(BaseModel):
                                   description="用户大白话需求,会被 LLM 优化成简短 prompt")
     # 2026-05-11:目标市场 toggle,影响输出语言(CN 中文 / Global 英文)
     region: Literal["CN", "Global"] = Field("CN", description="CN 国内中文 / Global 海外英文")
+    # 2026-06-02:可选 — 已上传的参考图 URL。传了则先用 qwen3-vl 看图描述产品,
+    # 再据此生成贴合实际产品的提示词(按需触发;不传则行为同旧版纯文字优化)。
+    image_urls: list[str] = Field(default_factory=list, max_length=6,
+                                  description="可选,已上传参考图 URL(最多 6 张),传了就看图生成")
+    # 2026-06-03:一键生成走 compact 简洁模式 — 看图后严格按 @ 引用模板只改"换什么",
+    # 不走广告 LLM(避免长篇广告冲掉简洁格式)。False = AI 优化按钮的广告创意模式。
+    compact: bool = Field(False, description="True=一键生成简洁模式(看图+严格模板);False=AI优化广告模式")
 
 
 class GenerateV2PromptResponse(BaseModel):
@@ -1005,23 +1026,95 @@ class GenerateV2PromptResponse(BaseModel):
     region: str
 
 
-async def _call_deepseek_optimize(user_description: str, region: str = "CN") -> Optional[str]:
+async def _describe_uploaded_images(image_urls, region: str = "CN") -> str:
+    """看用户上传的参考图(按需),返回一句客观的产品/主体描述,作为上下文喂给提示词 LLM。
+    复用现成的 fal openrouter vision(qwen3-vl,同 ad_video/vlm_service)。
+    无图/失败 → 返空串,调用方降级为纯文字优化(行为同旧版)。
+    只在 image_urls 非空时才真正调模型 → 单次约几分钱,不点不花钱。"""
+    if not image_urls:
+        return ""
+    is_en = region == "Global"
+    instruction = (
+        "Briefly and objectively describe the product/subject in these reference images: "
+        "what it is, its category, key visual features (color, material, shape). "
+        "One concise sentence. No marketing language."
+        if is_en else
+        "用一句话客观描述这些参考图里的产品/主体:是什么、属于什么品类、关键外观特征"
+        "(颜色、材质、形状)。简洁,不要营销词。"
+    )
+    try:
+        result = await asyncio.wait_for(
+            fal_client.run_async(
+                "openrouter/router/vision",
+                arguments={
+                    "image_urls": list(image_urls)[:6],
+                    "prompt": instruction,
+                    "model": "qwen/qwen3-vl-235b-a22b-instruct",
+                    "temperature": 0.3,
+                },
+            ),
+            timeout=30,
+        )
+        desc = (result.get("output") or "").strip() if isinstance(result, dict) else ""
+        return desc[:300]
+    except Exception as e:
+        log_error(f"v2 generate-prompt 看图失败(降级纯文字): {str(e)[:200]}")
+        return ""
+
+
+async def _vision_classify_swap(image_urls, region: str = "CN") -> str:
+    """看参考图判断"换什么":服装穿戴类→'整套穿搭';其他实物→'画面主体产品'。失败返空。
+    看图不稳,内置重试 + 加长超时;任务简单(只分类),用关键词后处理兜底,不靠模型精确措辞。"""
+    if not image_urls:
+        return ""
+    instruction = (
+        "看这些参考图里的产品,判断它是不是【可穿戴的服装 / 鞋帽 / 配饰】。"
+        "是服装穿戴类 → 只回答:整套穿搭。"
+        "其他实物产品(电子设备 / 食品 / 日用品 / 玩具等非穿戴)→ 只回答:画面主体产品。"
+        "只回这一个短语,不要其他文字。"
+    )
+    for attempt in range(2):  # 看图服务不稳,失败重试一次
+        try:
+            result = await asyncio.wait_for(
+                fal_client.run_async(
+                    "openrouter/router/vision",
+                    arguments={"image_urls": list(image_urls)[:3], "prompt": instruction,
+                               "model": "qwen/qwen3-vl-235b-a22b-instruct", "temperature": 0.1},
+                ),
+                timeout=45,
+            )
+            out = (result.get("output") or "").strip() if isinstance(result, dict) else ""
+            if "穿搭" in out or "服装" in out or "衣" in out:
+                return "整套穿搭"
+            if out:
+                return "画面主体产品"
+        except Exception as e:
+            log_error(f"v2 看图分类失败(第{attempt+1}次): {str(e)[:120]}")
+    return ""
+
+
+async def _call_deepseek_optimize(user_description: str, region: str = "CN", *,
+                                  system_override: str = None, user_override: str = None) -> Optional[str]:
     """DeepSeek API 优化 prompt(中文母语,$0.27/M in + $1.10/M out,直连不过 fal)。
-    region=CN 输出中文,region=Global 输出英文。返 None = 失败,调用方走 fal fallback。"""
+    region=CN 输出中文,region=Global 输出英文。返 None = 失败,调用方走 fal fallback。
+    system_override / user_override:compact 简洁模式用,绕开广告 system prompt。"""
     api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not api_key:
         return None
     import httpx
     is_en = region == "Global"
-    user_content = (
-        f"User description: {user_description}\n\nOutput ONE short English sentence prompt (8-25 words)."
-        if is_en
-        else f"用户描述:{user_description}\n\n请输出一句简短的中文 prompt(对齐 playground 实测成功配方风格)。"
-    )
+    if user_override:
+        user_content = user_override
+    else:
+        user_content = (
+            f"User description: {user_description}\n\nOutput ONE short English sentence prompt (8-25 words)."
+            if is_en
+            else f"用户描述:{user_description}\n\n请输出一句简短的中文 prompt(对齐 playground 实测成功配方风格)。"
+        )
     body = {
         "model": "deepseek-chat",
         "messages": [
-            {"role": "system", "content": _pick_system_prompt(region)},
+            {"role": "system", "content": system_override or _pick_system_prompt(region)},
             {"role": "user", "content": user_content},
         ],
         "temperature": 0.7,
@@ -1059,18 +1152,48 @@ async def generate_v2_prompt(
     text = ""
     used_model = ""
 
-    # ⭐ Primary:DeepSeek(直连不过 fal,$0.0003/次,跟 region 切语言)
-    ds_text = await _call_deepseek_optimize(req.user_description, region=region)
-    if ds_text:
-        text = ds_text
-        used_model = "deepseek-chat"
+    # 2026-06-02:看图(按需触发)。有上传参考图就先让 qwen3-vl 描述产品
+    # (食品/衣服/化妆品...),把客观描述作为上下文喂给下面的提示词 LLM → 生成
+    # 贴合实际产品的提示词,而非通用模板。无图/失败则 effective_desc = 用户原话,行为同旧版。
+    # 2026-06-03:compact 简洁模式(一键生成)— 看图判断"换什么",填进固定模板。
+    # 格式后端死控、@引用不丢、保留台词不重复,不靠 LLM 改写(它不听话)。
+    vision_desc = ""  # 默认空,供下方日志;else 分支会用看图描述覆盖
+    if req.compact:
+        swap = await _vision_classify_swap(req.image_urls, region=region)
+        vision_desc = swap  # 让日志 vision_chars 反映看图分类结果
+        if swap:
+            keep_line = (
+                "新视频中不要保留原视频里的台词、字幕和旁白。"
+                if ("不要保留" in req.user_description or "不保留" in req.user_description)
+                else "新视频中保留原视频里的台词和声音、字幕和旁白。"
+            )
+            text = f"以 @视频1 为参考视频,保持其运动、构图和节奏。把视频里人物的{swap}换成 @产品1。{keep_line}"
+        else:
+            text = req.user_description  # 看图失败:用前端拼的基础模板兜底
+        used_model = "vision-compact"
+    else:
+        vision_desc = await _describe_uploaded_images(req.image_urls, region=region)
+        if vision_desc:
+            effective_desc = (
+                f"Reference image content: {vision_desc}\nUser request: {req.user_description}"
+                if is_en else
+                f"参考图内容:{vision_desc}\n用户需求:{req.user_description}"
+            )
+        else:
+            effective_desc = req.user_description
+
+        # ⭐ Primary:DeepSeek(直连不过 fal,$0.0003/次,跟 region 切语言)
+        ds_text = await _call_deepseek_optimize(effective_desc, region=region)
+        if ds_text:
+            text = ds_text
+            used_model = "deepseek-chat"
 
     # Fallback 1+2:fal openrouter qwen/gemini(DeepSeek 失败时,跟 region 切语言)
     if not text:
         user_msg = (
-            f"User description: {req.user_description}\n\nOutput ONE short English sentence prompt (8-25 words)."
+            f"User description: {effective_desc}\n\nOutput ONE short English sentence prompt (8-25 words)."
             if is_en
-            else f"用户描述:{req.user_description}\n\n请输出一句简短的中文 prompt(对齐 playground 实测成功配方风格)。"
+            else f"用户描述:{effective_desc}\n\n请输出一句简短的中文 prompt(对齐 playground 实测成功配方风格)。"
         )
         for model in (_V2_PROMPT_LLM_MODEL, _V2_PROMPT_LLM_FALLBACK):
             try:
@@ -1112,7 +1235,7 @@ async def generate_v2_prompt(
         if is_en
         else "新视频中保留原视频里的台词、声音、字幕和旁白。"
     )
-    if text and keep_clause not in text:
+    if text and not req.compact and keep_clause not in text:
         if is_en:
             text = (text.rstrip().rstrip(".") + ". " + keep_clause).strip()
         else:
@@ -1120,6 +1243,7 @@ async def generate_v2_prompt(
 
     log_info(
         f"v2 generate-prompt user={current_user.get('id')} region={region} "
+        f"vision_chars={len(vision_desc)} "
         f"model={used_model} desc_len={len(req.user_description)} out_len={len(text)}"
     )
     return GenerateV2PromptResponse(generated_prompt=text, model=used_model, region=region)

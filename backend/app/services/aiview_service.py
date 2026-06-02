@@ -16,6 +16,7 @@ import uuid
 import httpx
 
 from app.config import get_settings
+from app.services.logger import log_info
 
 
 # 本地科学上网(Clash 等)会用 fake-ip 劫持 aiview.club 的 DNS、并按 SNI 拦截 TLS,
@@ -94,19 +95,26 @@ class AiviewImageService:
             return await c.request(method, f"https://{ip}{path}", headers=headers, content=content)
 
     async def submit(self, prompt: str, ratio: str = None, size: str = "2K",
-                     n: int = 1, image_urls=None) -> dict:
-        """提交文生图任务。成功返回 {"request_id": ...}，失败返回 {"error": ...}。"""
+                     n: int = 1, image_urls=None, model: str = None) -> dict:
+        """提交文生图任务。成功返回 {"request_id": ...}，失败返回 {"error": ...}。
+
+        model: 文生图模型,缺省由 aiview 默认(seedream-5.0-lite)。标准模式传 'gpt-image-2'。
+        """
         path = "/open/v1/image/generate"
         body = {"prompt": prompt, "n": n, "size": size}
+        if model:
+            body["model"] = model
         if ratio:
             body["ratio"] = ratio
         if image_urls:
             body["image_urls"] = list(image_urls)[:5]
         # 必须先序列化为字符串，签名与发送用同一份字节，避免哈希不一致
         body_str = json.dumps(body, ensure_ascii=False)
+        log_info(f"[AIVIEW-REQ] POST {path} body={body_str[:500]}")
         try:
             resp = await self._send("POST", path, body_str)
             data = resp.json()
+            log_info(f"[AIVIEW-RESP] submit -> {json.dumps(data, ensure_ascii=False)[:400]}")
         except Exception as e:
             return {"error": f"aiview 提交请求失败: {type(e).__name__}: {str(e)[:200]}"}
         if data.get("code") != 0:
