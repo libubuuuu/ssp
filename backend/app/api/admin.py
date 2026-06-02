@@ -1268,6 +1268,147 @@ async def admin_billing_detail(
         raise HTTPException(400, f"unknown type: {type}")
 
 
+@router.get("/billing-consumption")
+async def admin_billing_consumption(
+    page: int = 0,
+    limit: int = 100,
+    user_id: Optional[str] = None,
+    export: bool = False,
+    _admin: dict = Depends(require_admin),
+):
+    """积分消耗明细：task_charge 流水，含用户、接口、模型信息。export=true 返回全量。"""
+    import datetime as _dt
+
+    def _ts(v) -> str:
+        try:
+            return _dt.datetime.fromtimestamp(float(v)).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return str(v)[:16]
+
+    where = "cl.reason = 'task_charge'"
+    params: list = []
+    if user_id:
+        where += " AND cl.user_id = ?"
+        params.append(user_id)
+
+    with get_db() as conn:
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM credits_ledger cl WHERE {where}", params
+        ).fetchone()[0]
+
+        actual_limit = 9999 if export else max(1, min(limit, 200))
+        actual_offset = 0 if export else page * actual_limit
+
+        rows = conn.execute(f"""
+            SELECT cl.delta, cl.ref_id, cl.module, cl.created_at,
+                   u.email, u.name
+            FROM credits_ledger cl
+            LEFT JOIN users u ON u.id = cl.user_id
+            WHERE {where}
+            ORDER BY cl.created_at DESC
+            LIMIT ? OFFSET ?
+        """, params + [actual_limit, actual_offset]).fetchall()
+
+    return {
+        "rows": [
+            {
+                "时间":    _ts(r["created_at"]),
+                "用户":    r["email"] or "—",
+                "接口/模型": r["module"] or "—",
+                "消耗积分":  abs(int(r["delta"])),
+                "任务ID":   (r["ref_id"] or "")[:20],
+            }
+            for r in rows
+        ],
+        "total": total,
+        "page": page,
+    }
+
+
+@router.get("/billing-recharges")
+async def admin_billing_recharges(
+    export: bool = False,
+    _admin: dict = Depends(require_admin),
+):
+    """充值入账：credit_orders 中 status=paid 的订单，与虎皮椒账单对应。"""
+    import datetime as _dt
+
+    def _ts(v) -> str:
+        if not v:
+            return "—"
+        try:
+            return _dt.datetime.fromtimestamp(float(v)).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return str(v)[:16]
+
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT co.id, co.amount, co.price, co.paid_at, co.created_at,
+                   u.email, u.name
+            FROM credit_orders co
+            LEFT JOIN users u ON u.id = co.user_id
+            WHERE co.status = 'paid'
+            ORDER BY co.created_at DESC
+        """).fetchall()
+
+    result = [
+        {
+            "时间":   _ts(r["paid_at"] or r["created_at"]),
+            "用户":   r["email"] or "—",
+            "充值积分": r["amount"],
+            "金额(元)": r["price"],
+            "订单号":  r["id"],
+        }
+        for r in rows
+    ]
+    return {
+        "rows": result,
+        "total": len(result),
+        "total_amount": round(sum(r["金额(元)"] or 0 for r in result), 2),
+        "total_credits": sum(r["充值积分"] or 0 for r in result),
+    }
+
+
+@router.get("/billing-gifts")
+async def admin_billing_gifts(
+    export: bool = False,
+    _admin: dict = Depends(require_admin),
+):
+    """赠送积分：注册赠送(register_bonus) + 历史补录(init_ledger_backfill)。"""
+    import datetime as _dt
+
+    def _ts(v) -> str:
+        try:
+            return _dt.datetime.fromtimestamp(float(v)).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return str(v)[:16]
+
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT cl.delta, cl.reason, cl.created_at,
+                   u.email, u.name
+            FROM credits_ledger cl
+            LEFT JOIN users u ON u.id = cl.user_id
+            WHERE cl.reason IN ('register_bonus', 'init_ledger_backfill')
+            ORDER BY cl.created_at DESC
+        """).fetchall()
+
+    result = [
+        {
+            "时间":   _ts(r["created_at"]),
+            "用户":   r["email"] or "—",
+            "赠送积分": int(r["delta"]),
+            "类型":   "注册赠送" if r["reason"] == "register_bonus" else "历史补录",
+        }
+        for r in rows
+    ]
+    return {
+        "rows": result,
+        "total": len(result),
+        "total_credits": sum(r["赠送积分"] for r in result),
+    }
+
+
 @router.post("/update-trends")
 async def manual_update_trends(_admin: dict = Depends(require_admin)):
     """手动触发每日趋势更新（不用等凌晨3点）。"""

@@ -655,6 +655,8 @@ async def login_by_code(req: VerifyCodeLoginRequest, response: Response):
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (user_id, req.email, default_name, "user", INITIAL_CREDITS, "", datetime.utcnow().isoformat())
             )
+            from app.services.billing import _ledger_in_tx
+            _ledger_in_tx(cursor, user_id, INITIAL_CREDITS, INITIAL_CREDITS, "register_bonus", None, "register")
             conn.commit()
             user_data = {
                 "id": user_id, "email": req.email, "name": default_name,
