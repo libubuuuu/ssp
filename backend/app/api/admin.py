@@ -1302,9 +1302,18 @@ async def admin_billing_consumption(
         return "—"
 
     with get_db() as conn:
-        total = conn.execute(
-            f"SELECT COUNT(*) FROM credits_ledger cl WHERE {where}", params
-        ).fetchone()[0]
+        # 只统计净消耗 > 0 的（排除全额退款的失败任务）
+        total = conn.execute(f"""
+            SELECT COUNT(*) FROM credits_ledger cl
+            WHERE {where}
+            AND (
+                cl.ref_id IS NULL
+                OR ABS(cl.delta) - COALESCE(
+                    (SELECT SUM(r.delta) FROM credits_ledger r
+                     WHERE r.ref_id = cl.ref_id AND r.reason = 'task_refund'), 0
+                ) > 0
+            )
+        """, params).fetchone()[0]
 
         actual_limit = 9999 if export else max(1, min(limit, 200))
         actual_offset = 0 if export else page * actual_limit
@@ -1312,17 +1321,27 @@ async def admin_billing_consumption(
         rows = conn.execute(f"""
             SELECT cl.delta, cl.ref_id, cl.module, cl.created_at,
                    u.email, u.name,
-                   v.video_model, v.type AS vc2_type
+                   v.video_model, v.type AS vc2_type,
+                   COALESCE(
+                       (SELECT SUM(r.delta) FROM credits_ledger r
+                        WHERE r.ref_id = cl.ref_id AND r.reason = 'task_refund'), 0
+                   ) AS total_refund
             FROM credits_ledger cl
             LEFT JOIN users u ON u.id = cl.user_id
             LEFT JOIN video_clone_v2_jobs v ON v.id = cl.ref_id
             WHERE {where}
+            AND (
+                cl.ref_id IS NULL
+                OR ABS(cl.delta) - COALESCE(
+                    (SELECT SUM(r.delta) FROM credits_ledger r
+                     WHERE r.ref_id = cl.ref_id AND r.reason = 'task_refund'), 0
+                ) > 0
+            )
             ORDER BY cl.created_at DESC
             LIMIT ? OFFSET ?
         """, params + [actual_limit, actual_offset]).fetchall()
 
     def _model(r) -> str:
-        # 优先用 video_clone_v2_jobs 的精确模型名
         if r["video_model"]:
             return f"{r['video_model']}({r['vc2_type'] or ''})"
         m = r["module"] or ""
@@ -1333,12 +1352,12 @@ async def admin_billing_consumption(
     return {
         "rows": [
             {
-                "时间":   _ts(r["created_at"]),
-                "用户":   r["email"] or "—",
-                "供应商":  _provider(r["module"] or ""),
+                "时间":    _ts(r["created_at"]),
+                "用户":    r["email"] or "—",
+                "供应商":   _provider(r["module"] or ""),
                 "模型/接口": _model(r),
-                "消耗积分": abs(int(r["delta"])),
-                "任务ID":  (r["ref_id"] or "")[:20],
+                "消耗积分":  max(0, abs(int(r["delta"])) - int(r["total_refund"])),
+                "任务ID":   (r["ref_id"] or "")[:20],
             }
             for r in rows
         ],
