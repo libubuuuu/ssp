@@ -56,6 +56,27 @@ interface UsageData {
 
 type Tab = "jobs" | "vc2" | "ledger";
 
+interface DetailRow { [key: string]: string | number | null | undefined; }
+interface RechargeRow {
+  id: string;
+  delta: number;
+  balance_after: number;
+  reason: string;
+  ref_id: string;
+  created_at: string;
+}
+interface DetailModal {
+  title: string;
+  type: "jobs" | "ledger" | "vc2";
+  params: Record<string, string>;
+  rows: DetailRow[];
+  recharges: RechargeRow[];
+  total: number;
+  page: number;
+  offset: number;
+  loading: boolean;
+}
+
 type Provider = "fal" | "aliyun" | "aiview" | "未知";
 
 const PROVIDER_STYLE: Record<Provider, { bg: string; color: string }> = {
@@ -137,7 +158,28 @@ export default function AdminBillingPage() {
   const [data, setData] = useState<UsageData | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("jobs");
+  const [modal, setModal] = useState<DetailModal | null>(null);
   const isEn = lang === "en";
+
+  const openDetail = useCallback(async (
+    type: "jobs" | "ledger" | "vc2",
+    title: string,
+    params: Record<string, string>,
+    page = 0,
+  ) => {
+    setModal({ title, type, params, rows: [], recharges: [], total: 0, page, offset: page * 50, loading: true });
+    try {
+      const token = localStorage.getItem("token") || "";
+      const qs = new URLSearchParams({ type, ...params, limit: "50", offset: String(page * 50) });
+      const res = await fetch(`${API_BASE}/api/admin/billing-detail?${qs}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const d = await res.json();
+      setModal(prev => prev ? { ...prev, rows: d.rows ?? [], recharges: d.recharges ?? [], total: d.total ?? 0, offset: d.offset ?? 0, loading: false } : null);
+    } catch {
+      setModal(prev => prev ? { ...prev, loading: false } : null);
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -276,6 +318,7 @@ export default function AdminBillingPage() {
                     <TH right>{isEn ? "Cost (credits)" : "消耗（积分）"}</TH>
                     <TH right>{isEn ? "Avg/job" : "均次积分"}</TH>
                     <TH right>{isEn ? "Users" : "用户数"}</TH>
+                    <TH>{/* 明细 */}</TH>
                   </tr>
                 </thead>
                 <tbody>
@@ -297,6 +340,14 @@ export default function AdminBillingPage() {
                         <TD right><strong>{r.cost_credits.toLocaleString()}</strong></TD>
                         <TD right><span style={{ color: "#666" }}>{avg}</span></TD>
                         <TD right>{r.unique_users}</TD>
+                        <TD>
+                          <button
+                            onClick={() => openDetail("jobs", `${r.model_label} — 任务明细`, { model_label: r.model_label })}
+                            style={{ padding: "0.2rem 0.7rem", border: "1px solid #ddd", borderRadius: "6px", cursor: "pointer", fontSize: "0.78rem", background: "#fafaf7", color: "#555" }}
+                          >
+                            {isEn ? "Detail" : "明细"}
+                          </button>
+                        </TD>
                       </tr>
                     );
                   })}
@@ -324,6 +375,7 @@ export default function AdminBillingPage() {
                     <TH right>{isEn ? "Net Cost" : "净消耗"}</TH>
                     <TH right>{isEn ? "fal ~USD" : "fal 估算 USD"}</TH>
                     <TH right>{isEn ? "Users" : "用户"}</TH>
+                    <TH>{/* 明细 */}</TH>
                   </tr>
                 </thead>
                 <tbody>
@@ -356,6 +408,14 @@ export default function AdminBillingPage() {
                       <TD right><strong>{(r.credits_charged - r.credits_refunded).toLocaleString()}</strong></TD>
                       <TD right>${r.fal_estimated_usd.toFixed(2)}</TD>
                       <TD right>{r.unique_users}</TD>
+                      <TD>
+                        <button
+                          onClick={() => openDetail("vc2", `${r.display_name}(${r.video_model}) — 任务明细`, { video_model: r.video_model })}
+                          style={{ padding: "0.2rem 0.7rem", border: "1px solid #ddd", borderRadius: "6px", cursor: "pointer", fontSize: "0.78rem", background: "#fafaf7", color: "#555" }}
+                        >
+                          {isEn ? "Detail" : "明细"}
+                        </button>
+                      </TD>
                     </tr>
                   ))}
                 </tbody>
@@ -380,6 +440,7 @@ export default function AdminBillingPage() {
                     <TH right>{isEn ? "Admin Adj." : "管理员调整"}</TH>
                     <TH right>{isEn ? "Net Δ" : "净变动"}</TH>
                     <TH right>{isEn ? "Txns" : "笔数"}</TH>
+                    <TH>{/* 明细 */}</TH>
                   </tr>
                 </thead>
                 <tbody>
@@ -410,6 +471,14 @@ export default function AdminBillingPage() {
                         </strong>
                       </TD>
                       <TD right>{r.tx_count}</TD>
+                      <TD>
+                        <button
+                          onClick={() => openDetail("ledger", `${r.user_name !== "—" ? r.user_name : r.user_email} — 积分流水`, { user_id: r.user_id })}
+                          style={{ padding: "0.2rem 0.7rem", border: "1px solid #ddd", borderRadius: "6px", cursor: "pointer", fontSize: "0.78rem", background: "#fafaf7", color: "#555" }}
+                        >
+                          {isEn ? "Detail" : "明细"}
+                        </button>
+                      </TD>
                     </tr>
                   ))}
                 </tbody>
@@ -419,6 +488,187 @@ export default function AdminBillingPage() {
         </div>
 
       </div>
+
+      {/* ── 明细弹窗 ── */}
+      {modal && (
+        <div
+          onClick={e => { if (e.target === e.currentTarget) setModal(null); }}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}
+        >
+          <div style={{ background: "#fff", borderRadius: "12px", width: "100%", maxWidth: "960px", maxHeight: "82vh", display: "flex", flexDirection: "column", boxShadow: "0 8px 40px rgba(0,0,0,0.2)" }}>
+            {/* header */}
+            <div style={{ padding: "1rem 1.5rem", borderBottom: "1px solid #eee", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: "1rem" }}>{modal.title}</div>
+                {!modal.loading && (
+                  <div style={{ fontSize: "0.75rem", color: "#999", marginTop: "0.2rem" }}>
+                    共 {modal.total} 条 · 第 {modal.page + 1} 页（每页 50）
+                  </div>
+                )}
+              </div>
+              <button onClick={() => setModal(null)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "1.4rem", color: "#888", lineHeight: 1 }}>✕</button>
+            </div>
+
+            {/* body */}
+            <div style={{ overflow: "auto", flex: 1, fontSize: "0.83rem" }}>
+              {modal.loading ? (
+                <div style={{ padding: "2.5rem", textAlign: "center", color: "#999" }}>加载中…</div>
+              ) : modal.rows.length === 0 ? (
+                <div style={{ padding: "2.5rem", textAlign: "center", color: "#999" }}>暂无记录</div>
+              ) : modal.type === "jobs" ? (
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead style={{ background: "#fafaf7", position: "sticky", top: 0 }}>
+                    <tr>
+                      {["时间","用户","标题","类型","积分","状态","耗时(s)"].map(h => (
+                        <th key={h} style={{ textAlign: "left", padding: "0.7rem 0.9rem", color: "#666", fontWeight: 500, whiteSpace: "nowrap", borderBottom: "1px solid #eee" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {modal.rows.map((r, i) => (
+                      <tr key={i} style={{ borderTop: "1px solid #f0f0f0" }}>
+                        <td style={{ padding: "0.65rem 0.9rem", whiteSpace: "nowrap", color: "#666" }}>{r.created_at}</td>
+                        <td style={{ padding: "0.65rem 0.9rem", whiteSpace: "nowrap" }}>
+                          <div style={{ fontWeight: 500 }}>{String(r.user_name) !== "—" ? r.user_name : r.user_email}</div>
+                          <div style={{ fontSize: "0.72rem", color: "#aaa" }}>{r.user_email}</div>
+                        </td>
+                        <td style={{ padding: "0.65rem 0.9rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.title || "—"}</td>
+                        <td style={{ padding: "0.65rem 0.9rem", whiteSpace: "nowrap", color: "#777", fontFamily: "monospace", fontSize: "0.78rem" }}>{r.module || r.type}</td>
+                        <td style={{ padding: "0.65rem 0.9rem", textAlign: "right", fontWeight: 600 }}>{r.cost}</td>
+                        <td style={{ padding: "0.65rem 0.9rem", whiteSpace: "nowrap" }}>
+                          <span style={{ padding: "0.15rem 0.5rem", borderRadius: "999px", fontSize: "0.72rem", background: r.status === "completed" ? "#eaf7ea" : r.status === "failed" ? "#fde8e8" : "#fff4e0", color: r.status === "completed" ? "#0a7" : r.status === "failed" ? "#c33" : "#f80" }}>
+                            {r.status}
+                          </span>
+                        </td>
+                        <td style={{ padding: "0.65rem 0.9rem", textAlign: "right", color: "#888" }}>{r.duration_sec ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : modal.type === "ledger" ? (
+                <div>
+                  {/* 充值记录区块 */}
+                  {modal.recharges.length > 0 && (
+                    <div style={{ margin: "1rem 1rem 0", padding: "0.9rem 1rem", background: "#f0f7ff", borderRadius: "8px", border: "1px solid #c5ddf7" }}>
+                      <div style={{ fontSize: "0.8rem", fontWeight: 600, color: "#1a56db", marginBottom: "0.6rem" }}>
+                        充值记录（共 {modal.recharges.length} 次）
+                      </div>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+                        <thead>
+                          <tr>
+                            {["时间","充值积分","充值后余额","订单号"].map(h => (
+                              <th key={h} style={{ textAlign: "left", padding: "0.3rem 0.6rem", color: "#555", fontWeight: 500 }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {modal.recharges.map((r, i) => (
+                            <tr key={i} style={{ borderTop: "1px solid #d4e8fc" }}>
+                              <td style={{ padding: "0.4rem 0.6rem", color: "#444" }}>{r.created_at}</td>
+                              <td style={{ padding: "0.4rem 0.6rem", fontWeight: 700, color: "#1a56db" }}>+{r.delta.toLocaleString()}</td>
+                              <td style={{ padding: "0.4rem 0.6rem" }}>{r.balance_after.toLocaleString()}</td>
+                              <td style={{ padding: "0.4rem 0.6rem", fontFamily: "monospace", fontSize: "0.75rem", color: "#888" }}>{r.ref_id || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {/* 全量流水 */}
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead style={{ background: "#fafaf7", position: "sticky", top: 0 }}>
+                      <tr>
+                        {["时间","类型","接口/模型","变动","余额","任务ID"].map(h => (
+                          <th key={h} style={{ textAlign: "left", padding: "0.7rem 0.9rem", color: "#666", fontWeight: 500, whiteSpace: "nowrap", borderBottom: "1px solid #eee" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {modal.rows.map((r, i) => {
+                        const delta = Number(r.delta);
+                        return (
+                          <tr key={i} style={{ borderTop: "1px solid #f0f0f0" }}>
+                            <td style={{ padding: "0.65rem 0.9rem", whiteSpace: "nowrap", color: "#666" }}>{r.created_at}</td>
+                            <td style={{ padding: "0.65rem 0.9rem", whiteSpace: "nowrap" }}>
+                              <span style={{
+                                padding: "0.15rem 0.5rem", borderRadius: "999px", fontSize: "0.72rem",
+                                background: String(r.reason).startsWith("recharge") ? "#e8f0fe" : delta < 0 ? "#fde8e8" : "#eaf7ea",
+                                color: String(r.reason).startsWith("recharge") ? "#1a56db" : delta < 0 ? "#c33" : "#0a7",
+                              }}>
+                                {String(r.reason_label || r.reason)}
+                              </span>
+                            </td>
+                            <td style={{ padding: "0.65rem 0.9rem", color: "#555", fontSize: "0.78rem" }}>
+                              {String(r.module) !== "—" ? r.module : <span style={{ color: "#ccc" }}>—</span>}
+                            </td>
+                            <td style={{ padding: "0.65rem 0.9rem", textAlign: "right", fontWeight: 700, color: delta > 0 ? "#0a7" : "#c33" }}>
+                              {delta > 0 ? "+" : ""}{delta}
+                            </td>
+                            <td style={{ padding: "0.65rem 0.9rem", textAlign: "right" }}>{r.balance_after}</td>
+                            <td style={{ padding: "0.65rem 0.9rem", fontFamily: "monospace", fontSize: "0.75rem", color: "#aaa" }}>{r.ref_id || "—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead style={{ background: "#fafaf7", position: "sticky", top: 0 }}>
+                    <tr>
+                      {["时间","用户","类型","状态","扣积分","退积分","fal USD","耗时(s)","错误"].map(h => (
+                        <th key={h} style={{ textAlign: "left", padding: "0.7rem 0.9rem", color: "#666", fontWeight: 500, whiteSpace: "nowrap", borderBottom: "1px solid #eee" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {modal.rows.map((r, i) => (
+                      <tr key={i} style={{ borderTop: "1px solid #f0f0f0" }}>
+                        <td style={{ padding: "0.65rem 0.9rem", whiteSpace: "nowrap", color: "#666" }}>{r.created_at}</td>
+                        <td style={{ padding: "0.65rem 0.9rem", whiteSpace: "nowrap" }}>{r.user_email}</td>
+                        <td style={{ padding: "0.65rem 0.9rem", fontFamily: "monospace", fontSize: "0.78rem" }}>{r.type}/{r.replacement_mode}</td>
+                        <td style={{ padding: "0.65rem 0.9rem", whiteSpace: "nowrap" }}>
+                          <span style={{ padding: "0.15rem 0.5rem", borderRadius: "999px", fontSize: "0.72rem", background: r.status === "completed" ? "#eaf7ea" : r.status === "failed" ? "#fde8e8" : r.status === "partial_completed" ? "#fff4e0" : "#f5f5f5", color: r.status === "completed" ? "#0a7" : r.status === "failed" ? "#c33" : r.status === "partial_completed" ? "#f80" : "#888" }}>
+                            {r.status}
+                          </span>
+                        </td>
+                        <td style={{ padding: "0.65rem 0.9rem", textAlign: "right", fontWeight: 600 }}>{r.credits_charged}</td>
+                        <td style={{ padding: "0.65rem 0.9rem", textAlign: "right", color: "#0a7" }}>{r.credits_refunded}</td>
+                        <td style={{ padding: "0.65rem 0.9rem", textAlign: "right", color: "#666" }}>${r.fal_usd}</td>
+                        <td style={{ padding: "0.65rem 0.9rem", textAlign: "right", color: "#888" }}>{r.duration_sec ?? "—"}</td>
+                        <td style={{ padding: "0.65rem 0.9rem", color: "#c33", fontSize: "0.75rem", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.error || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* footer pagination */}
+            {!modal.loading && modal.total > 50 && (
+              <div style={{ padding: "0.8rem 1.5rem", borderTop: "1px solid #eee", display: "flex", gap: "0.5rem", alignItems: "center", justifyContent: "flex-end", flexShrink: 0 }}>
+                <span style={{ fontSize: "0.8rem", color: "#888", marginRight: "auto" }}>
+                  {modal.offset + 1}–{Math.min(modal.page * 50 + 50, modal.total)} / {modal.total}
+                </span>
+                <button
+                  disabled={modal.page === 0}
+                  onClick={() => openDetail(modal.type, modal.title, modal.params, modal.page - 1)}
+                  style={{ padding: "0.3rem 0.9rem", border: "1px solid #ddd", borderRadius: "6px", cursor: modal.page === 0 ? "not-allowed" : "pointer", opacity: modal.page === 0 ? 0.4 : 1, background: "#fff" }}
+                >
+                  ← {isEn ? "Prev" : "上一页"}
+                </button>
+                <button
+                  disabled={(modal.page + 1) * 50 >= modal.total}
+                  onClick={() => openDetail(modal.type, modal.title, modal.params, modal.page + 1)}
+                  style={{ padding: "0.3rem 0.9rem", border: "1px solid #ddd", borderRadius: "6px", cursor: (modal.page + 1) * 50 >= modal.total ? "not-allowed" : "pointer", opacity: (modal.page + 1) * 50 >= modal.total ? 0.4 : 1, background: "#fff" }}
+                >
+                  {isEn ? "Next" : "下一页"} →
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

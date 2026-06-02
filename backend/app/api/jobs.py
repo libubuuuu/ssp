@@ -1887,12 +1887,12 @@ async def submit_job(req: SubmitJobRequest, current_user: dict = Depends(get_cur
     else:
         cost = get_task_cost(module)
 
+    job_id = str(uuid.uuid4())[:8]
+
     # 扣费(原子:SQL 层 WHERE credits >= ?,无竞态)
     if cost > 0:
-        if not deduct_credits(user_id, cost):
+        if not deduct_credits(user_id, cost, ref_id=job_id, module=module):
             raise HTTPException(status_code=402, detail=f"积分不足,需要 {cost} 积分")
-    
-    job_id = str(uuid.uuid4())[:8]
     JOBS[job_id] = {
         "id": job_id,
         "user_id": user_id_str,

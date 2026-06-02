@@ -1029,6 +1029,245 @@ async def admin_model_usage(_admin: dict = Depends(require_admin)):
     }
 
 
+@router.get("/billing-detail")
+async def admin_billing_detail(
+    type: str,
+    model_label: Optional[str] = None,
+    user_id: Optional[str] = None,
+    video_model: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    _admin: dict = Depends(require_admin),
+):
+    """对账单明细：按 type 返回单条记录列表（只读）。
+
+    type=jobs   → jobs.json 中该 model_label 的所有任务
+    type=ledger → credits_ledger 中该 user_id 的所有流水
+    type=vc2    → video_clone_v2_jobs 中该 video_model 的所有任务
+    """
+    import json as _json, datetime as _dt
+    from pathlib import Path as _Path
+
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+
+    def _ts(v) -> str:
+        if v is None:
+            return "—"
+        try:
+            return _dt.datetime.fromtimestamp(float(v)).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return str(v)[:16]
+
+    # ── type=jobs ────────────────────────────────────────────────────────
+    if type == "jobs":
+        if not model_label:
+            raise HTTPException(400, "model_label required for type=jobs")
+
+        _jobs_file = _Path(os.environ.get(
+            "JOBS_FILE",
+            str(_Path(__file__).resolve().parents[3] / "jobs_data" / "jobs.json"),
+        ))
+        jobs_raw: dict = {}
+        if _jobs_file.exists():
+            try:
+                import fcntl as _fcntl
+                with open(_jobs_file, "r", encoding="utf-8") as _f:
+                    _fcntl.flock(_f.fileno(), _fcntl.LOCK_SH)
+                    try:
+                        jobs_raw = _json.loads(_f.read() or "{}")
+                    finally:
+                        _fcntl.flock(_f.fileno(), _fcntl.LOCK_UN)
+            except Exception:
+                pass
+
+        def _label(job: dict) -> str:
+            jtype = job.get("type", "unknown")
+            if jtype == "image":
+                p = job.get("params") or {}
+                m = (p.get("model") or "").strip() if isinstance(p, dict) else ""
+                return m if m else "image/未标注"
+            if jtype == "video_i2v":    return "图生视频/未标注"
+            if jtype in ("script_to_video", "video_general"): return "AI爆款视频"
+            if jtype == "video_general_analyze":  return "AI爆款/分析"
+            if jtype == "video_general_storyboard": return "AI爆款/分镜"
+            if jtype in ("replicate_analyze", "skill_analyze"): return "分镜复刻/分析"
+            if jtype == "skill_replace":  return "分镜复刻/替换"
+            if jtype == "skill_generate": return "分镜复刻/生成"
+            if jtype in ("replicate", "video_clone"): return "视频复刻V1"
+            if jtype == "ad_video":       return "广告视频"
+            return job.get("module") or jtype
+
+        matched = [
+            j for j in jobs_raw.values()
+            if isinstance(j, dict) and _label(j) == model_label
+        ]
+        matched.sort(key=lambda j: j.get("created_at") or 0, reverse=True)
+        total = len(matched)
+        page_items = matched[offset: offset + limit]
+
+        # 批量查用户信息（一次 IN 查询）
+        uids = list({j.get("user_id", "") for j in page_items if j.get("user_id")})
+        user_map: dict = {}
+        if uids:
+            with get_db() as conn:
+                ph = ",".join("?" * len(uids))
+                rows = conn.execute(
+                    f"SELECT id, email, name FROM users WHERE id IN ({ph})", uids
+                ).fetchall()
+                user_map = {r["id"]: {"email": r["email"] or "—", "name": r["name"] or "—"} for r in rows}
+
+        result_rows = []
+        for j in page_items:
+            uid = j.get("user_id", "")
+            u = user_map.get(uid, {})
+            dur = None
+            if j.get("finished_at") and j.get("started_at"):
+                try:
+                    dur = round(float(j["finished_at"]) - float(j["started_at"]))
+                except Exception:
+                    pass
+            result_rows.append({
+                "id":         j.get("id", "")[:8],
+                "user_email": u.get("email", uid[:8] + "…"),
+                "user_name":  u.get("name", "—"),
+                "title":      (j.get("title") or "")[:40],
+                "type":       j.get("type", ""),
+                "module":     j.get("module", ""),
+                "cost":       j.get("cost") or 0,
+                "status":     j.get("status", ""),
+                "created_at": _ts(j.get("created_at")),
+                "duration_sec": dur,
+            })
+        return {"rows": result_rows, "total": total, "limit": limit, "offset": offset}
+
+    # ── type=ledger ──────────────────────────────────────────────────────
+    elif type == "ledger":
+        if not user_id:
+            raise HTTPException(400, "user_id required for type=ledger")
+
+        def _reason_label(reason: str) -> str:
+            if not reason:
+                return "—"
+            if reason == "task_charge":       return "任务扣费"
+            if reason.startswith("task_refund"): return "任务退款"
+            if reason.startswith("recharge"):  return "用户充值"
+            if reason.startswith("admin"):    return "管理员调整"
+            if reason == "init_ledger_backfill": return "初始化补录"
+            if reason.startswith("ledger_correction"): return "账本修正"
+            return reason
+
+        with get_db() as conn:
+            total_row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM credits_ledger WHERE user_id = ?", (user_id,)
+            ).fetchone()
+            total = total_row["cnt"] if total_row else 0
+            rows = conn.execute(
+                """SELECT id, delta, balance_after, reason, ref_id, module, created_at
+                   FROM credits_ledger WHERE user_id = ?
+                   ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+                (user_id, limit, offset),
+            ).fetchall()
+            # 充值记录单独全量返回（通常极少，不分页）
+            recharge_rows = conn.execute(
+                """SELECT id, delta, balance_after, reason, ref_id, created_at
+                   FROM credits_ledger WHERE user_id = ? AND reason LIKE 'recharge%'
+                   ORDER BY created_at DESC""",
+                (user_id,),
+            ).fetchall()
+        return {
+            "rows": [
+                {
+                    "id":            r["id"][:8],
+                    "delta":         r["delta"],
+                    "balance_after": r["balance_after"],
+                    "reason":        r["reason"],
+                    "reason_label":  _reason_label(r["reason"]),
+                    "ref_id":        (r["ref_id"] or "")[:12],
+                    "module":        r["module"] or "—",
+                    "created_at":    _ts(r["created_at"]),
+                }
+                for r in rows
+            ],
+            "recharges": [
+                {
+                    "id":            r["id"][:8],
+                    "delta":         r["delta"],
+                    "balance_after": r["balance_after"],
+                    "reason":        r["reason"],
+                    "ref_id":        (r["ref_id"] or "")[:20],
+                    "created_at":    _ts(r["created_at"]),
+                }
+                for r in recharge_rows
+            ],
+            "total": total, "limit": limit, "offset": offset,
+        }
+
+    # ── type=vc2 ─────────────────────────────────────────────────────────
+    elif type == "vc2":
+        vm = video_model or "seedance-2-0-fast"
+        with get_db() as conn:
+            total_row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM video_clone_v2_jobs WHERE COALESCE(video_model,'seedance-2-0-fast')=?",
+                (vm,),
+            ).fetchone()
+            total = total_row["cnt"] if total_row else 0
+            rows = conn.execute(
+                """SELECT id, user_id, type, replacement_mode, status,
+                          total_credits_charged, total_credits_refunded,
+                          fal_cost_total_usd, error_message,
+                          created_at, completed_at
+                   FROM video_clone_v2_jobs
+                   WHERE COALESCE(video_model,'seedance-2-0-fast')=?
+                   ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+                (vm, limit, offset),
+            ).fetchall()
+
+            uids = list({r["user_id"] for r in rows if r["user_id"]})
+            user_map2: dict = {}
+            if uids:
+                ph = ",".join("?" * len(uids))
+                urs = conn.execute(
+                    f"SELECT id, email, name FROM users WHERE id IN ({ph})", uids
+                ).fetchall()
+                user_map2 = {u["id"]: u["email"] or u["name"] or u["id"][:8] for u in urs}
+
+        def _dur2(row) -> Optional[int]:
+            try:
+                if row["completed_at"] and row["created_at"]:
+                    from datetime import datetime as _DT
+                    fmt = "%Y-%m-%d %H:%M:%S"
+                    a = _DT.strptime(str(row["created_at"])[:19], fmt)
+                    b = _DT.strptime(str(row["completed_at"])[:19], fmt)
+                    return int((b - a).total_seconds())
+            except Exception:
+                pass
+            return None
+
+        return {
+            "rows": [
+                {
+                    "id":               r["id"][:8],
+                    "user_email":       user_map2.get(r["user_id"], r["user_id"][:8] + "…"),
+                    "type":             r["type"],
+                    "replacement_mode": r["replacement_mode"],
+                    "status":           r["status"],
+                    "credits_charged":  r["total_credits_charged"],
+                    "credits_refunded": r["total_credits_refunded"],
+                    "fal_usd":          round(r["fal_cost_total_usd"] or 0, 3),
+                    "error":            (r["error_message"] or "")[:60],
+                    "created_at":       str(r["created_at"])[:16],
+                    "duration_sec":     _dur2(r),
+                }
+                for r in rows
+            ],
+            "total": total, "limit": limit, "offset": offset,
+        }
+
+    else:
+        raise HTTPException(400, f"unknown type: {type}")
+
+
 @router.post("/update-trends")
 async def manual_update_trends(_admin: dict = Depends(require_admin)):
     """手动触发每日趋势更新（不用等凌晨3点）。"""
