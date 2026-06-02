@@ -45,25 +45,37 @@ const TD = ({ children, right, mono }: { children: React.ReactNode; right?: bool
 export default function AdminBillingPage() {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("consumption");
+  const [filterUser, setFilterUser] = useState("");
 
   const empty = (): SectionState => ({ rows: [], total: 0, page: 0, loading: false });
   const [consumption, setConsumption] = useState<SectionState>(empty());
   const [recharge, setRecharge]       = useState<SectionState>(empty());
   const [gift, setGift]               = useState<SectionState>(empty());
+  const [users, setUsers]             = useState<{id:string;email:string}[]>([]);
 
   const token = () => (typeof window !== "undefined" ? localStorage.getItem("token") || "" : "");
 
-  const fetchConsumption = useCallback(async (page = 0) => {
+  const fetchUsers = useCallback(async () => {
+    try {
+      const r = await fetch(`${API_BASE}/api/admin/users?limit=200`, { headers: { Authorization: `Bearer ${token()}` } });
+      const d = await r.json();
+      setUsers((d.users ?? d.items ?? d ?? []).map((u: {id:string;email:string}) => ({ id: u.id, email: u.email })));
+    } catch { /* ignore */ }
+  }, []);
+
+  const fetchConsumption = useCallback(async (page = 0, userId = filterUser) => {
     setConsumption(p => ({ ...p, loading: true, page }));
     try {
-      const r = await fetch(`${API_BASE}/api/admin/billing-consumption?page=${page}&limit=100`, {
+      const qs = new URLSearchParams({ page: String(page), limit: "100" });
+      if (userId) qs.set("user_id", userId);
+      const r = await fetch(`${API_BASE}/api/admin/billing-consumption?${qs}`, {
         headers: { Authorization: `Bearer ${token()}` },
       });
       if (r.status === 403) { router.push("/dashboard"); return; }
       const d = await r.json();
       setConsumption({ rows: d.rows ?? [], total: d.total ?? 0, page, loading: false });
     } catch { setConsumption(p => ({ ...p, loading: false })); }
-  }, [router]);
+  }, [router, filterUser]);
 
   const fetchRecharge = useCallback(async () => {
     setRecharge(p => ({ ...p, loading: true }));
@@ -89,7 +101,7 @@ export default function AdminBillingPage() {
     } catch { setGift(p => ({ ...p, loading: false })); }
   }, []);
 
-  useEffect(() => { fetchConsumption(); fetchRecharge(); fetchGift(); }, [fetchConsumption, fetchRecharge, fetchGift]);
+  useEffect(() => { fetchConsumption(); fetchRecharge(); fetchGift(); fetchUsers(); }, [fetchConsumption, fetchRecharge, fetchGift, fetchUsers]);
 
   const exportConsumption = async () => {
     const r = await fetch(`${API_BASE}/api/admin/billing-consumption?export=true`, {
@@ -192,7 +204,26 @@ export default function AdminBillingPage() {
 
           {/* ── 消耗明细 ── */}
           {tab === "consumption" && (
-            consumption.loading ? (
+            <>
+            {/* 用户筛选 */}
+            <div style={{ padding: "0.8rem 1rem", borderBottom: "1px solid #eee", display: "flex", gap: "0.8rem", alignItems: "center" }}>
+              <span style={{ fontSize: "0.85rem", color: "#666" }}>筛选用户：</span>
+              <select
+                value={filterUser}
+                onChange={e => { setFilterUser(e.target.value); fetchConsumption(0, e.target.value); }}
+                style={{ padding: "0.35rem 0.7rem", border: "1px solid #ddd", borderRadius: "6px", fontSize: "0.85rem", minWidth: 220 }}
+              >
+                <option value="">全部用户</option>
+                {users.map(u => <option key={u.id} value={u.id}>{u.email}</option>)}
+              </select>
+              {filterUser && (
+                <button onClick={() => { setFilterUser(""); fetchConsumption(0, ""); }}
+                  style={{ padding: "0.3rem 0.7rem", border: "1px solid #ddd", borderRadius: "6px", fontSize: "0.8rem", cursor: "pointer", background: "#fff" }}>
+                  清除
+                </button>
+              )}
+            </div>
+            {consumption.loading ? (
               <div style={{ padding: "3rem", textAlign: "center", color: "#999" }}>加载中...</div>
             ) : consumption.rows.length === 0 ? (
               <div style={{ padding: "3rem", textAlign: "center", color: "#999" }}>暂无消耗记录</div>
@@ -253,7 +284,8 @@ export default function AdminBillingPage() {
                   </div>
                 )}
               </>
-            )
+            )}
+            </>
           )}
 
           {/* ── 充值入账 ── */}
