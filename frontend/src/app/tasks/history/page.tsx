@@ -18,9 +18,24 @@ export default function HistoryPage() {
     status?: string;
     credits_refunded?: number;
   }
+  interface LedgerRecord {
+    id: string;
+    delta: number;
+    balance_after: number;
+    reason: string;
+    label: string;
+    ref_id?: string;
+    module?: string;
+    created_at: number;
+  }
+  const [activeTab, setActiveTab] = useState<"works" | "credits">("works");
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<HistoryItem | null>(null);
+  const [ledger, setLedger] = useState<LedgerRecord[]>([]);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerFetched, setLedgerFetched] = useState(false);
+  const [ledgerError, setLedgerError] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem("token") || "";
@@ -70,6 +85,25 @@ export default function HistoryPage() {
       setLoading(false);
     });
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== "credits" || ledgerFetched) return;
+    setLedgerLoading(true);
+    setLedgerError(false);
+    const token = localStorage.getItem("token") || "";
+    fetch(`${API_BASE}/api/billing/ledger?page=1&limit=50`, {
+      headers: { "Authorization": `Bearer ${token}` },
+    })
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(data => {
+        setLedger((data.records || []) as LedgerRecord[]);
+        setLedgerFetched(true);
+      })
+      .catch(() => {
+        setLedgerError(true);
+      })
+      .finally(() => setLedgerLoading(false));
+  }, [activeTab, ledgerFetched]);
 
   const moduleLabel: Record<string, string> = {
     "video/image-to-video": t("tasks.mod_i2v"),
@@ -121,12 +155,77 @@ export default function HistoryPage() {
           <h1 style={{ fontSize: "1.6rem", fontWeight: 400, color: "#0d0d0d", margin: 0, fontFamily: "Georgia,serif" }}>{t("tasks.titleMain")}<span style={{ fontStyle: "italic" }}> {t("tasks.titleAccent")}</span></h1>
         </div>
 
-        {loading && <div style={{ color: "#999", textAlign: "center", marginTop: "4rem" }}>{t("tasks.loading")}</div>}
-        {!loading && history.length === 0 && (
+        {/* Tab switcher */}
+        <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.5rem" }}>
+          {(["works", "credits"] as const).map(tab => (
+            <button key={tab} onClick={() => setActiveTab(tab)}
+              style={{
+                padding: "0.45rem 1.1rem",
+                borderRadius: "20px",
+                border: "none",
+                cursor: "pointer",
+                fontWeight: activeTab === tab ? 600 : 400,
+                fontSize: "0.88rem",
+                background: activeTab === tab ? "#0d0d0d" : "#e8e5df",
+                color: activeTab === tab ? "#fff" : "#555",
+                transition: "background 0.15s",
+              }}>
+              {tab === "works" ? "作品历史" : "积分明细"}
+            </button>
+          ))}
+        </div>
+
+        {/* Credits tab */}
+        {activeTab === "credits" && (
+          <div>
+            {ledger.length > 0 && (
+              <div style={{ marginBottom: "1rem", padding: "0.75rem 1.1rem", background: "#fff", borderRadius: "12px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", display: "inline-block", fontSize: "0.9rem", color: "#333" }}>
+                当前余额 <strong style={{ fontSize: "1.1rem", color: "#0d0d0d" }}>{ledger[0].balance_after}</strong> 积分
+              </div>
+            )}
+            {ledgerLoading && <div style={{ color: "#999", textAlign: "center", marginTop: "4rem" }}>加载中…</div>}
+            {ledgerError && <div style={{ color: "#b71c1c", textAlign: "center", marginTop: "4rem" }}>加载失败，请刷新重试</div>}
+            {!ledgerLoading && !ledgerError && ledger.length === 0 && (
+              <div style={{ color: "#999", textAlign: "center", marginTop: "4rem" }}>暂无积分记录</div>
+            )}
+            {!ledgerLoading && ledger.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                {ledger.map(rec => {
+                  const balanceBefore = rec.balance_after - rec.delta;
+                  const isNeg = rec.delta < 0;
+                  const isPos = rec.delta > 0;
+                  return (
+                    <div key={rec.id} style={{ background: "#fff", borderRadius: "12px", padding: "0.75rem 1.1rem", display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: "0 2px 6px rgba(0,0,0,0.04)", flexWrap: "wrap", gap: "0.5rem" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: "0.88rem", fontWeight: 500, color: "#222" }}>{rec.label || rec.reason}</div>
+                        <div style={{ fontSize: "0.75rem", color: "#999", marginTop: "0.15rem" }}>
+                          {new Date(rec.created_at * 1000).toLocaleString()}
+                          {rec.module && <span style={{ marginLeft: "0.5rem", color: "#bbb" }}>{rec.module}</span>}
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexShrink: 0 }}>
+                        <span style={{ fontSize: "1rem", fontWeight: 700, color: isNeg ? "#c0392b" : isPos ? "#1a7a40" : "#555" }}>
+                          {isPos ? "+" : ""}{rec.delta}
+                        </span>
+                        <span style={{ fontSize: "0.78rem", color: "#999", whiteSpace: "nowrap" }}>
+                          {balanceBefore} → {rec.balance_after}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Works tab */}
+        {activeTab === "works" && loading && <div style={{ color: "#999", textAlign: "center", marginTop: "4rem" }}>{t("tasks.loading")}</div>}
+        {activeTab === "works" && !loading && history.length === 0 && (
           <div style={{ color: "#999", textAlign: "center", marginTop: "4rem" }}>{t("tasks.empty")}</div>
         )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "1rem" }}>
+        <div style={{ display: activeTab === "works" ? "grid" : "none", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "1rem" }}>
           {history.map((item) => (
             <div key={item.id} onClick={() => setSelected(item)}
               style={{ background: "#fff", borderRadius: "14px", overflow: "hidden", boxShadow: "0 4px 12px rgba(0,0,0,0.06)", cursor: "pointer", transition: "transform 0.15s" }}
