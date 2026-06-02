@@ -1531,7 +1531,10 @@ async def admin_billing_user_detail(
     with get_db() as conn:
         total = conn.execute(
             """SELECT COUNT(*) FROM credits_ledger
-               WHERE user_id=? AND reason IN ('task_charge','register_bonus','init_ledger_backfill')""",
+               WHERE user_id=? AND reason IN (
+                   'task_charge','register_bonus','init_ledger_backfill','recharge_hupijiao',
+                   'recharge_wx','recharge_alipay','recharge'
+               )""",
             (user_id,)
         ).fetchone()[0]
 
@@ -1545,7 +1548,10 @@ async def admin_billing_user_detail(
             FROM credits_ledger cl
             LEFT JOIN video_clone_v2_jobs v ON v.id = cl.ref_id
             WHERE cl.user_id = ?
-              AND cl.reason IN ('task_charge','register_bonus','init_ledger_backfill')
+              AND cl.reason IN (
+                   'task_charge','register_bonus','init_ledger_backfill','recharge_hupijiao',
+                   'recharge_wx','recharge_alipay','recharge'
+              )
             ORDER BY cl.created_at DESC
             LIMIT ? OFFSET ?
         """, (user_id, actual_limit, actual_offset)).fetchall()
@@ -1571,6 +1577,19 @@ async def admin_billing_user_detail(
                 "退积分":  0,
                 "净消耗":  0,
                 "赠送积分": int(r["delta"]),
+                "充值积分": 0,
+            })
+        elif reason.startswith("recharge"):
+            result.append({
+                "时间":    _ts(r["created_at"]),
+                "状态":    "充值",
+                "供应商":  "system",
+                "模型/接口": "虎皮椒充值" if "hupijiao" in reason else "充值",
+                "扣积分":  0,
+                "退积分":  0,
+                "净消耗":  0,
+                "赠送积分": 0,
+                "充值积分": int(r["delta"]),
             })
         else:
             gross = abs(int(r["delta"]))
@@ -1585,6 +1604,7 @@ async def admin_billing_user_detail(
                 "退积分":  refund,
                 "净消耗":  net,
                 "赠送积分": 0,
+                "充值积分": 0,
             })
     return {"rows": result, "total": total, "page": page}
 

@@ -345,22 +345,26 @@ export default function AdminBillingPage() {
                         <TH>状态</TH>
                         <TH>供应商</TH>
                         <TH>模型 / 接口</TH>
+                        <TH right>充值积分</TH>
+                        <TH right>赠送积分</TH>
                         <TH right>扣积分</TH>
                         <TH right>退积分</TH>
                         <TH right>净消耗</TH>
-                        <TH right>赠送积分</TH>
                       </tr>
                     </thead>
                     <tbody>
                       {userModal.rows.map((r, i) => {
                         const isGift = r["状态"] === "赠送";
+                        const isRecharge = r["状态"] === "充值";
                         const statusStyle = isGift
-                          ? { background: "#e8f0fe", color: "#1a56db" }
-                          : r["状态"] === "成功"
-                            ? { background: "#eaf7ea", color: "#0a7" }
-                            : { background: "#fde8e8", color: "#c33" };
+                          ? { background: "#eaf7ea", color: "#0a7" }
+                          : isRecharge
+                            ? { background: "#e8f0fe", color: "#1a56db" }
+                            : r["状态"] === "成功"
+                              ? { background: "#f0f0f0", color: "#555" }
+                              : { background: "#fde8e8", color: "#c33" };
                         return (
-                        <tr key={i} style={{ background: r["状态"]==="失败" ? "#fff8f8" : isGift ? "#f8fbff" : undefined }}>
+                        <tr key={i} style={{ background: r["状态"]==="失败" ? "#fff8f8" : isRecharge ? "#f8fbff" : isGift ? "#f6fff6" : undefined }}>
                           <TD><span style={{ color: "#888" }}>{r["时间"]}</span></TD>
                           <TD>
                             <span style={{ padding: "0.15rem 0.5rem", borderRadius: "999px", fontSize: "0.72rem", ...statusStyle }}>
@@ -369,10 +373,11 @@ export default function AdminBillingPage() {
                           </TD>
                           <TD><ProviderBadge provider={String(r["供应商"] ?? "")} /></TD>
                           <TD mono><span style={{ fontSize: "0.8rem", color: "#444" }}>{r["模型/接口"] || "—"}</span></TD>
-                          <TD right><span style={{ color: "#bbb" }}>{isGift ? "—" : Number(r["扣积分"]).toLocaleString()}</span></TD>
+                          <TD right><span style={{ color: "#1a56db", fontWeight: Number(r["充值积分"])>0?600:400 }}>{Number(r["充值积分"])>0 ? `+${Number(r["充值积分"]).toLocaleString()}` : "—"}</span></TD>
+                          <TD right><span style={{ color: "#0a7", fontWeight: Number(r["赠送积分"])>0?600:400 }}>{Number(r["赠送积分"])>0 ? `+${Number(r["赠送积分"]).toLocaleString()}` : "—"}</span></TD>
+                          <TD right><span style={{ color: "#bbb" }}>{r["状态"]==="赠送"||r["状态"]==="充值" ? "—" : Number(r["扣积分"]).toLocaleString()}</span></TD>
                           <TD right><span style={{ color: Number(r["退积分"]) > 0 ? "#0a7" : "#bbb" }}>{Number(r["退积分"]) > 0 ? `+${Number(r["退积分"]).toLocaleString()}` : "—"}</span></TD>
-                          <TD right><strong style={{ color: Number(r["净消耗"])>0?"#c33":"#bbb" }}>{isGift ? "—" : Number(r["净消耗"]).toLocaleString()}</strong></TD>
-                          <TD right><span style={{ color: "#1a56db", fontWeight: Number(r["赠送积分"])>0?600:400 }}>{Number(r["赠送积分"])>0 ? `+${Number(r["赠送积分"]).toLocaleString()}` : "—"}</span></TD>
+                          <TD right><strong style={{ color: Number(r["净消耗"])>0?"#c33":"#bbb" }}>{r["状态"]==="赠送"||r["状态"]==="充值" ? "—" : Number(r["净消耗"]).toLocaleString()}</strong></TD>
                         </tr>
                         );
                       })}
