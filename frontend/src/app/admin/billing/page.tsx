@@ -56,6 +56,46 @@ interface UsageData {
 
 type Tab = "jobs" | "vc2" | "ledger";
 
+type Provider = "fal" | "aliyun" | "aiview" | "未知";
+
+const PROVIDER_STYLE: Record<Provider, { bg: string; color: string }> = {
+  fal:    { bg: "#e8f0fe", color: "#1a56db" },
+  aliyun: { bg: "#fff3e0", color: "#c45f00" },
+  aiview: { bg: "#e6f4ea", color: "#137333" },
+  未知:   { bg: "#f1f1f1", color: "#888"    },
+};
+
+function getProvider(label: string): Provider {
+  if (label === "gpt-image-2")          return "fal";
+  if (label === "AI爆款视频")            return "fal";
+  if (label === "分镜复刻/替换")         return "fal";
+  if (label === "分镜复刻/生成")         return "fal";
+  if (label === "广告视频")              return "fal";
+  if (label === "图生视频/未标注")       return "fal";
+  if (label === "AI爆款/分析")           return "aliyun";
+  if (label === "分镜复刻/分析")         return "aliyun";
+  return "未知";
+}
+
+function ProviderBadge({ label }: { label: string }) {
+  const p = getProvider(label);
+  const s = PROVIDER_STYLE[p];
+  return (
+    <span style={{
+      display: "inline-block",
+      padding: "0.15rem 0.5rem",
+      borderRadius: "999px",
+      fontSize: "0.75rem",
+      fontWeight: 500,
+      background: s.bg,
+      color: s.color,
+      whiteSpace: "nowrap",
+    }}>
+      {p}
+    </span>
+  );
+}
+
 const TH = ({ children, right }: { children: ReactNode; right?: boolean }) => (
   <th style={{
     textAlign: right ? "right" : "left",
@@ -216,6 +256,7 @@ export default function AdminBillingPage() {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.88rem" }}>
                 <thead style={{ background: "#fafaf7" }}>
                   <tr>
+                    <TH>{isEn ? "Provider" : "供应商"}</TH>
                     <TH>{isEn ? "Model / Type" : "模型 / 类型"}</TH>
                     <TH right>{isEn ? "Total" : "总次数"}</TH>
                     <TH right>{isEn ? "Success" : "成功"}</TH>
@@ -232,6 +273,7 @@ export default function AdminBillingPage() {
                     const avg = r.count > 0 ? Math.round(r.cost_credits / r.count) : 0;
                     return (
                       <tr key={r.model_label} style={{ borderTop: "1px solid #eee" }}>
+                        <TD><ProviderBadge label={r.model_label} /></TD>
                         <TD><span style={{ fontWeight: 500 }}>{r.model_label}</span></TD>
                         <TD right>{r.count.toLocaleString()}</TD>
                         <TD right><span style={{ color: "#0a7" }}>{r.success.toLocaleString()}</span></TD>
