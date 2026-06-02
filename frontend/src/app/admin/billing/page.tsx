@@ -65,33 +65,44 @@ const PROVIDER_STYLE: Record<Provider, { bg: string; color: string }> = {
   未知:   { bg: "#f1f1f1", color: "#888"    },
 };
 
-function getProvider(label: string): Provider {
-  if (label === "gpt-image-2")          return "fal";
-  if (label === "AI爆款视频")            return "fal";
-  if (label === "分镜复刻/替换")         return "fal";
-  if (label === "分镜复刻/生成")         return "fal";
-  if (label === "广告视频")              return "fal";
-  if (label === "图生视频/未标注")       return "fal";
-  if (label === "AI爆款/分析")           return "aliyun";
-  if (label === "分镜复刻/分析")         return "aliyun";
-  return "未知";
+interface ProviderInfo { provider: Provider; endpoint: string; }
+
+function getProviderInfo(label: string): ProviderInfo {
+  const fal = (ep: string): ProviderInfo => ({ provider: "fal",    endpoint: ep });
+  const ali = (ep: string): ProviderInfo => ({ provider: "aliyun", endpoint: ep });
+  if (label === "gpt-image-2")      return fal("openai/gpt-image-2");
+  if (label === "AI爆款视频")        return fal("seedance/v1/pro/i2v");
+  if (label === "分镜复刻/替换")     return fal("kling-video/o3/edit");
+  if (label === "分镜复刻/生成")     return fal("gpt-image-2");
+  if (label === "广告视频")          return fal("seedance+omnihuman");
+  if (label === "图生视频/未标注")   return fal("kling-video/o3/i2v");
+  if (label === "AI爆款/分析")       return ali("qwen-vl-max");
+  if (label === "分镜复刻/分析")     return ali("qwen-vl-max");
+  return { provider: "未知", endpoint: "—" };
 }
 
-function ProviderBadge({ label }: { label: string }) {
-  const p = getProvider(label);
-  const s = PROVIDER_STYLE[p];
+function ProviderCell({ label }: { label: string }) {
+  const { provider, endpoint } = getProviderInfo(label);
+  const s = PROVIDER_STYLE[provider];
   return (
-    <span style={{
-      display: "inline-block",
-      padding: "0.15rem 0.5rem",
-      borderRadius: "999px",
-      fontSize: "0.75rem",
-      fontWeight: 500,
-      background: s.bg,
-      color: s.color,
-      whiteSpace: "nowrap",
-    }}>
-      {p}
+    <span style={{ display: "inline-flex", flexDirection: "column", gap: "0.2rem" }}>
+      <span style={{
+        display: "inline-block",
+        padding: "0.15rem 0.5rem",
+        borderRadius: "999px",
+        fontSize: "0.75rem",
+        fontWeight: 500,
+        background: s.bg,
+        color: s.color,
+        whiteSpace: "nowrap",
+      }}>
+        {provider}
+      </span>
+      {endpoint !== "—" && (
+        <span style={{ fontSize: "0.72rem", color: "#999", fontFamily: "monospace", whiteSpace: "nowrap" }}>
+          {endpoint}
+        </span>
+      )}
     </span>
   );
 }
@@ -256,7 +267,7 @@ export default function AdminBillingPage() {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.88rem" }}>
                 <thead style={{ background: "#fafaf7" }}>
                   <tr>
-                    <TH>{isEn ? "Provider" : "供应商"}</TH>
+                    <TH>{isEn ? "Provider / API" : "供应商 / 接口"}</TH>
                     <TH>{isEn ? "Model / Type" : "模型 / 类型"}</TH>
                     <TH right>{isEn ? "Total" : "总次数"}</TH>
                     <TH right>{isEn ? "Success" : "成功"}</TH>
@@ -273,7 +284,7 @@ export default function AdminBillingPage() {
                     const avg = r.count > 0 ? Math.round(r.cost_credits / r.count) : 0;
                     return (
                       <tr key={r.model_label} style={{ borderTop: "1px solid #eee" }}>
-                        <TD><ProviderBadge label={r.model_label} /></TD>
+                        <TD><ProviderCell label={r.model_label} /></TD>
                         <TD><span style={{ fontWeight: 500 }}>{r.model_label}</span></TD>
                         <TD right>{r.count.toLocaleString()}</TD>
                         <TD right><span style={{ color: "#0a7" }}>{r.success.toLocaleString()}</span></TD>
@@ -303,6 +314,7 @@ export default function AdminBillingPage() {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.88rem" }}>
                 <thead style={{ background: "#fafaf7" }}>
                   <tr>
+                    <TH>{isEn ? "Provider / API" : "供应商 / 接口"}</TH>
                     <TH>{isEn ? "Model" : "模型"}</TH>
                     <TH right>{isEn ? "Total" : "总数"}</TH>
                     <TH right>{isEn ? "Completed" : "成功"}</TH>
@@ -317,6 +329,19 @@ export default function AdminBillingPage() {
                 <tbody>
                   {data.vc2_usage.map(r => (
                     <tr key={r.video_model} style={{ borderTop: "1px solid #eee" }}>
+                      <TD>
+                        <span style={{ display: "inline-flex", flexDirection: "column", gap: "0.2rem" }}>
+                          <span style={{
+                            display: "inline-block", padding: "0.15rem 0.5rem",
+                            borderRadius: "999px", fontSize: "0.75rem", fontWeight: 500,
+                            background: PROVIDER_STYLE.aiview.bg, color: PROVIDER_STYLE.aiview.color,
+                            whiteSpace: "nowrap",
+                          }}>aiview</span>
+                          <span style={{ fontSize: "0.72rem", color: "#999", fontFamily: "monospace", whiteSpace: "nowrap" }}>
+                            aiview.club/{r.video_model}
+                          </span>
+                        </span>
+                      </TD>
                       <TD>
                         <strong>{r.display_name}</strong>
                         <span style={{ color: "#aaa", fontSize: "0.75rem", marginLeft: "0.5rem" }}>
