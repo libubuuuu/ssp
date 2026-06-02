@@ -1450,6 +1450,121 @@ async def admin_billing_gifts(
     }
 
 
+@router.get("/billing-users")
+async def admin_billing_users(_admin: dict = Depends(require_admin)):
+    """用户消耗汇总列表：每个用户的成功/失败次数、净消耗积分。"""
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT
+                cl.user_id,
+                u.email,
+                u.name,
+                COUNT(*) AS total_charges,
+                SUM(CASE WHEN EXISTS(
+                    SELECT 1 FROM credits_ledger r
+                    WHERE r.ref_id = cl.ref_id AND r.reason='task_refund' AND cl.ref_id IS NOT NULL
+                ) THEN 1 ELSE 0 END) AS failed_count,
+                SUM(ABS(cl.delta)) AS gross_credits,
+                SUM(COALESCE((
+                    SELECT SUM(r.delta) FROM credits_ledger r
+                    WHERE r.ref_id = cl.ref_id AND r.reason='task_refund'
+                ), 0)) AS refunded_credits
+            FROM credits_ledger cl
+            LEFT JOIN users u ON u.id = cl.user_id
+            WHERE cl.reason = 'task_charge'
+            GROUP BY cl.user_id
+            ORDER BY gross_credits DESC
+        """).fetchall()
+    return {
+        "users": [
+            {
+                "user_id":        r["user_id"],
+                "email":          r["email"] or "—",
+                "name":           r["name"] or "—",
+                "total_charges":  r["total_charges"],
+                "failed_count":   r["failed_count"],
+                "success_count":  r["total_charges"] - r["failed_count"],
+                "gross_credits":  r["gross_credits"] or 0,
+                "refunded_credits": abs(int(r["refunded_credits"] or 0)),
+                "net_credits":    (r["gross_credits"] or 0) - abs(int(r["refunded_credits"] or 0)),
+            }
+            for r in rows
+        ]
+    }
+
+
+@router.get("/billing-user-detail")
+async def admin_billing_user_detail(
+    user_id: str,
+    page: int = 0,
+    limit: int = 100,
+    export: bool = False,
+    _admin: dict = Depends(require_admin),
+):
+    """单用户消耗明细：成功+失败全显示，含模型/接口信息。"""
+    import datetime as _dt
+
+    def _ts(v) -> str:
+        try:
+            return _dt.datetime.fromtimestamp(float(v)).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return str(v)[:16]
+
+    def _provider(module: str) -> str:
+        if not module: return "—"
+        if module.startswith("aiview/"): return "aiview"
+        if "clone-v2" in module: return "aiview"
+        if module.startswith("fal/") or module.startswith("image/") or module.startswith("video/"): return "fal"
+        return "—"
+
+    actual_limit = 9999 if export else max(1, min(limit, 200))
+    actual_offset = 0 if export else page * actual_limit
+
+    with get_db() as conn:
+        total = conn.execute(
+            "SELECT COUNT(*) FROM credits_ledger WHERE reason='task_charge' AND user_id=?",
+            (user_id,)
+        ).fetchone()[0]
+
+        rows = conn.execute("""
+            SELECT cl.delta, cl.ref_id, cl.module, cl.created_at,
+                   v.video_model, v.type AS vc2_type,
+                   COALESCE((
+                       SELECT SUM(r.delta) FROM credits_ledger r
+                       WHERE r.ref_id = cl.ref_id AND r.reason = 'task_refund'
+                   ), 0) AS total_refund
+            FROM credits_ledger cl
+            LEFT JOIN video_clone_v2_jobs v ON v.id = cl.ref_id
+            WHERE cl.reason = 'task_charge' AND cl.user_id = ?
+            ORDER BY cl.created_at DESC
+            LIMIT ? OFFSET ?
+        """, (user_id, actual_limit, actual_offset)).fetchall()
+
+    def _model(r) -> str:
+        if r["video_model"]:
+            return f"{r['video_model']}({r['vc2_type'] or ''})"
+        m = r["module"] or ""
+        if "/" in m:
+            return m.split("/", 1)[1]
+        return m or "—"
+
+    result = []
+    for r in rows:
+        gross = abs(int(r["delta"]))
+        refund = int(r["total_refund"])
+        net = gross - refund
+        result.append({
+            "时间":    _ts(r["created_at"]),
+            "状态":    "失败" if net == 0 and refund > 0 else "成功",
+            "供应商":  _provider(r["module"] or ""),
+            "模型/接口": _model(r),
+            "扣积分":  gross,
+            "退积分":  refund,
+            "净消耗":  net,
+        })
+    return {"rows": result, "total": total, "page": page}
+
+
 @router.post("/update-trends")
 async def manual_update_trends(_admin: dict = Depends(require_admin)):
     """手动触发每日趋势更新（不用等凌晨3点）。"""
