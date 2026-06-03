@@ -123,7 +123,7 @@ class Settings(BaseSettings):
     AIVIEW_BASE_URL: str = "https://www.aiview.club"
     # 视频复刻(video-clone-v2)用哪个通道出视频:"fal"=原 FAL Seedance / "aiview"=第三方
     # 默认 fal(不改配置则行为不变);设为 aiview 即切到第三方,可随时切回
-    VIDEO_CLONE_V2_PROVIDER: str = "fal"
+    VIDEO_CLONE_V2_PROVIDER: str = "aiview"
     AIVIEW_VIDEO_MODEL: str = "seedance-2-0-fast"  # aiview 视频模型
 
     class Config:
