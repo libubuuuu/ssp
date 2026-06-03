@@ -505,12 +505,8 @@ async def preview_segments(
             # 2026-05-10 砍单档:allowed_tiers 跟随 SegmentChoice 模型一起删
         ) for p in plan
     ]
-    # 2026-05-11 多镜头检测(F 弹窗触发用)
-    # 检测失败 fallback 1(单镜头视为安全分支),不阻塞 preview 流程
-    try:
-        scene_count = await detect_scene_count(req.video_url)
-    except Exception:
-        scene_count = 1
+    # 多镜头检测前端未使用 scene_count，不阻塞主路径
+    scene_count = 1
     preview_token = uuid.uuid4().hex
     return PreviewSegmentsResponse(
         type=type_, segments=segments, preview_token=preview_token,
