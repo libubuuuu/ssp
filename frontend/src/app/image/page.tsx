@@ -56,7 +56,7 @@ export default function ImagePage(){
       const token=localStorage.getItem("token")||"";
       const fd=new FormData();
       fd.append("file",compressed);
-      const res=await fetch(`${API_BASE}/api/video/upload/image`,{
+      const res=await fetch(`${API_BASE}/api/video/upload/image-cos`,{
         method:"POST",
         headers:{"Authorization":`Bearer ${token}`},
         body:fd,
