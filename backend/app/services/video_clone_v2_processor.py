@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -247,7 +248,7 @@ async def call_aiview_seedance(
         raise RuntimeError("aiview 未配置(缺 AppKey/AppSecret)")
 
     input_hash = sha256_url_first8(video_url)
-    out_dur = max(4, min(15, round(input_duration_sec)))
+    out_dur = max(4, min(15, math.ceil(input_duration_sec)))
     ratio = aspect_ratio if aspect_ratio in _AIVIEW_RATIO_OK else "adaptive"
     # 视频复刻只用 2.0 / 2.0-fast(支持参考视频+多图);其它(如 1.5 Pro 不支持参考视频)强制回退
     # 优先用本单【用户所选模型】:① 显式传入 → ② 按 job_id 查库 → ③ 回落 .env 默认
@@ -347,7 +348,7 @@ async def _run_one_ai_segment(
             _db_update_segment_stage(job_id, idx, "ai_processing")
         # 段实际秒数 → 四舍五入整秒（≥0.5进位），与 aiview out_dur 和扣费口径统一
         prepared_dur = await _ffprobe_duration(prepared)
-        billed_dur = max(4, min(15, int(prepared_dur + 0.5)))
+        billed_dur = max(4, min(15, math.ceil(prepared_dur)))
         fal_called_at = time.strftime("%Y-%m-%d %H:%M:%S")
         # Seedance @imageN 靠顺序对应:按角色固定排序图,并把提示词里的
         # @产品1/@人物1/@视频1 改写成 @image1/@image2/@video1

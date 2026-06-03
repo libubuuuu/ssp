@@ -73,12 +73,13 @@ class TestCalcCredits:
 
     def test_segment_credits_helper(self):
         assert calc_segment_credits(0) == 0
-        # 整秒四舍五入（≥0.5进位），最小计费 4 秒
+        # 天花板取整：有小数就进一秒，最小计费 4 秒
         assert calc_segment_credits(4.0) == 4 * CREDITS_PER_SEC
         assert calc_segment_credits(8.0) == 8 * CREDITS_PER_SEC
-        assert calc_segment_credits(14.4) == 14 * CREDITS_PER_SEC   # 14.4 → 14
-        assert calc_segment_credits(14.5) == 15 * CREDITS_PER_SEC   # 14.5 → 15
-        assert calc_segment_credits(14.8) == 15 * CREDITS_PER_SEC   # 14.8 → 15
+        assert calc_segment_credits(10.1) == 11 * CREDITS_PER_SEC   # 10.1 → 11
+        assert calc_segment_credits(14.0) == 14 * CREDITS_PER_SEC   # 整秒不变
+        assert calc_segment_credits(14.1) == 15 * CREDITS_PER_SEC   # 14.1 → 15
+        assert calc_segment_credits(14.9) == 15 * CREDITS_PER_SEC   # 14.9 → 15
         assert calc_segment_credits(15.0) == 15 * CREDITS_PER_SEC
 
     def test_seg_duration_inline_works(self):
