@@ -94,10 +94,14 @@ class AiviewImageService:
             return await c.request(method, f"https://{ip}{path}", headers=headers, content=content)
 
     async def submit(self, prompt: str, ratio: str = None, size: str = "2K",
-                     n: int = 1, image_urls=None) -> dict:
+                     n: int = 1, image_urls=None, model: str = None) -> dict:
         """提交文生图任务。成功返回 {"request_id": ...}，失败返回 {"error": ...}。"""
         path = "/open/v1/image/generate"
-        body = {"prompt": prompt, "n": n, "size": size}
+        body = {"prompt": prompt, "n": n}
+        if size:
+            body["size"] = size
+        if model:
+            body["model"] = model
         if ratio:
             body["ratio"] = ratio
         if image_urls:

@@ -241,18 +241,22 @@ async def _shrink_ref_for_aiview(url: str) -> str:
         return url
 
 
-async def _run_aiview_image_job(params: dict):
-    """走 aiview.club 文生图(seedream,异步 提交→轮询)。"""
+async def _run_aiview_image_job(params: dict, aiview_model: str = None):
+    """走 aiview.club 文生图(异步 提交→轮询)。
+    aiview_model=None → seedream(豆包专业版); aiview_model="gpt-image-2" → gpt2 标准模式。
+    """
     import asyncio
     from app.services.aiview_service import get_aiview_image_service
     service = get_aiview_image_service()
     if not service.is_available():
         raise Exception("aiview 暂未配置")
     refs = params.get("reference_images") or []
-    log_info(f"[AIVIEW-IMG] seedream refs={len(refs)} prompt={(params.get('prompt') or '')[:40]!r}")
+    log_info(f"[AIVIEW-IMG] model={aiview_model or 'seedream'} refs={len(refs)} prompt={(params.get('prompt') or '')[:40]!r}")
     if refs:
         refs = [await _shrink_ref_for_aiview(u) for u in refs]
-    sub = await service.submit(params["prompt"], image_urls=refs or None)
+    # gpt-image-2 不传 size(resolution out of range);seedream 仍传 2K
+    _size = None if aiview_model == "gpt-image-2" else "2K"
+    sub = await service.submit(params["prompt"], size=_size, image_urls=refs or None, model=aiview_model)
     if sub.get("error"):
         raise Exception(sub["error"])
     rid = sub["request_id"]
@@ -260,7 +264,8 @@ async def _run_aiview_image_job(params: dict):
         await asyncio.sleep(5)
         st = await service.query(rid)
         if st.get("status") == "completed" and st.get("image_url"):
-            return {"image_url": st["image_url"], "type": "image", "model": "aiview-pro"}
+            return {"image_url": st["image_url"], "type": "image",
+                    "model": params.get("model") or "aiview-pro"}
         if st.get("status") == "failed":
             raise Exception(st.get("error", "生成失败"))
     raise Exception("timeout (10 min)")
@@ -271,7 +276,9 @@ async def _run_image_job(params: dict):
     # 2026-06-03:豆包(seedream) → aiview;gpt-image-2 继续走下方 fal,不碰
     _m = (params.get("model") or "").lower()
     if _m in AIVIEW_IMAGE_MODELS:
-        return await _run_aiview_image_job(params)
+        return await _run_aiview_image_job(params)                              # 专业版/豆包 → seedream
+    if _m == "gpt-image-2":
+        return await _run_aiview_image_job(params, aiview_model="gpt-image-2")  # 标准模式 → aiview gpt2
     service = get_image_service()
     refs = params.get("reference_images") or []
     aspect_ratio = params.get("aspect_ratio", "")
