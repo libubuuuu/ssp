@@ -1449,6 +1449,21 @@ async def fal_upload_with_retry(local_path: str, max_retries: int = 10) -> str:
                 "reset" in err_low or
                 "temporarily" in err_low
             )
+            # 403/401: auth失败,重试无意义,立刻走本地 fallback
+            is_auth_error = (
+                "403" in err_str or "401" in err_str or
+                "forbidden" in err_low or "unauthorized" in err_low
+            )
+            if is_auth_error:
+                try:
+                    local_url = _fallback_local_upload(local_path)
+                    log_warning(
+                        f"fal_upload auth error ({err_str[:80]}), P89 fallback to local nginx URL: {local_url}"
+                    )
+                    return local_url
+                except Exception as fb_err:
+                    log_warning(f"P89 fallback local upload also failed: {fb_err}")
+                raise
             if not is_transient or attempt == max_retries - 1:
                 # P89 最后一次 retry 仍失败:transient 错误时 fallback 本地 nginx URL
                 if is_transient:
