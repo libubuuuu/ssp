@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     # 详见 docs/P221-API-SCHEMA.md / docs/P221-MIGRATION.sql / docs/legal/*
     ENABLE_VIDEO_CLONE_V2: bool = False
     # 三道工程保险阈值(用户最终决议锁定,改要走 PR)
-    VC2_MAX_SEGMENT_COST_USD: float = 1.50    # 单段 fal 实扣超 → 全额退 + 报警
+    VC2_MAX_SEGMENT_COST_USD: float = 2.00    # 单段 fal 实扣超 → 全额退 + 报警(15s段估算≈$1.80,留0.20余量)
     VC2_MAX_ORDER_COST_USD: float = 15.0      # 单订单估算超 → 拒收
     VC2_DAILY_FAL_BUDGET_USD: float = 100.0   # 每日累计超 → 自动 disable v2
 
