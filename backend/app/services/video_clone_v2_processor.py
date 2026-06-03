@@ -345,8 +345,9 @@ async def _run_one_ai_segment(
 
         async with _seg_lock(job_id):
             _db_update_segment_stage(job_id, idx, "ai_processing")
-        # 段实际秒数 — duration 跟它对齐,避免 input < output 触发 hallucinate
+        # 段实际秒数 → 四舍五入整秒（≥0.5进位），与 aiview out_dur 和扣费口径统一
         prepared_dur = await _ffprobe_duration(prepared)
+        billed_dur = max(4, min(15, int(prepared_dur + 0.5)))
         fal_called_at = time.strftime("%Y-%m-%d %H:%M:%S")
         # Seedance @imageN 靠顺序对应:按角色固定排序图,并把提示词里的
         # @产品1/@人物1/@视频1 改写成 @image1/@image2/@video1
@@ -355,11 +356,11 @@ async def _run_one_ai_segment(
         result = await call_aiview_seedance(
             input_url, ordered_urls, aiview_prompt, seed, aspect_ratio,
             job_id=job_id, seg_idx=idx,
-            input_duration_sec=prepared_dur,
+            input_duration_sec=billed_dur,
         )
         actual_cost = result["actual_cost_usd"]
         if actual_cost is None:
-            actual_cost = _estimate_cost_usd(prepared_dur)
+            actual_cost = _estimate_cost_usd(billed_dur)
         return {
             "idx": idx,
             "source_type": "ai",

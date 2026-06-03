@@ -73,9 +73,13 @@ class TestCalcCredits:
 
     def test_segment_credits_helper(self):
         assert calc_segment_credits(0) == 0
-        assert calc_segment_credits(1) == CREDITS_PER_SEC
-        assert calc_segment_credits(8) == 8 * CREDITS_PER_SEC
-        assert calc_segment_credits(0.5) == CREDITS_PER_SEC  # 下限 1秒
+        # 整秒四舍五入（≥0.5进位），最小计费 4 秒
+        assert calc_segment_credits(4.0) == 4 * CREDITS_PER_SEC
+        assert calc_segment_credits(8.0) == 8 * CREDITS_PER_SEC
+        assert calc_segment_credits(14.4) == 14 * CREDITS_PER_SEC   # 14.4 → 14
+        assert calc_segment_credits(14.5) == 15 * CREDITS_PER_SEC   # 14.5 → 15
+        assert calc_segment_credits(14.8) == 15 * CREDITS_PER_SEC   # 14.8 → 15
+        assert calc_segment_credits(15.0) == 15 * CREDITS_PER_SEC
 
     def test_seg_duration_inline_works(self):
         """如果 seg 本身带 duration,可不传 plan"""

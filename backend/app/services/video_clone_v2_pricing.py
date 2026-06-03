@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 import hashlib
+import math
 from typing import Final, Mapping, Sequence
 
 
@@ -84,7 +85,9 @@ def calc_segment_credits(duration_sec: float, rate: int = CREDITS_PER_SEC) -> in
     """单段积分 = round(duration_sec × rate),下限 1 秒。rate 默认 55(fast),标准版传 60。"""
     if duration_sec <= 0:
         return 0
-    return max(rate, int(round(float(duration_sec) * rate)))
+    # 四舍五入到整秒（≥0.5进位，与 aiview out_dur 一致），夹到 [4, 15]
+    billed_sec = max(4, min(15, math.floor(float(duration_sec) + 0.5)))
+    return max(rate, billed_sec * rate)
 
 
 def calc_total_credits(
