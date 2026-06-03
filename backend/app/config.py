@@ -89,9 +89,9 @@ class Settings(BaseSettings):
     # 详见 docs/P221-API-SCHEMA.md / docs/P221-MIGRATION.sql / docs/legal/*
     ENABLE_VIDEO_CLONE_V2: bool = False
     # 三道工程保险阈值(用户最终决议锁定,改要走 PR)
-    VC2_MAX_SEGMENT_COST_USD: float = 2.00    # 单段 fal 实扣超 → 全额退 + 报警(15s段估算≈$1.80,留0.20余量)
+    VC2_MAX_SEGMENT_COST_USD: float = 2.00    # 单段成本估算超限 → 全额退 + 报警(15s段估算≈$1.80,留0.20余量)
     VC2_MAX_ORDER_COST_USD: float = 15.0      # 单订单估算超 → 拒收
-    VC2_DAILY_FAL_BUDGET_USD: float = 100.0   # 每日累计超 → 自动 disable v2
+    VC2_DAILY_FAL_BUDGET_USD: float = 100.0   # 每日 aiview 累计超 → 自动 disable v2
 
     # 六十八续:微信支付 V3(默认关,等用户开商户号 + 配 cert 后启用)
     WECHAT_PAY_ENABLED: bool = False
@@ -121,9 +121,6 @@ class Settings(BaseSettings):
     AIVIEW_API_KEY: str = ""       # AppKey, 形如 ak_xxx
     AIVIEW_API_SECRET: str = ""    # AppSecret, 形如 sk_xxx(敏感)
     AIVIEW_BASE_URL: str = "https://www.aiview.club"
-    # 视频复刻(video-clone-v2)用哪个通道出视频:"fal"=原 FAL Seedance / "aiview"=第三方
-    # 默认 fal(不改配置则行为不变);设为 aiview 即切到第三方,可随时切回
-    VIDEO_CLONE_V2_PROVIDER: str = "aiview"
     AIVIEW_VIDEO_MODEL: str = "seedance-2-0-fast"  # aiview 视频模型
 
     class Config:

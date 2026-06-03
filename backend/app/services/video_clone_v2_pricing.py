@@ -32,25 +32,6 @@ SEGMENT_LABEL:         Final[str] = "AI 替换"  # 前端段卡片显示名
 SEGMENT_INPUT_SECONDS_MAX: Final[int] = 8   # worst-case 估算上限,实际段长 4-8s
 
 
-# fal 端固定参数(改要测过)
-FAL_ENDPOINT:        Final[str] = "bytedance/seedance-2.0/fast/reference-to-video"
-# 2026-05-11:480p。老板 playground 实证 (request 019e1331) 也用 480p 跑出大体对的结果。
-# Agent 调研说 fal schema 默认 720p,但 playground 实际跑 480p,实证为准。
-FAL_RESOLUTION:      Final[str] = "480p"
-# fal 端点接受 duration ∈ {'auto', '4', '5', ..., '15'}(2026-05-10 probe 验证)
-# processor 会按段实际秒数对齐到 [4, 15] 区间,不再用此固定值;保留作 fallback
-FAL_OUTPUT_DURATION: Final[int] = 8
-# 2026-05-11:对齐 playground 默认 = generate_audio=True(老板真测确认 playground 开)。
-# fal 模型在 generate_audio=False 时走不同 code path,实测产品图替换效果失效(prod 920b2000 只换 1 帧)。
-# 后端 mux 逻辑会用原视频音轨覆盖 fal 生成的音频(processor L883-918),最终成品仍是原音轨,
-# 仅 fal 浪费一次音频生成时间(微小成本)。
-FAL_GENERATE_AUDIO:  Final[bool] = False  # 2026-05-13 改 False:fal 自生成音频会被 fal 内容策略检查,
-                                          # 偶发 "Output audio has sensitive content" 整段失败。改用原视频音轨。
-                                          # _build_segment_clip 检测 fal 无音轨自动 fallback mux 原视频音轨。
-# 删除 FAL_SAFETY_CHECKER:fal 官方 schema 不存在 enable_safety_checker 字段,
-# 之前 payload 里这个 unknown key 可能干扰 fal 内部 routing。
-
-
 # 全能档限制
 MAX_ULTIMATE_SECONDS:  Final[int] = 64
 MAX_ULTIMATE_SEGMENTS: Final[int] = 8

@@ -1,4 +1,4 @@
-"""P221 视频复刻 V2 — 任务调度 + fal 调用 + 重试 + 保险 + 多段拼接
+"""P221 视频复刻 V2 — 任务调度 + aiview 调用 + 重试 + 保险 + 多段拼接
 
 A2 范围:type=single 单段路径(已上线)
 B 阶段:type=ultimate 多段并发 + 失败段跳过+按段退款 + ffmpeg 拼接 + 音轨方案 B
@@ -10,14 +10,13 @@ import asyncio
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
-import fal_client
 
 from ..config import get_settings
 from ..database import get_db
@@ -28,10 +27,6 @@ from .video_clone_v2_archive import archive_dual_versions
 from .video_clone_v2_pricing import (
     CREDITS_PER_SEC,
     SEGMENT_INPUT_SECONDS_MAX,
-    FAL_ENDPOINT,
-    FAL_RESOLUTION,
-    FAL_OUTPUT_DURATION,
-    FAL_GENERATE_AUDIO,
     ROLE_TO_AT_LABEL,
     build_prompt,
     calc_segment_credits,
@@ -41,13 +36,10 @@ from .video_clone_v2_pricing import (
 )
 
 
-# fal seedance-2.0/fast/reference-to-video 真实计费(2026-05-13 billing CSV 实证):
-# 按 token 计费:$0.0112 / 1000 tokens。
-# token 数 ≈ 与视频分辨率 × 帧数相关,8s@480p 具体 token 数待下月账单校准。
+# aiview Seedance 成本估算(fal billing CSV 实证,aiview 计费结构相近):
 # 暂用 worst-case 估算:$0.962/段(8s × $0.0925 × 1.3),偏高但安全。
-# 下次校准:用6月账单(含5月V2数据)→ 总token数 ÷ V2段数 → 得出 token/段 → 更新公式。
-FAL_FALLBACK_USD_PER_INPUT_SEC = 0.0925
-FAL_FALLBACK_OVERESTIMATE = 1.3
+_COST_ESTIMATE_PER_SEC = 0.0925
+_COST_ESTIMATE_OVERRATE = 1.3
 
 
 def stable_seed(job_id: str) -> int:
@@ -194,98 +186,6 @@ async def prepare_segment_input(seg_file: str, plan_item: Dict[str, Any]) -> str
     return seg_file
 
 
-# ─── fal 上传 + 调用 ─────────────────────────────────────────────────────
-
-async def _fal_upload(local_path: str) -> str:
-    """fal_client.upload_file_async 包装(同 v1 复用)。"""
-    return await fal_client.upload_file_async(local_path)
-
-
-def _fal_duration_for_input(input_seconds: float) -> str:
-    """把段实际秒数对齐到 fal 接受的 duration 枚举值 ('4'-'15' 的字符串)。
-
-    fal seedance fast/r2v 端点接受:'auto', '4', '5', ..., '15'
-    我们传字符串(跟 ad_video_models.py 同协议),round 到最近整数后夹到 [4, 15]
-    """
-    rounded = max(4, min(15, round(input_seconds)))
-    return str(rounded)
-
-
-async def call_fal_seedance(
-    video_url: str,
-    image_urls: List[str],
-    prompt_compiled: str,
-    seed: int,
-    aspect_ratio: str = "auto",
-    *,
-    job_id: str = "",
-    seg_idx: int = -1,
-    input_duration_sec: float = 8.0,
-) -> Dict[str, Any]:
-    """实际调 fal seedance r2v fast。
-
-    ⭐ 红线 2:每次调用前 log 完整上下文(input_hash + prompt 前 50 + seed),
-       便于审计"是不是上传了同一视频用同一参数"。
-
-    input_duration_sec: 段实际秒数,用于对齐 fal duration 字段
-                       (fal 端点接受 ['auto', '4'-'15'],input < output 会触发 hallucinate)
-
-    Returns:
-        {"video_url", "actual_cost_usd"(可能 None), "raw_response"}
-    Raises:
-        RuntimeError: fal 失败 / NSFW 拦截
-    """
-    input_hash = sha256_url_first8(video_url)
-    fal_duration = _fal_duration_for_input(input_duration_sec)
-    log_info(
-        f"[V2-FAL] job={job_id} seg={seg_idx} "
-        f"input_hash={input_hash} prompt={prompt_compiled[:50]!r} seed={seed} "
-        f"aspect={aspect_ratio} input_dur={input_duration_sec:.1f}s fal_duration={fal_duration!r}"
-    )
-    # fal seedance r2v 端点(fast/reference-to-video)真实字段名 = image_urls
-    # 出处:fal 官方文档 + V1 项目内同端点用法 backend/app/api/jobs.py:3337
-    # 注:ad_video_models.py 用的是 bytedance/seedance-2.0/reference-to-video(无 fast/),
-    # 是不同端点,字段名规则不能直接对照
-    # 2026-05-11:1:1 对齐老板 playground 完美 request 019e0951 payload(实证)。
-    # 必传 audio_urls=[](完美/1秒漂 都传了 [],删除曾导致 prod 920b2000 只换 1 帧)。
-    # 删 enable_safety_checker(playground 不传,fal schema 也无此字段)。
-    arguments = {
-        "video_urls": [video_url],
-        "image_urls": image_urls,
-        "audio_urls": [],
-        "prompt": prompt_compiled,
-        "resolution": FAL_RESOLUTION,
-        "duration": fal_duration,
-        "aspect_ratio": aspect_ratio,
-        "generate_audio": FAL_GENERATE_AUDIO,
-        "seed": seed,
-    }
-    try:
-        result = await asyncio.wait_for(
-            fal_client.subscribe_async(FAL_ENDPOINT, arguments=arguments),
-            timeout=300.0,
-        )
-    except asyncio.TimeoutError:
-        raise RuntimeError("fal seedance 调用超时(>300s)")
-    except Exception as e:
-        raise RuntimeError(f"fal 调用失败:{e}")
-
-    video_url_out = (result or {}).get("video", {}).get("url")
-    if not video_url_out:
-        raise RuntimeError(f"fal 返回无 video.url:{json.dumps(result, ensure_ascii=False)[:500]}")
-
-    output_hash = sha256_url_first8(video_url_out)
-    log_info(
-        f"[V2-FAL-OK] job={job_id} seg={seg_idx} "
-        f"input_hash={input_hash} → output_hash={output_hash} "
-        f"output_url={video_url_out[:80]}"
-    )
-    return {
-        "video_url": video_url_out,
-        "actual_cost_usd": None,
-        "raw_response": result,
-    }
-
 
 _AIVIEW_RATIO_OK = {"16:9", "9:16", "1:1", "4:3", "3:4"}
 # 角色图固定排序(产品→人物→场景→其它),决定 @imageN 的编号
@@ -339,7 +239,7 @@ async def call_aiview_seedance(
     model: str = "",
 ) -> Dict[str, Any]:
     """走第三方 aiview.club 的 Seedance 参考视频复刻(异步 提交→轮询)。
-    返回结构与 call_fal_seedance 一致:{"video_url", "actual_cost_usd", "raw_response"}。
+    返回结构:{"video_url", "actual_cost_usd", "raw_response"}。
     """
     from app.services.aiview_service import get_aiview_image_service
     service = get_aiview_image_service()
@@ -372,7 +272,7 @@ async def call_aiview_seedance(
     if is_speech:
         model = "seedance-2-0"
     # 2026-06-01:普通复刻也开模型配音(用户要"模型生成的声音",不要贴原声)。
-    # 旧 FAL_GENERATE_AUDIO=False 的理由是 fal 会审核生成音频 → 已换 aiview,是否审核待实测。
+    # 2026-06-01:普通复刻开模型配音;aiview 不做音频内容审核,不触发整段失败。
     # 兜底:万一模型某次没出音轨,_build_segment_clip 仍会 mux 原声,保证成片不哑。
     gen_audio = True
     log_info(
@@ -387,7 +287,7 @@ async def call_aiview_seedance(
         input_video_duration=round(input_duration_sec),
         duration=out_dur,
         model=model,
-        resolution=FAL_RESOLUTION,       # 与 FAL 路径一致:480p
+        resolution="480p",
         ratio=ratio,
         seed=seed,
         generate_audio=gen_audio,  # 口播=True(模型出新配音) / 普通复刻=False(保留原声)
@@ -412,10 +312,8 @@ async def call_aiview_seedance(
 
 
 def _estimate_cost_usd(duration_sec: float = SEGMENT_INPUT_SECONDS_MAX) -> float:
-    """fallback:fal 不返 cost 时按实际段长估算。
-    fal 按 token 计费(token ≈ 分辨率×帧数),帧数与时长线性相关,故用实际秒数代替 worst-case 8s。
-    校准基线:8s@480p ≈ $0.962(2026-05-13 billing CSV 实证)。"""
-    return duration_sec * FAL_FALLBACK_USD_PER_INPUT_SEC * FAL_FALLBACK_OVERESTIMATE
+    """aiview 不返 cost 时按实际段长估算。校准基线:8s@480p ≈ $0.962(2026-05-13 billing CSV 实证)。"""
+    return duration_sec * _COST_ESTIMATE_PER_SEC * _COST_ESTIMATE_OVERRATE
 
 
 # ─── 单段调度(A2 范围)─────────────────────────────────────────────────
@@ -442,35 +340,23 @@ async def _run_one_ai_segment(
         async with _seg_lock(job_id):
             _db_update_segment_stage(job_id, idx, "uploading")
         prepared = await prepare_segment_input(seg_file, plan_item)
-        _provider = (get_settings().VIDEO_CLONE_V2_PROVIDER or "fal").lower()
-        if _provider == "aiview":
-            # aiview 是国内服务，段文件必须传 COS（国内），fal CDN 在中国不可达
-            input_url = await asyncio.to_thread(upload_to_cos, prepared)
-        else:
-            input_url = await _fal_upload(prepared)
+        # aiview 是国内服务，段文件必须传 COS（国内）
+        input_url = await asyncio.to_thread(upload_to_cos, prepared)
 
         async with _seg_lock(job_id):
-            _db_update_segment_stage(job_id, idx, "fal_processing")
-        url_only = [img["url"] for img in image_urls]
-        # 段实际秒数 — fal duration 跟它对齐,避免 input < output 触发 hallucinate
+            _db_update_segment_stage(job_id, idx, "ai_processing")
+        # 段实际秒数 — duration 跟它对齐,避免 input < output 触发 hallucinate
         prepared_dur = await _ffprobe_duration(prepared)
         fal_called_at = time.strftime("%Y-%m-%d %H:%M:%S")
-        if _provider == "aiview":
-            # Seedance @imageN 靠顺序对应:按角色固定排序图,并把提示词里的
-            # @产品1/@人物1/@视频1 改写成 @image1/@image2/@video1
-            ordered_urls, _ref_map = _aiview_order_and_refs(image_urls)
-            aiview_prompt = _rewrite_prompt_for_aiview(prompt_compiled, _ref_map)
-            result = await call_aiview_seedance(
-                input_url, ordered_urls, aiview_prompt, seed, aspect_ratio,
-                job_id=job_id, seg_idx=idx,
-                input_duration_sec=prepared_dur,
-            )
-        else:
-            result = await call_fal_seedance(
-                input_url, url_only, prompt_compiled, seed, aspect_ratio,
-                job_id=job_id, seg_idx=idx,
-                input_duration_sec=prepared_dur,
-            )
+        # Seedance @imageN 靠顺序对应:按角色固定排序图,并把提示词里的
+        # @产品1/@人物1/@视频1 改写成 @image1/@image2/@video1
+        ordered_urls, _ref_map = _aiview_order_and_refs(image_urls)
+        aiview_prompt = _rewrite_prompt_for_aiview(prompt_compiled, _ref_map)
+        result = await call_aiview_seedance(
+            input_url, ordered_urls, aiview_prompt, seed, aspect_ratio,
+            job_id=job_id, seg_idx=idx,
+            input_duration_sec=prepared_dur,
+        )
         actual_cost = result["actual_cost_usd"]
         if actual_cost is None:
             actual_cost = _estimate_cost_usd(prepared_dur)
@@ -633,6 +519,8 @@ async def process_v2_job(job_id: str) -> None:
             raise
     finally:
         _seg_locks.pop(job_id, None)  # 释放 lock,防内存泄漏
+        work_dir = f"/tmp/video_clone_v2_work/{job_id}"
+        shutil.rmtree(work_dir, ignore_errors=True)
 
 
 async def _process_v2_job_inner(job_id: str) -> None:
@@ -810,7 +698,7 @@ async def _process_v2_job_inner(job_id: str) -> None:
             )
         except Exception as e:
             log_error(f"run segment with retry failed job_id={job_id}: {e}")
-            _db_update_job(job_id, status="failed", error_step="fal",
+            _db_update_job(job_id, status="failed", error_step="aiview",
                            error_message=str(e)[:500])
             await _refund_full(job)
             return
@@ -818,7 +706,7 @@ async def _process_v2_job_inner(job_id: str) -> None:
         if result["status"] != "completed":
             # 重试也失败 → 全失败(单段路径就是全失败)
             _db_update_job(
-                job_id, status="refunded", error_step="fal",
+                job_id, status="refunded", error_step="aiview",
                 error_message=f"ai 段失败:{result['error'][:300]}",
                 segments_results=json.dumps([result], ensure_ascii=False),
             )
@@ -1092,7 +980,7 @@ async def _ffprobe_video_duration(video_path: str) -> float:
     return await _ffprobe_duration(video_path)
 
 
-async def _download_fal_to_local(url: str, out_path: str) -> None:
+async def _download_to_local(url: str, out_path: str) -> None:
     """下载 fal 输出 URL 到本地文件。"""
     import httpx
     async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
@@ -1132,14 +1020,14 @@ async def _build_segment_clip(
         await _mux_video_audio(seg_local_path, silence, out, clip_dur)
         return out
 
-    # AI 段:下载 fal output → 拉伸到精确 plan duration(B'' setpts 方案)
-    # → fal 自带音轨用 fal,否则 mux 原视频音轨
-    # 2026-05-13 加 setpts 拉伸:fal seedance r2v fast 输出比 input 短约 0.08-0.1s
+    # AI 段:下载 aiview output → 拉伸到精确 plan duration(B'' setpts 方案)
+    # → 模型自带音轨则保留,否则 mux 原视频音轨
+    # 2026-05-13 加 setpts 拉伸:seedance r2v fast 输出比 input 短约 0.08-0.1s
     # (8s 请求出 7.917s)。用 setpts 拉伸到精确 plan duration,确保用户拿到 16s 就是 16s。
     # 副作用:视频整体播慢 1%,人耳/眼分辨阈值 ~3%,无人察觉。
     # 详见 memory project_ssp_v2_setpts_tradeoff。
     fal_local = os.path.join(work_dir, f"seg_{idx}_ai.mp4")
-    await _download_fal_to_local(seg_result["output_url"], fal_local)
+    await _download_to_local(seg_result["output_url"], fal_local)
     clip_dur = await _ffprobe_video_duration(fal_local)
 
     target_dur = float(plan_item["duration"])

@@ -677,9 +677,7 @@ async def create(
     if not check_user_credits(user_id, total_credits):
         raise HTTPException(402, f"积分不足,需 {total_credits} 积分")
     job_id = str(uuid.uuid4())
-    _vc2_provider = (settings.VIDEO_CLONE_V2_PROVIDER or "fal").lower()
-    _vc2_model_name = req.video_model if _vc2_provider == "aiview" else "seedance-r2v"
-    _module_tag = f"aiview/{_vc2_model_name}" if _vc2_provider == "aiview" else f"fal/seedance-r2v"
+    _module_tag = f"aiview/{req.video_model or 'seedance-2-0-fast'}"
     if not deduct_credits(user_id, total_credits, ref_id=job_id, module=_module_tag):
         raise HTTPException(402, "扣费失败(并发竞争)")
 

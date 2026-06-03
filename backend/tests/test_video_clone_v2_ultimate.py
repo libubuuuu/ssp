@@ -226,37 +226,30 @@ class TestProcessUltimate:
             conn.commit()
         return user["id"], job_id, total_credits
 
-    def _mock_fal_success(self, fal_url="https://fake.fal.media/out.mp4"):
-        """mock fal_client.upload_file_async + subscribe_async,返成功。"""
-        async def _upload(*a, **kw): return "https://fake.fal.media/in.mp4"
-        async def _subscribe(*a, **kw):
-            return {"video": {"url": fal_url}, "request_id": "req-mock"}
-        return _upload, _subscribe
-
     def _mock_download(self, src_video=P220_VIDEO):
-        """mock httpx 下载 — 把 P220 视频复制成 fal 输出 / 用户输入。"""
+        """mock httpx 下载 — 把 P220 视频复制成 aiview 输出 / 用户输入。"""
         import shutil
         async def _stream_to(url, out_path):
-            # 不管啥 URL 都返 P220 内容
             shutil.copy2(src_video, out_path)
         return _stream_to
 
-    @patch("app.services.video_clone_v2_processor.fal_client")
-    @patch("app.services.video_clone_v2_processor._download_fal_to_local")
+    @patch("app.services.video_clone_v2_processor.upload_to_cos")
+    @patch("app.services.video_clone_v2_processor.call_aiview_seedance")
+    @patch("app.services.video_clone_v2_processor._download_to_local")
     def test_all_segs_succeed_concats_dual_versions(
-        self, mock_download_fal, mock_fal, tmp_path, monkeypatch,
+        self, mock_download, mock_aiview, mock_cos, tmp_path, monkeypatch,
     ):
         """3 段全 AI 全成功 → concat → 双版本归档。"""
-        # mock fal
-        mock_fal.upload_file_async = AsyncMock(return_value="fake_in")
-        mock_fal.subscribe_async = AsyncMock(return_value={
-            "video": {"url": "https://fake.fal.media/out.mp4"},
-            "request_id": "req-1",
-        })
-        # mock fal output download
+        mock_cos.return_value = "https://fake.cos/in.mp4"
+        mock_aiview.return_value = {
+            "video_url": "https://fake.cos/out.mp4",
+            "actual_cost_usd": None,
+            "raw_response": {"request_id": "req-1"},
+        }
+        # mock aiview output download
         async def _dl(url, out):
             import shutil; shutil.copy2(P220_VIDEO, out)
-        mock_download_fal.side_effect = _dl
+        mock_download.side_effect = _dl
 
         # mock 用户 input 下载(httpx 流式) — 直接拷 P220
         # 注意:client.stream(...) 返 async CM(不是 coroutine),所以 _fake_httpx_get 是 sync
@@ -319,24 +312,21 @@ class TestProcessUltimate:
         assert row[2] and "_raw" in row[2]
         assert row[3] == 0  # 没失败段不退款
 
-    @patch("app.services.video_clone_v2_processor.fal_client")
-    @patch("app.services.video_clone_v2_processor._download_fal_to_local")
+    @patch("app.services.video_clone_v2_processor.upload_to_cos")
+    @patch("app.services.video_clone_v2_processor.call_aiview_seedance")
+    @patch("app.services.video_clone_v2_processor._download_to_local")
     def test_one_seg_fails_others_complete_full_refund(
-        self, mock_download_fal, mock_fal, tmp_path, monkeypatch,
+        self, mock_download, mock_aiview, mock_cos, tmp_path, monkeypatch,
     ):
-        """2026-05-13 新契约:段 1 fal 失败(包括 retry)→ 整单 failed + 全额退款。
-        不再拼接幸存段产出残片(防止用户拿到 16s 期望但实际 8s 的迷惑成片)。"""
-        mock_fal.upload_file_async = AsyncMock(return_value="fake_in")
-        # 2026-05-13 改:retry 从 1 次提到 2 次(共 3 次机会)。原 "1 段 3 次全失败" mock
-        # 在 asyncio.gather 下难精确路由,简化成"全部 subscribe 都失败"— 同样触发整单 failed +
-        # 全额退,契约一致(任意 ai 段最终失败 → 整单 fail)。
-        async def _always_fail_subscribe(*a, **kw):
-            raise RuntimeError("fake fal NSFW")
-        mock_fal.subscribe_async = _always_fail_subscribe
+        """任意 ai 段失败(包括 retry)→ 整单 failed + 全额退款。"""
+        mock_cos.return_value = "https://fake.cos/in.mp4"
+        async def _always_fail(*a, **kw):
+            raise RuntimeError("fake aiview failure")
+        mock_aiview.side_effect = _always_fail
 
         async def _dl(url, out):
             import shutil; shutil.copy2(P220_VIDEO, out)
-        mock_download_fal.side_effect = _dl
+        mock_download.side_effect = _dl
 
         async def _fake_archive(local_video, job_id):
             import shutil
@@ -396,15 +386,16 @@ class TestProcessUltimate:
         assert row[1] == charged, f"期望全额退 {charged},实际退 {row[1]}"
         assert user_credits == balance_before + charged
 
-    @patch("app.services.video_clone_v2_processor.fal_client")
+    @patch("app.services.video_clone_v2_processor.upload_to_cos")
+    @patch("app.services.video_clone_v2_processor.call_aiview_seedance")
     def test_all_segs_fail_marks_failed_and_partial_refunds(
-        self, mock_fal, tmp_path, monkeypatch,
+        self, mock_aiview, mock_cos, tmp_path, monkeypatch,
     ):
         """所有 ai 段都失败 → status=failed,所有段 credits 各自退。"""
-        mock_fal.upload_file_async = AsyncMock(return_value="fake_in")
+        mock_cos.return_value = "https://fake.cos/in.mp4"
         async def _all_fail(*a, **kw):
-            raise RuntimeError("fake fal failure")
-        mock_fal.subscribe_async = _all_fail
+            raise RuntimeError("fake aiview failure")
+        mock_aiview.side_effect = _all_fail
 
         plan = [
             {"idx": 0, "start": 0.0, "duration": 2.0, "source_type": "ai"},
@@ -552,23 +543,22 @@ class TestCreateUltimateApi:
             conn.commit()
         token = create_jwt_token(u["id"], em, "user")
 
-        # 18s 视频 → 丢弃尾部 [16,18] 2s → effective 16s → 2 段
+        # 13s 视频 → 丢弃尾部 [11,13] 2s → effective 11s → 1 段(≤15s 单段路径)
         # B 阶段语义:trim_start/end 是丢弃区间
         body = {
             "type": "ultimate",
             "replacement_mode": "partial",
             "segments": [
                 {"idx": 0, "source_type": "ai"},
-                {"idx": 1, "source_type": "ai"},
             ],
             "video_url": "https://fake.fal.media/v.mp4",
-            "video_duration_sec": 18.0,
+            "video_duration_sec": 13.0,
             "video_sha256": "a" * 64,
             "image_urls": [],
             "prompt": "婴儿练习抬头",
             "disclaimer_acknowledged": True,
-            "trim_start": 16,    # drop 区间起点
-            "trim_end": 18,      # drop 区间终点
+            "trim_start": 11,    # drop 区间起点
+            "trim_end": 13,      # drop 区间终点
             "trimmed_seconds": 2,
         }
         r = c.post("/api/video/clone-v2/create", json=body, headers={"Authorization": f"Bearer {token}"})
@@ -584,12 +574,12 @@ class TestCreateUltimateApi:
             ).fetchone()
         assert row[0] == "ultimate"
         assert row[1] == "partial"
-        assert row[2] == 16.0
-        assert row[3] == 18.0
+        assert row[2] == 11.0
+        assert row[3] == 13.0
         assert row[4] == 2.0
-        # 2 段 ai × 8s × 50 = 800 (effective_duration=16, plan=[8s, 8s])
-        assert row[5] == 2 * 8 * CREDITS_PER_SEC
-        assert row[6] == 2  # 2 段(plan 用 effective=16s 算)
+        # 1 段 ai × 11s × CREDITS_PER_SEC (effective_duration=11)
+        assert row[5] == calc_segment_credits(11.0, CREDITS_PER_SEC)
+        assert row[6] == 1
 
         # ── 同一 client 测中段 drop:18s 视频丢中间 [8, 10] 2s → effective 16s → 2 段 ──
         body_mid = dict(body)
@@ -608,7 +598,7 @@ class TestCreateUltimateApi:
         assert row2[0] == 8.0
         assert row2[1] == 10.0
         assert row2[2] == 2.0
-        assert row2[3] == 2  # effective 16s = 2 段
+        assert row2[3] == 1  # effective 11s = 1 段(≤15s 单段路径)
 
         # ── 校验:drop_end <= drop_start 拒绝 ──
         body_bad = dict(body)
@@ -619,12 +609,11 @@ class TestCreateUltimateApi:
         assert r3.status_code == 400
         assert "trim 丢弃区间非法" in r3.json()["detail"]
 
-        # ── 多段 drop:24s 视频丢 [5,6] + [12,13] = 2s → effective 22s(8 倍数 16)──
-        # 实际我们用 18s 视频 + 2 段共 2s drop → effective 16s = 2 段
+        # ── 多段 drop:13s 视频丢 [5,6] + [8,9] = 2s → effective 11s → 1 段 ──
         body_multi = dict(body)
         body_multi.pop("trim_start", None)
         body_multi.pop("trim_end", None)
-        body_multi["trim_drop_ranges"] = [[5, 6], [12, 13]]
+        body_multi["trim_drop_ranges"] = [[5, 6], [8, 9]]
         body_multi["trimmed_seconds"] = 2
         body_multi["video_url"] = "https://fake.fal.media/v3.mp4"
         body_multi["video_sha256"] = "c" * 64
@@ -638,12 +627,12 @@ class TestCreateUltimateApi:
             ).fetchone()
         import json as _j
         ranges = _j.loads(row4[0])
-        assert ranges == [[5.0, 6.0], [12.0, 13.0]]
+        assert ranges == [[5.0, 6.0], [8.0, 9.0]]
         assert row4[1] == 2.0
-        assert row4[2] == 2  # effective 16s = 2 段
+        assert row4[2] == 1  # effective 11s = 1 段
 
         # ── 多段 drop 重叠现在允许,按并集算 + 入库 merged ──
-        # 18s 视频,丢 [5,8] + [7,10] → union=[5,10]=5s → effective 13s → 2 段(8+5)
+        # 13s 视频,丢 [5,8] + [7,10] → union=[5,10]=5s → effective 8s → 1 段
         body_overlap = dict(body_multi)
         body_overlap["trim_drop_ranges"] = [[5, 8], [7, 10]]   # 7-8 重叠
         body_overlap["trimmed_seconds"] = 5
@@ -659,12 +648,12 @@ class TestCreateUltimateApi:
             ).fetchone()
         assert _j.loads(row5[0]) == [[5.0, 10.0]], "重叠区段应 merge 成 [[5,10]]"
         assert row5[1] == 5.0, "trimmed_seconds 用 union 不是 sum"
-        assert row5[2] == 2  # effective 13s = [(0,8),(8,13)] 两段
+        assert row5[2] == 1  # effective 8s = 1 段(≤15s 单段路径)
 
         # ── legacy trim_start/end 仍兼容(不传 trim_drop_ranges)──
         body_legacy = dict(body)
-        body_legacy["trim_start"] = 16
-        body_legacy["trim_end"] = 18
+        body_legacy["trim_start"] = 11
+        body_legacy["trim_end"] = 13
         body_legacy["video_url"] = "https://fake.fal.media/v5.mp4"
         body_legacy["video_sha256"] = "e" * 64
         r6 = c.post("/api/video/clone-v2/create", json=body_legacy,
@@ -676,7 +665,7 @@ class TestCreateUltimateApi:
                 (r6.json()["job_id"],)
             ).fetchone()
         # legacy 单段也会自动转成 1-elem JSON 持久化
-        assert _j.loads(row6[0]) == [[16.0, 18.0]]
+        assert _j.loads(row6[0]) == [[11.0, 13.0]]
 
         # ── 黑客视角:NaN / Infinity 必拒 ──
         body_nan = dict(body_multi)
@@ -900,17 +889,17 @@ class TestSSRFGuard:
         u = create_user(email=em, password="x" * 8)
         token = create_jwt_token(u["id"], em, "user")
 
-        # 24s 视频需要 trim → 走 motion_score 路径(读 video_url)
+        # SSRF 守卫在 duration check 之前运行,任何时长 + 非法 URL 都应 400
         r = c.post("/api/video/clone-v2/check-duration", json={
-            "video_duration_sec": 24.5,
+            "video_duration_sec": 10.0,
             "video_url": "http://169.254.169.254/latest/meta-data/",
         }, headers={"Authorization": f"Bearer {token}"})
         assert r.status_code == 400
         assert "https" in r.json()["detail"]
 
-        # video_url 不传也允许(走静态 fallback)
+        # video_url 不传 + 合法时长 → 200
         r2 = c.post("/api/video/clone-v2/check-duration", json={
-            "video_duration_sec": 24.5,
+            "video_duration_sec": 10.0,
         }, headers={"Authorization": f"Bearer {token}"})
         assert r2.status_code == 200
 

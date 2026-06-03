@@ -15,9 +15,9 @@ class TestCheckDurationBoundaries:
         with pytest.raises(ValueError, match="太短"):
             check_duration(3.99)
 
-    def test_above_64_raises(self):
-        with pytest.raises(ValueError, match="太长"):
-            check_duration(64.5)
+    def test_above_15_raises(self):
+        with pytest.raises(ValueError, match="最长 15 秒"):
+            check_duration(15.1)
 
 
 class TestCheckDurationNoTrimCases:
@@ -46,35 +46,15 @@ class TestCheckDurationNoTrimCases:
         r = check_duration(15.0)
         assert r["needs_trim"] is False
 
-    def test_16s_perfect_no_trim(self):
-        r = check_duration(16.0)
-        assert r["needs_trim"] is False
-        assert r["target_duration"] == 16.0
+    def test_16s_raises(self):
+        # 单段最长 15s,>15s 全部拒绝
+        with pytest.raises(ValueError, match="最长 15 秒"):
+            check_duration(16.0)
 
-    def test_16_03s_within_tolerance_no_trim(self):
-        # 16.03s = [8s, 8s];末段 8s ≥ 4s → 无需 trim
-        r = check_duration(16.03)
-        assert r["needs_trim"] is False
+    def test_18s_raises(self):
+        with pytest.raises(ValueError, match="最长 15 秒"):
+            check_duration(18.0)
 
-    def test_18s_no_trim(self):
-        # 18s = [8s, 8s, 2s];末段 2s < 4s 但并入前段 = 10s ≤ 15s → 无需 trim
-        r = check_duration(18.0)
-        assert r["needs_trim"] is False
-
-    def test_23_5s_no_trim(self):
-        # 23.5s = [8s, 8s, 7.5s];末段 7.5s ≥ 4s → 无需 trim
-        r = check_duration(23.5)
-        assert r["needs_trim"] is False
-
-    def test_24s_perfect_no_trim(self):
-        r = check_duration(24.0)
-        assert r["needs_trim"] is False
-
-    def test_50_3s_no_trim(self):
-        # 50.3s = [8s×6, 2.3s];末段 2.3s < 4s 但并入前段 = 10.3s ≤ 15s → 无需 trim
-        r = check_duration(50.3)
-        assert r["needs_trim"] is False
-
-    def test_64s_max_perfect_no_trim(self):
-        r = check_duration(64.0)
-        assert r["needs_trim"] is False
+    def test_64s_raises(self):
+        with pytest.raises(ValueError, match="最长 15 秒"):
+            check_duration(64.0)

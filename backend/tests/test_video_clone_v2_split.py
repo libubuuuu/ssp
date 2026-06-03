@@ -21,11 +21,12 @@ class TestPlanSegmentsV2:
         with pytest.raises(ValueError, match="视频太短"):
             plan_segments_v2(0)
 
-    def test_above_64s_raises(self):
-        with pytest.raises(ValueError, match="视频太长"):
+    def test_above_15s_raises(self):
+        # 单段最长 15s,超出拒绝
+        with pytest.raises(ValueError, match="最长 15 秒"):
+            plan_segments_v2(15.1)
+        with pytest.raises(ValueError, match="最长 15 秒"):
             plan_segments_v2(64.1)
-        with pytest.raises(ValueError, match="视频太长"):
-            plan_segments_v2(120)
 
     def test_exactly_4s_single_segment(self):
         plan = plan_segments_v2(4.0)
@@ -40,65 +41,21 @@ class TestPlanSegmentsV2:
         assert plan[0]["duration"] == 8.0
         assert "allowed_tiers" not in plan[0]
 
-    def test_just_above_8s_two_segments_with_merge(self):
-        # 8.5s:第二段 0.5s < 4 → 并到第一段 → 1 段(8.5s)
-        # 等等,merge 逻辑只在 len > 1 时触发,8.5 切出来是 [8.0, 0.5] → 第二段 < 4,merge → [8.5]
-        plan = plan_segments_v2(8.5)
-        assert len(plan) == 1
-        assert plan[0]["duration"] == 8.5
-
-    def test_12s_two_full_segments(self):
-        # 12s:[8, 4] → 第二段 4s 不 < 4(等于 4 不触发并段) → 2 段
+    def test_12s_single_segment(self):
+        # ≤15s 全部返回单段
         plan = plan_segments_v2(12.0)
-        assert len(plan) == 2
-        assert plan[0]["start"] == 0.0 and plan[0]["duration"] == 8.0
-        assert plan[1]["start"] == 8.0 and plan[1]["duration"] == 4.0
-        assert "allowed_tiers" not in plan[0]
-        assert "allowed_tiers" not in plan[1]
+        assert len(plan) == 1
+        assert plan[0]["start"] == 0.0
+        assert plan[0]["duration"] == 12.0
 
-    def test_15s_merge_last_short(self):
-        # 15s:[8, 7] → 第二段 7s 不 merge → 2 段
+    def test_15s_max_single_segment(self):
         plan = plan_segments_v2(15.0)
-        assert len(plan) == 2
-        assert plan[1]["duration"] == 7.0
+        assert len(plan) == 1
+        assert plan[0]["duration"] == 15.0
 
-    def test_18s_merge_last_short(self):
-        # 18s:[8, 8, 2] → 第三段 2 < 4,合并到第二段 → [8, 10]
-        plan = plan_segments_v2(18.0)
-        assert len(plan) == 2
-        assert plan[0]["duration"] == 8.0
-        assert plan[1]["duration"] == 10.0
-        assert plan[1]["start"] == 8.0
-
-    def test_24s_three_full_segments(self):
-        # 24s:[8, 8, 8] → 末段 8 不 < 4 → 3 段
-        plan = plan_segments_v2(24.0)
-        assert len(plan) == 3
-        for seg in plan:
-            assert seg["duration"] == 8.0
-
-    def test_32_5s_user_doc_example(self):
-        # 用户决议文档示例:32.5s → 4 段 [8, 8, 8, 8.5]
-        plan = plan_segments_v2(32.5)
-        assert len(plan) == 4
-        assert [s["duration"] for s in plan] == [8.0, 8.0, 8.0, 8.5]
-        assert [s["start"] for s in plan] == [0.0, 8.0, 16.0, 24.0]
-
-    def test_64s_max_8_segments(self):
-        # 64s:[8]*8 → 8 段,刚好上限
-        plan = plan_segments_v2(64.0)
-        assert len(plan) == 8
-
-    def test_short_last_segment_kept(self):
-        """12.5s:[8, 4.5] → 第二段 4.5 ≥ 4 不 merge → 2 段"""
-        plan = plan_segments_v2(12.5)
-        assert len(plan) == 2
-        assert plan[0]["duration"] == 8.0
-        assert plan[1]["duration"] == 4.5
-
-    def test_idx_continuous(self):
-        plan = plan_segments_v2(32.5)
-        assert [s["idx"] for s in plan] == [0, 1, 2, 3]
+    def test_idx_is_zero(self):
+        plan = plan_segments_v2(10.0)
+        assert plan[0]["idx"] == 0
 
 
 # ─── 红线 1:切片 hash collision 检测 ───────────────────────────────────
