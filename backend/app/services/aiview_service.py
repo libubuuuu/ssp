@@ -203,7 +203,9 @@ class AiviewImageService:
                 return {"status": "failed", "error": "已完成但未返回视频"}
             return {"status": "completed", "video_url": url, "raw": d}
         if status in ("FAILED", "ERROR"):
-            return {"status": "failed", "error": d.get("message") or "生成失败"}
+            from .logger import log_error as _le
+            _le(f"[AIVIEW-VIDEO-FAIL] rid={request_id} raw_data={str(d)[:300]}")
+            return {"status": "failed", "error": d.get("message") or d.get("fail_reason") or "生成失败"}
         return {"status": "processing"}
 
 

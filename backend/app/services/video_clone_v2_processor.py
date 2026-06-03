@@ -22,6 +22,7 @@ import fal_client
 from ..config import get_settings
 from ..database import get_db
 from .billing import add_credits
+from .cos_upload import upload_to_cos
 from .logger import log_info, log_error
 from .video_clone_v2_archive import archive_dual_versions
 from .video_clone_v2_pricing import (
@@ -441,7 +442,12 @@ async def _run_one_ai_segment(
         async with _seg_lock(job_id):
             _db_update_segment_stage(job_id, idx, "uploading")
         prepared = await prepare_segment_input(seg_file, plan_item)
-        input_url = await _fal_upload(prepared)
+        _provider = (get_settings().VIDEO_CLONE_V2_PROVIDER or "fal").lower()
+        if _provider == "aiview":
+            # aiview 是国内服务，段文件必须传 COS（国内），fal CDN 在中国不可达
+            input_url = await asyncio.to_thread(upload_to_cos, prepared)
+        else:
+            input_url = await _fal_upload(prepared)
 
         async with _seg_lock(job_id):
             _db_update_segment_stage(job_id, idx, "fal_processing")
@@ -449,8 +455,6 @@ async def _run_one_ai_segment(
         # 段实际秒数 — fal duration 跟它对齐,避免 input < output 触发 hallucinate
         prepared_dur = await _ffprobe_duration(prepared)
         fal_called_at = time.strftime("%Y-%m-%d %H:%M:%S")
-        # 通道开关:aiview=第三方 Seedance / 其它=原 FAL Seedance(可随时切回)
-        _provider = (get_settings().VIDEO_CLONE_V2_PROVIDER or "fal").lower()
         if _provider == "aiview":
             # Seedance @imageN 靠顺序对应:按角色固定排序图,并把提示词里的
             # @产品1/@人物1/@视频1 改写成 @image1/@image2/@video1
