@@ -167,8 +167,8 @@ export const zh = {
     sizeSquare: "正方形 1:1",
     sizePortrait: "竖版 3:4",
     sizeLandscape: "横版 4:3",
-    generate: "开始生成(消耗 20 积分/张)",
-    generateRef: "开始图生图(消耗 20 积分/张)",
+    generate: "开始生成",
+    generateRef: "开始生成",
   },
   video: {
     title: "视频生成",

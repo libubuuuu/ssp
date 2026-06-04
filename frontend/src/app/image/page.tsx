@@ -242,7 +242,7 @@ export default function ImagePage(){
         {error && <div style={{color:"#c00",background:"#ffeaea",padding:"0.7rem",borderRadius:"10px",fontSize:"0.8rem"}}>{error}</div>}
 <button onClick={generate}
           style={{padding:"0.9rem",background:"#0d0d0d",color:"#fff",border:"none",borderRadius:"12px",cursor:loading?"wait":"pointer",fontSize:"0.95rem",fontWeight:500}}>
-          {refImages.length>0?t("image.generateRef"):t("image.generate")}
+          {t("image.generate")}
         </button>
       </aside>
     </div>
