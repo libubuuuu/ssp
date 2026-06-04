@@ -1932,8 +1932,11 @@ async def _execute_job(job_id: str):
 
 def _module_from_type(job_type: str, params: dict) -> str:
     if job_type == "image":
-        if (params.get("model") or "").lower() in AIVIEW_IMAGE_MODELS:
-            return "aiview:aiview-pro"
+        _m = (params.get("model") or "").lower()
+        if _m in AIVIEW_IMAGE_MODELS:
+            return "aiview/aiview-pro"
+        if _m == "gpt-image-2":
+            return "aiview/gpt-image-2"
         return "image/multi-reference" if params.get("reference_images") else "image/style"
     if job_type == "video_i2v":
         return "video/image-to-video"

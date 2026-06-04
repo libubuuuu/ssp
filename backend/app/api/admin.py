@@ -1293,7 +1293,7 @@ async def admin_billing_consumption(
 
     def _provider(module: str) -> str:
         if not module or module == "—": return "—"
-        if module.startswith("aiview/"): return "aiview"
+        if module.startswith("aiview/") or module.startswith("aiview:"): return "aiview"
         if module.startswith("fal/"): return "fal"
         if module.startswith("image/"): return "fal"
         if "clone-v2" in module: return "aiview"
@@ -1520,7 +1520,7 @@ async def admin_billing_user_detail(
 
     def _provider(module: str) -> str:
         if not module: return "—"
-        if module.startswith("aiview/"): return "aiview"
+        if module.startswith("aiview/") or module.startswith("aiview:"): return "aiview"
         if "clone-v2" in module: return "aiview"
         if module.startswith("fal/") or module.startswith("image/") or module.startswith("video/"): return "fal"
         return "—"
