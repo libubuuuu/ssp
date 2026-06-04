@@ -601,7 +601,9 @@ export default function VideoCloneV2Page() {
         });
         const d: JobView = await r.json();
         if (!r.ok) {
-          setError(`任务查询失败:${(d as unknown as { detail: string }).detail}`);
+          const errBody = d as unknown as { detail?: string; message?: string };
+          const msg = errBody.detail || errBody.message || `HTTP ${r.status}`;
+          setError(`任务查询失败:${msg}`);
           if (pollRef.current) clearInterval(pollRef.current);
           return;
         }
