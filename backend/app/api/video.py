@@ -11,7 +11,6 @@ from typing import Optional, List
 from enum import Enum
 import asyncio
 from app.services.fal_service import get_video_service, fal_upload_with_retry
-from app.services.cos_upload import upload_to_cos
 from app.services.decorators import require_credits
 from app.services.content_filter import assert_safe_prompt
 from app.services.media_archiver import archive_url
@@ -420,102 +419,6 @@ async def translate_script(req: dict):
         detail="脚本翻译功能正在开发中,预计 4-6 周内上线。本接口不扣积分。",
     )
 
-
-@router.post("/upload/image")
-async def upload_image(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
-    import fal_client, tempfile, os
-    from PIL import Image
-    import io
-    from app.services.upload_guard import read_bounded, IMAGE_MIMES
-    contents = await read_bounded(file, max_bytes=10 * 1024 * 1024, allowed_mimes=IMAGE_MIMES, label="图片")
-    # 用 Pillow 处理图片，自动满足 fal 要求
-    img = Image.open(io.BytesIO(contents))
-    if img.mode in ("RGBA", "P", "LA"):
-        bg = Image.new("RGB", img.size, (255, 255, 255))
-        if img.mode == "RGBA" or img.mode == "LA":
-            bg.paste(img, mask=img.split()[-1])
-        else:
-            bg.paste(img.convert("RGBA"), mask=img.convert("RGBA").split()[-1])
-        img = bg
-    elif img.mode != "RGB":
-        img = img.convert("RGB")
-    w, h = img.size
-    # 宽高比约束：0.40 ~ 2.50
-    ratio = w / h
-    if ratio < 0.40:
-        # 太竖，左右加白边
-        new_w = int(h * 0.45)
-        new_img = Image.new("RGB", (new_w, h), (255, 255, 255))
-        new_img.paste(img, ((new_w - w) // 2, 0))
-        img = new_img
-        w, h = img.size
-    elif ratio > 2.50:
-        # 太横，上下加白边
-        new_h = int(w / 2.45)
-        new_img = Image.new("RGB", (w, new_h), (255, 255, 255))
-        new_img.paste(img, (0, (new_h - h) // 2))
-        img = new_img
-        w, h = img.size
-    # 最小 300px
-    if w < 300 or h < 300:
-        scale = max(300 / w, 300 / h)
-        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
-    # 保存为 JPEG，质量90
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
-        img.save(tmp.name, "JPEG", quality=90, optimize=True)
-        # 如果还是超过10MB，降质量
-        if os.path.getsize(tmp.name) > 10 * 1024 * 1024:
-            img.save(tmp.name, "JPEG", quality=75, optimize=True)
-        tmp_path = tmp.name
-    try:
-        url = await fal_upload_with_retry(tmp_path)
-        return {"url": url}
-    finally:
-        os.unlink(tmp_path)
-
-@router.post("/upload/image-cos")
-async def upload_image_cos(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
-    from PIL import Image
-    import io, tempfile, os
-    from app.services.upload_guard import read_bounded, IMAGE_MIMES
-    contents = await read_bounded(file, max_bytes=10 * 1024 * 1024, allowed_mimes=IMAGE_MIMES, label="图片")
-    img = Image.open(io.BytesIO(contents))
-    if img.mode in ("RGBA", "P", "LA"):
-        bg = Image.new("RGB", img.size, (255, 255, 255))
-        if img.mode == "RGBA" or img.mode == "LA":
-            bg.paste(img, mask=img.split()[-1])
-        else:
-            bg.paste(img.convert("RGBA"), mask=img.convert("RGBA").split()[-1])
-        img = bg
-    elif img.mode != "RGB":
-        img = img.convert("RGB")
-    w, h = img.size
-    ratio = w / h
-    if ratio < 0.40:
-        new_w = int(h * 0.45)
-        new_img = Image.new("RGB", (new_w, h), (255, 255, 255))
-        new_img.paste(img, ((new_w - w) // 2, 0))
-        img = new_img
-        w, h = img.size
-    elif ratio > 2.50:
-        new_h = int(w / 2.45)
-        new_img = Image.new("RGB", (w, new_h), (255, 255, 255))
-        new_img.paste(img, (0, (new_h - h) // 2))
-        img = new_img
-        w, h = img.size
-    if w < 300 or h < 300:
-        scale = max(300 / w, 300 / h)
-        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
-        img.save(tmp.name, "JPEG", quality=90, optimize=True)
-        if os.path.getsize(tmp.name) > 10 * 1024 * 1024:
-            img.save(tmp.name, "JPEG", quality=75, optimize=True)
-        tmp_path = tmp.name
-    try:
-        url = await asyncio.to_thread(upload_to_cos, tmp_path)
-        return {"url": url}
-    finally:
-        os.unlink(tmp_path)
 
 @router.post("/upload/video")
 async def upload_video(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):

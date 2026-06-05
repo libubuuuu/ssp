@@ -59,7 +59,7 @@ export default function VideoPage() {
     const token = localStorage.getItem("token") || "";
     const fd = new FormData();
     fd.append("file", compressed);
-    const r = await fetch(`${API_BASE}/api/video/upload/image`, {
+    const r = await fetch(`${API_BASE}/api/image/upload/fal`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
       body: fd,

@@ -26,6 +26,7 @@ export default function ImagePage(){
   const [refPreviews,setRefPreviews]=useState<string[]>([]);
   const [uploading,setUploading]=useState(false);
   const [loading,setLoading]=useState(false);
+  const [elapsedSecs,setElapsedSecs]=useState(0);
   const [error,setError]=useState("");
   const [msg,setMsg]=useState("");
   const [gallery,setGallery]=useState<GalleryItem[]>([]);
@@ -56,7 +57,7 @@ export default function ImagePage(){
       const token=localStorage.getItem("token")||"";
       const fd=new FormData();
       fd.append("file",compressed);
-      const res=await fetch(`${API_BASE}/api/video/upload/image-cos`,{
+      const res=await fetch(`${API_BASE}/api/image/upload/cos`,{
         method:"POST",
         headers:{"Authorization":`Bearer ${token}`},
         body:fd,
@@ -75,10 +76,9 @@ export default function ImagePage(){
   };
   const generate=async()=>{
     if(!prompt.trim()){setError(t("errors.inputPrompt"));return;}
-    setError("");setLoading(true);
+    setError("");setElapsedSecs(0);setLoading(true);
     try{
       const token=localStorage.getItem("token")||"";
-      // 投递到全局任务队列
       const res=await fetch(`${API_BASE}/api/jobs/submit`,{
         method:"POST",
         headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
@@ -100,16 +100,21 @@ export default function ImagePage(){
       if(typeof data.cost==="number"&&data.cost>0)adjustLocalUserCredits(-data.cost);
       setMsg(`任务已提交！查看右下角⚡ 我的任务`);
       setTimeout(()=>setMsg(""),3000);
+      // 不在 finally 清 loading，由 pollJob 负责清
       pollJob(data.job_id,prompt);
-    }catch(e){setError(errMsg(e));}
-    finally{setLoading(false);}
+    }catch(e){
+      setError(errMsg(e));
+      setLoading(false);
+    }
   };
 
   const pollJob=async(jobId:string,jobPrompt:string)=>{
     const token=localStorage.getItem("token")||"";
-    const start=Date.now();
-    while(Date.now()-start<300000){ // 最多 5 分钟
+    let sec=0;
+    // backend aiview 超时 10 分钟，前端跟齐
+    while(sec<620){
       await new Promise(r=>setTimeout(r,3000));
+      sec+=3;setElapsedSecs(sec);
       try{
         const res=await fetch(`${API_BASE}/api/jobs/${jobId}`,{
           headers:{"Authorization":`Bearer ${token}`},
@@ -131,6 +136,9 @@ export default function ImagePage(){
         }
       }catch{}
     }
+    // 超时仍未完成
+    setError("生成超时（>10分钟），请重试");
+    setLoading(false);
   };
   return (
     <div style={{display:"flex",minHeight:"100vh",background:"#edeae4",fontFamily:"-apple-system,BlinkMacSystemFont,sans-serif"}}>

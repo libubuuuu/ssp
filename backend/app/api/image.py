@@ -4,16 +4,62 @@
 - 多参考图生图: 权重排序机制
 - 额度扣费: 使用 @require_credits 装饰器自动处理
 """
-from fastapi import APIRouter, HTTPException, Depends
+import asyncio
+import io
+import os
+import tempfile
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from PIL import Image
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
-from app.services.fal_service import get_image_service
-from app.services.decorators import require_credits
-from app.services.content_filter import assert_safe_prompt
-from app.services.media_archiver import archive_url
+
 from app.api.auth import get_current_user
+from app.services.content_filter import assert_safe_prompt
+from app.services.cos_upload import upload_to_cos
+from app.services.decorators import require_credits
+from app.services.fal_service import get_image_service, fal_upload_with_retry
+from app.services.media_archiver import archive_url
+from app.services.upload_guard import read_bounded, IMAGE_MIMES
 
 router = APIRouter()
+
+
+def _process_image_to_tmp(contents: bytes) -> str:
+    """Pillow 标准化处理：RGBA→RGB 白底 / 宽高比 0.40~2.50 / 最小 300px / JPEG q90。
+    返回临时文件路径，调用方负责 os.unlink。"""
+    img = Image.open(io.BytesIO(contents))
+    if img.mode in ("RGBA", "P", "LA"):
+        bg = Image.new("RGB", img.size, (255, 255, 255))
+        if img.mode in ("RGBA", "LA"):
+            bg.paste(img, mask=img.split()[-1])
+        else:
+            bg.paste(img.convert("RGBA"), mask=img.convert("RGBA").split()[-1])
+        img = bg
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+    w, h = img.size
+    ratio = w / h
+    if ratio < 0.40:
+        new_w = int(h * 0.45)
+        new_img = Image.new("RGB", (new_w, h), (255, 255, 255))
+        new_img.paste(img, ((new_w - w) // 2, 0))
+        img = new_img
+        w, h = img.size
+    elif ratio > 2.50:
+        new_h = int(w / 2.45)
+        new_img = Image.new("RGB", (w, new_h), (255, 255, 255))
+        new_img.paste(img, (0, (new_h - h) // 2))
+        img = new_img
+        w, h = img.size
+    if w < 300 or h < 300:
+        scale = max(300 / w, 300 / h)
+        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+        img.save(tmp.name, "JPEG", quality=90, optimize=True)
+        if os.path.getsize(tmp.name) > 10 * 1024 * 1024:
+            img.save(tmp.name, "JPEG", quality=75, optimize=True)
+        return tmp.name
 
 
 class ImageStyleRequest(BaseModel):
@@ -194,3 +240,27 @@ async def list_models():
     """列出可用的图片生成模型"""
     service = get_image_service()
     return {"models": service.MODELS}
+
+
+@router.post("/upload/fal")
+async def upload_image_to_fal(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    """上传图片到 fal storage（图生视频首帧用）"""
+    contents = await read_bounded(file, max_bytes=10 * 1024 * 1024, allowed_mimes=IMAGE_MIMES, label="图片")
+    tmp_path = _process_image_to_tmp(contents)
+    try:
+        url = await fal_upload_with_retry(tmp_path)
+        return {"url": url}
+    finally:
+        os.unlink(tmp_path)
+
+
+@router.post("/upload/cos")
+async def upload_image_to_cos(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    """上传图片到腾讯 COS（图片生成参考图用）"""
+    contents = await read_bounded(file, max_bytes=10 * 1024 * 1024, allowed_mimes=IMAGE_MIMES, label="图片")
+    tmp_path = _process_image_to_tmp(contents)
+    try:
+        url = await asyncio.to_thread(upload_to_cos, tmp_path)
+        return {"url": url}
+    finally:
+        os.unlink(tmp_path)
