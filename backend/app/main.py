@@ -64,6 +64,15 @@ async def lifespan(app: FastAPI):
         log_info(f"数据库校验通过: {_db_path} → {_real}")
     # 启动
     log_info("AI 创意平台 启动成功")
+    # 确保 V2 工作目录存在且归 ssp-app 所有（/tmp 重启后被清空，目录由 root 重建会导致 PermissionError）
+    try:
+        import os, stat
+        _v2_work = "/tmp/video_clone_v2_work"
+        os.makedirs(_v2_work, exist_ok=True)
+        os.chmod(_v2_work, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+        log_info(f"V2 工作目录就绪: {_v2_work}")
+    except Exception as e:
+        log_error(f"V2 工作目录初始化失败: {e}")
     # P163: 服务重启时把 jobs.json 里 status=running 的孤儿 job 标 failed + 退积分
     try:
         from app.api.jobs import cleanup_orphan_jobs_on_startup
