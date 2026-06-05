@@ -41,7 +41,8 @@ class FalImageService:
         try:
             os.write(fd, img_bytes)
             os.close(fd)
-            img_url = await fal_upload_with_retry(tmp_path)
+            from .cos_upload import upload_to_cos
+            img_url = await asyncio.to_thread(upload_to_cos, tmp_path)
         finally:
             try:
                 os.unlink(tmp_path)
@@ -128,7 +129,8 @@ class FalImageService:
         try:
             os.write(fd, img_bytes)
             os.close(fd)
-            img_url = await fal_upload_with_retry(tmp_path)
+            from .cos_upload import upload_to_cos
+            img_url = await asyncio.to_thread(upload_to_cos, tmp_path)
         finally:
             try:
                 os.unlink(tmp_path)

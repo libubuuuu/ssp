@@ -37,7 +37,7 @@ from pydantic import BaseModel, Field
 from app.api.auth import get_current_user
 from app.config import get_settings
 from app.services.billing import deduct_credits
-from app.services.fal_service import fal_upload_with_retry
+from app.services.cos_upload import upload_to_cos
 from app.services.logger import log_info, log_error
 from app.services.upload_guard import read_bounded
 
@@ -93,7 +93,7 @@ async def upload_video(
             dur = float(_j.loads(rr.stdout).get("format", {}).get("duration", 0))
         except Exception:
             dur = 0
-        url = await fal_upload_with_retry(video_path)
+        url = await asyncio.to_thread(upload_to_cos, video_path)
     finally:
         try: os.unlink(video_path)
         except Exception: pass
@@ -114,7 +114,7 @@ async def upload_image(
         tmp.write(contents)
         tmp_path = tmp.name
     try:
-        url = await fal_upload_with_retry(tmp_path)
+        url = await asyncio.to_thread(upload_to_cos, tmp_path)
     finally:
         try: os.unlink(tmp_path)
         except Exception: pass

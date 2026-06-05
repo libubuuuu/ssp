@@ -169,11 +169,12 @@ def _generate_tags(prompt: str, style: str) -> list[str]:
     return tags[:5]
 
 
+import asyncio
 from fastapi import UploadFile, File, Depends
 from app.api.auth import get_current_user
 from app.services.upload_guard import read_bounded, IMAGE_MIMES
-from app.services.fal_service import fal_upload_with_retry
-import fal_client, tempfile, os
+from app.services.cos_upload import upload_to_cos
+import tempfile, os
 
 @router.post("/upload")
 async def upload_content(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
@@ -188,7 +189,7 @@ async def upload_content(file: UploadFile = File(...), current_user: dict = Depe
         tmp.write(contents)
         tmp_path = tmp.name
     try:
-        url = await fal_upload_with_retry(tmp_path)
+        url = await asyncio.to_thread(upload_to_cos, tmp_path)
         return {"url": url, "image_url": url}
     finally:
         os.unlink(tmp_path)

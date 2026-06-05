@@ -10,7 +10,8 @@ from pydantic import BaseModel, ConfigDict
 from typing import Optional, List
 from enum import Enum
 import asyncio
-from app.services.fal_service import get_video_service, fal_upload_with_retry
+from app.services.fal_service import get_video_service
+from app.services.cos_upload import upload_to_cos
 from app.services.decorators import require_credits
 from app.services.content_filter import assert_safe_prompt
 from app.services.media_archiver import archive_url
@@ -431,7 +432,7 @@ async def upload_video(file: UploadFile = File(...), current_user: dict = Depend
         tmp.write(contents)
         tmp_path = tmp.name
     try:
-        url = await fal_upload_with_retry(tmp_path)
+        url = await asyncio.to_thread(upload_to_cos, tmp_path)
         return {"url": url}
     finally:
         os.unlink(tmp_path)

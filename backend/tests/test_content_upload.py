@@ -51,9 +51,9 @@ def test_upload_valid_passes_to_fal(client_c, register, auth_header):
     token, _ = register(client_c, "ct-ok@example.com")
     valid = b"\xff\xd8\xff\xe0" + b"x" * 1024  # JPEG magic + 数据
     files = {"file": ("ok.jpg", valid, "image/jpeg")}
-    with patch("fal_client.upload_file_async", new=AsyncMock(return_value="https://fal.media/xxx.jpg")):
+    with patch("app.api.content.upload_to_cos", return_value="https://fake-cos.example.com/xxx.jpg"):
         r = client_c.post("/api/content/upload", files=files, headers=auth_header(token))
     assert r.status_code == 200
     body = r.json()
-    assert body["url"] == "https://fal.media/xxx.jpg"
-    assert body["image_url"] == "https://fal.media/xxx.jpg"
+    assert body["url"] == "https://fake-cos.example.com/xxx.jpg"
+    assert body["image_url"] == "https://fake-cos.example.com/xxx.jpg"

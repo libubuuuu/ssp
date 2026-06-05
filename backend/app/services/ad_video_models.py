@@ -529,7 +529,7 @@ async def crop_storyboard_panels(
     import os
     import httpx
     from PIL import Image
-    from .fal_service import fal_upload_with_retry
+    from .cos_upload import upload_to_cos
 
     if n_panels not in (2, 3, 4, 6, 9):
         raise ValueError(f"n_panels={n_panels} 不支持(只支持 2/3/4/6/9)")
@@ -585,7 +585,7 @@ async def crop_storyboard_panels(
             panel.save(tmp.name, "JPEG", quality=92, optimize=True)
             tmp_path = tmp.name
         try:
-            url = await fal_upload_with_retry(tmp_path)
+            url = await asyncio.to_thread(upload_to_cos, tmp_path)
             panel_urls.append(url)
             log_info(f"crop_storyboard_panels panel {i+1} {box} → {url[:80]}")
         finally:

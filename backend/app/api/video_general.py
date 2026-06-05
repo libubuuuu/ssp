@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field
 
 from app.api.auth import get_current_user
 from app.services.billing import deduct_credits
-from app.services.fal_service import fal_upload_with_retry
+from app.services.cos_upload import upload_to_cos
 from app.services.logger import log_info, log_error
 from app.services.upload_guard import read_bounded, IMAGE_MIMES
 
@@ -70,7 +70,7 @@ async def upload_image(
         tmp.write(contents)
         tmp_path = tmp.name
     try:
-        url = await fal_upload_with_retry(tmp_path)
+        url = await asyncio.to_thread(upload_to_cos, tmp_path)
     finally:
         try: os.unlink(tmp_path)
         except Exception: pass
@@ -135,14 +135,14 @@ async def upload_model_video(
                     )
                     raise HTTPException(422, "视频帧抽取失败，请确认视频包含画面且格式为 mp4/mov/webm")
             try:
-                video_url = await fal_upload_with_retry(video_path)
+                video_url = await asyncio.to_thread(upload_to_cos, video_path)
             except Exception as e:
-                log_error(f"upload_video fal upload video failed: user={user_id} err={str(e)[:200]}")
+                log_error(f"upload_video cos upload video failed: user={user_id} err={str(e)[:200]}")
                 raise HTTPException(500, f"视频上传至 CDN 失败，请稍后重试")
             try:
-                model_image_url = await fal_upload_with_retry(mid_path)
+                model_image_url = await asyncio.to_thread(upload_to_cos, mid_path)
             except Exception as e:
-                log_error(f"upload_video fal upload frame failed: user={user_id} err={str(e)[:200]}")
+                log_error(f"upload_video cos upload frame failed: user={user_id} err={str(e)[:200]}")
                 raise HTTPException(500, f"封面图上传至 CDN 失败，请稍后重试")
     except HTTPException:
         raise
@@ -178,7 +178,7 @@ async def upload_scene_image(
         tmp.write(contents)
         tmp_path = tmp.name
     try:
-        url = await fal_upload_with_retry(tmp_path)
+        url = await asyncio.to_thread(upload_to_cos, tmp_path)
     finally:
         try: os.unlink(tmp_path)
         except Exception: pass
@@ -260,7 +260,7 @@ async def upload_model_image(
         tmp.write(contents)
         tmp_path = tmp.name
     try:
-        url = await fal_upload_with_retry(tmp_path)
+        url = await asyncio.to_thread(upload_to_cos, tmp_path)
     finally:
         try: os.unlink(tmp_path)
         except Exception: pass
@@ -1488,9 +1488,9 @@ async def notify_cos_video(body: NotifyVideoRequest, current_user: dict = Depend
                 if cp2.returncode != 0 or not os.path.exists(mid_path):
                     raise HTTPException(422, "视频帧抽取失败，请确认视频包含画面且格式为 mp4/mov/webm")
             try:
-                model_image_url = await fal_upload_with_retry(mid_path)
+                model_image_url = await asyncio.to_thread(upload_to_cos, mid_path)
             except Exception as e:
-                log_error(f"notify_cos_video fal frame upload failed: user={user_id} err={e}")
+                log_error(f"notify_cos_video cos frame upload failed: user={user_id} err={e}")
                 raise HTTPException(500, "封面图上传失败，请稍后重试")
     except HTTPException:
         raise

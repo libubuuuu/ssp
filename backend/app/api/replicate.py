@@ -29,7 +29,8 @@ from pydantic import BaseModel
 
 from app.api.auth import get_current_user
 from app.services.billing import get_task_cost, deduct_credits
-from app.services.fal_service import fal_upload_with_retry, get_aliyun_qwenvl_service
+from app.services.fal_service import get_aliyun_qwenvl_service
+from app.services.cos_upload import upload_to_cos
 from app.services.upload_guard import read_bounded, IMAGE_MIMES
 from app.services.logger import log_info, log_error
 from app.services.content_filter import assert_safe_prompt
@@ -96,7 +97,7 @@ async def upload_video(
         tmp.write(contents)
         tmp_path = tmp.name
     try:
-        url = await fal_upload_with_retry(tmp_path)
+        url = await asyncio.to_thread(upload_to_cos, tmp_path)
     finally:
         try: os.unlink(tmp_path)
         except Exception: pass
@@ -129,7 +130,7 @@ async def upload_image(
             img.save(tmp.name, "JPEG", quality=90, optimize=True)
             tmp_path = tmp.name
         try:
-            url = await fal_upload_with_retry(tmp_path)
+            url = await asyncio.to_thread(upload_to_cos, tmp_path)
         finally:
             os.unlink(tmp_path)
     except Exception as e:

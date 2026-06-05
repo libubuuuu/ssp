@@ -86,11 +86,8 @@ def client_av(app_with_ad_video):
 
 @pytest.fixture()
 def mock_fal_upload():
-    """
-    自动 mock fal_client.upload_file_async,避免测试真去打 fal CDN。
-    /analyze 端点内部会上传到 fal storage,所有 /analyze 测试都需要这个。
-    """
-    with patch("fal_client.upload_file_async", new=AsyncMock(return_value="https://fal.media/files/test/fake-product.jpg")):
+    """mock upload_to_cos，避免测试真去打 COS（原 mock fal CDN，现已切 COS）。"""
+    with patch("app.api.ad_video.upload_to_cos", return_value="https://fake-cos.example.com/test/fake-product.jpg"):
         yield
 
 
@@ -123,7 +120,7 @@ def test_analyze_success_deducts_credits(client_av, mock_fal_upload, register, a
     assert len(body["script"]["scenes"]) == 3
     # v3: /analyze 内部上传图到 fal storage,返回 URL 给前端复用
     assert "product_image_url" in body
-    assert body["product_image_url"].startswith("https://fal.media/")
+    assert body["product_image_url"].startswith("https://")  # COS 或其他存储 URL
 
     # 扣 1 积分
     me = client_av.get("/api/auth/me", headers=auth_header(token)).json()
@@ -446,7 +443,7 @@ def test_upload_image_valid_passes_guard(client_av, register, auth_header):
     token, _ = register(client_av, "av-up-ok@example.com")
     valid = _fake_image_bytes(size=(1000, 1000))
     files = {"file": ("ok.jpg", valid, "image/jpeg")}
-    with patch("fal_client.upload_file_async", new=AsyncMock(return_value="https://fal.media/test.jpg")):
+    with patch("app.api.ad_video.upload_to_cos", return_value="https://fake-cos.example.com/test.jpg"):
         r = client_av.post("/api/ad-video/upload/image", files=files, headers=auth_header(token))
     assert r.status_code == 200, r.text
 

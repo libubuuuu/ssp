@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 
 from app.api.auth import get_current_user
 from app.services.billing import deduct_credits, add_credits
-from app.services.fal_service import fal_upload_with_retry
+from app.services.cos_upload import upload_to_cos
 from app.services.upload_guard import read_bounded, IMAGE_MIMES, _check_mime
 from app.services.logger import log_info
 
@@ -49,7 +49,7 @@ async def upload_video(
         tmp_path = tmp.name
     try:
         await stream_bounded_to_path(file, Path(tmp_path), MAX_VIDEO_SIZE, VIDEO_MIMES, "参考视频")
-        url = await fal_upload_with_retry(tmp_path)
+        url = await asyncio.to_thread(upload_to_cos, tmp_path)
     finally:
         try: os.unlink(tmp_path)
         except Exception: pass
@@ -208,7 +208,7 @@ async def upload_image(
             img.save(tmp.name, "JPEG", quality=90, optimize=True)
             tmp_path = tmp.name
         try:
-            url = await fal_upload_with_retry(tmp_path)
+            url = await asyncio.to_thread(upload_to_cos, tmp_path)
         finally:
             try: os.unlink(tmp_path)
             except Exception: pass

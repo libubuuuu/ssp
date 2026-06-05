@@ -15,6 +15,7 @@ AI 带货视频 API
 - 失败返还积分(用 @require_credits 装饰器,沿用现有模式)
 - VLM 走 fal OpenRouter Vision(零新 API key,复用 FAL_KEY)
 """
+import asyncio
 from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 from pydantic import BaseModel, Field
@@ -23,7 +24,7 @@ from app.services.decorators import require_credits
 from app.services.content_filter import assert_safe_prompt
 from app.services.media_archiver import archive_url
 from app.services.vlm_service import get_vlm_service
-from app.services.fal_service import fal_upload_with_retry
+from app.services.cos_upload import upload_to_cos
 from app.services import ad_video_models
 from app.services.logger import log_info, log_error
 
@@ -152,7 +153,7 @@ async def analyze_product(
             tmp_path = tmp.name
 
         try:
-            product_image_url = await fal_upload_with_retry(tmp_path)
+            product_image_url = await asyncio.to_thread(upload_to_cos, tmp_path)
         finally:
             os.unlink(tmp_path)
     except Exception as e:
@@ -179,7 +180,7 @@ async def analyze_product(
                     img_bg.save(tmp_bg.name, "JPEG", quality=75, optimize=True)
                 tmp_bg_path = tmp_bg.name
             try:
-                background_image_url = await fal_upload_with_retry(tmp_bg_path)
+                background_image_url = await asyncio.to_thread(upload_to_cos, tmp_bg_path)
             finally:
                 os.unlink(tmp_bg_path)
         except Exception as e:
@@ -208,7 +209,7 @@ async def analyze_product(
                     img_b.save(tmp_b.name, "JPEG", quality=75, optimize=True)
                 tmp_back_path = tmp_b.name
             try:
-                product_back_image_url = await fal_upload_with_retry(tmp_back_path)
+                product_back_image_url = await asyncio.to_thread(upload_to_cos, tmp_back_path)
             finally:
                 os.unlink(tmp_back_path)
         except Exception as e:
@@ -565,8 +566,8 @@ async def extract_style_frames(
             # 触发 "Unexpected token '<'" JSON parse 失败。
             # 解:只用单帧 VLM 判 has_people(P190 之前的方案),整段视频判断废弃。
             grid_url, middle_url = await asyncio.gather(
-                fal_upload_with_retry(grid_path),
-                fal_upload_with_retry(middle_frame_path),
+                asyncio.to_thread(upload_to_cos, grid_path),
+                asyncio.to_thread(upload_to_cos, middle_frame_path),
             )
 
             # P213(2026-05-08):VLM prompt 改成"宽容"判 has_people。
@@ -733,7 +734,7 @@ async def upload_image(
             img.save(tmp.name, "JPEG", quality=75, optimize=True)
         tmp_path = tmp.name
     try:
-        url = await fal_upload_with_retry(tmp_path)
+        url = await asyncio.to_thread(upload_to_cos, tmp_path)
         return {"url": url}
     finally:
         os.unlink(tmp_path)

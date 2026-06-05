@@ -489,7 +489,7 @@ async def analyze_video(
     # 主路：GPT-5.5 抽帧（约 35-60s，低延迟可靠，避免 Cloudflare 100s 超时）
     import subprocess as _sp, tempfile as _tmp, os as _os, shutil as _shutil
     import httpx as _httpx
-    from app.services.fal_service import fal_upload_with_retry
+    from app.services.cos_upload import upload_to_cos
     tmp_path: str | None = None
     frame_dir: str | None = None
     gpt_err: Exception | None = None
@@ -519,7 +519,7 @@ async def analyze_video(
         # 3. 上传帧图片到 fal storage
         frame_urls = []
         for fn in selected:
-            url = await fal_upload_with_retry(_os.path.join(frame_dir, fn))
+            url = await asyncio.to_thread(upload_to_cos, _os.path.join(frame_dir, fn))
             frame_urls.append(url)
         log_info(f"video_analyze: 帧上传完成 n={len(frame_urls)}")
         # 4. GPT-5.5 分析（帧图片 + 产品图 + prompt）

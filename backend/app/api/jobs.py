@@ -32,7 +32,8 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
-from app.services.fal_service import get_image_service, get_video_service, fal_upload_with_retry
+from app.services.fal_service import get_image_service, get_video_service
+from app.services.cos_upload import upload_to_cos
 from app.services.billing import get_task_cost, check_user_credits, deduct_credits, add_credits, create_consumption_record
 from app.services.logger import log_info, log_warning, log_error  # P101: ad_video TTS+lipsync 日志
 from app.api.auth import get_current_user
@@ -1775,7 +1776,7 @@ async def _run_ad_video_job(params: dict):
                     log_warning(f"ad_video P188 TTS overlay 异常,fallback 静音: {audio_err}")
 
         # 上传到 fal storage 拿可访问 URL(沿用现有归档/分发模式)
-        final_url = await fal_upload_with_retry(str(merged))
+        final_url = await asyncio.to_thread(upload_to_cos, str(merged))
         return {"video_url": final_url, "type": "video"}
     finally:
         shutil.rmtree(seg_root, ignore_errors=True)
@@ -2520,7 +2521,7 @@ async def _run_skill_analyze_job(params: dict) -> dict:
     import time as _t
     import httpx as _httpx
     from app.services.fal_service import (
-        AliyunQwenVLVideoService, fal_upload_with_retry,
+        AliyunQwenVLVideoService,
     )
     from app.services.media_archiver import archive_url
     from app.services.logger import log_info, log_error
@@ -2565,7 +2566,7 @@ async def _run_skill_analyze_job(params: dict) -> dict:
         t3 = _t.time()
         grid_urls = []
         for p in skill_out["grid_paths"]:
-            url = await fal_upload_with_retry(p)
+            url = await asyncio.to_thread(upload_to_cos, p)
             grid_urls.append(url)
         log_info(f"skill_analyze 九宫格上传 N={len(grid_urls)} ({_t.time()-t3:.1f}s)")
 
@@ -2748,7 +2749,6 @@ async def _run_skill_replace_flux2(
     import httpx as _httpx
     import fal_client as _fc
     from PIL import Image
-    from app.services.fal_service import fal_upload_with_retry
     from app.services.logger import log_info, log_error
     from app.skills.video_frame_extraction import compose_grid
 
@@ -2768,7 +2768,7 @@ async def _run_skill_replace_flux2(
         async with cell_sem:
             t = _t.time()
             try:
-                cell_url = await fal_upload_with_retry(cell_path)
+                cell_url = await asyncio.to_thread(upload_to_cos, cell_path)
                 result = await asyncio.wait_for(
                     _fc.run_async("fal-ai/kling/v1-5/kolors-virtual-try-on", arguments={
                         "human_image_url": cell_url,
@@ -2833,7 +2833,7 @@ async def _run_skill_replace_flux2(
             # 4. 重拼九宫格
             new_grid_path = _os.path.join(work_dir, f"new_grid_{gi:02d}.png")
             compose_grid(list(processed), layout=(rows, cols), output_path=new_grid_path)
-            new_url = await fal_upload_with_retry(new_grid_path)
+            new_url = await asyncio.to_thread(upload_to_cos, new_grid_path)
             replaced_urls.append(new_url)
             log_info(f"skill_replace_flux2 grid {gi+1}/{n_grids} 完成")
 
@@ -3019,7 +3019,6 @@ async def _run_skill_generate_job(params: dict) -> dict:
     import time as _t
     import httpx as _httpx
     from PIL import Image
-    from app.services.fal_service import fal_upload_with_retry
     from app.services.ad_video_models import (
         submit_seedance_fast_r2v_video, poll_seedance_fast_r2v_status,
     )
@@ -3100,7 +3099,7 @@ async def _run_skill_generate_job(params: dict) -> dict:
                 global_i = start_scene + local_i
                 cell_path = _os.path.join(work_dir, f"frame_{global_i:03d}.png")
                 cell_img.save(cell_path, "PNG")
-                cell_url = await fal_upload_with_retry(cell_path)
+                cell_url = await asyncio.to_thread(upload_to_cos, cell_path)
                 frame_urls.append(cell_url)
 
         if len(frame_urls) != n_active:
@@ -3426,7 +3425,7 @@ async def _run_skill_generate_job(params: dict) -> dict:
                 log_error(f"skill_generate 叠加原音轨异常(保留无声成片): {_e}")
 
         # ── 7. 上传 fal 拿成品 URL ───────────────────────────────────────────────
-        video_url = await fal_upload_with_retry(final_video)
+        video_url = await asyncio.to_thread(upload_to_cos, final_video)
         total_dur_sec = sum(float(s.get("duration_sec", 4)) for s in scenes_active)
         log_info(
             f"skill_generate 收工 total={_t.time()-t0:.1f}s "
@@ -3713,7 +3712,7 @@ async def _run_replicate_job(params: dict) -> dict:
     import tempfile
     import os
     import httpx
-    from app.services.fal_service import get_aliyun_wan_service, fal_upload_with_retry
+    from app.services.fal_service import get_aliyun_wan_service
     from app.services import ad_video_models
     from app.services.logger import log_info, log_error
 
@@ -4027,7 +4026,7 @@ async def _run_replicate_job(params: dict) -> dict:
                         "type": "video/replicate",
                         "description": f"视频复刻(降级版本,merge 失败仅返第一段)· {len(scenes)} 段 · {total_dur}s",
                     }
-        fal_final_url = await fal_upload_with_retry(out_path)
+        fal_final_url = await asyncio.to_thread(upload_to_cos, out_path)
 
     total_dur = sum(int(round(s.get("duration_sec", 5))) for s in scenes)
     return {
@@ -4050,7 +4049,6 @@ async def _slice_video_by_scenes(reference_video_url: str, scenes: list, tmpdir:
     import subprocess
     import os
     import httpx
-    from app.services.fal_service import fal_upload_with_retry
     from app.services.logger import log_info, log_error
 
     # 720p 分辨率映射(强制 downscale,确保 fal pixverse 计费 $0.20/5s)
@@ -4101,7 +4099,7 @@ async def _slice_video_by_scenes(reference_video_url: str, scenes: list, tmpdir:
     log_info(f"slice_video: 切完 {len(seg_paths)} 段(已强制 {scale_str} 720p)")
 
     # 3. 并发上传 fal storage
-    seg_fal_urls = await _asyncio.gather(*[fal_upload_with_retry(p) for p in seg_paths])
+    seg_fal_urls = await _asyncio.gather(*[asyncio.to_thread(upload_to_cos, p) for p in seg_paths])
     log_info(f"slice_video: 上传 fal 完成")
     return seg_fal_urls
 
@@ -4114,7 +4112,6 @@ async def _replicate_frame_to_static_video(image_url: str, duration_sec: float, 
     import urllib.request as _urlreq
     import subprocess as _sp
     import tempfile as _tmp
-    from app.services.fal_service import fal_upload_with_retry as _fup
     dim = {"9:16": "720:1280", "16:9": "1280:720", "1:1": "720:720"}.get(ratio, "720:1280")
     with _tmp.TemporaryDirectory() as _td:
         img_path = os.path.join(_td, "frame.png")
@@ -4128,7 +4125,7 @@ async def _replicate_frame_to_static_video(image_url: str, duration_sec: float, 
         r = _sp.run(cmd, capture_output=True, text=True, timeout=120)
         if r.returncode != 0:
             raise RuntimeError(f"ffmpeg image->video 失败: {r.stderr[:300]}")
-        return await _fup(out_path)
+        return await asyncio.to_thread(upload_to_cos, out_path)
 
 
 async def _gen_videos_seedance_lite_i2v(scenes: list, frames: list, aspect_ratio: str) -> list:
@@ -4235,7 +4232,6 @@ async def _gen_videos_pixverse_swap(scenes: list, frames: list, reference_video_
         scene_dur = float(scenes[idx].get("duration_sec", 5)) if idx < len(scenes) else 5.0
         # 复用 2-step 的 helper(同文件,同模块作用域)
         import urllib.request as _urlreq, subprocess as _sp
-        from app.services.fal_service import fal_upload_with_retry as _fup
         dim = {"9:16": "720:1280", "16:9": "1280:720", "1:1": "720:720"}.get(aspect_ratio, "720:1280")
         with tempfile.TemporaryDirectory() as _td:
             img_path = os.path.join(_td, "frame.png")
@@ -4249,7 +4245,7 @@ async def _gen_videos_pixverse_swap(scenes: list, frames: list, reference_video_
             r = _sp.run(cmd, capture_output=True, text=True, timeout=120)
             if r.returncode != 0:
                 raise RuntimeError(f"ffmpeg image->video 失败: {r.stderr[:300]}")
-            return await _fup(out_path)
+            return await asyncio.to_thread(upload_to_cos, out_path)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         seg_urls = await _slice_video_by_scenes(reference_video_url, scenes, tmpdir, aspect_ratio=aspect_ratio)
@@ -4343,7 +4339,6 @@ async def _gen_videos_pixverse_2step(scenes: list, frames: list, reference_video
     async def _frame_to_static_video(image_url: str, duration_sec: float, ratio: str) -> str:
         import urllib.request as _urlreq
         import subprocess as _sp
-        from app.services.fal_service import fal_upload_with_retry as _fup
         dim = {"9:16": "720:1280", "16:9": "1280:720", "1:1": "720:720"}.get(ratio, "720:1280")
         with tempfile.TemporaryDirectory() as _td:
             img_path = os.path.join(_td, "frame.png")
@@ -4357,7 +4352,7 @@ async def _gen_videos_pixverse_2step(scenes: list, frames: list, reference_video
             r = _sp.run(cmd, capture_output=True, text=True, timeout=120)
             if r.returncode != 0:
                 raise RuntimeError(f"ffmpeg image->video 失败: {r.stderr[:300]}")
-            return await _fup(out_path)
+            return await asyncio.to_thread(upload_to_cos, out_path)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         seg_urls = await _slice_video_by_scenes(reference_video_url, scenes, tmpdir, aspect_ratio=aspect_ratio)
@@ -4452,7 +4447,6 @@ async def _gen_videos_catvton_pixverse(scenes: list, frames: list, product_image
 
     async def _frame_to_static_video(image_url: str, duration_sec: float, ratio: str) -> str:
         import urllib.request as _urlreq, subprocess as _sp
-        from app.services.fal_service import fal_upload_with_retry as _fup
         dim = {"9:16": "720:1280", "16:9": "1280:720", "1:1": "720:720"}.get(ratio, "720:1280")
         with tempfile.TemporaryDirectory() as _td:
             img_path = os.path.join(_td, "frame.png")
@@ -4466,7 +4460,7 @@ async def _gen_videos_catvton_pixverse(scenes: list, frames: list, product_image
             r = _sp.run(cmd, capture_output=True, text=True, timeout=120)
             if r.returncode != 0:
                 raise RuntimeError(f"ffmpeg image->video 失败: {r.stderr[:300]}")
-            return await _fup(out_path)
+            return await asyncio.to_thread(upload_to_cos, out_path)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         seg_urls = await _slice_video_by_scenes(reference_video_url, scenes, tmpdir, aspect_ratio=aspect_ratio)
@@ -5387,7 +5381,6 @@ async def _run_script_to_video_job(params: dict) -> dict:
     import time as _t
     import httpx as _httpx
     import fal_client as _fal
-    from app.services.fal_service import fal_upload_with_retry
     from app.services.ad_video_models import poll_seedance_fast_r2v_status
     from app.services.logger import log_info, log_error
     from app.database import get_app_config as _get_app_config
@@ -5525,7 +5518,7 @@ async def _run_script_to_video_job(params: dict) -> dict:
                 capture_output=True, text=True, timeout=30,
             )
             if rr.returncode != 0 or not _os.path.exists(fp): return None
-            return await fal_upload_with_retry(fp)
+            return await asyncio.to_thread(upload_to_cos, fp)
         except Exception as e:
             log_error(f"script_to_video: last_frame failed: {e}")
             return None
@@ -5958,7 +5951,7 @@ async def _run_script_to_video_job(params: dict) -> dict:
             log_info(f"script_to_video concat 完成 {_os.path.getsize(final)} bytes")
 
         # 先上传 480p 成品
-        video_url_out = await fal_upload_with_retry(final)
+        video_url_out = await asyncio.to_thread(upload_to_cos, final)
 
         # ── Upscale（视频拆解跳过，AI爆款视频正常执行）──────────────────────────
         if params.get("is_replicate"):
