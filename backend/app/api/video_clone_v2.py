@@ -34,7 +34,7 @@ from app.services.billing import check_user_credits, deduct_credits
 from app.services.content_filter import check_prompt
 from app.services.cos_upload import upload_to_cos
 from app.services.logger import log_info, log_error
-from app.api.jobs import create_tracked_task
+from app.api.jobs import create_tracked_task, count_user_active_jobs
 from app.services.upload_guard import read_bounded
 from app.services.video_clone_v2_pricing import (
     PROMPT_TEMPLATES,
@@ -675,13 +675,13 @@ async def create(
     # 5. 检查 + 扣费
     user_id = str(current_user["id"])
 
-    # 每用户最多 5 个进行中任务
+    # 每用户最多 5 个进行中任务（视频复刻 V2 + jobs 队列合计）
     with get_db() as _conn:
-        _active = _conn.execute(
+        _v2_active = _conn.execute(
             "SELECT COUNT(*) FROM video_clone_v2_jobs WHERE user_id = ? AND status IN ('pending','processing')",
             (user_id,)
         ).fetchone()[0]
-    if _active >= 5:
+    if _v2_active + count_user_active_jobs(user_id) >= 5:
         raise HTTPException(429, "任务队列已满，最多同时进行 5 个任务，请等待当前任务完成后再提交")
 
     if not check_user_credits(user_id, total_credits):

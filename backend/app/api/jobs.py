@@ -114,6 +114,14 @@ def _save_jobs():
 JOBS: Dict[str, dict] = _load_jobs()
 
 
+def count_user_active_jobs(user_id: str) -> int:
+    """返回该用户在 jobs.py 队列中 pending/running 的任务数。"""
+    return sum(
+        1 for j in JOBS.values()
+        if j.get("user_id") == user_id and j.get("status") in ("pending", "running")
+    )
+
+
 # ── 任务失败率追踪（滑动窗口，最近 20 个任务，>30% 推送告警）────────────────
 _TASK_RESULTS: collections.deque = collections.deque(maxlen=20)
 _TASK_RESULTS_LOCK = threading.Lock()
@@ -1966,12 +1974,15 @@ async def submit_job(req: SubmitJobRequest, current_user: dict = Depends(get_cur
     else:
         cost = get_task_cost(module)
 
-    # 每用户最多 5 个进行中任务
-    _user_active = sum(
-        1 for j in JOBS.values()
-        if j.get("user_id") == user_id_str and j.get("status") in ("pending", "running")
-    )
-    if _user_active >= 5:
+    # 每用户最多 5 个进行中任务（jobs 队列 + 视频复刻 V2 合计）
+    from app.database import get_db as _get_db
+    with _get_db() as _conn:
+        _v2_active = _conn.execute(
+            "SELECT COUNT(*) FROM video_clone_v2_jobs WHERE user_id = ? AND status IN ('pending','processing')",
+            (user_id_str,)
+        ).fetchone()[0]
+    _jobs_active = count_user_active_jobs(user_id_str)
+    if _v2_active + _jobs_active >= 5:
         raise HTTPException(status_code=429, detail="任务队列已满，最多同时进行 5 个任务，请等待当前任务完成后再提交")
 
     job_id = str(uuid.uuid4())[:8]
