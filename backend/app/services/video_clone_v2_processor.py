@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 from ..config import get_settings
 from ..database import get_db
 from .billing import add_credits
-from .cos_upload import upload_to_cos
+from .cos_upload import upload_to_cos, regenerate_cos_url
 from .logger import log_info, log_error
 from .video_clone_v2_archive import archive_dual_versions
 from .video_clone_v2_pricing import (
@@ -350,9 +350,15 @@ async def _run_one_ai_segment(
         prepared_dur = await _ffprobe_duration(prepared)
         billed_dur = max(4, min(15, math.ceil(prepared_dur)))
         fal_called_at = time.strftime("%Y-%m-%d %H:%M:%S")
+        # 调 aiview 前刷新所有 COS 参考图 URL（防止上传时间距现在超过 7 天）
+        fresh_image_urls = [
+            {**img, "url": await asyncio.to_thread(regenerate_cos_url, img["url"])}
+            if "myqcloud.com" in img.get("url", "") else img
+            for img in image_urls
+        ]
         # Seedance @imageN 靠顺序对应:按角色固定排序图,并把提示词里的
         # @产品1/@人物1/@视频1 改写成 @image1/@image2/@video1
-        ordered_urls, _ref_map = _aiview_order_and_refs(image_urls)
+        ordered_urls, _ref_map = _aiview_order_and_refs(fresh_image_urls)
         aiview_prompt = _rewrite_prompt_for_aiview(prompt_compiled, _ref_map)
         result = await call_aiview_seedance(
             input_url, ordered_urls, aiview_prompt, seed, aspect_ratio,
@@ -573,6 +579,13 @@ async def _process_v2_job_inner(job_id: str) -> None:
         try:
             async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
                 async with client.stream("GET", input_video_url) as resp:
+                    if resp.status_code == 403:
+                        # COS 预签名 URL 过期 → 重新签名后重试
+                        new_url = await asyncio.to_thread(regenerate_cos_url, input_video_url)
+                        if new_url != input_video_url:
+                            log_info(f"download input COS URL 过期,已重签 job_id={job_id}")
+                            input_video_url = new_url
+                        raise RuntimeError(f"下载用户输入失败:status=403(已重签,下次重试)")
                     if resp.status_code != 200:
                         raise RuntimeError(f"下载用户输入失败:status={resp.status_code}")
                     with open(input_full, "wb") as f:
@@ -584,8 +597,9 @@ async def _process_v2_job_inner(job_id: str) -> None:
             err_str = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
             last_download_err = err_str
             log_error(f"download input failed attempt={_attempt} job_id={job_id}: {err_str}")
-            if isinstance(e, RuntimeError) and "status=" in str(e):
-                break  # 4xx/5xx 不重试(重试也不会变)
+            # 403 重签后会重试；其他 4xx/5xx 不重试
+            if isinstance(e, RuntimeError) and "status=" in str(e) and "403" not in str(e):
+                break
     else:
         # 重试耗尽仍失败 — 最后一次的错误已在循环里记录
         pass
