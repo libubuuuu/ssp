@@ -562,19 +562,37 @@ async def _process_v2_job_inner(job_id: str) -> None:
 
     input_video_url = job["input_video_url"]
     input_full = os.path.join(work_dir, "input_full.mp4")
-    try:
-        import httpx
-        async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
-            async with client.stream("GET", input_video_url) as resp:
-                if resp.status_code != 200:
-                    raise RuntimeError(f"下载用户输入失败:status={resp.status_code}")
-                with open(input_full, "wb") as f:
-                    async for chunk in resp.aiter_bytes(chunk_size=64*1024):
-                        f.write(chunk)
-    except Exception as e:
-        log_error(f"download input failed job_id={job_id}: {e}")
+
+    import httpx
+    _DOWNLOAD_DELAYS = [5, 15, 40]  # 3 次重试间隔(秒)
+    last_download_err: str = ""
+    for _attempt, _delay in enumerate([0] + _DOWNLOAD_DELAYS):
+        if _delay:
+            log_info(f"download input retry attempt={_attempt} delay={_delay}s job_id={job_id}")
+            await asyncio.sleep(_delay)
+        try:
+            async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
+                async with client.stream("GET", input_video_url) as resp:
+                    if resp.status_code != 200:
+                        raise RuntimeError(f"下载用户输入失败:status={resp.status_code}")
+                    with open(input_full, "wb") as f:
+                        async for chunk in resp.aiter_bytes(chunk_size=64*1024):
+                            f.write(chunk)
+            last_download_err = ""
+            break  # 成功
+        except Exception as e:
+            err_str = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+            last_download_err = err_str
+            log_error(f"download input failed attempt={_attempt} job_id={job_id}: {err_str}")
+            if isinstance(e, RuntimeError) and "status=" in str(e):
+                break  # 4xx/5xx 不重试(重试也不会变)
+    else:
+        # 重试耗尽仍失败 — 最后一次的错误已在循环里记录
+        pass
+
+    if last_download_err:
         _db_update_job(job_id, status="failed", error_step="download_input",
-                       error_message=str(e)[:500])
+                       error_message=last_download_err[:500])
         await _refund_full(job)
         return
 

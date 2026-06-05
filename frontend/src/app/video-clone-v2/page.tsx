@@ -878,9 +878,9 @@ export default function VideoCloneV2Page() {
           </Section>
         )}
 
-        {/* Step 4:Prompt */}
+        {/* Step 3/4:Prompt (single=3, ultimate=4) */}
         {video && (
-          <Section title="4. 提示词(可选 · 按需要写,不写也能生成)">
+          <Section title={`${preview?.type === "ultimate" ? "4" : "3"}. 提示词(可选 · 按需要写,不写也能生成)`}>
             {/* 视频模型选择:极速版 / 标准版,影响画质与价格 */}
             <div style={{ marginBottom: 14, padding: "10px 12px", background: "#f8fafc", border: "1px solid #e5e7eb", borderRadius: 10 }}>
               <label style={{ fontSize: "0.85rem", color: "#444", fontWeight: 600, display: "block", marginBottom: 8 }}>视频模型:</label>
@@ -1005,9 +1005,9 @@ export default function VideoCloneV2Page() {
           </Section>
         )}
 
-        {/* Step 5:价格汇总 + 声明 + 提交 */}
+        {/* Step 4/5:价格汇总 + 声明 + 提交 (single=4, ultimate=5) */}
         {estimate && (
-          <Section title="5. 价格汇总 + 上传声明">
+          <Section title={`${preview?.type === "ultimate" ? "5" : "4"}. 价格汇总 + 上传声明`}>
             <div style={{ background: "#f0f7fb", padding: "1rem 1.2rem", borderRadius: 10, fontSize: "0.95rem", color: "#456", marginBottom: 12 }}>
               <div>段数:<b>{estimate.total_segments}</b> · AI 段:<b>{estimate.ai_segments_count}</b></div>
               <div style={{ fontSize: "1.3rem", color: "#2563eb", margin: "8px 0" }}>
