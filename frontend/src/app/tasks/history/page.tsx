@@ -155,6 +155,11 @@ export default function HistoryPage() {
           <h1 style={{ fontSize: "1.6rem", fontWeight: 400, color: "#0d0d0d", margin: 0, fontFamily: "Georgia,serif" }}>{t("tasks.titleMain")}<span style={{ fontStyle: "italic" }}> {t("tasks.titleAccent")}</span></h1>
         </div>
 
+        {/* 保存期限提示 */}
+        <div style={{ marginBottom: "1.2rem", padding: "0.6rem 1rem", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "8px", fontSize: "0.82rem", color: "#92400e" }}>
+          生成的图片和视频保存 <b>7 天</b>，到期后自动清除（积分记录和账单不受影响，永久保留）。请及时下载保存。
+        </div>
+
         {/* Tab switcher */}
         <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.5rem" }}>
           {(["works", "credits"] as const).map(tab => (
