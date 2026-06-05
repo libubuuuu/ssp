@@ -700,8 +700,6 @@ export default function VideoCloneV2Page() {
         <Section title="1. 上传参考视频(MP4/MOV,≤50MB,4-15 秒)">
           {!video && (
             <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 8, padding: "0.7rem 1rem", marginBottom: 12, fontSize: "0.85rem", color: "#075985", lineHeight: 1.6 }}>
-              <b>💡 效果说明</b>:本工具以上传视频的<b>运动节奏、构图和风格</b>为参考,生成包含你产品的全新视频。建议使用<b>单镜头视频</b>,效果最稳定。
-              <br />
               <b>⏱ 单次复刻最长 15 秒</b>。视频较长?可按以下方式实现长视频复刻:① 将原视频分段截取,每段不超过 15 秒;② 逐段上传并分别复刻;③ 将各段成片拼接为完整视频。
             </div>
           )}
