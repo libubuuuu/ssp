@@ -732,9 +732,6 @@ export default function VideoCloneV2Page() {
 
         {/* Step 2:上传参考图(产品 / 人物 / 场景 各 0-3 张,总上限 9 张对齐 fal) */}
         <Section title="2. 上传参考图(产品 / 人物 / 场景,合计最多 6 张)">
-          <div style={{ fontSize: "0.78rem", color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "0.45rem 0.75rem", marginBottom: 12 }}>
-            ⚠️ 内衣 / 泳装 / 情趣类产品图暂不支持
-          </div>
           <div style={{ fontSize: "0.78rem", color: images.length >= 6 ? "#dc2626" : "#6b7280", marginBottom: 12 }}>
             参考图合计 {images.length}/6 张{images.length >= 6 ? "(已达上限)" : ",可在产品 / 人物 / 场景间自由分配"}
           </div>
