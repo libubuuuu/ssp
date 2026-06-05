@@ -164,6 +164,7 @@ export default function VideoCloneV2Page() {
 
   // 提示词 @ 提及:打 @ 弹出图片/视频选择(像大厂)。pos = @ 在文本里的位置
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
   const [atMenu, setAtMenu] = useState<{ open: boolean; query: string; pos: number }>({ open: false, query: "", pos: -1 });
 
   // 傻瓜模式:每张图的用途(key=图片url) + 去掉原视频台词开关
@@ -703,6 +704,18 @@ export default function VideoCloneV2Page() {
               <b>⏱ 单次复刻最长 15 秒</b>。视频较长?可按以下方式实现长视频复刻:① 将原视频分段截取,每段不超过 15 秒;② 逐段上传并分别复刻;③ 将各段成片拼接为完整视频。
             </div>
           )}
+          {/* 隐藏的视频文件选择器，供"更换视频"按钮触发 */}
+          <input
+            ref={videoInputRef}
+            type="file"
+            accept="video/*"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) { handleVideoUpload(f); }
+              e.target.value = "";
+            }}
+          />
           {!video ? (
             <FileInput
               accept="video/*"
@@ -711,8 +724,16 @@ export default function VideoCloneV2Page() {
               onFile={handleVideoUpload}
             />
           ) : (
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <video src={video.url} controls style={{ width: 200, borderRadius: 8, background: "#000" }} />
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ position: "relative", flexShrink: 0 }}>
+                <video src={video.url} controls style={{ width: 200, borderRadius: 8, background: "#000", display: "block" }} />
+                {/* 叉叉：删除视频 */}
+                <button
+                  onClick={() => { setVideo(null); setPreview(null); setTrim(null); setTrimPopup(null); setEstimate(null); }}
+                  style={{ position: "absolute", top: -8, right: -8, width: 22, height: 22, borderRadius: "50%", background: "#fff", border: "1px solid #ddd", cursor: "pointer", fontSize: "0.75rem", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}
+                  title="删除视频"
+                >✕</button>
+              </div>
               <div style={{ fontSize: "0.85rem", color: "#666" }}>
                 时长:{video.duration.toFixed(1)} 秒
                 {trim && (
@@ -722,7 +743,12 @@ export default function VideoCloneV2Page() {
                   </div>
                 )}
                 <br />
-                <button onClick={() => { setVideo(null); setPreview(null); setTrim(null); setTrimPopup(null); }} style={btnLink}>更换</button>
+                {/* 更换视频：触发文件选择器 */}
+                <button
+                  onClick={() => videoInputRef.current?.click()}
+                  disabled={uploadingVideo}
+                  style={btnLink}
+                >{uploadingVideo ? "上传中..." : "更换视频"}</button>
               </div>
             </div>
           )}
