@@ -1966,6 +1966,14 @@ async def submit_job(req: SubmitJobRequest, current_user: dict = Depends(get_cur
     else:
         cost = get_task_cost(module)
 
+    # 每用户最多 5 个进行中任务
+    _user_active = sum(
+        1 for j in JOBS.values()
+        if j.get("user_id") == user_id_str and j.get("status") in ("pending", "running")
+    )
+    if _user_active >= 5:
+        raise HTTPException(status_code=429, detail="任务队列已满，最多同时进行 5 个任务，请等待当前任务完成后再提交")
+
     job_id = str(uuid.uuid4())[:8]
 
     # 扣费(原子:SQL 层 WHERE credits >= ?,无竞态)

@@ -674,6 +674,16 @@ async def create(
 
     # 5. 检查 + 扣费
     user_id = str(current_user["id"])
+
+    # 每用户最多 5 个进行中任务
+    with get_db() as _conn:
+        _active = _conn.execute(
+            "SELECT COUNT(*) FROM video_clone_v2_jobs WHERE user_id = ? AND status IN ('pending','processing')",
+            (user_id,)
+        ).fetchone()[0]
+    if _active >= 5:
+        raise HTTPException(429, "任务队列已满，最多同时进行 5 个任务，请等待当前任务完成后再提交")
+
     if not check_user_credits(user_id, total_credits):
         raise HTTPException(402, f"积分不足,需 {total_credits} 积分")
     job_id = str(uuid.uuid4())
