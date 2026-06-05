@@ -18,7 +18,7 @@ from app.api.auth import get_current_user
 from app.services.content_filter import assert_safe_prompt
 from app.services.cos_upload import upload_to_cos
 from app.services.decorators import require_credits
-from app.services.fal_service import get_image_service, fal_upload_with_retry
+from app.services.fal_service import get_image_service
 from app.services.media_archiver import archive_url
 from app.services.upload_guard import read_bounded, IMAGE_MIMES
 
@@ -240,18 +240,6 @@ async def list_models():
     """列出可用的图片生成模型"""
     service = get_image_service()
     return {"models": service.MODELS}
-
-
-@router.post("/upload/fal")
-async def upload_image_to_fal(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
-    """上传图片到 fal storage（图生视频首帧用）"""
-    contents = await read_bounded(file, max_bytes=10 * 1024 * 1024, allowed_mimes=IMAGE_MIMES, label="图片")
-    tmp_path = _process_image_to_tmp(contents)
-    try:
-        url = await fal_upload_with_retry(tmp_path)
-        return {"url": url}
-    finally:
-        os.unlink(tmp_path)
 
 
 @router.post("/upload/cos")
