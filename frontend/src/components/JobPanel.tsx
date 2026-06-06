@@ -306,6 +306,7 @@ export default function JobPanel() {
                 <div style={{ fontSize: "0.75rem", color: "#888", marginTop: 2 }}>
                   {running} · {completed}
                 </div>
+                <div style={{ fontSize: "0.7rem", color: "#b45309", marginTop: 2 }}>作品保存 7 天，请及时下载</div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <button onClick={async () => {

@@ -151,6 +151,9 @@ export default function ImagePage(){
           </div>
           {gallery.length>0 && <button onClick={()=>{if(confirm(t("confirms.clearCanvas"))){saveGallery([]);}}} style={{background:"none",border:"1px solid #ddd",padding:"0.5rem 1rem",borderRadius:"999px",color:"#666",fontSize:"0.85rem",cursor:"pointer"}}>{t("image.clearBtn")}</button>}
         </div>
+        <div style={{marginBottom:"1rem",padding:"0.6rem 1rem",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:"8px",fontSize:"0.82rem",color:"#92400e"}}>
+          生成的图片保存 <b>7 天</b>，到期后自动清除（积分记录不受影响）。请及时下载保存。
+        </div>
         <div style={{background:"#fafaf7",backgroundImage:"linear-gradient(rgba(0,0,0,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.05) 1px, transparent 1px)",backgroundSize:"40px 40px",borderRadius:"24px",minHeight:"calc(100vh - 180px)",padding:"2rem",border:"2px dashed rgba(0,0,0,0.2)"}}>
           {gallery.length===0 && !loading && (
             <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"500px",color:"#bbb"}}>

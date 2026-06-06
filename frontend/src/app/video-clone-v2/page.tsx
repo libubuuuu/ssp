@@ -1135,6 +1135,9 @@ export default function VideoCloneV2Page() {
         {/* Step 7:完成,双版本下载 */}
         {job && submitStatus === "completed" && (
           <Section title="✅ 生成完成">
+            <div style={{ marginBottom: 12, padding: "0.6rem 1rem", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, fontSize: "0.82rem", color: "#92400e" }}>
+              生成的视频保存 <b>7 天</b>，到期后自动清除。请及时下载保存。
+            </div>
             <video src={job.final_video_url_watermarked || job.final_video_url || ""} controls style={{ width: "100%", maxWidth: 480, borderRadius: 10, background: "#000", marginBottom: 16 }} />
 
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 8, alignItems: "center" }}>
