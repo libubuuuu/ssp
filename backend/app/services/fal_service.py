@@ -19,9 +19,11 @@ class FalImageService:
     def __init__(self, fal_key: str):
         self.fal_key = fal_key
 
-    async def _generate_subrouter(self, prompt: str, image_size: str) -> dict:
-        """subrouter.ai gpt-image-2 主力路径：base64 → 临时文件 → fal storage URL。"""
-        import base64, os, tempfile
+    async def _generate_subrouter(self, prompt: str, image_size: str, user_id: str = "anon") -> dict:
+        """subrouter.ai gpt-image-2 主力路径：base64 → 直接写本地 uploads（跳过 COS 上传）。"""
+        import base64, os, re as _re, uuid as _uuid
+        from datetime import datetime
+        from pathlib import Path
         from openai import AsyncOpenAI
         from app.config import get_settings
         s = get_settings()
@@ -37,17 +39,17 @@ class FalImageService:
         if not b64:
             raise RuntimeError("subrouter 返回空 base64")
         img_bytes = base64.b64decode(b64)
-        fd, tmp_path = tempfile.mkstemp(suffix=".png")
-        try:
-            os.write(fd, img_bytes)
-            os.close(fd)
-            from .cos_upload import upload_to_cos
-            img_url = await asyncio.to_thread(upload_to_cos, tmp_path)
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
+        uploads_root = Path(os.environ.get("SSP_UPLOADS_ROOT", "/opt/ssp/uploads"))
+        public_base = os.environ.get("SSP_UPLOADS_PUBLIC_BASE", "https://ailixiao.com/uploads").rstrip("/")
+        safe_user = _re.sub(r"[^A-Za-z0-9._-]", "_", str(user_id))[:64] or "anon"
+        yyyymm = datetime.utcnow().strftime("%Y-%m")
+        filename = f"image_{_uuid.uuid4().hex}.png"
+        target_dir = uploads_root / safe_user / yyyymm
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / filename
+        target_path.write_bytes(img_bytes)
+        os.chmod(target_path, 0o644)
+        img_url = f"{public_base}/{safe_user}/{yyyymm}/{filename}"
         try:
             w, h = (int(x) for x in size.split("x"))
         except Exception:
@@ -55,13 +57,13 @@ class FalImageService:
         return {"image_url": img_url, "width": w, "height": h,
                 "model": "gpt-image-2/subrouter", "model_label": "专业模式"}
 
-    async def generate(self, prompt: str, image_size: str = "1024x1024", model_key: str = "gpt-image-2") -> dict:
+    async def generate(self, prompt: str, image_size: str = "1024x1024", model_key: str = "gpt-image-2", user_id: str = "anon") -> dict:
         """先试 subrouter.ai，失败降级 fal。"""
         from app.config import get_settings
         from app.services.logger import log_info, log_error
         if get_settings().IMAGE_API_KEY:
             try:
-                result = await self._generate_subrouter(prompt, image_size)
+                result = await self._generate_subrouter(prompt, image_size, user_id)
                 log_info(f"image_gen subrouter OK size={image_size}")
                 return result
             except Exception as e:

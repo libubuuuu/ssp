@@ -119,12 +119,13 @@ async def generate_style_image(req: ImageStyleRequest, current_user: dict = Depe
     if req.color_tone:
         full_prompt += f", {req.color_tone} color tone"
 
-    result = await service.generate(full_prompt, req.size, req.model)
+    result = await service.generate(full_prompt, req.size, req.model, current_user["id"])
 
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
 
     # BUG-2: 归档 fal URL 到本地 /uploads(防 fal.media 7-30 天过期)
+    # subrouter 路径已直接写本地，archive_url 会自动跳过；fal 降级路径仍需归档
     if result.get("image_url"):
         result["image_url"] = await archive_url(result["image_url"], current_user["id"], "image")
 
@@ -147,7 +148,7 @@ async def generate_realistic_image(req: ImageRealisticRequest, current_user: dic
     if req.refine_prompt:
         full_prompt += ". " + req.refine_prompt
 
-    result = await service.generate(full_prompt, "1024x1024", req.model)
+    result = await service.generate(full_prompt, "1024x1024", req.model, current_user["id"])
 
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
