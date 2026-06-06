@@ -464,8 +464,12 @@ export default function VideoCloneV2Page() {
     if (removeOriginalSpeech) text += "新视频中不要保留原视频里的台词、字幕和旁白。";
     else text += "新视频中保留原视频里的台词和声音、字幕和旁白。";
     text += "生成的人物要和说话内容对准口型。";
-    const hasPersonImg = images.some(img => img.role === "person");
-    if (hasPersonImg) text += "上传的@人物1 脸上的涂鸦去掉换成真实的人物形象。";
+    // 动态拼出所有人物图的 @引用，如 @人物1、@人物2
+    const personRefs = images
+      .filter(img => img.role === "person")
+      .map((_, i) => `@人物${i + 1}`)
+      .join("、");
+    if (personRefs) text += `上传的${personRefs} 脸上的涂鸦去掉，换成真实的人物形象。`;
     // 无图:直接本地拼接(行为不变)
     if (images.length === 0) { setPrompt(text); return; }
     // 有图:先占位,不蹦本地猜的词;看图返回再填正确结果
