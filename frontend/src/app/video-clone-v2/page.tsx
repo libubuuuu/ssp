@@ -476,9 +476,9 @@ export default function VideoCloneV2Page() {
       return images.filter(img => img.role === "person").map(() => `@人物${++n}`).join("、");
     })();
     if (personRefs) text += `上传的${personRefs} 脸上的涂鸦去掉，换成真实的人物形象。`;
-    // 无图:直接用本地拼好的文本
-    if (images.length === 0) { setPrompt(text); return; }
-    // 有图:把本地拼好的文本送给 DeepSeek 做语言润色（不是看图分类，不走 compact）
+    // 直接用本地拼好的文本，不再经过 AI 改写
+    setPrompt(text);
+    if (false) {  // 保留原来的 AI 调用结构供将来参考，当前不执行
     setPrompt("正在生成提示词…");
     setAiOptimizing(true);
     try {
@@ -489,13 +489,14 @@ export default function VideoCloneV2Page() {
       });
       if (r.ok) {
         const data = await r.json();
-        setPrompt(data.generated_prompt || text);  // 成功用看图结果,异常空回本地拼接
+        setPrompt(data.generated_prompt || text);
       } else {
-        setPrompt(text);  // 失败兜底:回本地拼接
+        setPrompt(text);
       }
     } catch {
-      setPrompt(text);  // 异常兜底
+      setPrompt(text);
     } finally { setAiOptimizing(false); }
+    }  // end if(false)
   }
 
   async function handleAiOptimize() {
