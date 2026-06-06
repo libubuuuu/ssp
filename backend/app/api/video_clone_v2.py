@@ -1050,34 +1050,68 @@ async def _call_deepseek_optimize(user_description: str, region: str = "CN") -> 
         return None
 
 
-async def _vision_classify_swap(image_urls, region: str = "CN") -> str:
-    """看参考图判断"换什么":服装穿戴类→'整套穿搭';其他实物→'画面主体产品'。失败返空。"""
-    if not image_urls:
+async def _vision_classify_swap(image_refs: list, region: str = "CN") -> str:
+    """看参考图，为每张图生成对应的替换指令，拼成完整句子返回。
+    image_refs: [{"url": "...", "ref": "@产品1", "role": "product"}, ...]
+    失败返空字符串。
+    """
+    product_refs = [r for r in image_refs if r.get("role") == "product"]
+    person_refs  = [r for r in image_refs if r.get("role") == "person"]
+    if not product_refs and not person_refs:
         return ""
-    instruction = (
-        "看这些参考图里的产品,判断它是不是【可穿戴的服装 / 鞋帽 / 配饰】。"
-        "是服装穿戴类 → 只回答:整套穿搭。"
-        "其他实物产品(电子设备 / 食品 / 日用品 / 玩具等非穿戴)→ 只回答:画面主体产品。"
-        "只回这一个短语,不要其他文字。"
-    )
-    for attempt in range(2):  # 看图服务不稳,失败重试一次
-        try:
-            result = await asyncio.wait_for(
-                fal_client.run_async(
-                    "openrouter/router/vision",
-                    arguments={"image_urls": list(image_urls)[:3], "prompt": instruction,
-                               "model": "qwen/qwen3-vl-235b-a22b-instruct", "temperature": 0.1},
-                ),
-                timeout=45,
-            )
-            out = (result.get("output") or "").strip() if isinstance(result, dict) else ""
-            if "穿搭" in out or "服装" in out or "衣" in out:
-                return "整套穿搭"
-            if out:
-                return "画面主体产品"
-        except Exception as e:
-            log_error(f"v2 看图分类失败(第{attempt+1}次): {str(e)[:120]}")
-    return ""
+
+    parts = []
+
+    # ── 产品图：逐张识别类型，生成换装/换产品指令 ──────────────────────
+    if product_refs:
+        # 每次最多送 3 张给 VLM，超出的分批或截取
+        urls_for_vision = [r["url"] for r in product_refs[:3]]
+        refs_str = "、".join(r["ref"] for r in product_refs)
+        instruction = (
+            f"我有 {len(product_refs)} 张产品参考图（编号 {refs_str}）。"
+            "请逐张看图，按以下规则各输出一句替换指令：\n"
+            "- 上衣/T恤/衬衫/卫衣/外套 → 把视频里人物的上衣换成{ref}\n"
+            "- 裤子/裙子/短裤/下装 → 把视频里人物的下装换成{ref}\n"
+            "- 鞋子/球鞋/靴子 → 把视频里人物的鞋子换成{ref}\n"
+            "- 帽子/配饰 → 把视频里人物的帽子/配饰换成{ref}\n"
+            "- 整套服装(看不清单件) → 把视频里人物的整套穿搭换成{ref}\n"
+            "- 非服装产品(电子产品/食品/日用品/玩具等) → 把视频里的产品换成{ref}\n"
+            f"图片顺序对应编号：{refs_str}。"
+            "直接输出替换指令，每句一行，不要解释。"
+        )
+        for attempt in range(2):
+            try:
+                result = await asyncio.wait_for(
+                    fal_client.run_async(
+                        "openrouter/router/vision",
+                        arguments={"image_urls": urls_for_vision,
+                                   "prompt": instruction,
+                                   "model": "qwen/qwen3-vl-235b-a22b-instruct",
+                                   "temperature": 0.1},
+                    ),
+                    timeout=45,
+                )
+                out = (result.get("output") or "").strip() if isinstance(result, dict) else ""
+                if out:
+                    # 确保 @引用 正确出现（AI 可能用 @产品1 也可能写"产品1"）
+                    for r in product_refs:
+                        ref_plain = r["ref"].lstrip("@")
+                        out = out.replace(ref_plain, r["ref"])
+                    parts.extend([line.strip() for line in out.splitlines() if line.strip()])
+                    break
+            except Exception as e:
+                log_error(f"v2 看图分类失败(第{attempt+1}次): {str(e)[:120]}")
+        # 兜底：看图失败时按数量拼默认指令
+        if not parts:
+            refs_joined = "".join(r["ref"] for r in product_refs)
+            parts.append(f"把视频里的产品换成{refs_joined}")
+
+    # ── 人物图：换脸/换人物形象 ──────────────────────────────────────────
+    if person_refs:
+        refs_joined = "、".join(r["ref"] for r in person_refs)
+        parts.append(f"上传的{refs_joined} 脸上的涂鸦去掉，换成真实的人物形象")
+
+    return "，".join(parts) + "。" if parts else ""
 
 
 @router.post("/generate-prompt", response_model=GenerateV2PromptResponse)
@@ -1091,16 +1125,27 @@ async def generate_v2_prompt(
 
     region = req.region
 
-    # 2026-06-03 新增:一键生成「看图分类」简洁模式 — 早返回,不触达下方任何原有逻辑/扣费
+    # 一键生成「看图分类」简洁模式 — 早返回,不触达下方任何原有逻辑/扣费
     if req.compact:
-        _swap = await _vision_classify_swap(req.image_urls, region=req.region)
+        # 把前端传来的 image_urls(纯URL列表) 转成带 role+ref 的结构
+        # compact 模式前端传的是产品图 URL，需要前端升级；兜底：全当 product 处理
+        _image_refs = []
+        prod_count = pers_count = 0
+        for item in req.image_urls:
+            if isinstance(item, dict):
+                _image_refs.append(item)
+            else:
+                prod_count += 1
+                _image_refs.append({"url": item, "ref": f"@产品{prod_count}", "role": "product"})
+        _swap = await _vision_classify_swap(_image_refs, region=req.region)
+        _keep = ("新视频中不要保留原视频里的台词、字幕和旁白。"
+                 if ("不要保留" in req.user_description or "不保留" in req.user_description)
+                 else "新视频中保留原视频里的台词和声音、字幕和旁白。")
+        _lipsync = "生成的人物要和说话内容对准口型。"
         if _swap:
-            _keep = ("新视频中不要保留原视频里的台词、字幕和旁白。"
-                     if ("不要保留" in req.user_description or "不保留" in req.user_description)
-                     else "新视频中保留原视频里的台词和声音、字幕和旁白。")
-            _text = f"以 @视频1 为参考视频,保持其运动、构图和节奏。把视频里人物的{_swap}换成 @产品1。{_keep}"
+            _text = f"以 @视频1 为参考视频,保持其运动、构图和节奏。{_swap}{_lipsync}{_keep}"
         else:
-            _text = req.user_description  # 看图失败:用前端拼的基础模板兜底
+            _text = req.user_description
         return GenerateV2PromptResponse(generated_prompt=_text, model="vision-compact", region=req.region)
 
     is_en = region == "Global"
