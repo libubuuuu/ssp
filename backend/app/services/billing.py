@@ -66,8 +66,12 @@ def get_task_cost(endpoint: str) -> int:
         if endpoint.startswith(key):
             return price
 
-    # 默认价格
-    return 5
+    # module 未在定价表中 → 直接报错，不允许静默兜底
+    # 之前此处 return 5 导致 aiview/gpt-image-2 漏配时只扣5积分
+    raise ValueError(
+        f"定价表缺少 module='{endpoint}'，请先在 billing.py PRICING 中补充正确价格，"
+        f"严禁用默认值兜底（会导致用户少扣积分）"
+    )
 
 
 def check_user_credits(user_id: str, required: int) -> bool:

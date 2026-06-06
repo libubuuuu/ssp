@@ -26,8 +26,10 @@ def test_pricing_exact_match():
 def test_pricing_prefix_match():
     # "image/style/anything" 应当通过前缀匹配命中 "image/style"
     assert billing.get_task_cost("image/style/extra/path") == 20
-    # 完全没匹配时走默认 5
-    assert billing.get_task_cost("totally/unknown/endpoint") == 5
+    # 完全没匹配时抛 ValueError（不允许静默兜底，防止漏配导致少扣积分）
+    import pytest
+    with pytest.raises(ValueError, match="定价表缺少"):
+        billing.get_task_cost("totally/unknown/endpoint")
 
 
 def test_check_user_credits_sufficient():
