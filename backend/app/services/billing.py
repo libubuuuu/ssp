@@ -22,11 +22,12 @@ def _ledger_in_tx(cursor, user_id: str, delta: int, balance_after: int,
 # 各功能定价(积分/次)
 # 2026-05-13 老板重定:50 积分 = 1 元,视频 50 积分/秒,图片 20 积分/张,文案 5 积分/次
 PRICING: Dict[str, int] = {
-    # 图片生成(GPT-image-2)统一 20/张
+    # 图片生成统一 20/张
     "image/style": 20,
     "image/realistic": 20,
     "image/multi-reference": 20,
     "image/inpaint": 20,
+    "aiview/gpt-image-2": 20,    # 标准模式(jobs.py 走 aiview 的 gpt-image-2)
 
     # 视频生成(动态:实际按 duration_sec * 50 计算,这里写下限作 fallback)
     "video/image-to-video": 50,
