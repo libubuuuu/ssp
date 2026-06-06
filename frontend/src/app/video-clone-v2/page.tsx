@@ -469,6 +469,7 @@ export default function VideoCloneV2Page() {
     let text = "以 @视频1 为参考视频,保持其运动、构图和节奏。";
     if (parts.length) text += parts.join("，") + "。";
     if (removeOriginalSpeech) text += "新视频中不要保留原视频里的台词、字幕和旁白。";
+    else text += "新视频中保留原视频里的台词和声音、字幕和旁白。";
     text += "生成的人物要和说话内容对准口型。";
     const personRefs = (() => {
       let n = 0;
