@@ -459,31 +459,27 @@ export default function VideoCloneV2Page() {
       const fn = PURPOSE_TEXT[purpose];
       if (fn) parts.push(fn(ref));
     }
-    const keepSpeech = removeOriginalSpeech
-      ? "新视频中不要保留原视频里的台词、字幕和旁白。"
-      : "新视频中保留原视频里的台词和声音、字幕和旁白。";
-    // 兜底文本（看图失败时用）
+    // 用户已通过下拉框选了每张图的用途，parts 已有正确句子，直接拼
     let text = "以 @视频1 为参考视频,保持其运动、构图和节奏。";
-    if (parts.length) text += parts.join(",") + "。";
-    text += keepSpeech;
+    if (parts.length) text += parts.join("，") + "。";
+    if (removeOriginalSpeech) text += "新视频中不要保留原视频里的台词、字幕和旁白。";
+    else text += "新视频中保留原视频里的台词和声音、字幕和旁白。";
     text += "生成的人物要和说话内容对准口型。";
-    // 无图:直接本地拼接(行为不变)
+    const personRefs = (() => {
+      let n = 0;
+      return images.filter(img => img.role === "person").map(() => `@人物${++n}`).join("、");
+    })();
+    if (personRefs) text += `上传的${personRefs} 脸上的涂鸦去掉，换成真实的人物形象。`;
+    // 无图:直接用本地拼好的文本
     if (images.length === 0) { setPrompt(text); return; }
-    // 有图:构建带 role+ref 的结构传给后端看图
-    const roleCounts: Record<string, number> = {};
-    const imageRefs = images.slice(0, 6).map(img => {
-      roleCounts[img.role] = (roleCounts[img.role] || 0) + 1;
-      const labelMap: Record<string, string> = { product: "产品", person: "人物", scene: "场景" };
-      const label = labelMap[img.role] || "图";
-      return { url: img.url, ref: `@${label}${roleCounts[img.role]}`, role: img.role };
-    });
-    setPrompt("正在识别产品并生成提示词…");
+    // 有图:把本地拼好的文本送给 DeepSeek 做语言润色（不是看图分类，不走 compact）
+    setPrompt("正在生成提示词…");
     setAiOptimizing(true);
     try {
       const r = await fetch(`${API_BASE}/api/video/clone-v2/generate-prompt`, {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json", ...token() },
-        body: JSON.stringify({ user_description: text, region, image_urls: imageRefs, compact: true }),
+        body: JSON.stringify({ user_description: text, region, image_urls: images.map(i => i.url).slice(0, 6) }),
       });
       if (r.ok) {
         const data = await r.json();
