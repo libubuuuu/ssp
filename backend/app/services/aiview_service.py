@@ -142,8 +142,9 @@ class AiviewImageService:
             return {"status": "completed", "image_url": urls[0], "image_urls": urls}
         if status in ("FAILED", "ERROR"):
             from .logger import log_info as _li
-            _li(f"[AIVIEW-IMG] query failed rid={request_id} msg={d.get('message','')[:80]}")
-            return {"status": "failed", "error": d.get("message") or "生成失败"}
+            msg = d.get("message") or d.get("error") or d.get("reason") or ""
+            _li(f"[AIVIEW-IMG] query failed rid={request_id} msg={msg[:80]} raw={str(d)[:120]}")
+            return {"status": "failed", "error": msg or "生成失败"}
         return {"status": "processing"}
 
     # ─── 图生视频 / 参考视频复刻(异步 提交→轮询)───────────────────────────

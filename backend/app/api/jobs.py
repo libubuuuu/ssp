@@ -226,7 +226,7 @@ async def _shrink_ref_for_aiview(url: str) -> str:
     from app.services.cos_upload import upload_to_cos
     MAX_SIDE = 2048
     try:
-        async with httpx.AsyncClient(timeout=30) as cli:
+        async with httpx.AsyncClient(timeout=60) as cli:
             r = await cli.get(url); r.raise_for_status()
         img = Image.open(io.BytesIO(r.content))
         if img.mode != "RGB":
@@ -250,9 +250,10 @@ async def _shrink_ref_for_aiview(url: str) -> str:
         return url
 
 
-async def _run_aiview_image_job(params: dict, aiview_model: str = None):
+async def _run_aiview_image_job(params: dict, aiview_model: str = None, _retry: int = 0):
     """走 aiview.club 文生图(异步 提交→轮询)。
     aiview_model=None → seedream(豆包专业版); aiview_model="gpt-image-2" → gpt2 标准模式。
+    _retry: 内部重试次数,最多 1 次(瞬时失败自动重投)。
     """
     import asyncio
     from app.services.aiview_service import get_aiview_image_service
@@ -260,7 +261,8 @@ async def _run_aiview_image_job(params: dict, aiview_model: str = None):
     if not service.is_available():
         raise Exception("aiview 暂未配置")
     refs = params.get("reference_images") or []
-    log_info(f"[AIVIEW-IMG] model={aiview_model or 'seedream'} refs={len(refs)} prompt={(params.get('prompt') or '')[:40]!r}")
+    if _retry == 0:
+        log_info(f"[AIVIEW-IMG] model={aiview_model or 'seedream'} refs={len(refs)} prompt={(params.get('prompt') or '')[:40]!r}")
     if refs:
         refs = [await _shrink_ref_for_aiview(u) for u in refs]
     # gpt-image-2 不传 size(resolution out of range);seedream 仍传 2K
@@ -269,15 +271,20 @@ async def _run_aiview_image_job(params: dict, aiview_model: str = None):
     if sub.get("error"):
         raise Exception(sub["error"])
     rid = sub["request_id"]
-    for _ in range(120):  # 10 分钟
+    for _ in range(180):  # 15 分钟(部分任务耗时 >10min)
         await asyncio.sleep(5)
         st = await service.query(rid)
         if st.get("status") == "completed" and st.get("image_url"):
             return {"image_url": st["image_url"], "type": "image",
                     "model": params.get("model") or "aiview-pro"}
         if st.get("status") == "failed":
-            raise Exception(st.get("error", "生成失败"))
-    raise Exception("timeout (10 min)")
+            err_msg = st.get("error") or "生成失败"
+            if _retry == 0:
+                log_info(f"[AIVIEW-IMG] attempt 1 failed ({err_msg[:60]}), auto-retrying in 3s...")
+                await asyncio.sleep(3)
+                return await _run_aiview_image_job(params, aiview_model=aiview_model, _retry=1)
+            raise Exception(err_msg)
+    raise Exception("timeout (15 min)")
 
 
 async def _run_image_job(params: dict):
