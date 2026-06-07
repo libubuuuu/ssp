@@ -1249,6 +1249,11 @@ def cleanup_stale_v2_jobs() -> int:
                     try:
                         add_credits(user_id, credits, reason="task_refund",
                                     ref_id=job_id, module="aiview/seedance-v2")
+                        conn.execute(
+                            "UPDATE video_clone_v2_jobs SET total_credits_refunded = ? WHERE id = ?",
+                            (credits, job_id),
+                        )
+                        conn.commit()
                     except Exception as re:
                         log_error(f"[V2-cleanup] 退积分失败 job={job_id}: {re}")
                 cleaned += 1
@@ -1285,6 +1290,11 @@ async def v2_watchdog_loop() -> None:
                         try:
                             add_credits(user_id, credits, reason="task_refund",
                                         ref_id=job_id, module="aiview/seedance-v2")
+                            conn.execute(
+                                "UPDATE video_clone_v2_jobs SET total_credits_refunded = ? WHERE id = ?",
+                                (credits, job_id),
+                            )
+                            conn.commit()
                         except Exception as re:
                             log_error(f"[V2-watchdog] 退积分失败 job={job_id}: {re}")
                     log_info(f"[V2-watchdog] 超时任务已清理 job={job_id} user={user_id} credits={credits}")
