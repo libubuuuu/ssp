@@ -100,8 +100,8 @@ export default function ImagePage(){
       if(typeof data.cost==="number"&&data.cost>0)adjustLocalUserCredits(-data.cost);
       setMsg(`任务已提交！查看右下角⚡ 我的任务`);
       setTimeout(()=>setMsg(""),3000);
-      // 不在 finally 清 loading，由 pollJob 负责清
-      pollJob(data.job_id,prompt);
+      // 不在 finally 清 loading，由 streamJob 负责清
+      streamJob(data.job_id,prompt);
     }catch(e){
       setError(errMsg(e));
       setLoading(false);
@@ -111,8 +111,7 @@ export default function ImagePage(){
   const pollJob=async(jobId:string,jobPrompt:string)=>{
     const token=localStorage.getItem("token")||"";
     let sec=0;
-    // backend aiview 超时 10 分钟，前端跟齐
-    while(sec<620){
+    while(sec<960){
       await new Promise(r=>setTimeout(r,3000));
       sec+=3;setElapsedSecs(sec);
       try{
@@ -136,9 +135,38 @@ export default function ImagePage(){
         }
       }catch{}
     }
-    // 超时仍未完成
-    setError("生成超时（>10分钟），请重试");
+    setError("生成超时（>15分钟），请重试");
     setLoading(false);
+  };
+  const streamJob=(jobId:string,jobPrompt:string)=>{
+    // SSE：后端 job 完成即刻推送，无需轮询
+    const sse=new EventSource(`${API_BASE}/api/jobs/${jobId}/stream`,{withCredentials:true});
+    const timer=setInterval(()=>setElapsedSecs(s=>s+1),1000);
+    const cleanup=()=>{clearInterval(timer);sse.close();};
+    sse.onmessage=(e)=>{
+      cleanup();
+      try{
+        const d=JSON.parse(e.data);
+        if(d.status==="completed"&&d.result?.image_url){
+          const ud=localStorage.getItem("user")||"{}";let uid="anonymous";try{uid=JSON.parse(ud).id||"anonymous";}catch{}
+          saveGallery([{url:d.result.image_url,prompt:jobPrompt,time:Date.now()},...JSON.parse(localStorage.getItem(`img_gallery_${uid}`)||"[]")]);
+          setLoading(false);
+        }else if(d.status==="failed"){
+          const raw=d.error||"";
+          if(raw.includes("content_policy_violation")||raw.includes("安全审核")){
+            setError("内容被安全审核拦截，请修改描述后重试（建议：减少人物动作描述，或改用英文）");
+          }else{
+            setError(raw.slice(0,120)||"生图失败，请重试");
+          }
+          setLoading(false);
+        }
+      }catch{}
+    };
+    sse.onerror=()=>{
+      // SSE 建立失败(如 token 过期)→ 降级轮询
+      cleanup();
+      pollJob(jobId,jobPrompt);
+    };
   };
   return (
     <div style={{display:"flex",minHeight:"100vh",background:"#edeae4",fontFamily:"-apple-system,BlinkMacSystemFont,sans-serif"}}>

@@ -31,6 +31,7 @@ from datetime import datetime as _datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from app.services.fal_service import get_image_service, get_video_service
 from app.services.cos_upload import upload_to_cos
@@ -113,6 +114,14 @@ def _save_jobs():
         print(f"save jobs failed: {e}")
 
 JOBS: Dict[str, dict] = _load_jobs()
+# job_id → asyncio.Event：job 完成时 set，SSE endpoint 监听
+_job_events: Dict[str, asyncio.Event] = {}
+
+
+def _signal_job_done(job_id: str) -> None:
+    ev = _job_events.get(job_id)
+    if ev and not ev.is_set():
+        ev.set()
 
 
 def count_user_active_jobs(user_id: str) -> int:
@@ -1961,6 +1970,7 @@ async def _execute_job(job_id: str):
             raise
         finally:
             _save_jobs()
+            _signal_job_done(job_id)
             _record_task_result(
                 job.get("status") == "completed",
                 job.get("type", ""),
@@ -2196,6 +2206,49 @@ def _v2_jobs_as_virtual_jobs(user_id: str) -> list:
             "_route": f"/video-clone-v2#{r['id']}",
         })
     return out
+
+
+@router.get("/{job_id}/stream")
+async def stream_job_result(job_id: str, current_user: dict = Depends(get_current_user)):
+    """SSE：job 完成立即推结果，无需前端轮询。"""
+    if job_id not in JOBS:
+        raise HTTPException(404, "job not found")
+    job = JOBS[job_id]
+    uid = str(current_user.get("id") or current_user.get("email", "unknown"))
+    if job.get("user_id") != uid:
+        raise HTTPException(403, "无权限访问")
+
+    async def _generate():
+        cur = JOBS.get(job_id, {})
+        # 已经完成直接返回
+        if cur.get("status") in ("completed", "failed"):
+            yield f"data: {json.dumps({'status': cur['status'], 'result': cur.get('result'), 'error': cur.get('error')})}\n\n"
+            return
+        ev = asyncio.Event()
+        _job_events[job_id] = ev
+        try:
+            elapsed = 0
+            while elapsed < 960:  # 16 min 上限
+                try:
+                    await asyncio.wait_for(ev.wait(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    yield ": heartbeat\n\n"
+                    elapsed += 15
+                    continue
+                break  # ev was set
+            cur = JOBS.get(job_id, {})
+            if cur.get("status") in ("completed", "failed"):
+                yield f"data: {json.dumps({'status': cur['status'], 'result': cur.get('result'), 'error': cur.get('error')})}\n\n"
+            else:
+                yield f"data: {json.dumps({'status': 'failed', 'error': 'stream timeout'})}\n\n"
+        finally:
+            _job_events.pop(job_id, None)
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/{job_id}")
