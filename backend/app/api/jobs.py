@@ -1902,17 +1902,27 @@ async def _execute_job(job_id: str):
                 _t2 = int(job["finished_at"] - job.get("created_at", job["finished_at"]))
                 _t1 = result.get("_t1") or _t2
                 log_info(f"[IMG-TIMING] job={job['id']} T1(提交→拿图)={_t1}s T2(提交→处理完成)={_t2}s(已异步归档)")
-                # 图片：后台异步归档，完成后静默替换 URL
+                # 图片：后台异步归档，完成后静默替换 URL（含重试，保证替换）
                 async def _bg_archive(j=job, r=result, u=uid):
-                    try:
-                        from app.services.media_archiver import archive_url as _au
-                        if r.get("image_url"):
-                            archived = await _au(r["image_url"], u, "image")
-                            j["result"]["image_url"] = archived
-                            _save_jobs()
-                            log_info(f"[IMG-ARCHIVE] job={j['id']} archived OK -> {archived[:60]}")
-                    except Exception as ae:
-                        log_error(f"[IMG-ARCHIVE] job={j['id']} failed: {ae}")
+                    from app.services.media_archiver import archive_url as _au
+                    original_url = r.get("image_url")
+                    if not original_url:
+                        return
+                    delays = [0, 30, 90]  # 立即 / 30s 后 / 90s 后，共 3 次
+                    for attempt, delay in enumerate(delays):
+                        if delay:
+                            await asyncio.sleep(delay)
+                        try:
+                            archived = await _au(original_url, u, "image")
+                            if archived:
+                                j["result"]["image_url"] = archived
+                                _save_jobs()
+                                log_info(f"[IMG-ARCHIVE] job={j['id']} OK attempt={attempt+1} -> {archived[:60]}")
+                                return
+                        except Exception as ae:
+                            log_error(f"[IMG-ARCHIVE] job={j['id']} attempt={attempt+1} failed: {ae}")
+                    # 3 次全失败：URL 仍是 aiview 临时链，30 天后失效
+                    log_error(f"[IMG-ARCHIVE] job={j['id']} ALL 3 ATTEMPTS FAILED, aiview URL will expire: {original_url[:80]}")
                 create_tracked_task(_bg_archive())
             # 写历史记录
             try:
