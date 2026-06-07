@@ -190,10 +190,18 @@ echo "[5/5] 关闭 $ACTIVE（先 drain 进行中任务）" | tee -a $LOG
 DRAIN_MAX=900   # 最多等 15 分钟
 DRAIN_ELAPSED=0
 
-# 查旧槽进程内存（不用 jobs.json，防止被新槽 cleanup 污染）
+# 查旧槽进程内存 + SQLite V2任务（双重保障：旧代码可能无V2计数，直接查DB兜底）
+DB_PATH="/opt/ssp/backend/dev.db"
 _get_active() {
-    curl -s --max-time 3 http://127.0.0.1:${ACTIVE_BACKEND}/internal/active-jobs \
-        2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('active_jobs',0))" 2>/dev/null || echo 0
+    # 1. 旧进程 API 上报的任务数
+    api_count=$(curl -s --max-time 3 http://127.0.0.1:${ACTIVE_BACKEND}/internal/active-jobs \
+        2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('active_jobs',0))" 2>/dev/null || echo 0)
+    # 2. SQLite 直查 V2 processing 任务（防旧代码不含V2计数时漏掉进行中任务）
+    v2_count=$(sqlite3 "$DB_PATH" \
+        "SELECT COUNT(*) FROM video_clone_v2_jobs WHERE status='processing';" \
+        2>/dev/null || echo 0)
+    # 取两者最大值：新代码API已含V2，旧代码API不含V2时SQLite作兜底
+    python3 -c "print(max(int('${api_count:-0}'), int('${v2_count:-0}')))" 2>/dev/null || echo "${api_count:-0}"
 }
 
 while [ $DRAIN_ELAPSED -lt $DRAIN_MAX ]; do
