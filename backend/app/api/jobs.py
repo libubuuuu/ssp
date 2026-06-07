@@ -296,23 +296,26 @@ async def _run_aiview_image_job(params: dict, aiview_model: str = None, _retry: 
         refs = [await _shrink_ref_for_aiview(u) for u in refs]
     # gpt-image-2 不传 size(resolution out of range);seedream 仍传 2K
     _size = None if aiview_model == "gpt-image-2" else "2K"
+    import time as _time
+    _t_job_start = params.get("_job_created_at") or _time.time()
     sub = await service.submit(params["prompt"], size=_size, image_urls=refs or None, model=aiview_model)
     if sub.get("error"):
         raise Exception(sub["error"])
     rid = sub["request_id"]
-    import time as _time
-    _t0 = _time.time()
+    _t_aiview_submit = _time.time()
     for _ in range(450):  # 15 分钟(部分任务耗时 >10min)
         await asyncio.sleep(2)
         st = await service.query(rid)
         if st.get("status") == "completed" and st.get("image_url"):
-            _elapsed = int(_time.time() - _t0)
-            log_info(f"[AIVIEW-IMG] completed rid={rid} duration={_elapsed}s url={st['image_url'][:60]}")
+            _t1 = int(_time.time() - _t_job_start)   # 用户提交 → 后端拿到图
+            _t_aiview = int(_time.time() - _t_aiview_submit)  # aiview 纯生成
+            log_info(f"[AIVIEW-IMG] completed rid={rid} T1(提交→拿图)={_t1}s aiview纯生成={_t_aiview}s url={st['image_url'][:60]}")
             return {"image_url": st["image_url"], "type": "image",
-                    "model": params.get("model") or "aiview-pro"}
+                    "model": params.get("model") or "aiview-pro",
+                    "_t1": _t1}
         if st.get("status") == "failed":
             err_msg = st.get("error") or "生成失败"
-            _elapsed = int(_time.time() - _t0)
+            _elapsed = int(_time.time() - _t_aiview_submit)
             if _retry == 0:
                 log_info(f"[AIVIEW-IMG] attempt 1 failed ({_elapsed}s) ({err_msg[:60]}), auto-retrying in 3s...")
                 await asyncio.sleep(3)
@@ -1840,6 +1843,7 @@ async def _execute_job(job_id: str):
         async def _dispatch() -> dict:
             t = job["type"]
             if t == "image":
+                job["params"]["_job_created_at"] = job.get("created_at")
                 return await _run_image_job(job["params"])
             # P215(2026-05-08):video_general* 必须在 startswith("video_") 之前匹配
             elif t == "video_general_analyze":
@@ -1889,6 +1893,10 @@ async def _execute_job(job_id: str):
             job["status"] = "completed"
             job["result"] = result
             job["finished_at"] = time.time()
+            if job.get("type") == "image":
+                _t2 = int(job["finished_at"] - job.get("created_at", job["finished_at"]))
+                _t1 = result.get("_t1") or _t2
+                log_info(f"[IMG-TIMING] job={job['id']} T1(提交→拿图)={_t1}s T2(提交→处理完成)={_t2}s 差值={_t2-_t1}s")
             # 写历史记录
             try:
                 uid = job.get("user_numeric_id")
