@@ -80,6 +80,17 @@ async def lifespan(app: FastAPI):
             log_info(f"启动清理: {n} 个孤儿 job 标 failed + 退积分")
     except Exception as e:
         log_error(f"orphan cleanup failed at startup: {e}")
+    # V2 视频复刻:把重启前卡住的 processing 任务标 failed + 退积分 + 启 watchdog
+    try:
+        from app.api.video_clone_v2 import cleanup_stale_v2_jobs, v2_watchdog_loop
+        n2 = cleanup_stale_v2_jobs()
+        if n2:
+            log_info(f"V2启动清理: {n2} 个残留 processing 任务已标 failed + 退积分")
+        import asyncio as _asyncio
+        _asyncio.create_task(v2_watchdog_loop())
+        log_info("V2 watchdog 已启动(每5分钟检查卡死任务)")
+    except Exception as e:
+        log_error(f"v2 cleanup/watchdog startup failed: {e}")
     # 启动时跑一次超时订单取消，再启后台 10 分钟循环
     try:
         from app.services.order_gc import cancel_expired_pending_orders, order_gc_loop

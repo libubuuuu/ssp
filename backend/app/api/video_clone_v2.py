@@ -1216,3 +1216,91 @@ async def generate_v2_prompt(
         f"model={used_model} desc_len={len(req.user_description)} out_len={len(text)}"
     )
     return GenerateV2PromptResponse(generated_prompt=text, model=used_model, region=region)
+
+
+# ─── 启动清理 & Watchdog ────────────────────────────────────────────────────────
+
+_V2_STUCK_THRESHOLD_SEC = 30 * 60  # 超过 30 分钟仍 processing → 判定卡死
+
+
+def cleanup_stale_v2_jobs() -> int:
+    """启动时把所有 status=processing 的 V2 任务标 failed + 退积分。
+    服务重启时协程已死，这些任务永远不会自行结束。
+    返回清理数量。
+    """
+    from app.services.billing import add_credits
+    cleaned = 0
+    try:
+        with get_db() as conn:
+            rows = conn.execute(
+                "SELECT id, user_id, total_credits_charged FROM video_clone_v2_jobs "
+                "WHERE status = 'processing'"
+            ).fetchall()
+            for row in rows:
+                job_id, user_id, credits = row[0], row[1], int(row[2] or 0)
+                conn.execute(
+                    "UPDATE video_clone_v2_jobs SET status='failed', "
+                    "error_step='unexpected', error_message='服务重启时任务中断，已自动退还积分', "
+                    "updated_at=datetime('now') WHERE id=?",
+                    (job_id,),
+                )
+                conn.commit()
+                if credits > 0 and user_id:
+                    try:
+                        add_credits(user_id, credits, reason="task_refund",
+                                    ref_id=job_id, module="aiview/seedance-v2")
+                    except Exception as re:
+                        log_error(f"[V2-cleanup] 退积分失败 job={job_id}: {re}")
+                cleaned += 1
+                log_info(f"[V2-cleanup] 清理卡死任务 job={job_id} user={user_id} credits={credits}")
+    except Exception as e:
+        log_error(f"[V2-cleanup] 启动清理异常: {e}")
+    return cleaned
+
+
+async def v2_watchdog_loop() -> None:
+    """每 5 分钟扫一次：超过 30 分钟仍 processing 的任务标 failed + 退积分 + 推微信。"""
+    from app.services.billing import add_credits
+    while True:
+        await asyncio.sleep(300)
+        try:
+            now_iso = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+            with get_db() as conn:
+                rows = conn.execute(
+                    "SELECT id, user_id, total_credits_charged, created_at "
+                    "FROM video_clone_v2_jobs WHERE status='processing' "
+                    "AND (julianday('now') - julianday(created_at)) * 86400 > ?",
+                    (_V2_STUCK_THRESHOLD_SEC,),
+                ).fetchall()
+                for row in rows:
+                    job_id, user_id, credits, created_at = row[0], row[1], int(row[2] or 0), row[3]
+                    conn.execute(
+                        "UPDATE video_clone_v2_jobs SET status='failed', "
+                        "error_step='timeout', error_message='任务超时(>30分钟)，已自动退还积分', "
+                        "updated_at=datetime('now') WHERE id=?",
+                        (job_id,),
+                    )
+                    conn.commit()
+                    if credits > 0 and user_id:
+                        try:
+                            add_credits(user_id, credits, reason="task_refund",
+                                        ref_id=job_id, module="aiview/seedance-v2")
+                        except Exception as re:
+                            log_error(f"[V2-watchdog] 退积分失败 job={job_id}: {re}")
+                    log_info(f"[V2-watchdog] 超时任务已清理 job={job_id} user={user_id} credits={credits}")
+                    try:
+                        from app.services.alert_service import push_alert, format_alert
+                        push_alert(
+                            "⚠️ 视频复刻任务卡死已自动清理",
+                            format_alert(
+                                problem=f"job={job_id[:12]} 超过30分钟仍processing，已标失败退积分",
+                                feature="视频复刻 V2",
+                                details=f"user={user_id}\ncredits退还={credits}\ncreated={created_at}",
+                            ),
+                            alert_key="v2_stuck_job",
+                            cooldown=300,
+                        )
+                    except Exception:
+                        pass
+        except Exception as e:
+            log_error(f"[V2-watchdog] 异常: {e}")
