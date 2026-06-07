@@ -300,16 +300,21 @@ async def _run_aiview_image_job(params: dict, aiview_model: str = None, _retry: 
     if sub.get("error"):
         raise Exception(sub["error"])
     rid = sub["request_id"]
+    import time as _time
+    _t0 = _time.time()
     for _ in range(450):  # 15 分钟(部分任务耗时 >10min)
         await asyncio.sleep(2)
         st = await service.query(rid)
         if st.get("status") == "completed" and st.get("image_url"):
+            _elapsed = int(_time.time() - _t0)
+            log_info(f"[AIVIEW-IMG] completed rid={rid} duration={_elapsed}s url={st['image_url'][:60]}")
             return {"image_url": st["image_url"], "type": "image",
                     "model": params.get("model") or "aiview-pro"}
         if st.get("status") == "failed":
             err_msg = st.get("error") or "生成失败"
+            _elapsed = int(_time.time() - _t0)
             if _retry == 0:
-                log_info(f"[AIVIEW-IMG] attempt 1 failed ({err_msg[:60]}), auto-retrying in 3s...")
+                log_info(f"[AIVIEW-IMG] attempt 1 failed ({_elapsed}s) ({err_msg[:60]}), auto-retrying in 3s...")
                 await asyncio.sleep(3)
                 return await _run_aiview_image_job(params, aiview_model=aiview_model, _retry=1)
             _aiview_failure_alert(err_msg, params)
