@@ -16,8 +16,13 @@ _REASON_LABEL = {
     "recharge_manual":     "充值",
     "recharge_wx":         "微信充值",
     "recharge_alipay":     "支付宝充值",
+    "recharge_hupijiao":   "虎皮椒充值",
+    "register_bonus":      "注册赠送",
     "admin_adjust":        "管理员调整",
     "system_compensation": "系统补偿",
+    "init_ledger_backfill":     "历史补录",
+    "admin_restore_db_corruption_20260523": "系统补偿",
+    "ledger_correction_20260524": "账本修正",
 }
 
 
@@ -51,9 +56,24 @@ async def get_ledger(
         )
         rows = cursor.fetchall()
 
+    _MODULE_LABEL = {
+        "aiview/gpt-image-2":       "AI 图片（标准）",
+        "aiview/aiview-pro":         "AI 图片（专业）",
+        "aiview/seedance-2-0-fast":  "AI 视频复刻",
+        "video/clone-v2":            "AI 视频复刻",
+        "payment/hupijiao":          "虎皮椒支付",
+        "image/style":               "AI 图片",
+        "image/multi-reference":     "AI 图片（多参考）",
+        "video/image-to-video":      "AI 视频",
+        "video/clone":               "AI 视频复刻",
+        "video/general":             "AI 爆款视频",
+    }
+
     records = []
     for row in rows:
         reason = row[3] or ""
+        raw_module = row[5] or ""
+        module_label = _MODULE_LABEL.get(raw_module) or (raw_module.split("/", 1)[-1] if "/" in raw_module else raw_module) or None
         records.append({
             "id":           row[0],
             "delta":        row[1],
@@ -61,7 +81,7 @@ async def get_ledger(
             "reason":       reason,
             "label":        _REASON_LABEL.get(reason, reason),
             "ref_id":       row[4],
-            "module":       row[5],
+            "module":       module_label,
             "created_at":   row[6],   # unix timestamp float
         })
 
