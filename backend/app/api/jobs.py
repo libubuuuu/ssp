@@ -1879,24 +1879,41 @@ async def _execute_job(job_id: str):
         try:
             result = await asyncio.wait_for(_dispatch(), timeout=_timeout_sec)
 
-            # BUG-2: 归档 fal URL → 本地 /uploads(防 fal.media 7-30 天过期)
-            try:
-                from app.services.media_archiver import archive_url
-                uid = job.get("user_numeric_id") or job.get("user_id") or "anon"
-                if result.get("image_url"):
-                    result["image_url"] = await archive_url(result["image_url"], uid, "image")
-                if result.get("video_url"):
-                    result["video_url"] = await archive_url(result["video_url"], uid, "video")
-            except Exception as arch_err:
-                print(f"archive failed (continuing with fal URL): {arch_err}")
+            # 图片任务：先让用户看到，后台异步归档(归档阻塞最多 69s，不应卡用户)
+            # 视频任务：仍同步归档(视频 URL 更容易过期，且用户已等很久)
+            _is_image = job.get("type") == "image"
+            uid = job.get("user_numeric_id") or job.get("user_id") or "anon"
+
+            if not _is_image:
+                # 视频：同步归档
+                try:
+                    from app.services.media_archiver import archive_url
+                    if result.get("image_url"):
+                        result["image_url"] = await archive_url(result["image_url"], uid, "image")
+                    if result.get("video_url"):
+                        result["video_url"] = await archive_url(result["video_url"], uid, "video")
+                except Exception as arch_err:
+                    print(f"archive failed (continuing with original URL): {arch_err}")
 
             job["status"] = "completed"
             job["result"] = result
             job["finished_at"] = time.time()
-            if job.get("type") == "image":
+            if _is_image:
                 _t2 = int(job["finished_at"] - job.get("created_at", job["finished_at"]))
                 _t1 = result.get("_t1") or _t2
-                log_info(f"[IMG-TIMING] job={job['id']} T1(提交→拿图)={_t1}s T2(提交→处理完成)={_t2}s 差值={_t2-_t1}s")
+                log_info(f"[IMG-TIMING] job={job['id']} T1(提交→拿图)={_t1}s T2(提交→处理完成)={_t2}s(已异步归档)")
+                # 图片：后台异步归档，完成后静默替换 URL
+                async def _bg_archive(j=job, r=result, u=uid):
+                    try:
+                        from app.services.media_archiver import archive_url as _au
+                        if r.get("image_url"):
+                            archived = await _au(r["image_url"], u, "image")
+                            j["result"]["image_url"] = archived
+                            _save_jobs()
+                            log_info(f"[IMG-ARCHIVE] job={j['id']} archived OK -> {archived[:60]}")
+                    except Exception as ae:
+                        log_error(f"[IMG-ARCHIVE] job={j['id']} failed: {ae}")
+                create_tracked_task(_bg_archive())
             # 写历史记录
             try:
                 uid = job.get("user_numeric_id")
