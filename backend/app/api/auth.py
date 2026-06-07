@@ -532,51 +532,86 @@ import time as _time
 from datetime import datetime
 
 # 验证码缓存（内存，5 分钟过期）
-_EMAIL_CODES: dict = {}  # {email: {code, expires_at, purpose}}
+_EMAIL_CODES: dict = {}  # {email: {code, expires_at, purpose, sent_at, daily_count, day}}
 
 
-def _send_email_code(email: str, code: str, purpose: str = "verify") -> bool:
-    """用 Resend 发送验证码邮件"""
+def _send_email_code(email: str, code: str, purpose: str = "verify") -> tuple[bool, str]:
+    """用 Resend 发送验证码邮件。返回 (成功, 错误原因)。"""
     api_key = os.environ.get("RESEND_API_KEY", "")
     from_email = os.environ.get("FROM_EMAIL", "onboarding@resend.dev")
     if not api_key:
         print(f"[WARN] 未配置 RESEND_API_KEY，验证码打印到控制台: {email} → {code}")
-        return True  # 开发模式
-    
+        return True, ""
+
     try:
         import resend
         resend.api_key = api_key
-        
+
         subject_map = {
             "register": "【AI Lixiao】注册验证码",
             "login": "【AI Lixiao】登录验证码",
             "reset": "【AI Lixiao】密码重置验证码",
             "verify": "【AI Lixiao】邮箱验证码",
         }
-        
+
         html = f"""
 <div style="font-family:sans-serif;max-width:500px;margin:40px auto;padding:40px;background:#fff;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.08);">
   <h2 style="color:#0d0d0d;margin:0 0 20px 0;font-weight:500;">AI Lixiao</h2>
   <p style="color:#666;line-height:1.6;">你的验证码是：</p>
   <div style="font-size:2.5rem;font-weight:700;color:#0d0d0d;letter-spacing:0.5rem;padding:20px;background:#f5f3ed;border-radius:12px;text-align:center;margin:20px 0;">{code}</div>
   <p style="color:#888;font-size:0.9rem;">验证码 5 分钟内有效，请勿泄露。</p>
-  <p style="color:#aaa;font-size:0.8rem;margin-top:30px;">如非本人操作，请忽略此邮件。</p>
+  <p style="color:#aaa;font-size:0.8rem;margin-top:20px;">如未收到请检查垃圾邮件/垃圾箱。如非本人操作，请忽略此邮件。</p>
 </div>
 """
-        
-        params = {
+
+        resp = resend.Emails.send({
             "from": f"AI Lixiao <{from_email}>",
             "to": [email],
             "subject": subject_map.get(purpose, "验证码"),
             "html": html,
-        }
-        
-        resend.Emails.send(params)
+        })
+        # 检查返回的每日/月度配额，低于阈值时推告警
+        try:
+            hdrs = getattr(resp, "http_headers", {}) or {}
+            daily_left = int(hdrs.get("x-resend-daily-quota", 9999))
+            monthly_left = int(hdrs.get("x-resend-monthly-quota", 9999))
+            if daily_left <= 20 or monthly_left <= 50:
+                from app.services.alert_service import push_alert, format_alert
+                push_alert(
+                    f"⚠️ Resend 邮件配额告急（日剩{daily_left}/月剩{monthly_left}）",
+                    format_alert(
+                        problem=f"每日剩余 {daily_left} 封，月度剩余 {monthly_left} 封",
+                        feature="邮箱验证码发送",
+                        details="请尽快升级 Resend 套餐(resend.com)或配置备用邮件服务\n当前套餐配额耗尽后所有用户无法收到验证码",
+                    ),
+                    alert_key="resend_quota_low",
+                    cooldown=3600,
+                )
+        except Exception:
+            pass
         print(f"[OK] 邮件已发送: {email} / {purpose}")
-        return True
+        return True, ""
     except Exception as e:
-        print(f"[ERR] 邮件发送失败: {e}")
-        return False
+        err_str = str(e)
+        print(f"[ERR] 邮件发送失败: {err_str}")
+        # 配额耗尽单独告警
+        if "quota" in err_str.lower() or "429" in err_str or "rate" in err_str.lower():
+            try:
+                from app.services.alert_service import push_alert, format_alert
+                push_alert(
+                    "🔴 Resend 配额耗尽，验证码无法发送！",
+                    format_alert(
+                        problem=err_str[:120],
+                        feature="邮箱验证码发送",
+                        details="所有用户当前无法收到验证码，请立即升级 Resend 套餐",
+                    ),
+                    alert_key="resend_quota_exhausted",
+                    cooldown=1800,
+                )
+            except Exception:
+                pass
+            return False, "邮件服务繁忙，请稍后重试或联系客服"
+        return False, "邮件发送失败，请检查邮箱是否正确或稍后重试"
 
 
 class SendCodeRequest(BaseModel):
@@ -587,30 +622,38 @@ class SendCodeRequest(BaseModel):
 @router.post("/send-code")
 async def send_email_code(req: SendCodeRequest):
     """发送邮箱验证码"""
-    # 基础校验
     if not req.email or "@" not in req.email:
         raise HTTPException(status_code=400, detail="邮箱格式错误")
-    
-    # 频率限制：同一邮箱 60 秒内只能发 1 次
-    cache = _EMAIL_CODES.get(req.email)
-    if cache and cache.get("sent_at", 0) + 60 > _time.time():
-        wait = int(cache["sent_at"] + 60 - _time.time())
+
+    now = _time.time()
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    cache = _EMAIL_CODES.get(req.email, {})
+
+    # 60 秒内不能重发
+    if cache.get("sent_at", 0) + 60 > now:
+        wait = int(cache["sent_at"] + 60 - now)
         raise HTTPException(status_code=429, detail=f"请 {wait} 秒后再试")
-    
-    # 生成 6 位数字码
+
+    # 每个邮箱每天最多发 5 次，防止单用户耗尽全局配额
+    daily_count = cache.get("daily_count", 0) if cache.get("day") == today else 0
+    if daily_count >= 5:
+        raise HTTPException(status_code=429, detail="今日发送次数已达上限（5次），请明天再试或联系客服")
+
     code = str(random.randint(100000, 999999))
     _EMAIL_CODES[req.email] = {
         "code": code,
-        "expires_at": _time.time() + 300,  # 5 分钟
-        "sent_at": _time.time(),
+        "expires_at": now + 300,
+        "sent_at": now,
         "purpose": req.purpose,
+        "daily_count": daily_count + 1,
+        "day": today,
     }
-    
-    # 发送
-    if not _send_email_code(req.email, code, req.purpose):
-        raise HTTPException(status_code=500, detail="邮件发送失败，请稍后重试")
-    
-    return {"success": True, "message": "验证码已发送"}
+
+    ok, err_msg = _send_email_code(req.email, code, req.purpose)
+    if not ok:
+        raise HTTPException(status_code=500, detail=err_msg or "邮件发送失败，请稍后重试")
+
+    return {"success": True, "message": "验证码已发送，若未收到请检查垃圾邮件箱"}
 
 
 class VerifyCodeLoginRequest(BaseModel):
