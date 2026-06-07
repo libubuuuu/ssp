@@ -207,6 +207,15 @@ async def internal_active_jobs():
     """deploy.sh drain 专用：返回当前进程内正在运行的任务数，不需要鉴权。"""
     from app.api.jobs import JOBS
     active = sum(1 for j in JOBS.values() if j.get("status") in ("running", "pending"))
+    # V2 视频复刻任务也算进去，防止部署时杀死正在跑的 Seedance 协程
+    try:
+        with get_db() as _c:
+            v2_active = _c.execute(
+                "SELECT COUNT(*) FROM video_clone_v2_jobs WHERE status='processing'"
+            ).fetchone()[0]
+        active += v2_active
+    except Exception:
+        pass
     return {"active_jobs": active}
 
 # startup / shutdown 已由顶部 @asynccontextmanager 管理(取代 deprecated @app.on_event)
