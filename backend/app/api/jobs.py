@@ -300,8 +300,8 @@ async def _run_aiview_image_job(params: dict, aiview_model: str = None, _retry: 
     if sub.get("error"):
         raise Exception(sub["error"])
     rid = sub["request_id"]
-    for _ in range(180):  # 15 分钟(部分任务耗时 >10min)
-        await asyncio.sleep(5)
+    for _ in range(450):  # 15 分钟(部分任务耗时 >10min)
+        await asyncio.sleep(2)
         st = await service.query(rid)
         if st.get("status") == "completed" and st.get("image_url"):
             return {"image_url": st["image_url"], "type": "image",
