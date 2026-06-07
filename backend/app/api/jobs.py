@@ -250,6 +250,26 @@ async def _shrink_ref_for_aiview(url: str) -> str:
         return url
 
 
+def _aiview_failure_alert(err_msg: str, params: dict):
+    """aiview 重试后仍失败时推微信告警(5 分钟冷却)。"""
+    try:
+        from app.services.alert_service import push_alert, format_alert
+        prompt_preview = (params.get("prompt") or "")[:40]
+        refs = len(params.get("reference_images") or [])
+        push_alert(
+            "🔴 aiview 图片生成失败（重试后仍失败）",
+            format_alert(
+                problem=err_msg,
+                feature="AI 图片生成（aiview.club）",
+                details=f"prompt: {prompt_preview!r}\n参考图: {refs} 张\n请检查 aiview.club 服务状态",
+            ),
+            alert_key="aiview_image_fail",
+            cooldown=300,
+        )
+    except Exception:
+        pass
+
+
 async def _run_aiview_image_job(params: dict, aiview_model: str = None, _retry: int = 0):
     """走 aiview.club 文生图(异步 提交→轮询)。
     aiview_model=None → seedream(豆包专业版); aiview_model="gpt-image-2" → gpt2 标准模式。
@@ -283,7 +303,9 @@ async def _run_aiview_image_job(params: dict, aiview_model: str = None, _retry: 
                 log_info(f"[AIVIEW-IMG] attempt 1 failed ({err_msg[:60]}), auto-retrying in 3s...")
                 await asyncio.sleep(3)
                 return await _run_aiview_image_job(params, aiview_model=aiview_model, _retry=1)
+            _aiview_failure_alert(err_msg, params)
             raise Exception(err_msg)
+    _aiview_failure_alert("timeout (15 min)", params)
     raise Exception("timeout (15 min)")
 
 
