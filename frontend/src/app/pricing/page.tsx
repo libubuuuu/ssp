@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import { adjustLocalUserCredits } from "@/lib/userState";
+import { QRCodeSVG } from "qrcode.react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 interface Package { id: string; name: string; credits: number; price: number; discount: string; description: string; }
@@ -78,7 +79,6 @@ export default function PricingPage() {
         if (data.payment_url) {
           setProcessingOrder(data.order_id);
           setPaymentUrl(data.payment_url);
-          window.open(data.payment_url, "_blank");
           setTimeout(() => pollOrderStatus(data.order_id, token, data.amount), 1000);
         } else {
           setProcessingOrder(null);
@@ -171,18 +171,19 @@ export default function PricingPage() {
           <div style={{ background: "#fff", borderRadius: 20, maxWidth: 440, width: "100%", padding: "2rem", textAlign: "center" }}>
             {paymentUrl ? (
               <>
-                <h2 style={{ margin: "0 0 0.75rem", fontSize: "1.2rem", fontWeight: 500 }}>支付窗口已打开</h2>
-                <div style={{ fontSize: "0.85rem", color: "#666", marginBottom: "1.5rem" }}>请在新标签页完成支付，支付成功后积分将自动到账</div>
-                <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 10, padding: "1rem", marginBottom: "1rem", fontSize: "0.85rem", color: "#166534" }}>
-                  ⏳ 等待支付确认中…
+                <h2 style={{ margin: "0 0 0.5rem", fontSize: "1.2rem", fontWeight: 500 }}>扫码付款</h2>
+                <p style={{ fontSize: "0.82rem", color: "#888", margin: "0 0 1.25rem" }}>
+                  微信 / 支付宝扫码，或截图保存后在「扫一扫」中选择相册识别
+                </p>
+                <div style={{ display: "inline-block", padding: "12px", background: "#fff", border: "1px solid #eee", borderRadius: 12, marginBottom: "1rem" }}>
+                  <QRCodeSVG value={paymentUrl} size={200} />
                 </div>
-                <button onClick={() => window.open(paymentUrl, "_blank")}
-                  style={{ width: "100%", padding: "0.75rem", background: "#0d0d0d", color: "#fff", border: "none", borderRadius: 10, cursor: "pointer", fontSize: "0.9rem", fontWeight: 500, marginBottom: "0.75rem" }}>
-                  重新打开支付页
-                </button>
+                <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 10, padding: "0.75rem 1rem", marginBottom: "1rem", fontSize: "0.83rem", color: "#166534" }}>
+                  ⏳ 等待支付确认中，支付成功后积分自动到账
+                </div>
                 <button onClick={() => { setProcessingOrder(null); setPaymentUrl(null); setLoading(false); }}
                   style={{ width: "100%", padding: "0.7rem", background: "#f5f5f0", border: "none", borderRadius: 10, cursor: "pointer", fontSize: "0.88rem", color: "#333" }}>
-                  关闭（支付成功后积分自动到账）
+                  关闭
                 </button>
               </>
             ) : (
