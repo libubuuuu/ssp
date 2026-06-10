@@ -782,8 +782,7 @@ async def _process_v2_job_inner(job_id: str) -> None:
             error_message=str(e)[:500],
             segments_results=json.dumps([result], ensure_ascii=False),
         )
-        # 已 fal 已扣钱,不退(用户已享受 fal 服务,只是归档失败)
-        # 实际生产中可以考虑退,但这是边角 case,A2 不做
+        await _refund_full(job)
         return
 
     # 5. 写日志:fal 实扣
@@ -1390,7 +1389,7 @@ async def _process_ultimate(
             error_message=str(e)[:500],
             segments_results=json.dumps(results, ensure_ascii=False),
         )
-        # 拼接失败属归档侧 — fal 已扣,仅退失败段已退;主路径不退
+        await _refund_full(job)
         return
 
     # 6. 双版本归档(用 _archive_local_dual,不需要再下 fal)
@@ -1403,6 +1402,7 @@ async def _process_ultimate(
             error_message=str(e)[:500],
             segments_results=json.dumps(results, ensure_ascii=False),
         )
+        await _refund_full(job)
         return
 
     # 7. 写入 segments_results 含 wm output URL(单段路径用了同样字段命名)
