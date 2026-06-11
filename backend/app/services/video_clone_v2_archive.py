@@ -25,7 +25,6 @@ from .video_clone_v2_watermark import emit_dual_versions, DEFAULT_STYLE
 V2_UPLOADS_ROOT = Path("/opt/ssp/uploads/video_clone_v2")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://ailixiao.com").rstrip("/")
 DOWNLOAD_TIMEOUT = 120  # fal.media 大视频留足下载窗口
-_COS_URL_TTL = 30 * 24 * 3600  # 30 天预签名
 
 
 async def _download_to_local(url: str, dest_path: Path) -> int:
@@ -47,18 +46,21 @@ async def _download_to_local(url: str, dest_path: Path) -> int:
 
 
 async def upload_v2_file_to_cos(local_path: str, job_id: str) -> Optional[str]:
-    """上传单个本地 mp4 到 COS，删除本地文件，返回预签名 URL。失败返回 None。"""
+    """上传单个本地 mp4 到 COS，删除本地文件，返回永久 COS 地址（不含签名）。失败返回 None。
+
+    返回格式: https://{bucket}.cos.{region}.myqcloud.com/video_clone_v2/{job_id}/{filename}
+    查询时由 regenerate_cos_url() 实时签名，DB 里存的地址永不过期。
+    """
     filename = os.path.basename(local_path)
     cos_key = f"video_clone_v2/{job_id}/{filename}"
 
     def _sync_upload() -> str:
         from .cos_upload import _make_client
         client, bucket = _make_client()
+        region = os.environ.get("STORAGE_REGION", "ap-guangzhou")
         with open(local_path, "rb") as f:
             client.put_object(Bucket=bucket, Body=f, Key=cos_key)
-        return client.get_presigned_url(
-            Method="GET", Bucket=bucket, Key=cos_key, Expired=_COS_URL_TTL
-        )
+        return f"https://{bucket}.cos.{region}.myqcloud.com/{cos_key}"
 
     try:
         url = await asyncio.get_event_loop().run_in_executor(None, _sync_upload)
