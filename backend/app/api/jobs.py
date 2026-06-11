@@ -50,6 +50,12 @@ JOBS_DIR = JOBS_FILE.parent
 MAX_CONCURRENT = 5
 _semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 
+# ── 全局 polling_queue 内存映射 ──────────────────────────────────────────
+# poll_id → asyncio.Event  (harvester 完成时 set)
+# poll_id → dict           (harvester 写入结果)
+_poll_events: dict = {}
+_poll_results: dict = {}
+
 # ── 全局后台任务注册表 ──────────────────────────────────────────────────
 # 所有 asyncio.create_task 的后台任务都注册到这里
 # uvicorn shutdown 时等待所有任务完成，彻底防止任务被强杀
@@ -76,6 +82,118 @@ async def wait_all_bg_tasks(timeout: float = 600.0) -> None:
         log_info("shutdown: 所有后台任务已完成")
     except asyncio.TimeoutError:
         log_info(f"shutdown: 超时({timeout}s)，强制退出（积分已自动退还）")
+
+
+# ── polling_queue DB 工具函数 ─────────────────────────────────────────────
+
+def _pq_insert(poll_id: str, job_id: str, request_id: str,
+               query_type: str, endpoint_hint: str = None, user_id: str = None):
+    from app.database import get_db
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO polling_queue (id, job_id, request_id, query_type, endpoint_hint, user_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (poll_id, job_id, request_id, query_type, endpoint_hint, user_id),
+        )
+        conn.commit()
+
+
+def _pq_update(poll_id: str, status: str, result_json: str = None, error_text: str = None):
+    from app.database import get_db
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE polling_queue SET status=?, result_json=?, error_text=?, "
+            "last_polled_at=CURRENT_TIMESTAMP, poll_count=poll_count+1 WHERE id=?",
+            (status, result_json, error_text, poll_id),
+        )
+        conn.commit()
+
+
+def _pq_delete(poll_id: str):
+    from app.database import get_db
+    with get_db() as conn:
+        conn.execute("DELETE FROM polling_queue WHERE id=?", (poll_id,))
+        conn.commit()
+
+
+def _pq_load_polling() -> list:
+    from app.database import get_db
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, job_id, request_id, query_type, endpoint_hint, user_id, poll_count "
+            "FROM polling_queue WHERE status='polling' ORDER BY created_at"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ── 全局 harvester：每3秒批量轮询所有 pending 任务 ────────────────────────
+
+async def _harvest_loop():
+    """统一轮询器：从 DB 读所有 status=polling 的任务，批量查第三方，完成时通知等待协程。"""
+    from app.services.aiview_service import get_aiview_image_service
+    import json as _json
+
+    while True:
+        await asyncio.sleep(3)
+        items = _pq_load_polling()
+        if not items:
+            continue
+
+        for item in items:
+            poll_id    = item["id"]
+            query_type = item["query_type"]
+            request_id = item["request_id"]
+            try:
+                st: dict = {}
+                if query_type == "aiview_image":
+                    svc = get_aiview_image_service()
+                    st = await svc.query(request_id)
+                elif query_type == "aiview_video":
+                    svc = get_aiview_image_service()
+                    st = await svc.query_video(request_id)
+                elif query_type == "fal_video":
+                    svc = get_video_service()
+                    st = await svc.get_task_status(request_id, endpoint_hint=item.get("endpoint_hint"))
+                else:
+                    continue
+
+                status = st.get("status")
+                if status == "completed":
+                    _pq_update(poll_id, "completed", result_json=_json.dumps(st))
+                    event = _poll_events.get(poll_id)
+                    if event:
+                        _poll_results[poll_id] = {"ok": True, "data": st}
+                        event.set()
+                elif status == "failed":
+                    err = st.get("error", "第三方返回失败")
+                    _pq_update(poll_id, "failed", error_text=err)
+                    event = _poll_events.get(poll_id)
+                    if event:
+                        _poll_results[poll_id] = {"ok": False, "error": err}
+                        event.set()
+                else:
+                    # 仍在处理中，只更新 last_polled_at
+                    _pq_update(poll_id, "polling")
+
+            except Exception as e:
+                log_warning(f"[harvest] poll_id={poll_id} query_type={query_type} 查询异常: {e}")
+
+
+def cleanup_orphan_polling_queue():
+    """启动时清理孤儿 polling_queue 记录(进程上次异常退出留下的 status=polling 行)。
+    返回清理数量。"""
+    from app.database import get_db
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, job_id, user_id FROM polling_queue WHERE status='polling'"
+        ).fetchall()
+        n = len(rows)
+        if n:
+            conn.execute("UPDATE polling_queue SET status='orphan' WHERE status='polling'")
+            conn.commit()
+            log_info(f"[polling_queue] 启动清理 {n} 条孤儿记录(标 orphan,对应 job 由 cleanup_orphan_jobs 处理)")
+    return n
+
 
 def _load_jobs():
     """读取 jobs.json,加共享锁(LOCK_SH)避免读到正在写的半量"""
@@ -280,11 +398,11 @@ def _aiview_failure_alert(err_msg: str, params: dict):
 
 
 async def _run_aiview_image_job(params: dict, aiview_model: str = None, _retry: int = 0):
-    """走 aiview.club 文生图(异步 提交→轮询)。
+    """走 aiview.club 文生图(提交→入 polling_queue→harvester 统一轮询)。
     aiview_model=None → seedream(豆包专业版); aiview_model="gpt-image-2" → gpt2 标准模式。
     _retry: 内部重试次数,最多 1 次(瞬时失败自动重投)。
     """
-    import asyncio
+    import uuid as _uuid
     from app.services.aiview_service import get_aiview_image_service
     service = get_aiview_image_service()
     if not service.is_available():
@@ -294,7 +412,6 @@ async def _run_aiview_image_job(params: dict, aiview_model: str = None, _retry: 
         log_info(f"[AIVIEW-IMG] model={aiview_model or 'seedream'} refs={len(refs)} prompt={(params.get('prompt') or '')[:40]!r}")
     if refs:
         refs = [await _shrink_ref_for_aiview(u) for u in refs]
-    # gpt-image-2 不传 size(resolution out of range);seedream 仍传 2K
     _size = None if aiview_model == "gpt-image-2" else "2K"
     import time as _time
     _t_job_start = params.get("_job_created_at") or _time.time()
@@ -303,18 +420,25 @@ async def _run_aiview_image_job(params: dict, aiview_model: str = None, _retry: 
         raise Exception(sub["error"])
     rid = sub["request_id"]
     _t_aiview_submit = _time.time()
-    for _ in range(450):  # 15 分钟(部分任务耗时 >10min)
-        await asyncio.sleep(2)
-        st = await service.query(rid)
-        if st.get("status") == "completed":
-            _t1 = int(_time.time() - _t_job_start)   # 用户提交 → 后端拿到图
-            _t_aiview = int(_time.time() - _t_aiview_submit)  # aiview 纯生成
-            log_info(f"[AIVIEW-IMG] completed rid={rid} T1(提交→拿图)={_t1}s aiview纯生成={_t_aiview}s url={st['image_url'][:60]}")
+
+    # 入 polling_queue，harvester 统一轮询（不再占用 semaphore 等待）
+    poll_id = _uuid.uuid4().hex
+    _pq_insert(poll_id, params.get("_job_id", ""), rid, "aiview_image",
+               user_id=params.get("_user_id"))
+    event = asyncio.Event()
+    _poll_events[poll_id] = event
+    try:
+        await asyncio.wait_for(event.wait(), timeout=900)  # 15 分钟兜底
+        res = _poll_results.pop(poll_id, {})
+        if res.get("ok"):
+            st = res["data"]
+            _t1 = int(_time.time() - _t_job_start)
+            _t_aiview = int(_time.time() - _t_aiview_submit)
+            log_info(f"[AIVIEW-IMG] completed rid={rid} T1={_t1}s aiview={_t_aiview}s url={st.get('image_url','')[:60]}")
             return {"image_url": st["image_url"], "type": "image",
-                    "model": params.get("model") or "aiview-pro",
-                    "_t1": _t1}
-        if st.get("status") == "failed":
-            err_msg = st.get("error") or "生成失败"
+                    "model": params.get("model") or "aiview-pro", "_t1": _t1}
+        else:
+            err_msg = res.get("error") or "生成失败"
             _elapsed = int(_time.time() - _t_aiview_submit)
             if _retry == 0:
                 log_info(f"[AIVIEW-IMG] attempt 1 failed ({_elapsed}s) ({err_msg[:60]}), auto-retrying in 3s...")
@@ -322,8 +446,12 @@ async def _run_aiview_image_job(params: dict, aiview_model: str = None, _retry: 
                 return await _run_aiview_image_job(params, aiview_model=aiview_model, _retry=1)
             _aiview_failure_alert(err_msg, params)
             raise Exception(err_msg)
-    _aiview_failure_alert("timeout (15 min)", params)
-    raise Exception("timeout (15 min)")
+    except asyncio.TimeoutError:
+        _aiview_failure_alert("timeout (15 min)", params)
+        raise Exception("timeout (15 min)")
+    finally:
+        _poll_events.pop(poll_id, None)
+        _pq_delete(poll_id)
 
 
 async def _run_image_job(params: dict):
@@ -372,9 +500,9 @@ async def _run_image_job(params: dict):
 
 
 async def _run_video_job(params: dict, job_type: str):
+    import uuid as _uuid
     service = get_video_service()
     if job_type == "video_i2v":
-        # 2026-05-13:之前 duration_sec 没传给 fal,kling 默认出 5s,用户点 10s 也只得 5s。
         duration_sec = int(params.get("duration_sec") or 5)
         r = await service.generate_from_image(
             params["image_url"], params.get("prompt", ""), params.get("tail_image_url"),
@@ -392,15 +520,26 @@ async def _run_video_job(params: dict, job_type: str):
     endpoint_tag = r.get("endpoint_tag", "edit")
     if not task_id:
         raise Exception("no task_id from fal")
-    for _ in range(120):
-        await asyncio.sleep(5)
-        status = await service.get_task_status(task_id, endpoint_hint=endpoint_tag)
-        st = status.get("status")
-        if st == "completed":
-            return {"video_url": status["video_url"], "type": "video"}
-        if st == "failed":
-            raise Exception(status.get("error", "fal task failed"))
-    raise Exception("timeout (10 min)")
+
+    # 入 polling_queue，harvester 统一轮询
+    poll_id = _uuid.uuid4().hex
+    _pq_insert(poll_id, params.get("_job_id", ""), task_id, "fal_video",
+               endpoint_hint=endpoint_tag, user_id=params.get("_user_id"))
+    event = asyncio.Event()
+    _poll_events[poll_id] = event
+    try:
+        await asyncio.wait_for(event.wait(), timeout=600)  # 10 分钟兜底
+        res = _poll_results.pop(poll_id, {})
+        if res.get("ok"):
+            st = res["data"]
+            return {"video_url": st["video_url"], "type": "video"}
+        else:
+            raise Exception(res.get("error") or "fal task failed")
+    except asyncio.TimeoutError:
+        raise Exception("timeout (10 min)")
+    finally:
+        _poll_events.pop(poll_id, None)
+        _pq_delete(poll_id)
 
 
 def _build_p118_seedance_prompt(scene: dict, overall: str, model_desc: str) -> str:
@@ -1831,6 +1970,7 @@ async def _run_ad_video_job(params: dict):
 
 
 async def _execute_job(job_id: str):
+    # semaphore 只限制并发提交数，不在等待第三方返回期间占槽
     async with _semaphore:
         job = JOBS.get(job_id)
         if not job:
@@ -1838,6 +1978,10 @@ async def _execute_job(job_id: str):
         job["status"] = "running"
         job["started_at"] = time.time()
         _save_jobs()
+        # 向 _run_*_job 注入 job_id / user_id，供其写入 polling_queue
+        job.setdefault("params", {})
+        job["params"]["_job_id"] = job_id
+        job["params"]["_user_id"] = job.get("user_id") or job.get("user_numeric_id")
         # 多段视频类任务给宽松上限,其余 10 分钟封顶;超时自动 failed + 退款
         _LONG_TYPES = {"video_general", "skill_generate", "video_clone", "script_to_video"}
         _timeout_sec = 1200 if job["type"] in _LONG_TYPES else 600

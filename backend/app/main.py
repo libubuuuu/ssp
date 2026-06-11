@@ -74,10 +74,16 @@ async def lifespan(app: FastAPI):
         log_error(f"V2 工作目录初始化失败: {e}")
     # P163: 服务重启时把 jobs.json 里 status=running 的孤儿 job 标 failed + 退积分
     try:
-        from app.api.jobs import cleanup_orphan_jobs_on_startup
+        from app.api.jobs import cleanup_orphan_jobs_on_startup, cleanup_orphan_polling_queue, _harvest_loop
         n = cleanup_orphan_jobs_on_startup()
         if n:
             log_info(f"启动清理: {n} 个孤儿 job 标 failed + 退积分")
+        n2 = cleanup_orphan_polling_queue()
+        if n2:
+            log_info(f"启动清理: {n2} 条孤儿 polling_queue 记录已标 orphan")
+        import asyncio as _asyncio
+        _asyncio.create_task(_harvest_loop())
+        log_info("polling_queue harvester 已启动(每3秒批量轮询)")
     except Exception as e:
         log_error(f"orphan cleanup failed at startup: {e}")
     # V2 视频复刻:把重启前卡住的 processing 任务标 failed + 退积分 + 启 watchdog

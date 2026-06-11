@@ -567,6 +567,26 @@ def init_db():
         )
         """)
 
+        # 第三方 API 轮询队列：提交后立即入表，全局 harvester 统一轮询
+        # 进程重启后 status=polling 的孤儿记录在启动时标 failed + 退积分
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS polling_queue (
+            id           TEXT PRIMARY KEY,
+            job_id       TEXT NOT NULL,
+            request_id   TEXT NOT NULL,
+            query_type   TEXT NOT NULL,
+            endpoint_hint TEXT,
+            user_id      TEXT,
+            status       TEXT DEFAULT 'polling',
+            created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+            last_polled_at TEXT,
+            poll_count   INTEGER DEFAULT 0,
+            result_json  TEXT,
+            error_text   TEXT
+        )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_polling_queue_status ON polling_queue(status)")
+
         # 创建索引优化查询性能
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
