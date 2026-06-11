@@ -32,7 +32,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.services.billing import check_user_credits, deduct_credits
 from app.services.content_filter import check_prompt
-from app.services.cos_upload import upload_to_cos
+from app.services.cos_upload import upload_to_cos, regenerate_cos_url
 from app.services.logger import log_info, log_error
 from app.api.jobs import create_tracked_task, count_user_active_jobs
 from app.services.upload_guard import read_bounded
@@ -816,8 +816,8 @@ async def get_job(
             "stage": r.get("stage", "pending"),
             "output_url": r.get("output_url"),
             # 2026-05-13 partial_completed:每段独立归档下载 URL
-            "watermarked_url": r.get("watermarked_url"),
-            "raw_url": r.get("raw_url"),
+            "watermarked_url": regenerate_cos_url(r.get("watermarked_url") or ""),
+            "raw_url": regenerate_cos_url(r.get("raw_url") or ""),
             "error": r.get("error"),
         })
 
@@ -837,9 +837,9 @@ async def get_job(
             "total_original": total_original,
         },
         "segments": seg_view,
-        "final_video_url": row["final_video_url"],
-        "final_video_url_watermarked": row["final_video_url_watermarked"],
-        "final_video_url_raw": row["final_video_url_raw"],
+        "final_video_url": regenerate_cos_url(row["final_video_url"] or ""),
+        "final_video_url_watermarked": regenerate_cos_url(row["final_video_url_watermarked"] or ""),
+        "final_video_url_raw": regenerate_cos_url(row["final_video_url_raw"] or ""),
         "total_credits_charged": row["total_credits_charged"],
         "total_credits_refunded": row["total_credits_refunded"],
         "error": row["error_message"],

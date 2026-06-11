@@ -34,7 +34,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from app.services.fal_service import get_image_service, get_video_service
-from app.services.cos_upload import upload_to_cos
+from app.services.cos_upload import upload_to_cos, regenerate_cos_url
 from app.services.billing import get_task_cost, check_user_credits, deduct_credits, add_credits, create_consumption_record
 from app.services.logger import log_info, log_warning, log_error  # P101: ad_video TTS+lipsync 日志
 from app.api.auth import get_current_user
@@ -306,7 +306,7 @@ async def _run_aiview_image_job(params: dict, aiview_model: str = None, _retry: 
     for _ in range(450):  # 15 分钟(部分任务耗时 >10min)
         await asyncio.sleep(2)
         st = await service.query(rid)
-        if st.get("status") == "completed" and st.get("image_url"):
+        if st.get("status") == "completed":
             _t1 = int(_time.time() - _t_job_start)   # 用户提交 → 后端拿到图
             _t_aiview = int(_time.time() - _t_aiview_submit)  # aiview 纯生成
             log_info(f"[AIVIEW-IMG] completed rid={rid} T1(提交→拿图)={_t1}s aiview纯生成={_t_aiview}s url={st['image_url'][:60]}")
@@ -395,9 +395,10 @@ async def _run_video_job(params: dict, job_type: str):
     for _ in range(120):
         await asyncio.sleep(5)
         status = await service.get_task_status(task_id, endpoint_hint=endpoint_tag)
-        if status.get("status") == "completed" and status.get("video_url"):
+        st = status.get("status")
+        if st == "completed":
             return {"video_url": status["video_url"], "type": "video"}
-        if status.get("status") == "failed":
+        if st == "failed":
             raise Exception(status.get("error", "fal task failed"))
     raise Exception("timeout (10 min)")
 
@@ -1662,9 +1663,10 @@ async def _run_ad_video_job(params: dict):
             for _ in range(180):
                 await asyncio.sleep(5)
                 st = await ad_video_models.poll_seedance_status(tid)
-                if st.get("status") == "completed" and st.get("video_url"):
+                s = st.get("status")
+                if s == "completed":
                     return st["video_url"]
-                if st.get("status") == "failed":
+                if s == "failed":
                     raise Exception(f"段 {idx+1}/{n_actual}: {st.get('error')}")
             raise Exception(f"段 {idx+1}/{n_actual}: 超时(15 min)")
 
@@ -2238,7 +2240,7 @@ def _v2_jobs_as_virtual_jobs(user_id: str) -> list:
             "finished_at": finished_ts,
             "module": "video/clone-v2",
             "result": {
-                "video_url": r["final_video_url_watermarked"] or r["final_video_url"],
+                "video_url": regenerate_cos_url(r["final_video_url_watermarked"] or r["final_video_url"] or ""),
             } if r["final_video_url_watermarked"] or r["final_video_url"] else None,
             "error": r["error_message"],
             "_session_id": f"v2_{r['id']}",
@@ -5292,10 +5294,11 @@ async def _run_video_general_job(params: dict) -> dict:
                 for _ in range(300):  # 25 分钟 (5s × 300)
                     await _aio.sleep(5)
                     st = await ad_video_models.poll_seedance_fast_r2v_status(tid)
-                    if st.get("status") == "completed" and st.get("video_url"):
+                    s = st.get("status")
+                    if s == "completed":
                         log_info(f"video_general seg {idx} Seedance r2v OK(attempt={attempt}) url={st['video_url'][:60]}")
                         return st["video_url"]
-                    if st.get("status") == "failed":
+                    if s == "failed":
                         raise Exception(f"seg {idx} Seedance r2v failed(attempt={attempt}): {st.get('error')}")
                 raise TimeoutError(f"seg {idx} 25 分钟轮询无结果(attempt={attempt})")
 
