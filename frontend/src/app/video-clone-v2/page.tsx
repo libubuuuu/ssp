@@ -475,7 +475,7 @@ export default function VideoCloneV2Page() {
       let n = 0;
       return images.filter(img => img.role === "person").map(() => `@人物${++n}`).join("、");
     })();
-    if (personRefs) text += `上传的${personRefs} 脸上的涂鸦去掉，换成真实的人物形象。`;
+    if (personRefs) text += `上传的${personRefs} 脸上的涂鸦去掉，脸部颜色要和身体的皮肤颜色对得上，换成真实的人物形象，头要小于身体。`;
     // 直接用本地拼好的文本，不再经过 AI 改写
     setPrompt(text);
     if (false) {  // 保留原来的 AI 调用结构供将来参考，当前不执行

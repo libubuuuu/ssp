@@ -1109,7 +1109,7 @@ async def _vision_classify_swap(image_refs: list, region: str = "CN") -> str:
     # ── 人物图：换脸/换人物形象 ──────────────────────────────────────────
     if person_refs:
         refs_joined = "、".join(r["ref"] for r in person_refs)
-        parts.append(f"上传的{refs_joined} 脸上的涂鸦去掉，换成真实的人物形象")
+        parts.append(f"上传的{refs_joined} 脸上的涂鸦去掉，脸部颜色要和身体的皮肤颜色对得上，换成真实的人物形象，头要小于身体")
 
     return "，".join(parts) + "。" if parts else ""
 
