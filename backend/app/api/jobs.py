@@ -2025,21 +2025,9 @@ async def _execute_job(job_id: str):
         try:
             result = await asyncio.wait_for(_dispatch(), timeout=_timeout_sec)
 
-            # 图片任务：先让用户看到，后台异步归档(归档阻塞最多 69s，不应卡用户)
-            # 视频任务：仍同步归档(视频 URL 更容易过期，且用户已等很久)
+            # 图片/视频：先让用户看到上游原始 URL，后台异步归档后替换为我们自己的 URL
             _is_image = job.get("type") == "image"
             uid = job.get("user_numeric_id") or job.get("user_id") or "anon"
-
-            if not _is_image:
-                # 视频：同步归档
-                try:
-                    from app.services.media_archiver import archive_url
-                    if result.get("image_url"):
-                        result["image_url"] = await archive_url(result["image_url"], uid, "image")
-                    if result.get("video_url"):
-                        result["video_url"] = await archive_url(result["video_url"], uid, "video")
-                except Exception as arch_err:
-                    print(f"archive failed (continuing with original URL): {arch_err}")
 
             job["status"] = "completed"
             job["result"] = result
@@ -2048,28 +2036,31 @@ async def _execute_job(job_id: str):
                 _t2 = int(job["finished_at"] - job.get("created_at", job["finished_at"]))
                 _t1 = result.get("_t1") or _t2
                 log_info(f"[IMG-TIMING] job={job['id']} T1(提交→拿图)={_t1}s T2(提交→处理完成)={_t2}s(已异步归档)")
-                # 图片：后台异步归档，完成后静默替换 URL（含重试，保证替换）
-                async def _bg_archive(j=job, r=result, u=uid):
-                    from app.services.media_archiver import archive_url as _au
-                    original_url = r.get("image_url")
+
+            # 后台异步归档（图片/视频统一），完成后静默替换 URL（含重试，保证替换）
+            async def _bg_archive(j=job, r=result, u=uid, is_img=_is_image):
+                from app.services.media_archiver import archive_url as _au
+                delays = [0, 30, 90]  # 立即 / 30s 后 / 90s 后，共 3 次
+                for key, kind in (("image_url", "image"), ("video_url", "video")):
+                    original_url = r.get(key)
                     if not original_url:
-                        return
-                    delays = [0, 30, 90]  # 立即 / 30s 后 / 90s 后，共 3 次
+                        continue
                     for attempt, delay in enumerate(delays):
                         if delay:
                             await asyncio.sleep(delay)
                         try:
-                            archived = await _au(original_url, u, "image")
-                            if archived:
-                                j["result"]["image_url"] = archived
+                            archived = await _au(original_url, u, kind)
+                            if archived and archived != original_url:
+                                j["result"][key] = archived
                                 _save_jobs()
-                                log_info(f"[IMG-ARCHIVE] job={j['id']} OK attempt={attempt+1} -> {archived[:60]}")
-                                return
+                                tag = "IMG" if kind == "image" else "VID"
+                                log_info(f"[{tag}-ARCHIVE] job={j['id']} OK attempt={attempt+1} -> {archived[:60]}")
+                                break
                         except Exception as ae:
-                            log_error(f"[IMG-ARCHIVE] job={j['id']} attempt={attempt+1} failed: {ae}")
-                    # 3 次全失败：URL 仍是 aiview 临时链，30 天后失效
-                    log_error(f"[IMG-ARCHIVE] job={j['id']} ALL 3 ATTEMPTS FAILED, aiview URL will expire: {original_url[:80]}")
-                create_tracked_task(_bg_archive())
+                            log_error(f"[ARCHIVE] job={j['id']} key={key} attempt={attempt+1} failed: {ae}")
+                    else:
+                        log_error(f"[ARCHIVE] job={j['id']} key={key} ALL 3 ATTEMPTS FAILED, upstream URL will expire: {original_url[:80]}")
+            create_tracked_task(_bg_archive())
             # 写历史记录
             try:
                 uid = job.get("user_numeric_id")
