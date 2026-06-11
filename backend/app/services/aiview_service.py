@@ -7,6 +7,7 @@ aiview.club Open API 图片服务（文生图，新模型「专业版模式」�
 - 文生图为异步：POST /open/v1/image/generate 拿 request_id，再 GET /open/v1/image/query/{id} 轮询
 - 所有调用必须在服务端发起，AppSecret 绝不进前端 / git
 """
+import asyncio
 import hashlib
 import hmac
 import json
@@ -108,11 +109,21 @@ class AiviewImageService:
             body["image_urls"] = list(image_urls)[:5]
         # 必须先序列化为字符串，签名与发送用同一份字节，避免哈希不一致
         body_str = json.dumps(body, ensure_ascii=False)
-        try:
-            resp = await self._send("POST", path, body_str)
-            data = resp.json()
-        except Exception as e:
-            return {"error": f"aiview 提交请求失败: {type(e).__name__}: {str(e)[:200]}"}
+        data = None
+        for _attempt in range(3):
+            try:
+                resp = await self._send("POST", path, body_str)
+                data = resp.json()
+            except Exception as e:
+                return {"error": f"aiview 提交请求失败: {type(e).__name__}: {str(e)[:200]}"}
+            # 10011: 认证缓存繁忙(v1.3.0新增)，短暂重试
+            if data.get("code") == 10011 and _attempt < 2:
+                await asyncio.sleep(3)
+                continue
+            # 10010: 请求体过大，终态无需重试
+            if data.get("code") == 10010:
+                return {"error": "aiview 请求体过大(>2MB),请减少参数或图片数量"}
+            break
         if data.get("code") != 0:
             return {"error": data.get("message") or f"aiview 提交失败 code={data.get('code')}"}
         d = data.get("data") or {}
@@ -129,6 +140,9 @@ class AiviewImageService:
             data = resp.json()
         except Exception as e:
             return {"status": "processing", "_warn": f"查询异常,稍后重试: {type(e).__name__}: {str(e)[:120]}"}
+        # 10011: 认证缓存繁忙(v1.3.0)是查询侧瞬时错误,任务本身没失败,下一轮再查
+        if data.get("code") == 10011:
+            return {"status": "processing", "_warn": "查询遇 10011 认证缓存繁忙,稍后重试"}
         if data.get("code") != 0:
             return {"status": "failed", "error": data.get("message") or "查询失败"}
         d = data.get("data") or {}
@@ -142,7 +156,8 @@ class AiviewImageService:
             return {"status": "completed", "image_url": urls[0], "image_urls": urls}
         if status in ("FAILED", "ERROR"):
             from .logger import log_info as _li
-            msg = d.get("message") or d.get("error") or d.get("reason") or ""
+            # v1.3.0: error_message 是 FAILED 任务的主字段
+            msg = d.get("error_message") or d.get("message") or d.get("error") or d.get("reason") or ""
             _li(f"[AIVIEW-IMG] query failed rid={request_id} msg={msg[:80]} raw={str(d)[:120]}")
             return {"status": "failed", "error": msg or "生成失败"}
         return {"status": "processing"}
@@ -175,13 +190,22 @@ class AiviewImageService:
         if seed is not None:
             body["seed"] = seed
         body_str = json.dumps(body, ensure_ascii=False)
-        try:
-            resp = await self._send("POST", path, body_str)
-            data = resp.json()
-        except Exception as e:
-            # ConnectError 等 str(e) 常为空 → 带上异常类型,否则错误一片空白没法排查
-            _detail = str(e)[:200] or "(无详情,多为代理/DNS劫持/网络不通)"
-            return {"error": f"aiview 视频提交失败: {type(e).__name__}: {_detail}"}
+        data = None
+        for _attempt in range(3):
+            try:
+                resp = await self._send("POST", path, body_str)
+                data = resp.json()
+            except Exception as e:
+                _detail = str(e)[:200] or "(无详情,多为代理/DNS劫持/网络不通)"
+                return {"error": f"aiview 视频提交失败: {type(e).__name__}: {_detail}"}
+            # 10011: 认证缓存繁忙(v1.3.0新增)，短暂重试
+            if data.get("code") == 10011 and _attempt < 2:
+                await asyncio.sleep(3)
+                continue
+            # 10010: 请求体过大，终态无需重试
+            if data.get("code") == 10010:
+                return {"error": "aiview 请求体过大(>2MB),请减少参数或图片数量"}
+            break
         if data.get("code") != 0:
             return {"error": data.get("message") or f"aiview 视频提交失败 code={data.get('code')}"}
         d = data.get("data") or {}
@@ -198,6 +222,9 @@ class AiviewImageService:
             data = resp.json()
         except Exception as e:
             return {"status": "processing", "_warn": f"查询异常,稍后重试: {type(e).__name__}: {str(e)[:120]}"}
+        # 10011: 认证缓存繁忙(v1.3.0)是查询侧瞬时错误,任务本身没失败,下一轮再查
+        if data.get("code") == 10011:
+            return {"status": "processing", "_warn": "查询遇 10011 认证缓存繁忙,稍后重试"}
         if data.get("code") != 0:
             return {"status": "failed", "error": data.get("message") or "查询失败"}
         d = data.get("data") or {}
@@ -210,7 +237,9 @@ class AiviewImageService:
         if status in ("FAILED", "ERROR"):
             from .logger import log_error as _le
             _le(f"[AIVIEW-VIDEO-FAIL] rid={request_id} raw_data={str(d)[:300]}")
-            return {"status": "failed", "error": d.get("message") or d.get("fail_reason") or d.get("error_message") or "生成失败"}
+            # v1.3.0: error_message 是 FAILED 任务的主字段
+            error = d.get("error_message") or d.get("message") or d.get("fail_reason") or "生成失败"
+            return {"status": "failed", "error": error}
         return {"status": "processing"}
 
 

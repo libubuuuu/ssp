@@ -73,15 +73,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log_error(f"V2 工作目录初始化失败: {e}")
     # P163: 服务重启时把 jobs.json 里 status=running 的孤儿 job 标 failed + 退积分
+    # 蓝绿部署重叠期对端槽还在 drain 时不能立刻清(会误杀活任务+误退积分),延迟到对端退出
     try:
-        from app.api.jobs import cleanup_orphan_jobs_on_startup, cleanup_orphan_polling_queue, _harvest_loop
-        n = cleanup_orphan_jobs_on_startup()
-        if n:
-            log_info(f"启动清理: {n} 个孤儿 job 标 failed + 退积分")
-        n2 = cleanup_orphan_polling_queue()
-        if n2:
-            log_info(f"启动清理: {n2} 条孤儿 polling_queue 记录已标 orphan")
+        from app.api.jobs import (cleanup_orphan_jobs_on_startup, cleanup_orphan_polling_queue,
+                                  _harvest_loop, peer_backend_alive, deferred_orphan_cleanup)
         import asyncio as _asyncio
+        if peer_backend_alive():
+            log_info("启动清理: 对端槽仍在运行(蓝绿 drain 中),孤儿清理延迟到对端退出后执行")
+            _asyncio.create_task(deferred_orphan_cleanup())
+        else:
+            n = cleanup_orphan_jobs_on_startup()
+            if n:
+                log_info(f"启动清理: {n} 个孤儿 job 标 failed + 退积分")
+            n2 = cleanup_orphan_polling_queue()
+            if n2:
+                log_info(f"启动清理: {n2} 条孤儿 polling_queue 记录已标 orphan")
         _asyncio.create_task(_harvest_loop())
         log_info("polling_queue harvester 已启动(每3秒批量轮询)")
     except Exception as e:

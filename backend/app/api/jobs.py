@@ -133,8 +133,20 @@ async def _harvest_loop():
     from app.services.aiview_service import get_aiview_image_service
     import json as _json
 
+    _gc_counter = 0
     while True:
         await asyncio.sleep(3)
+        # 每 ~5 分钟清一次超 2 小时的死行(等待方最长 15 分钟,2h 后必是孤儿)
+        _gc_counter += 1
+        if _gc_counter >= 100:
+            _gc_counter = 0
+            try:
+                from app.database import get_db as _gdb
+                with _gdb() as conn:
+                    conn.execute("DELETE FROM polling_queue WHERE created_at < datetime('now','-2 hours')")
+                    conn.commit()
+            except Exception as e:
+                log_warning(f"[harvest] 过期行 GC 失败: {e}")
         items = _pq_load_polling()
         if not items:
             continue
@@ -143,6 +155,10 @@ async def _harvest_loop():
             poll_id    = item["id"]
             query_type = item["query_type"]
             request_id = item["request_id"]
+            # 蓝绿部署重叠期两个进程共用 polling_queue 表:只轮询本进程有等待方的行,
+            # 否则会抢先把对端的行标 completed,对端 harvester 再也看不到 → 等待协程挂到超时
+            if poll_id not in _poll_events:
+                continue
             try:
                 st: dict = {}
                 if query_type == "aiview_image":
@@ -181,18 +197,64 @@ async def _harvest_loop():
 
 def cleanup_orphan_polling_queue():
     """启动时清理孤儿 polling_queue 记录(进程上次异常退出留下的 status=polling 行)。
+
+    只清 last_polled_at 超过 60s 的行:活着的 harvester 每 3s 摸一次,
+    蓝绿部署重叠期对端槽还在 drain 的行是新鲜的,绝不能标 orphan
+    (2026-06-11 已踩:新槽启动把老槽 5 个活任务标孤儿+误退积分)。
     返回清理数量。"""
     from app.database import get_db
+    _stale_cond = "status='polling' AND COALESCE(last_polled_at, created_at) < datetime('now','-60 seconds')"
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT id, job_id, user_id FROM polling_queue WHERE status='polling'"
+            f"SELECT id, job_id, user_id FROM polling_queue WHERE {_stale_cond}"
         ).fetchall()
         n = len(rows)
         if n:
-            conn.execute("UPDATE polling_queue SET status='orphan' WHERE status='polling'")
+            conn.execute(f"UPDATE polling_queue SET status='orphan' WHERE {_stale_cond}")
             conn.commit()
             log_info(f"[polling_queue] 启动清理 {n} 条孤儿记录(标 orphan,对应 job 由 cleanup_orphan_jobs 处理)")
     return n
+
+
+def peer_backend_alive() -> bool:
+    """蓝绿部署重叠期:对端槽 backend 是否还活着(还在 drain 旧任务)。
+    自己跑 8000 → 对端 8001,反之亦然。探活失败一律视为对端已死。"""
+    import sys
+    import urllib.request
+    try:
+        argv = sys.argv
+        own = int(argv[argv.index("--port") + 1]) if "--port" in argv else 8000
+    except Exception:
+        own = 8000
+    peer = 8001 if own == 8000 else 8000
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{peer}/health", timeout=2) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+async def deferred_orphan_cleanup():
+    """蓝绿重叠期的延迟孤儿清理:等对端槽真正退出后再清。
+
+    直接在新槽启动时清会误杀对端正在 drain 的活任务+误退积分(2026-06-11 已踩,
+    5 个任务被标 failed 退积分后又真完成 → 钱双花 + 误报警)。
+    对端退出后重读 jobs.json,以对端写盘的最终状态为准(本进程创建的 job 以内存为准)。"""
+    for _ in range(180):  # 最多等 30 分钟(对端 drain stopwaitsecs=660s)
+        await asyncio.sleep(10)
+        if not await asyncio.to_thread(peer_backend_alive):
+            break
+    else:
+        log_warning("[deferred-cleanup] 对端槽 30 分钟仍未退出,放弃等待,直接清理")
+    fresh = _load_jobs()
+    for jid in _session_jids:
+        if jid in JOBS:
+            fresh[jid] = JOBS[jid]  # 同一 dict 对象,活协程持有的引用不失效
+    JOBS.clear()
+    JOBS.update(fresh)
+    n = cleanup_orphan_jobs_on_startup()
+    n2 = cleanup_orphan_polling_queue()
+    log_info(f"[deferred-cleanup] 对端已退出,孤儿清理完成: {n} 个 job + {n2} 条 polling_queue")
 
 
 def _load_jobs():
@@ -234,6 +296,8 @@ def _save_jobs():
 JOBS: Dict[str, dict] = _load_jobs()
 # job_id → asyncio.Event：job 完成时 set，SSE endpoint 监听
 _job_events: Dict[str, asyncio.Event] = {}
+# 本进程生命周期内创建的 job id:孤儿清理绝不能动这些(它们有活协程在跑)
+_session_jids: set = set()
 
 
 def _signal_job_done(job_id: str) -> None:
@@ -296,6 +360,8 @@ def cleanup_orphan_jobs_on_startup() -> int:
     for jid, j in list(JOBS.items()):
         if j.get("status") != "running":
             continue
+        if jid in _session_jids:
+            continue  # 本进程自己的活任务(延迟清理路径下会有),不是孤儿
         j["status"] = "failed"
         j["error"] = "服务重启时任务丢失,已自动退还积分,请重新提交"
         j["finished_at"] = time.time()
@@ -2220,6 +2286,7 @@ async def submit_job(req: SubmitJobRequest, current_user: dict = Depends(get_cur
         "status": "pending",
         "created_at": time.time(),
     }
+    _session_jids.add(job_id)
     _save_jobs()
     create_tracked_task(_execute_job(job_id))
     return {"job_id": job_id, "status": "pending", "cost": cost}

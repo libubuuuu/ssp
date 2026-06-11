@@ -52,7 +52,7 @@ fail_alert() {
 }
 
 # === 1. 登录 ===
-LOGIN_RESP=$(curl -s -m 15 -X POST "$PROD_HOST/api/auth/login" \
+LOGIN_RESP=$(curl -sS -m 15 -X POST "$PROD_HOST/api/auth/login" \
     -H "Content-Type: application/json" \
     -d "$(printf '{"email":"%s","password":"%s"}' "$EMAIL" "$PASSWORD")" 2>&1) || \
     fail_alert "登录" "网络错误: $LOGIN_RESP"
@@ -71,29 +71,29 @@ if [[ -z "$TOKEN" ]]; then
 fi
 
 # === 2. /api/auth/me ===
-ME_CODE=$(curl -s -m 10 -o /tmp/synth-me.json -w "%{http_code}" \
+ME_CODE=$(curl -sS -m 10 -o /tmp/synth-me.json -w "%{http_code}" \
     -H "Authorization: Bearer $TOKEN" \
-    "$PROD_HOST/api/auth/me" 2>/dev/null || echo "0")
+    "$PROD_HOST/api/auth/me" 2>/tmp/synth-me-err.txt || echo "0")
 if [[ "$ME_CODE" != "200" ]]; then
-    fail_alert "/api/auth/me" "返回 $ME_CODE: $(cat /tmp/synth-me.json 2>/dev/null | head -c 300)"
+    fail_alert "/api/auth/me" "返回 $ME_CODE: $(cat /tmp/synth-me-err.txt /tmp/synth-me.json 2>/dev/null | head -c 300)"
 fi
 
 # === 3. /api/jobs/list ===
-JOBS_CODE=$(curl -s -m 10 -o /tmp/synth-jobs.json -w "%{http_code}" \
+JOBS_CODE=$(curl -sS -m 10 -o /tmp/synth-jobs.json -w "%{http_code}" \
     -H "Authorization: Bearer $TOKEN" \
-    "$PROD_HOST/api/jobs/list" 2>/dev/null || echo "0")
+    "$PROD_HOST/api/jobs/list" 2>/tmp/synth-jobs-err.txt || echo "0")
 if [[ "$JOBS_CODE" != "200" ]]; then
-    fail_alert "/api/jobs/list" "返回 $JOBS_CODE: $(cat /tmp/synth-jobs.json 2>/dev/null | head -c 300)"
+    fail_alert "/api/jobs/list" "返回 $JOBS_CODE: $(cat /tmp/synth-jobs-err.txt /tmp/synth-jobs.json 2>/dev/null | head -c 300)"
 fi
 
 # === 4. /api/payment/packages(无认证也应该 200)===
-PKG_CODE=$(curl -s -m 10 -o /dev/null -w "%{http_code}" \
-    "$PROD_HOST/api/payment/packages" 2>/dev/null || echo "0")
+PKG_CODE=$(curl -sS -m 10 -o /tmp/synth-pkg-err.txt -w "%{http_code}" \
+    "$PROD_HOST/api/payment/packages" 2>&1 || echo "0")
 if [[ "$PKG_CODE" != "200" ]]; then
-    fail_alert "/api/payment/packages" "返回 $PKG_CODE"
+    fail_alert "/api/payment/packages" "返回 $PKG_CODE: $(cat /tmp/synth-pkg-err.txt 2>/dev/null | head -c 200)"
 fi
 
 # 全部通过
 log "OK 全 4 步通过(login=200 me=200 jobs=$JOBS_CODE packages=$PKG_CODE)"
-rm -f /tmp/synth-me.json /tmp/synth-jobs.json
+rm -f /tmp/synth-me.json /tmp/synth-me-err.txt /tmp/synth-jobs.json /tmp/synth-jobs-err.txt /tmp/synth-pkg-err.txt
 exit 0

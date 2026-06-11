@@ -395,6 +395,8 @@ class FalVideoService:
                 if isinstance(result, dict):
                     video_obj = result.get("video") or {}
                     video_url = video_obj.get("url") if isinstance(video_obj, dict) else None
+                if not video_url:
+                    return {"status": "failed", "error": "FAL 任务完成但未返回 video URL"}
                 return {"status": "completed", "video_url": video_url}
             if "Failed" in status_type or "Failed" in status_str:
                 return {"status": "failed", "error": "FAL 任务失败"}
