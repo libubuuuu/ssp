@@ -91,14 +91,15 @@ async def get_history(current_user: dict = Depends(get_current_user)):
             """, (current_user["id"],))
             rows = cursor.fetchall()
             history = []
+            from app.services.cos_upload import regenerate_cos_url
             for row in rows:
                 videos = []
                 images = []
                 try:
-                    if row[4]: videos = json.loads(row[4])
+                    if row[4]: videos = [regenerate_cos_url(u) for u in json.loads(row[4])]
                 except: pass
                 try:
-                    if row[3]: images = json.loads(row[3])
+                    if row[3]: images = [regenerate_cos_url(u) for u in json.loads(row[3])]
                 except: pass
                 history.append({
                     "id": row[0],
