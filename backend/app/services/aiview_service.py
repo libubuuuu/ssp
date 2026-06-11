@@ -152,8 +152,14 @@ class AiviewImageService:
             if not urls:
                 return {"status": "failed", "error": "已完成但未返回图片"}
             from .logger import log_info as _li
-            _li(f"[AIVIEW-IMG] query completed rid={request_id} url={urls[0][:80]}")
-            return {"status": "completed", "image_url": urls[0], "image_urls": urls}
+            # timing: 平台侧耗时分解(文档 v1.4.0 新增,旧任务/失败任务可能缺失)。
+            # header=等中转响应头(中转面板只统计这段) body=读响应体(aiview↔中转吞吐瓶颈,实测 14-18KB/s)
+            t = d.get("timing") or {}
+            tb = (f" queue={t.get('queueWaitMs')}ms header={t.get('responseHeaderMs')}ms"
+                  f" body={t.get('responseBodyReadMs')}ms post={t.get('postUpstreamMs')}ms"
+                  f" total={t.get('totalMs')}ms") if t else ""
+            _li(f"[AIVIEW-IMG] query completed rid={request_id}{tb} url={urls[0][:80]}")
+            return {"status": "completed", "image_url": urls[0], "image_urls": urls, "timing": t}
         if status in ("FAILED", "ERROR"):
             from .logger import log_info as _li
             # v1.3.0: error_message 是 FAILED 任务的主字段
