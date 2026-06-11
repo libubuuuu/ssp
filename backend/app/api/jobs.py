@@ -139,7 +139,8 @@ async def _harvest_loop():
         if not items:
             continue
 
-        for item in items:
+        # 每轮最多轮询 20 条，防止 polling_queue 意外堆积时打爆上游
+        for item in items[:20]:
             poll_id    = item["id"]
             query_type = item["query_type"]
             request_id = item["request_id"]
@@ -1970,7 +1971,7 @@ async def _run_ad_video_job(params: dict):
 
 
 async def _execute_job(job_id: str):
-    # semaphore 只限制并发提交数，不在等待第三方返回期间占槽
+    # semaphore 覆盖整个执行周期（含等待第三方返回），保证上游并发数不超过 MAX_CONCURRENT
     async with _semaphore:
         job = JOBS.get(job_id)
         if not job:
