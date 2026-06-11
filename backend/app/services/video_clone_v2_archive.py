@@ -4,6 +4,9 @@
 - {job_id}_raw.mp4         无标识版(直接归档,保留隐式 metadata)
 - {job_id}_watermarked.mp4 合规版(加 simple 风格水印)
 
+生成后上传 COS(key: video_clone_v2/{job_id}/{filename}),删除本地文件。
+COS 上传失败时 fallback 到本地 /uploads/ URL(不影响任务完成)。
+
 详见 docs/P221-API-SCHEMA.md(v4)§6.3。
 """
 from __future__ import annotations
@@ -11,7 +14,7 @@ import asyncio
 import os
 import shutil
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 import httpx
 
@@ -22,6 +25,7 @@ from .video_clone_v2_watermark import emit_dual_versions, DEFAULT_STYLE
 V2_UPLOADS_ROOT = Path("/opt/ssp/uploads/video_clone_v2")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://ailixiao.com").rstrip("/")
 DOWNLOAD_TIMEOUT = 120  # fal.media 大视频留足下载窗口
+_COS_URL_TTL = 30 * 24 * 3600  # 30 天预签名
 
 
 async def _download_to_local(url: str, dest_path: Path) -> int:
@@ -42,30 +46,52 @@ async def _download_to_local(url: str, dest_path: Path) -> int:
     return total
 
 
+async def upload_v2_file_to_cos(local_path: str, job_id: str) -> Optional[str]:
+    """上传单个本地 mp4 到 COS，删除本地文件，返回预签名 URL。失败返回 None。"""
+    filename = os.path.basename(local_path)
+    cos_key = f"video_clone_v2/{job_id}/{filename}"
+
+    def _sync_upload() -> str:
+        from .cos_upload import _make_client
+        client, bucket = _make_client()
+        with open(local_path, "rb") as f:
+            client.put_object(Bucket=bucket, Body=f, Key=cos_key)
+        return client.get_presigned_url(
+            Method="GET", Bucket=bucket, Key=cos_key, Expired=_COS_URL_TTL
+        )
+
+    try:
+        url = await asyncio.get_event_loop().run_in_executor(None, _sync_upload)
+        try:
+            os.unlink(local_path)
+        except OSError:
+            pass
+        log_info(f"video_clone_v2 COS 上传成功: {filename}")
+        return url
+    except Exception as e:
+        log_error(f"video_clone_v2 COS 上传失败 {filename}: {e}(fallback 本地)")
+        return None
+
+
 async def archive_dual_versions(
     fal_video_url: str,
     job_id: str,
     style: str = DEFAULT_STYLE,
 ) -> Dict[str, str]:
-    """把 fal 输出视频归档成双版本。
+    """把 fal 输出视频归档成双版本，上传 COS，删除本地文件。
 
     流程:
-        1. 下载 fal.media 到本地 /opt/ssp/uploads/video_clone_v2/{job_id}/{job_id}_source.mp4
-        2. 调 emit_dual_versions(...) 生成 raw + watermarked
-        3. raw 是 source 的拷贝(保留 fal 原始画质);watermarked 加水印
-        4. 删 source 临时文件(已被 raw 拷贝)
-
-    Args:
-        fal_video_url: fal.media 上的视频 URL
-        job_id:        任务 ID(uuid)
-        style:         水印风格,默认 simple(六审决议)
+        1. 下载 fal.media 到本地临时目录
+        2. emit_dual_versions 生成 raw + watermarked
+        3. 并发上传两个文件到 COS，删本地
+        4. COS 失败时 fallback 本地 /uploads/ URL
 
     Returns:
         {
-            "raw_local_path":         "/opt/ssp/uploads/.../{job_id}_raw.mp4",
-            "watermarked_local_path": "/opt/ssp/uploads/.../{job_id}_watermarked.mp4",
-            "raw_url":                "https://ailixiao.com/uploads/video_clone_v2/.../{job_id}_raw.mp4",
-            "watermarked_url":        "https://ailixiao.com/uploads/video_clone_v2/.../{job_id}_watermarked.mp4",
+            "raw_local_path":         None(已删)/本地路径(fallback),
+            "watermarked_local_path": None(已删)/本地路径(fallback),
+            "raw_url":                COS 预签名 URL 或本地 URL,
+            "watermarked_url":        COS 预签名 URL 或本地 URL,
         }
     Raises:
         RuntimeError: 下载失败 / 水印加盖失败
@@ -91,20 +117,27 @@ async def archive_dual_versions(
     except OSError:
         pass
 
-    # owner 设为 ssp-app(防 root 跑出来 nginx 读取异常)
-    for p in (raw_local, wm_local):
+    # 并发上传两个文件到 COS
+    raw_cos_url, wm_cos_url = await asyncio.gather(
+        upload_v2_file_to_cos(raw_local, job_id),
+        upload_v2_file_to_cos(wm_local, job_id),
+    )
+
+    # fallback:COS 失败时用本地 URL(文件未被删除)
+    raw_url = raw_cos_url or f"{PUBLIC_BASE_URL}/uploads/video_clone_v2/{job_id}/{os.path.basename(raw_local)}"
+    wm_url  = wm_cos_url  or f"{PUBLIC_BASE_URL}/uploads/video_clone_v2/{job_id}/{os.path.basename(wm_local)}"
+
+    # COS 成功时本地文件已删，尝试清理空目录
+    if raw_cos_url and wm_cos_url:
         try:
-            shutil.chown(p, user="ssp-app", group="ssp-app")
-        except (LookupError, PermissionError):
-            pass  # 测试环境无 ssp-app 用户/无权限,跳过
+            job_dir.rmdir()
+        except OSError:
+            pass
 
-    raw_url = f"{PUBLIC_BASE_URL}/uploads/video_clone_v2/{job_id}/{os.path.basename(raw_local)}"
-    wm_url  = f"{PUBLIC_BASE_URL}/uploads/video_clone_v2/{job_id}/{os.path.basename(wm_local)}"
-
-    log_info(f"video_clone_v2 archive ok:job_id={job_id} wm={wm_url} raw={raw_url}")
+    log_info(f"video_clone_v2 archive ok:job_id={job_id} wm={wm_url[:80]}")
     return {
-        "raw_local_path":         raw_local,
-        "watermarked_local_path": wm_local,
+        "raw_local_path":         None if raw_cos_url else raw_local,
+        "watermarked_local_path": None if wm_cos_url else wm_local,
         "raw_url":                raw_url,
         "watermarked_url":        wm_url,
     }

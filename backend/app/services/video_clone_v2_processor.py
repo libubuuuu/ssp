@@ -815,9 +815,10 @@ async def _process_v2_job_inner(job_id: str) -> None:
 
 
 async def _archive_local_dual(local_video_path: str, job_id: str) -> Dict[str, str]:
-    """source_type=original 走这条 — 不下载 fal,直接归档本地段 + 加水印。"""
+    """source_type=original 走这条 — 不下载 fal,直接归档本地段 + 加水印，上传 COS。"""
+    import asyncio as _asyncio
     from .video_clone_v2_watermark import emit_dual_versions, DEFAULT_STYLE
-    import shutil as _sh
+    from .video_clone_v2_archive import upload_v2_file_to_cos
 
     job_dir = Path("/opt/ssp/uploads/video_clone_v2") / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -826,18 +827,26 @@ async def _archive_local_dual(local_video_path: str, job_id: str) -> Dict[str, s
         local_video_path, str(job_dir), job_id, style=DEFAULT_STYLE
     )
 
-    for p in (wm_local, raw_local):
-        try:
-            _sh.chown(p, user="ssp-app", group="ssp-app")
-        except (LookupError, PermissionError):
-            pass
+    raw_cos_url, wm_cos_url = await _asyncio.gather(
+        upload_v2_file_to_cos(raw_local, job_id),
+        upload_v2_file_to_cos(wm_local, job_id),
+    )
 
     base_url = os.environ.get("PUBLIC_BASE_URL", "https://ailixiao.com").rstrip("/")
+    raw_url = raw_cos_url or f"{base_url}/uploads/video_clone_v2/{job_id}/{os.path.basename(raw_local)}"
+    wm_url  = wm_cos_url  or f"{base_url}/uploads/video_clone_v2/{job_id}/{os.path.basename(wm_local)}"
+
+    if raw_cos_url and wm_cos_url:
+        try:
+            job_dir.rmdir()
+        except OSError:
+            pass
+
     return {
-        "raw_local_path":         raw_local,
-        "watermarked_local_path": wm_local,
-        "raw_url":                f"{base_url}/uploads/video_clone_v2/{job_id}/{os.path.basename(raw_local)}",
-        "watermarked_url":        f"{base_url}/uploads/video_clone_v2/{job_id}/{os.path.basename(wm_local)}",
+        "raw_local_path":         None if raw_cos_url else raw_local,
+        "watermarked_local_path": None if wm_cos_url else wm_local,
+        "raw_url":                raw_url,
+        "watermarked_url":        wm_url,
     }
 
 
@@ -1317,28 +1326,28 @@ async def _process_ultimate(
                 plan_item = plan_by_idx[r["idx"]]
                 seg_local = seg_files[ next(i for i, p in enumerate(plan) if p["idx"] == r["idx"]) ]
                 clip = await _build_segment_clip(r, plan_item, seg_local, input_local, work_dir)
-                # archive 单段双版本,filename prefix = "{job_id}_seg_{idx}"
+                # archive 单段双版本,filename prefix = "{job_id}_seg_{idx}"，上传 COS
                 seg_archive_id = f"{job_id}_seg_{r['idx']}"
                 from .video_clone_v2_watermark import emit_dual_versions, DEFAULT_STYLE
-                import shutil as _sh
+                from .video_clone_v2_archive import upload_v2_file_to_cos
+                import asyncio as _asyncio
                 job_dir = Path("/opt/ssp/uploads/video_clone_v2") / job_id
                 job_dir.mkdir(parents=True, exist_ok=True)
                 wm_local, raw_local = await emit_dual_versions(
                     clip, str(job_dir), seg_archive_id, style=DEFAULT_STYLE
                 )
-                for p in (wm_local, raw_local):
-                    try:
-                        _sh.chown(p, user="ssp-app", group="ssp-app")
-                    except (LookupError, PermissionError):
-                        pass
+                raw_cos_url, wm_cos_url = await _asyncio.gather(
+                    upload_v2_file_to_cos(raw_local, job_id),
+                    upload_v2_file_to_cos(wm_local, job_id),
+                )
                 base_url = os.environ.get("PUBLIC_BASE_URL", "https://ailixiao.com").rstrip("/")
                 per_seg_archives.append({
                     "idx": r["idx"],
                     "source_type": r["source_type"],
                     "status": "completed",
                     "error": None,
-                    "watermarked_url": f"{base_url}/uploads/video_clone_v2/{job_id}/{os.path.basename(wm_local)}",
-                    "raw_url":         f"{base_url}/uploads/video_clone_v2/{job_id}/{os.path.basename(raw_local)}",
+                    "watermarked_url": wm_cos_url or f"{base_url}/uploads/video_clone_v2/{job_id}/{os.path.basename(wm_local)}",
+                    "raw_url":         raw_cos_url or f"{base_url}/uploads/video_clone_v2/{job_id}/{os.path.basename(raw_local)}",
                 })
             except Exception as e:
                 log_error(f"video_clone_v2 per-seg archive 失败 idx={r['idx']} job={job_id}: {e}")
