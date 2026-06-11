@@ -1269,14 +1269,17 @@ async def v2_watchdog_loop() -> None:
     while True:
         await asyncio.sleep(300)
         try:
-            now_iso = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+            # created_at/updated_at 均为 DB CURRENT_TIMESTAMP(UTC),截止线必须同用 UTC。
+            # 2026-06-11 用 localtime 比较(快 8h),每个 processing 任务 5 分钟内必被误杀+误退积分。
+            # 按 updated_at 判"最后进展"而非 created_at:多段长任务每段完成会刷新,活任务不会被杀。
+            cutoff = time.strftime("%Y-%m-%d %H:%M:%S",
+                                   time.gmtime(time.time() - _V2_STUCK_THRESHOLD_SEC))
             with get_db() as conn:
                 rows = conn.execute(
                     "SELECT id, user_id, total_credits_charged, created_at "
                     "FROM video_clone_v2_jobs WHERE status='processing' "
-                    "AND created_at < ?",
-                    (time.strftime("%Y-%m-%d %H:%M:%S",
-                                   time.localtime(time.time() - _V2_STUCK_THRESHOLD_SEC)),),
+                    "AND COALESCE(updated_at, created_at) < ?",
+                    (cutoff,),
                 ).fetchall()
                 for row in rows:
                     job_id, user_id, credits, created_at = row[0], row[1], int(row[2] or 0), row[3]
