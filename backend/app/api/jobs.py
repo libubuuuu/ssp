@@ -139,8 +139,7 @@ async def _harvest_loop():
         if not items:
             continue
 
-        # 每轮最多轮询 20 条，防止 polling_queue 意外堆积时打爆上游
-        for item in items[:20]:
+        for item in items:
             poll_id    = item["id"]
             query_type = item["query_type"]
             request_id = item["request_id"]
