@@ -24,6 +24,25 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+def _make_fake_pq_insert(ok: bool, data=None, error=None):
+    """测试辅助：返回一个假 _pq_insert，在 event loop 下一轮立即触发对应事件。
+    用于 _run_video_job / _run_aiview_image_job 测试，替代真实 harvester。
+    """
+    def fake_pq_insert(poll_id, job_id, request_id, query_type, endpoint_hint=None, user_id=None):
+        result = {"ok": ok, "data": data} if ok else {"ok": False, "error": error}
+
+        async def _resolve():
+            await asyncio.sleep(0)  # 让 _poll_events[poll_id] 先被设好再触发
+            jobs_module._poll_results[poll_id] = result
+            event = jobs_module._poll_events.get(poll_id)
+            if event:
+                event.set()
+
+        asyncio.get_event_loop().create_task(_resolve())
+
+    return fake_pq_insert
+
+
 @pytest.fixture(autouse=True)
 def _reset_jobs(monkeypatch, tmp_path):
     """每个测试独立 JOBS_FILE + JOBS dict + 还原真 _execute_job"""
@@ -154,10 +173,9 @@ def test_run_video_job_completed_immediately(monkeypatch):
     """polling 第一轮就 completed → 立刻返回"""
     mock_service = MagicMock()
     mock_service.generate_from_image = AsyncMock(return_value={"task_id": "t1", "endpoint_tag": "i2v"})
-    mock_service.get_task_status = AsyncMock(return_value={"status": "completed", "video_url": "https://v.mp4"})
     monkeypatch.setattr(jobs_module, "get_video_service", lambda: mock_service)
-    # 短路 sleep 让测试不真等 5s
-    monkeypatch.setattr(jobs_module.asyncio, "sleep", AsyncMock(return_value=None))
+    monkeypatch.setattr(jobs_module, "_pq_insert",
+                        _make_fake_pq_insert(True, data={"status": "completed", "video_url": "https://v.mp4"}))
 
     result = _run(jobs_module._run_video_job({"image_url": "x"}, "video_i2v"))
     assert result["video_url"] == "https://v.mp4"
@@ -167,9 +185,9 @@ def test_run_video_job_completed_immediately(monkeypatch):
 def test_run_video_job_failed_raises(monkeypatch):
     mock_service = MagicMock()
     mock_service.replace_element = AsyncMock(return_value={"task_id": "t2"})
-    mock_service.get_task_status = AsyncMock(return_value={"status": "failed", "error": "fal upstream"})
     monkeypatch.setattr(jobs_module, "get_video_service", lambda: mock_service)
-    monkeypatch.setattr(jobs_module.asyncio, "sleep", AsyncMock(return_value=None))
+    monkeypatch.setattr(jobs_module, "_pq_insert",
+                        _make_fake_pq_insert(False, error="fal upstream"))
 
     with pytest.raises(Exception, match="fal upstream"):
         _run(jobs_module._run_video_job(
@@ -182,9 +200,9 @@ def test_run_video_job_clone_path(monkeypatch):
     """video_clone 也走 polling"""
     mock_service = MagicMock()
     mock_service.clone_video = AsyncMock(return_value={"task_id": "t3"})
-    mock_service.get_task_status = AsyncMock(return_value={"status": "completed", "video_url": "https://c.mp4"})
     monkeypatch.setattr(jobs_module, "get_video_service", lambda: mock_service)
-    monkeypatch.setattr(jobs_module.asyncio, "sleep", AsyncMock(return_value=None))
+    monkeypatch.setattr(jobs_module, "_pq_insert",
+                        _make_fake_pq_insert(True, data={"status": "completed", "video_url": "https://c.mp4"}))
 
     result = _run(jobs_module._run_video_job(
         {"reference_video_url": "r", "model_image_url": "m"},
