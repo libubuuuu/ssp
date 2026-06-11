@@ -121,8 +121,8 @@ supervisorctl start ssp-frontend-$STANDBY 2>&1 | tee -a $LOG
 echo "等待 $STANDBY 健康就绪（最多 60s）..." | tee -a $LOG
 HEALTH_OK=0
 for i in $(seq 1 12); do
-    BACKEND_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://127.0.0.1:$STANDBY_BACKEND/health)
-    FRONTEND_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://127.0.0.1:$STANDBY_FRONTEND)
+    BACKEND_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://127.0.0.1:$STANDBY_BACKEND/health 2>/dev/null || echo "000")
+    FRONTEND_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://127.0.0.1:$STANDBY_FRONTEND 2>/dev/null || echo "000")
     if [ "$BACKEND_STATUS" = "200" ] && [ "$FRONTEND_STATUS" = "200" ]; then
         echo "✅ $STANDBY 健康检查通过 (backend=$BACKEND_STATUS, frontend=$FRONTEND_STATUS) — ${i}x5s" | tee -a $LOG
         HEALTH_OK=1

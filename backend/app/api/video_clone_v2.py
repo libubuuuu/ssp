@@ -1274,8 +1274,9 @@ async def v2_watchdog_loop() -> None:
                 rows = conn.execute(
                     "SELECT id, user_id, total_credits_charged, created_at "
                     "FROM video_clone_v2_jobs WHERE status='processing' "
-                    "AND (julianday('now') - julianday(created_at)) * 86400 > ?",
-                    (_V2_STUCK_THRESHOLD_SEC,),
+                    "AND created_at < ?",
+                    (time.strftime("%Y-%m-%d %H:%M:%S",
+                                   time.localtime(time.time() - _V2_STUCK_THRESHOLD_SEC)),),
                 ).fetchall()
                 for row in rows:
                     job_id, user_id, credits, created_at = row[0], row[1], int(row[2] or 0), row[3]
