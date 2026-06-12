@@ -55,31 +55,31 @@ async def _hpj_create_order(appid: str, secret: str, order_id: str,
     return data["url"]
 
 
-# 套餐配置(2026-05-20 调价:50 积分 = 1 元)
+# 套餐配置(2026-06-13 调价:50 积分 = 1 元;credits 含赠送,到账即此数)
 PACKAGES = [
     {
         "id": "monthly",
         "name": "基础版",
         "credits": 10000,
-        "price": 189.00,
-        "discount": "9.5 折",
-        "description": "基础版 10000 积分(≈¥200 等值,9.5 折回赠)",
+        "price": 200.00,
+        "discount": "",
+        "description": "基础版 10000 积分",
     },
     {
         "id": "quarterly",
         "name": "标准版",
-        "credits": 25000,
-        "price": 449.00,
-        "discount": "9 折",
-        "description": "标准版 25000 积分(≈¥500 等值,9 折回赠)",
+        "credits": 26780,  # 25000 + 送 1780
+        "price": 500.00,
+        "discount": "9.5 折",
+        "description": "标准版 25000 积分 + 送 1780 积分",
     },
     {
         "id": "yearly",
         "name": "高级版",
-        "credits": 50000,
-        "price": 886.00,
-        "discount": "8.9 折",
-        "description": "高级版 50000 积分(≈¥1000 等值,8.9 折回赠)",
+        "credits": 55000,  # 50000 + 送 5000
+        "price": 1000.00,
+        "discount": "9 折",
+        "description": "高级版 50000 积分 + 送 5000 积分",
     },
 ]
 

@@ -124,7 +124,9 @@ export default function PricingPage() {
                 <div style={{ marginBottom: "1.25rem" }}>
                   <span style={{ fontSize: "2rem", fontWeight: 700, color: "#0d0d0d" }}>¥{pkg.price}</span>
                   <span style={{ fontSize: "0.8rem", color: "#999", marginLeft: "0.4rem" }}>/ {pkg.credits} {t("pricing.creditsLabel")}</span>
-                  <span style={{ marginLeft: "0.4rem", padding: "0.15rem 0.5rem", background: "#f0ede6", color: "#666", borderRadius: "999px", fontSize: "0.72rem" }}>{translatePkg(pkg).discount}</span>
+                  {translatePkg(pkg).discount && (
+                    <span style={{ marginLeft: "0.4rem", padding: "0.15rem 0.5rem", background: "#f0ede6", color: "#666", borderRadius: "999px", fontSize: "0.72rem" }}>{translatePkg(pkg).discount}</span>
+                  )}
                 </div>
                 <button onClick={() => handlePurchase("package", pkg.id)} disabled={loading || !!processingOrder} style={btn(loading || !!processingOrder)}>
                   {processingOrder ? t("pricing.processing") : loading ? t("pricing.loading") : t("pricing.buyNow")}
