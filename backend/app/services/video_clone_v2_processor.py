@@ -1023,15 +1023,14 @@ async def _ffprobe_video_duration(video_path: str) -> float:
 
 
 async def _download_to_local(url: str, out_path: str) -> None:
-    """下载 fal 输出 URL 到本地文件。"""
-    import httpx
-    async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
-        async with client.stream("GET", url) as resp:
-            if resp.status_code != 200:
-                raise RuntimeError(f"download fal output failed:status={resp.status_code}")
-            with open(out_path, "wb") as f:
-                async for chunk in resp.aiter_bytes(chunk_size=64*1024):
-                    f.write(chunk)
+    """下载 fal 输出 URL 到本地文件。
+
+    复用 archive 的带重试实现:fal CDN 瞬时抖动(ReadTimeout 等)指数退避重试,
+    避免下载某一 AI 段失败导致整单作废退款(与 2026-06-14 archive 同类 bug)。
+    """
+    from pathlib import Path
+    from .video_clone_v2_archive import _download_to_local as _robust_download
+    await _robust_download(url, Path(out_path))
 
 
 async def _build_segment_clip(

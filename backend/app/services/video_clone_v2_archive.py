@@ -24,25 +24,53 @@ from .video_clone_v2_watermark import emit_dual_versions, DEFAULT_STYLE
 
 V2_UPLOADS_ROOT = Path("/opt/ssp/uploads/video_clone_v2")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://ailixiao.com").rstrip("/")
-DOWNLOAD_TIMEOUT = 120  # fal.media 大视频留足下载窗口
+# fal.media 大视频:分类超时,read 放宽到 180s(CDN 抖动时单次读会很慢)
+DOWNLOAD_TIMEOUT = httpx.Timeout(connect=30.0, read=180.0, write=60.0, pool=30.0)
+DOWNLOAD_MAX_RETRIES = 3  # fal CDN 瞬时抖动靠重试自愈,不让搬运失败整单退款空跑
 
 
 async def _download_to_local(url: str, dest_path: Path) -> int:
-    """流式下载 url 到 dest_path,返字节数。失败抛 RuntimeError。"""
+    """流式下载 url 到 dest_path,返字节数。
+
+    fal CDN 大视频下载常瞬时抖动(ReadTimeout/连接重置),此前零重试 → 上游
+    生成成功+已扣费却因搬运失败整单退款空跑(2026-06-14 job 9473d90b)。
+    网络类错误指数退避重试 DOWNLOAD_MAX_RETRIES 次;非 200/非网络错误直接抛。
+    """
     dest_path.parent.mkdir(parents=True, exist_ok=True)
-    total = 0
-    async with httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT, follow_redirects=True) as client:
-        async with client.stream("GET", url) as resp:
-            if resp.status_code != 200:
-                raise RuntimeError(
-                    f"download_to_local 失败:status={resp.status_code} url={url[:120]}"
+    last_exc: Exception | None = None
+    for attempt in range(1, DOWNLOAD_MAX_RETRIES + 1):
+        total = 0
+        try:
+            async with httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT, follow_redirects=True) as client:
+                async with client.stream("GET", url) as resp:
+                    if resp.status_code != 200:
+                        # 非 200(403/404 等)重试无用,直接抛
+                        raise RuntimeError(
+                            f"download_to_local 失败:status={resp.status_code} url={url[:120]}"
+                        )
+                    with dest_path.open("wb") as f:
+                        async for chunk in resp.aiter_bytes(chunk_size=64 * 1024):
+                            total += len(chunk)
+                            f.write(chunk)
+            os.chmod(dest_path, 0o644)
+            return total
+        except httpx.HTTPError as e:
+            # 仅网络/超时类错误重试,清掉半截文件避免污染
+            last_exc = e
+            try:
+                dest_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            if attempt < DOWNLOAD_MAX_RETRIES:
+                backoff = 2 ** attempt  # 2s, 4s
+                log_error(
+                    f"video_clone_v2 download attempt {attempt}/{DOWNLOAD_MAX_RETRIES} "
+                    f"失败({type(e).__name__}: {e}),{backoff}s 后重试 url={url[:80]}"
                 )
-            with dest_path.open("wb") as f:
-                async for chunk in resp.aiter_bytes(chunk_size=64 * 1024):
-                    total += len(chunk)
-                    f.write(chunk)
-    os.chmod(dest_path, 0o644)
-    return total
+                await asyncio.sleep(backoff)
+    raise RuntimeError(
+        f"download_to_local 重试 {DOWNLOAD_MAX_RETRIES} 次仍失败: {last_exc}"
+    ) from last_exc
 
 
 async def upload_v2_file_to_cos(local_path: str, job_id: str) -> Optional[str]:
