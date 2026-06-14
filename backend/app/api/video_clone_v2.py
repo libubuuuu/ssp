@@ -315,18 +315,65 @@ def _validate_segments(
 
 # ---------------------------------------------------------------- Endpoints ----
 
+# 视频打码异步任务状态（本地单 worker：进程内内存存。blur_id -> {status, video_url, ...}）
+_blur_jobs: dict = {}
+
+
+async def _blur_video_task(blur_id: str, video_path: str, user_id: str, mask_face: bool = True):
+    """后台：(选了"需要替换人脸"才)人脸打码→ffprobe→sha256→上传COS→写状态。前端轮询取结果。"""
+    import subprocess as _sp, json as _j
+    try:
+        # ⭐ 隐私保护：仅当用户选了"需要替换人脸"才打码；不选则原视频不动
+        # 2026-06-15:换用 face_mask_pro(SCRFD 每帧检测 + 光流跟运动 + 椭圆紧贴脸),
+        # 比旧 face_blur(YuNet 逐帧)覆盖率高、贴脸不超下巴。新依赖(insightface/onnxruntime)
+        # 缺失时自动回退旧 face_blur,保证不崩(服务器没装也能跑)。
+        if mask_face:
+            _blurred = video_path + ".blurred.mp4"
+            try:
+                from app.services.face_mask_pro import mask_faces_in_video_pro
+                r = await asyncio.to_thread(mask_faces_in_video_pro, video_path, _blurred)
+                if r.get("ok") and r.get("any_face") and os.path.exists(_blurred):
+                    os.replace(_blurred, video_path)
+                    log_info(f"[V2-BLUR] face_mask_pro 打码 coverage={r.get('coverage')} "
+                             f"hit={r.get('detected_frames')}/{r.get('frames')}")
+            except Exception as e:
+                log_error(f"[V2-BLUR] face_mask_pro 不可用,回退旧 face_blur: {str(e)[:160]}")
+                from app.services.face_blur import blur_faces_in_video
+                if await asyncio.to_thread(blur_faces_in_video, video_path, _blurred):
+                    os.replace(_blurred, video_path)
+        try:
+            rr = _sp.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                          "-of", "json", video_path], capture_output=True, text=True, timeout=30)
+            dur = float(_j.loads(rr.stdout).get("format", {}).get("duration", 0))
+        except Exception:
+            dur = 0
+        file_sha256 = sha256_file(video_path)
+        url = await asyncio.to_thread(upload_to_cos, video_path)
+        validate_video_url(url, field_name="cos_storage_url")
+        cache_store(file_sha256, video_path)
+        try: cache_clean_old()
+        except Exception: pass
+        _blur_jobs[blur_id] = {"status": "done", "video_url": url, "duration_sec": dur,
+                               "sha256": file_sha256, "sha256_short": file_sha256[:8]}
+        log_info(f"[V2-BLUR-DONE] blur_id={blur_id[:8]} user={user_id} dur={dur:.1f}s url={url[:60]}")
+    except Exception as e:
+        _blur_jobs[blur_id] = {"status": "failed", "error": str(e)[:300]}
+        log_error(f"[V2-BLUR-FAIL] blur_id={blur_id[:8]} {e}")
+    finally:
+        if os.path.exists(video_path):
+            try: os.unlink(video_path)
+            except Exception: pass
+
+
 @router.post("/upload/video")
 async def upload_video(
     file: UploadFile = File(...),
+    mask_face: bool = Form(True),
     current_user: dict = Depends(get_current_user),
 ):
-    """上传参考视频(≤50MB)。返 fal storage URL + ffprobe 时长 + ⭐ 文件 SHA256(红线 3)。
-
-    红线 3:每次上传立即算文件 SHA256,前端拿到后:
-    - 显示前 8 位给用户("当前视频 hash: abc12345")
-    - /create 时把完整 hash 传回来 → 入库 input_video_sha256
-    便于事后审计"是不是上传了同一视频" + 法务 §4.4.4 举证。
-    """
+    """上传参考视频(≤50MB)。**异步**：秒回 blur_job_id；后台(选了替换人脸才)打码+上传；
+    前端轮询 GET /upload/video/status/{blur_job_id} 拿 video_url/时长/sha256。
+    mask_face=True(默认)→打码；False→不打码、原视频直接传。"""
     _guard_enabled()
     contents = await read_bounded(file, MAX_VIDEO_SIZE, VIDEO_MIMES, "参考视频")
     suffix = ".mp4"
@@ -335,53 +382,31 @@ async def upload_video(
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(contents)
         video_path = tmp.name
-    try:
-        import subprocess as _sp, json as _j
-        try:
-            rr = _sp.run(
-                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                 "-of", "json", video_path],
-                capture_output=True, text=True, timeout=30,
-            )
-            dur = float(_j.loads(rr.stdout).get("format", {}).get("duration", 0))
-        except Exception:
-            dur = 0
-        # ⭐ 红线 3:文件本体 SHA256
-        file_sha256 = sha256_file(video_path)
-        url = await asyncio.to_thread(upload_to_cos, video_path)
-        validate_video_url(url, field_name="cos_storage_url")
-        # Path B 缓存:把临时文件搬到 /tmp/v2_cache/{sha256}.mp4
-        # 让 check-duration 直读本地(省去跨境读 fal CDN 的 6-9s)
-        # store 内部成功会把 video_path 移走;失败/dedupe 时也会清掉源文件
-        cached = cache_store(file_sha256, video_path)
-        # opportunistic 清过期文件(防 cron 没装也不堆积)
-        try: cache_clean_old()
-        except Exception: pass
-        log_info(
-            f"[V2-UPLOAD-VIDEO] user={current_user.get('id')} "
-            f"sha256={file_sha256[:8]} duration={dur:.1f}s "
-            f"cache={'hit' if cached else 'miss'} url={url[:80]}"
-        )
-    finally:
-        # store 已搬走;若失败 video_path 还在,unlink 兜底防泄漏
-        if os.path.exists(video_path):
-            try: os.unlink(video_path)
-            except Exception: pass
-    return {
-        "video_url": url,
-        "duration_sec": dur,
-        "sha256": file_sha256,
-        "sha256_short": file_sha256[:8],
-    }
+    blur_id = uuid.uuid4().hex
+    _blur_jobs[blur_id] = {"status": "processing"}
+    asyncio.create_task(_blur_video_task(blur_id, video_path, str(current_user.get("id")), mask_face))
+    log_info(f"[V2-UPLOAD-VIDEO] 秒回 blur_id={blur_id[:8]} user={current_user.get('id')} mask_face={mask_face}")
+    return {"blur_job_id": blur_id, "status": "processing"}
+
+
+@router.get("/upload/video/status/{blur_id}")
+async def upload_video_status(blur_id: str, current_user: dict = Depends(get_current_user)):
+    """前端轮询：processing=打码中；done 带 video_url/duration_sec/sha256；failed 带 error。"""
+    _guard_enabled()
+    job = _blur_jobs.get(blur_id)
+    if not job:
+        raise HTTPException(404, "打码任务不存在或已过期")
+    return job
 
 
 @router.post("/upload/image")
 async def upload_image(
     file: UploadFile = File(...),
     role: str = Form(..., description="product | person | scene | reference"),
+    mask_face: bool = Form(True),
     current_user: dict = Depends(get_current_user),
 ):
-    """上传参考图(≤10MB,role 必传)。"""
+    """上传参考图(≤10MB,role 必传)。mask_face=True(默认)→涂鸦盖脸；False→不处理、原图直接传。"""
     _guard_enabled()
     if role not in IMAGE_ROLES:
         raise HTTPException(400, f"role 必须 ∈ {IMAGE_ROLES}")
@@ -393,6 +418,12 @@ async def upload_image(
         tmp.write(contents)
         tmp_path = tmp.name
     try:
+        # ⭐ 隐私保护：仅当选了"需要替换人脸"才涂鸦盖脸；不选则原图不动
+        if mask_face:
+            from app.services.face_blur import blur_faces_in_image
+            _blurred = tmp_path + ".blurred.jpg"
+            if await asyncio.to_thread(blur_faces_in_image, tmp_path, _blurred):
+                os.replace(_blurred, tmp_path)
         url = await asyncio.to_thread(upload_to_cos, tmp_path)
     finally:
         try: os.unlink(tmp_path)
