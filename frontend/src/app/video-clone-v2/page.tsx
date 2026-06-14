@@ -114,6 +114,15 @@ const PURPOSE_TEXT: Record<string, (ref: string) => string> = {
   bg: (r) => `把视频的背景换成 ${r}`,
 };
 
+// 2026-06-13 用户要求:每张产品图必须选朝向(同一产品可传多角度),拼进提示词
+// → 把视频里人物的下装换成 @产品1正面、@产品2背面。custom = 自己填文字(如"左侧45度")。
+const ORIENTATION_OPTS: { v: string; label: string; text: string }[] = [
+  { v: "front", label: "正面", text: "正面" },
+  { v: "back", label: "背面", text: "背面" },
+  { v: "side", label: "侧面", text: "侧面" },
+  { v: "custom", label: "自定义", text: "" },
+];
+
 // 2026-05-10 砍单档:TIER_DISPLAY 删除,改 SEGMENT_PRICE 单档常量
 // 占位定价用原 standard 档值,commit 5 真测后基于 fal cost 重定
 const SEGMENT_PRICE = {
@@ -161,6 +170,10 @@ export default function VideoCloneV2Page() {
 
   // 视频模型(用户自选):极速版 fast(55积分/秒) / 标准版 2.0(60积分/秒)
   const [videoModel, setVideoModel] = useState<"seedance-2-0-fast" | "seedance-2-0">("seedance-2-0-fast");
+  // 人脸隐私处理 3 选一:auto=系统自动打码 / self=用户自己已打码直接传 / none=无需处理。默认 auto(安全兜底)
+  // 只有 auto 才让后端打码;self 和 none 都用原文件(self 是用户已自行打码,none 是无脸/不需要)
+  const [privacyMode, setPrivacyMode] = useState<"auto" | "self" | "none">("auto");
+  const maskFace = privacyMode === "auto";
 
   // 提示词 @ 提及:打 @ 弹出图片/视频选择(像大厂)。pos = @ 在文本里的位置
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -169,6 +182,9 @@ export default function VideoCloneV2Page() {
 
   // 傻瓜模式:每张图的用途(key=图片url) + 去掉原视频台词开关
   const [imagePurpose, setImagePurpose] = useState<Record<string, string>>({});
+  // 产品图朝向(key=图片url):front/back/side/custom;custom 时取下面的自定义文字
+  const [imageOrientation, setImageOrientation] = useState<Record<string, string>>({});
+  const [imageOrientationCustom, setImageOrientationCustom] = useState<Record<string, string>>({});
   const [removeOriginalSpeech, setRemoveOriginalSpeech] = useState(false);
 
   // prompt + 模板
@@ -374,6 +390,8 @@ export default function VideoCloneV2Page() {
     try {
       const fd = new FormData();
       fd.append("file", file);
+      fd.append("mask_face", String(maskFace));  // 选了"需要替换人脸"才打码
+      // 1) 秒提交:后端返回 blur_job_id,后台异步(按 mask_face)打码(不在这步等,避免超时)
       const r = await fetch(`${API_BASE}/api/video/clone-v2/upload/video`, {
         method: "POST",
         credentials: "include",
@@ -382,7 +400,25 @@ export default function VideoCloneV2Page() {
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || "上传失败");
-      setVideo({ url: d.video_url, duration: d.duration_sec, sha256: d.sha256 || "" });
+      const blurId = d.blur_job_id;
+      if (!blurId) throw new Error("未拿到打码任务号");
+      // 2) 轮询打码状态(后台打码慢,转圈等;每 2.5s 查一次,最多 ~5 分钟)
+      for (let i = 0; i < 120; i++) {
+        await new Promise((res) => setTimeout(res, 2500));
+        const sr = await fetch(`${API_BASE}/api/video/clone-v2/upload/video/status/${blurId}`, {
+          credentials: "include",
+          headers: token(),
+        });
+        if (!sr.ok) continue;
+        const sd = await sr.json();
+        if (sd.status === "done") {
+          // 打码版才显示给用户、也用于后续生成
+          setVideo({ url: sd.video_url, duration: sd.duration_sec, sha256: sd.sha256 || "" });
+          return;
+        }
+        if (sd.status === "failed") throw new Error(sd.error || "打码处理失败");
+      }
+      throw new Error("打码处理超时,请重试");
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -398,6 +434,7 @@ export default function VideoCloneV2Page() {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("role", role);
+      fd.append("mask_face", String(maskFace));  // 选了"需要替换人脸"才涂鸦盖脸
       const r = await fetch(`${API_BASE}/api/video/clone-v2/upload/image`, {
         method: "POST",
         credentials: "include",
@@ -416,13 +453,36 @@ export default function VideoCloneV2Page() {
 
   function applyTemplate(t: Template) { setPrompt(t.template); }
 
+  // 取某产品图的朝向文字(正面/背面/侧面/自定义内容);未选或自定义为空 → 返 ""
+  function orientationText(url: string): string {
+    const o = imageOrientation[url];
+    if (!o) return "";
+    if (o === "custom") return (imageOrientationCustom[url] || "").trim();
+    return ORIENTATION_OPTS.find((x) => x.v === o)?.text || "";
+  }
+  // 列出还没选朝向(或选了自定义但没填字)的产品图序号(@产品N 的 N),用于必选拦截
+  function productImagesMissingOrientation(): number[] {
+    const missing: number[] = [];
+    let n = 0;
+    for (const img of images) {
+      if (img.role !== "product") continue;
+      n += 1;
+      const o = imageOrientation[img.url];
+      if (!o || (o === "custom" && !(imageOrientationCustom[img.url] || "").trim())) missing.push(n);
+    }
+    return missing;
+  }
+
   // ─── 提示词 @ 提及:打 @ 弹出"图片/视频"选择(像大厂那样)───
   // 选项 = 每张参考图按 role 编号(产品1/人物1/场景1...) + 参考视频(视频1)
+  // 产品图带上朝向后缀(产品1正面),插入提示词时一并带走
   function buildMentionOptions() {
     const counts: Record<string, number> = {};
     const opts = images.map((img) => {
       counts[img.role] = (counts[img.role] || 0) + 1;
-      return { label: `${ROLE_LABELS[img.role]}${counts[img.role]}`, thumb: img.url, sub: img.filename || "", isVideo: false };
+      const base = `${ROLE_LABELS[img.role]}${counts[img.role]}`;
+      const ori = img.role === "product" ? orientationText(img.url) : "";
+      return { label: base + ori, thumb: img.url, sub: img.filename || "", isVideo: false };
     });
     if (video) opts.push({ label: "视频1", thumb: video.url, sub: "参考视频", isVideo: true });
     return opts;
@@ -450,15 +510,24 @@ export default function VideoCloneV2Page() {
 
   // 傻瓜模式:把每张图的"用途"自动拼成 @ 格式提示词(填进提示词框,用户可再改)
   async function composeAutoPrompt() {
+    // 产品图朝向必选(同一产品可传多角度);未选/自定义没填字 → 拦截
+    const missing = productImagesMissingOrientation();
+    if (missing.length) {
+      setError(`请先给产品图 ${missing.join("、")} 选择朝向(正面 / 背面 / 侧面 / 自定义)`);
+      return;
+    }
+    setError("");
     // 同用途的多张图合并成一句，避免"换成@产品1"、"换成@产品2"重复
+    // 产品图带朝向后缀(@产品1正面),拼进同用途句
     const counts: Record<string, number> = {};
     const byPurpose: Record<string, string[]> = {};
     for (const img of images) {
       counts[img.role] = (counts[img.role] || 0) + 1;
       const ref = `@${ROLE_LABELS[img.role]}${counts[img.role]}`;
+      const tagged = img.role === "product" ? ref + orientationText(img.url) : ref;
       const purpose = imagePurpose[img.url] || DEFAULT_PURPOSE[img.role] || "";
       if (!byPurpose[purpose]) byPurpose[purpose] = [];
-      byPurpose[purpose].push(ref);
+      byPurpose[purpose].push(tagged);
     }
     // 每种用途生成一句，多个引用用顿号隔开
     const parts: string[] = [];
@@ -543,6 +612,11 @@ export default function VideoCloneV2Page() {
       setError("请先上传视频"); return;
     }
     if (!disclaimerChecked) { setError("请勾选《视频复刻 V2 上传声明书》"); return; }
+    // 产品图朝向必选(同 composeAutoPrompt)
+    const missingOri = productImagesMissingOrientation();
+    if (missingOri.length) {
+      setError(`请先给产品图 ${missingOri.join("、")} 选择朝向(正面 / 背面 / 侧面 / 自定义)`); return;
+    }
 
     // 构造 segments(single / ultimate 不同)
     // 单档:body segments 不传 tier(后端 forbid 会拒)
@@ -711,6 +785,45 @@ export default function VideoCloneV2Page() {
           </button>
         </div>
 
+        {/* 人脸隐私处理:上传前选,决定视频/人物图是否打码涂鸦盖脸 */}
+        <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "1rem 1.2rem", marginBottom: "1.2rem" }}>
+          <div style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: 4 }}>人脸隐私处理</div>
+          <div style={{ fontSize: "0.8rem", color: "#888", marginBottom: 10, lineHeight: 1.6 }}>
+            为防止肖像侵权,可对上传的视频和人物图<b>自动给人脸打码/涂鸦</b>。请在上传前选择(自动打码非 100%,个别帧/下巴可能漏,可上传后自查):
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {([
+              { v: "auto", label: "需要替换人脸", desc: "上传的视频+人物图自动打码涂鸦盖脸" },
+              { v: "self", label: "我自己已打码", desc: "你已自行给人脸打码,直接上传不再二次处理" },
+              { v: "none", label: "不需要替换人脸", desc: "上传原视频/原图,不做处理" },
+            ] as const).map((opt) => {
+              const active = privacyMode === opt.v;
+              const locked = !!video || images.length > 0;
+              return (
+                <button
+                  key={opt.v}
+                  disabled={locked}
+                  onClick={() => setPrivacyMode(opt.v)}
+                  style={{
+                    flex: 1, textAlign: "left", cursor: locked ? "not-allowed" : "pointer",
+                    background: active ? "#eff6ff" : "#fafafa",
+                    border: active ? "2px solid #3b82f6" : "1px solid #e5e7eb",
+                    borderRadius: 8, padding: "0.7rem 0.9rem", opacity: locked && !active ? 0.5 : 1,
+                  }}
+                >
+                  <div style={{ fontWeight: 600, fontSize: "0.9rem", color: active ? "#1d4ed8" : "#374151" }}>
+                    {active ? "● " : "○ "}{opt.label}
+                  </div>
+                  <div style={{ fontSize: "0.76rem", color: "#999", marginTop: 3 }}>{opt.desc}</div>
+                </button>
+              );
+            })}
+          </div>
+          {(!!video || images.length > 0) && (
+            <div style={{ fontSize: "0.74rem", color: "#a16207", marginTop: 8 }}>已开始上传,如需更改请先清空已上传的视频/图片再重选。</div>
+          )}
+        </div>
+
         {/* Step 1:上传视频 */}
         <Section title="1. 上传参考视频(MP4/MOV,≤50MB,4-15 秒)">
           {!video && (
@@ -785,6 +898,11 @@ export default function VideoCloneV2Page() {
                     上传人物<b>正脸照片</b>,用于复刻 / 替换视频中的人物形象(换脸)。
                   </div>
                 )}
+                {role === "product" && (
+                  <div style={{ fontSize: "0.75rem", color: "#9ca3af", marginBottom: 8, lineHeight: 1.5 }}>
+                    同一产品可传<b>多张不同角度</b>(最多 3 张)。<b>每张都需选择朝向</b>(正面 / 背面 / 侧面 / 自定义),会拼进提示词如「换成 @产品1正面、@产品2背面」。
+                  </div>
+                )}
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
                   {roleImages.map((x, i) => (
                     <div key={x.idx} style={{ position: "relative" }}>
@@ -798,6 +916,27 @@ export default function VideoCloneV2Page() {
                         >
                           {PURPOSE_BY_ROLE[role].map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
                         </select>
+                      )}
+                      {/* 朝向(产品图必选):正面 / 背面 / 侧面 / 自定义。未选时红框提示 */}
+                      {role === "product" && (
+                        <>
+                          <select
+                            value={imageOrientation[x.img.url] || ""}
+                            onChange={(e) => setImageOrientation((p) => ({ ...p, [x.img.url]: e.target.value }))}
+                            style={{ display: "block", width: 80, marginTop: 4, fontSize: "0.7rem", padding: "2px 4px", border: imageOrientation[x.img.url] ? "1px solid #ddd" : "1px solid #ef4444", borderRadius: 6, cursor: "pointer" }}
+                          >
+                            <option value="" disabled>选朝向 *</option>
+                            {ORIENTATION_OPTS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+                          </select>
+                          {imageOrientation[x.img.url] === "custom" && (
+                            <input
+                              value={imageOrientationCustom[x.img.url] || ""}
+                              onChange={(e) => setImageOrientationCustom((p) => ({ ...p, [x.img.url]: e.target.value }))}
+                              placeholder="如:左侧45度"
+                              style={{ display: "block", width: 80, marginTop: 4, fontSize: "0.7rem", padding: "2px 4px", border: (imageOrientationCustom[x.img.url] || "").trim() ? "1px solid #ddd" : "1px solid #ef4444", borderRadius: 6 }}
+                            />
+                          )}
+                        </>
                       )}
                       <button onClick={() => setImages((arr) => arr.filter((_, j) => j !== x.idx))} style={{ position: "absolute", top: -6, right: -6, background: "#fff", border: "1px solid #ddd", borderRadius: "50%", width: 20, height: 20, cursor: "pointer", fontSize: "0.7rem" }}>✕</button>
                     </div>
@@ -967,7 +1106,7 @@ export default function VideoCloneV2Page() {
             {/* 傻瓜模式:一键根据"每张图用途"自动生成提示词,用户不用写、不用打 @ */}
             <div style={{ marginBottom: 10, padding: "10px 12px", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 10 }}>
               <div style={{ fontSize: "0.82rem", color: "#0369a1", marginBottom: 8 }}>
-                💡 不会写?在上面第 2 步给每张图选好"用途",勾选下面需要的,点按钮自动生成 ↓
+                💡 不会写?在上面第 2 步给每张图选好「用途」和「朝向」(产品图必选),勾选下面需要的,点按钮自动生成 ↓
               </div>
               <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.85rem", color: "#374151", marginBottom: 8, cursor: "pointer" }}>
                 <input type="checkbox" checked={removeOriginalSpeech} onChange={(e) => setRemoveOriginalSpeech(e.target.checked)} />

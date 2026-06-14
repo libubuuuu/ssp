@@ -18,6 +18,7 @@ import asyncio
 import hashlib
 import json
 import os
+import sys
 import tempfile
 import time
 import uuid
@@ -315,17 +316,117 @@ def _validate_segments(
 
 # ---------------------------------------------------------------- Endpoints ----
 
+# ── 人脸打码异步任务(上传视频"需要替换人脸"时用)─────────────────────────────
+# 单 worker uvicorn:状态存进程内内存。⚠️ 蓝绿切换会清空 → 在跑的打码丢失,前端遇 404 自行重传。
+_blur_jobs: dict = {}                # blur_id -> {status, user_id, ts, video_url/duration_sec/sha256/error}
+_blur_sem = asyncio.Semaphore(1)     # ⭐ 2vCPU:全局串行,同时最多 1 个打码在跑,其余排队(防饿死线上 + 防 OOM)
+_BLUR_JOB_TTL = 1800                 # 状态保留 30 分钟,超时清理(防内存无限涨)
+
+# 打码模型目录:子进程用 INSIGHTFACE_HOME 指到只读共享目录,不依赖运行时联网下载
+_MASK_MODEL_HOME = os.environ.get("FACE_MASK_MODEL_HOME", "/opt/ssp/models/insightface")
+# backend 根目录(app 的上一级),子进程 cwd 用它,保证 `python -m app.services.*` 能 import
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _prune_blur_jobs() -> None:
+    now = time.time()
+    for k in [k for k, v in _blur_jobs.items() if now - v.get("ts", now) > _BLUR_JOB_TTL]:
+        _blur_jobs.pop(k, None)
+
+
+async def _run_mask_subprocess(in_path: str, out_path: str, detect_every: int = 3) -> dict:
+    """以 nice 低优先级子进程跑打码(隔离 CPU/内存,不占 uvicorn 事件循环)。返回 worker 的 RESULT_JSON dict。"""
+    env = dict(os.environ)
+    env["INSIGHTFACE_HOME"] = _MASK_MODEL_HOME
+    proc = await asyncio.create_subprocess_exec(
+        "nice", "-n", "10", sys.executable, "-m", "app.services.face_mask_worker",
+        in_path, out_path, str(detect_every),
+        cwd=_BACKEND_DIR, env=env,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=900)  # 15min 硬超时(60s 视频 ~3.5min,留足余量)
+    except asyncio.TimeoutError:
+        try: proc.kill()
+        except Exception: pass
+        return {"ok": False, "error": "打码子进程超时(>15min)"}
+    for line in reversed((out or b"").decode("utf-8", "ignore").splitlines()):
+        if line.startswith("RESULT_JSON "):
+            try:
+                return json.loads(line[len("RESULT_JSON "):])
+            except Exception:
+                break
+    tail = (err or b"").decode("utf-8", "ignore")[-200:]
+    return {"ok": False, "error": f"打码子进程无结果(rc={proc.returncode}): {tail}"}
+
+
+async def _blur_video_task(blur_id: str, video_path: str, user_id: str, mask_face: bool) -> None:
+    """后台:(mask_face=True 才)打码 → ffprobe → 原始 sha256(审计)→ 上传 COS → 写状态。前端轮询取结果。"""
+    import subprocess as _sp
+    try:
+        # ⭐ 红线 3:审计 sha256 必须用【原始】视频指纹(判断"是否上传同一视频"),不能用打码版
+        file_sha256 = sha256_file(video_path)
+        upload_path = video_path
+        mask_meta: dict = {}
+        if mask_face:
+            masked = video_path + ".masked.mp4"
+            async with _blur_sem:                       # 全局串行:排队,最多 1 个在跑
+                _blur_jobs[blur_id].update(status="masking", ts=time.time())
+                mask_meta = await _run_mask_subprocess(video_path, masked, detect_every=3)
+            if mask_meta.get("ok") and mask_meta.get("any_face") and os.path.exists(masked):
+                os.replace(masked, video_path)          # 用打码版上传(覆盖原 path,后续逻辑不变)
+                log_info(f"[V2-BLUR] blur_id={blur_id[:8]} coverage={mask_meta.get('coverage')} "
+                         f"hit={mask_meta.get('detected_frames')}/{mask_meta.get('frames')} "
+                         f"fallback={mask_meta.get('fallback')}")
+            else:
+                # 无脸 / 打码失败 → 用原视频(不阻断上传);失败仅记日志告警
+                if not mask_meta.get("ok"):
+                    log_error(f"[V2-BLUR] blur_id={blur_id[:8]} 打码失败,改用原视频: {mask_meta.get('error')}")
+                if os.path.exists(masked):
+                    try: os.unlink(masked)
+                    except Exception: pass
+        # ffprobe 时长(原始/打码版时长一致)
+        try:
+            rr = _sp.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                          "-of", "json", upload_path], capture_output=True, text=True, timeout=30)
+            dur = float(json.loads(rr.stdout).get("format", {}).get("duration", 0))
+        except Exception:
+            dur = 0
+        url = await asyncio.to_thread(upload_to_cos, upload_path)
+        validate_video_url(url, field_name="cos_storage_url")
+        cache_store(file_sha256, upload_path)           # 按原始 sha256 缓存(内部会搬走文件)
+        try: cache_clean_old()
+        except Exception: pass
+        _blur_jobs[blur_id].update(
+            status="done", video_url=url, duration_sec=dur,
+            sha256=file_sha256, sha256_short=file_sha256[:8],
+            masked=bool(mask_face and mask_meta.get("any_face")),
+            coverage=mask_meta.get("coverage"), ts=time.time(),
+        )
+        log_info(f"[V2-BLUR-DONE] blur_id={blur_id[:8]} user={user_id} dur={dur:.1f}s "
+                 f"masked={_blur_jobs[blur_id].get('masked')} url={url[:60]}")
+    except Exception as e:
+        _blur_jobs[blur_id] = {**_blur_jobs.get(blur_id, {}),
+                               "status": "failed", "error": str(e)[:300], "ts": time.time()}
+        log_error(f"[V2-BLUR-FAIL] blur_id={blur_id[:8]} {e}")
+    finally:
+        # cache_store 成功已搬走 video_path;失败时这里兜底删,防临时文件泄漏
+        if os.path.exists(video_path):
+            try: os.unlink(video_path)
+            except Exception: pass
+
+
 @router.post("/upload/video")
 async def upload_video(
     file: UploadFile = File(...),
+    mask_face: bool = Form(False),
     current_user: dict = Depends(get_current_user),
 ):
-    """上传参考视频(≤50MB)。返 fal storage URL + ffprobe 时长 + ⭐ 文件 SHA256(红线 3)。
+    """上传参考视频(≤50MB)。**异步**:秒回 blur_job_id,后台处理后前端轮询取结果。
 
-    红线 3:每次上传立即算文件 SHA256,前端拿到后:
-    - 显示前 8 位给用户("当前视频 hash: abc12345")
-    - /create 时把完整 hash 传回来 → 入库 input_video_sha256
-    便于事后审计"是不是上传了同一视频" + 法务 §4.4.4 举证。
+    - mask_face=True(前端选"需要替换人脸"才传)→ 后台 nice 子进程给人脸打码再上传 COS;
+      默认 False(服务端兜底:不传 / 老 client → 不打码,原视频直接传)。
+    - 前端轮询 GET /upload/video/status/{blur_job_id} 取 video_url / duration_sec / sha256(原始,红线 3)。
     """
     _guard_enabled()
     contents = await read_bounded(file, MAX_VIDEO_SIZE, VIDEO_MIMES, "参考视频")
@@ -335,53 +436,37 @@ async def upload_video(
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(contents)
         video_path = tmp.name
-    try:
-        import subprocess as _sp, json as _j
-        try:
-            rr = _sp.run(
-                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                 "-of", "json", video_path],
-                capture_output=True, text=True, timeout=30,
-            )
-            dur = float(_j.loads(rr.stdout).get("format", {}).get("duration", 0))
-        except Exception:
-            dur = 0
-        # ⭐ 红线 3:文件本体 SHA256
-        file_sha256 = sha256_file(video_path)
-        url = await asyncio.to_thread(upload_to_cos, video_path)
-        validate_video_url(url, field_name="cos_storage_url")
-        # Path B 缓存:把临时文件搬到 /tmp/v2_cache/{sha256}.mp4
-        # 让 check-duration 直读本地(省去跨境读 fal CDN 的 6-9s)
-        # store 内部成功会把 video_path 移走;失败/dedupe 时也会清掉源文件
-        cached = cache_store(file_sha256, video_path)
-        # opportunistic 清过期文件(防 cron 没装也不堆积)
-        try: cache_clean_old()
-        except Exception: pass
-        log_info(
-            f"[V2-UPLOAD-VIDEO] user={current_user.get('id')} "
-            f"sha256={file_sha256[:8]} duration={dur:.1f}s "
-            f"cache={'hit' if cached else 'miss'} url={url[:80]}"
-        )
-    finally:
-        # store 已搬走;若失败 video_path 还在,unlink 兜底防泄漏
-        if os.path.exists(video_path):
-            try: os.unlink(video_path)
-            except Exception: pass
-    return {
-        "video_url": url,
-        "duration_sec": dur,
-        "sha256": file_sha256,
-        "sha256_short": file_sha256[:8],
-    }
+    _prune_blur_jobs()
+    blur_id = uuid.uuid4().hex
+    uid = str(current_user.get("id"))
+    _blur_jobs[blur_id] = {"status": "processing", "user_id": uid, "ts": time.time()}
+    # create_tracked_task:注册到全局 bg 注册表,lifespan 关闭时会等待,不会像裸 create_task 静默丢
+    create_tracked_task(_blur_video_task(blur_id, video_path, uid, mask_face))
+    log_info(f"[V2-UPLOAD-VIDEO] 秒回 blur_id={blur_id[:8]} user={uid} mask_face={mask_face}")
+    return {"blur_job_id": blur_id, "status": "processing"}
+
+
+@router.get("/upload/video/status/{blur_id}")
+async def upload_video_status(blur_id: str, current_user: dict = Depends(get_current_user)):
+    """前端轮询打码/上传状态:processing/masking=处理中;done 带 video_url/duration_sec/sha256;failed 带 error。"""
+    _guard_enabled()
+    job = _blur_jobs.get(blur_id)
+    if not job:
+        raise HTTPException(404, "打码任务不存在或已过期")
+    if str(job.get("user_id")) != str(current_user.get("id")):   # 归属校验:不许查别人的任务
+        raise HTTPException(403, "无权访问该任务")
+    return {k: v for k, v in job.items() if k != "user_id"}
 
 
 @router.post("/upload/image")
 async def upload_image(
     file: UploadFile = File(...),
     role: str = Form(..., description="product | person | scene | reference"),
+    mask_face: bool = Form(False),
     current_user: dict = Depends(get_current_user),
 ):
-    """上传参考图(≤10MB,role 必传)。"""
+    """上传参考图(≤10MB,role 必传)。mask_face=True(前端选"需要替换人脸"才传)→ 涂鸦盖脸;
+    默认 False(服务端兜底:不传 / 老 client → 原图直接传)。图片打码很快(单帧),同步处理即可。"""
     _guard_enabled()
     if role not in IMAGE_ROLES:
         raise HTTPException(400, f"role 必须 ∈ {IMAGE_ROLES}")
@@ -393,6 +478,15 @@ async def upload_image(
         tmp.write(contents)
         tmp_path = tmp.name
     try:
+        # ⭐ 隐私保护:仅当选了"需要替换人脸"才涂鸦盖脸;无脸/失败 → 用原图(不阻断上传)
+        if mask_face:
+            try:
+                from app.services.face_blur import blur_faces_in_image
+                _blurred = tmp_path + ".blurred.jpg"
+                if await asyncio.to_thread(blur_faces_in_image, tmp_path, _blurred) and os.path.exists(_blurred):
+                    os.replace(_blurred, tmp_path)
+            except Exception as e:
+                log_error(f"[V2-UPLOAD-IMG] 图片打码失败,用原图: {str(e)[:160]}")
         url = await asyncio.to_thread(upload_to_cos, tmp_path)
     finally:
         try: os.unlink(tmp_path)

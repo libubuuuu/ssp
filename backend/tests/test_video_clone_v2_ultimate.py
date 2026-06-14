@@ -991,17 +991,16 @@ class TestV2UploadCos:
         files = {"file": ("test.mp4", data, "video/mp4")}
         r = c.post("/api/video/clone-v2/upload/video", files=files,
                    headers={"Authorization": f"Bearer {token}"})
+        # 2026-06-15:upload_video 改异步,端点秒回 blur_job_id;COS 上传在后台 _blur_video_task 里做
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body["video_url"] == fake_url
-        assert "sha256" in body
+        assert body.get("blur_job_id"), "应返回 blur_job_id"
+        assert body["status"] == "processing"
 
-    def test_upload_video_ssrf_guard_rejects_bad_url(self, monkeypatch):
-        """upload_to_cos 若返回非白名单域名 → validate_video_url 应拦截 → 500/400。"""
+    async def test_upload_video_ssrf_guard_rejects_bad_url(self, monkeypatch, tmp_path):
+        """SSRF 守卫:后台 task 里 upload_to_cos 返非白名单域名 → validate_video_url 拦截 → 任务 failed。"""
         import subprocess
         from app.api import video_clone_v2 as v2_module
-
-        c, token = self._make_v2_client(monkeypatch)
 
         def _fake_subprocess_run(cmd, **kw):
             m = MagicMock()
@@ -1010,15 +1009,19 @@ class TestV2UploadCos:
             return m
 
         monkeypatch.setattr(subprocess, "run", _fake_subprocess_run)
+        monkeypatch.setattr(v2_module, "sha256_file", lambda p: "S")
         monkeypatch.setattr(v2_module, "upload_to_cos", lambda p: "https://evil.com/steal.mp4")
         monkeypatch.setattr(v2_module, "cache_store", lambda sha, p: False)
         monkeypatch.setattr(v2_module, "cache_clean_old", lambda: None)
 
-        data = b"\x00\x00\x00\x18ftypisom" + b"\x00" * 100
-        files = {"file": ("test.mp4", data, "video/mp4")}
-        r = c.post("/api/video/clone-v2/upload/video", files=files,
-                   headers={"Authorization": f"Bearer {token}"})
-        assert r.status_code == 400, f"非白名单 URL 应被 SSRF 守卫拦截,实际:{r.status_code}"
+        path = str(tmp_path / "x.mp4")
+        with open(path, "wb") as f:
+            f.write(b"\x00\x00\x00\x18ftypisom")
+        v2_module._blur_jobs["ssrf"] = {"status": "processing", "user_id": "u1", "ts": 0}
+        await v2_module._blur_video_task("ssrf", path, "u1", mask_face=False)
+        job = v2_module._blur_jobs["ssrf"]
+        assert job["status"] == "failed", f"非白名单 URL 应被 SSRF 守卫拦截,实际:{job}"
+        v2_module._blur_jobs.clear()
 
     def test_upload_image_calls_cos(self, monkeypatch):
         """upload_image 端点:mock upload_to_cos 返 COS URL → 200。"""
