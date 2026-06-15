@@ -67,7 +67,7 @@ def _detect_faces(app, frame):
     return _nms(out)
 
 
-def _ellipse_mosaic(frame, x1, y1, x2, y2, blocks=12, expand=0.2):
+def _ellipse_mosaic(frame, x1, y1, x2, y2, blocks=8, expand=0.2):
     """椭圆形马赛克，紧贴脸部、不超出脸框。两侧不外扩，顶/底各内收 5%。"""
     H, W = frame.shape[:2]
     w, h = x2 - x1, y2 - y1
@@ -117,7 +117,7 @@ def _shift_box_by_flow(prev_gray, gray, box):
     return [box[0] + dx, box[1] + dy, box[2] + dx, box[3] + dy]
 
 
-def mask_faces_in_video_pro(in_path, out_path, *, detect_every=3, expand=0.2, blocks=12):
+def mask_faces_in_video_pro(in_path, out_path, *, detect_every=3, expand=0.2, blocks=8):
     """视频人脸打码。返回统计 dict；全程无脸返 any_face=False（调用方用原视频）。
     detect_every：每 N 帧检测一次（CPU 提速），非检测帧靠光流跟 + hold。默认 3（服务器实测最优）。"""
     app = _get_scrfd()

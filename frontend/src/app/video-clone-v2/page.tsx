@@ -427,14 +427,14 @@ export default function VideoCloneV2Page() {
   }
 
   // ─── 图片上传 handler ───
-  async function handleImageUpload(file: File, role: Role) {
+  async function handleImageUpload(file: File, role: Role, noMask: boolean = false) {
     setUploadingImage(true);
     setError("");
     try {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("role", role);
-      fd.append("mask_face", String(maskFace));  // 选了"需要替换人脸"才涂鸦盖脸
+      fd.append("mask_face", String(maskFace && !noMask));  // noMask=专业版生成的脸,永不打码
       const r = await fetch(`${API_BASE}/api/video/clone-v2/upload/image`, {
         method: "POST",
         credentials: "include",
@@ -947,6 +947,14 @@ export default function VideoCloneV2Page() {
                       disabled={uploadingImage}
                       label={uploadingImage ? "上传中..." : `+ 添加${ROLE_LABELS[role]}图`}
                       onFile={(f) => handleImageUpload(f, role)}
+                    />
+                  )}
+                  {role === "person" && images.length < 6 && (
+                    <FileInput
+                      accept="image/*"
+                      disabled={uploadingImage}
+                      label={uploadingImage ? "上传中..." : "+ 专业版生成人脸(不打码)"}
+                      onFile={(f) => handleImageUpload(f, "person", true)}
                     />
                   )}
                 </div>
