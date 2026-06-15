@@ -10,6 +10,10 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 const RANGE_COLORS = ["#dc2626", "#f97316", "#9333ea", "#06b6d4"] as const;
 const MAX_RANGES = 4;
 
+// 2026-06-16 服务器配置过低,视频自动打码太慢(2vCPU ~3.5min/60s),暂时关闭【视频】打码。
+// 图片涂鸦不受影响,照常按 privacyMode 处理。后端打码代码全保留,升配后改回 true 即恢复视频打码。
+const ENABLE_VIDEO_FACE_MASK = false;
+
 // 2026-05-10 砍单档:Tier type 删除
 type Role = "product" | "person" | "scene" | "reference";
 type SourceType = "ai" | "original";
@@ -390,7 +394,9 @@ export default function VideoCloneV2Page() {
     try {
       const fd = new FormData();
       fd.append("file", file);
-      fd.append("mask_face", String(maskFace));  // 选了"需要替换人脸"才打码
+      // 2026-06-16 服务器配置过低,视频打码太慢 → 暂时关闭视频打码(ENABLE_VIDEO_FACE_MASK=false)。
+      // 图片涂鸦不受影响(见 handleImageUpload)。升配后改回 true 即恢复。
+      fd.append("mask_face", String(maskFace && ENABLE_VIDEO_FACE_MASK));
       // 1) 秒提交:后端返回 blur_job_id,后台异步(按 mask_face)打码(不在这步等,避免超时)
       const r = await fetch(`${API_BASE}/api/video/clone-v2/upload/video`, {
         method: "POST",
