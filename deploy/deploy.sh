@@ -6,6 +6,10 @@
 set -e
 
 LOG="/var/log/deploy.log"
+# 脚本真实所在目录(解析 symlink:/root/deploy.sh → /root/ssp/deploy/deploy.sh)。
+# 不能用 dirname "$0" —— 经 symlink 调用时它返回 /root,找不到同目录的 smoke-test.sh / push-alert.sh,
+# 导致冒烟测试 + 自动回滚安全网被静默跳过(2026-06-16 修复)。
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 
 echo "========================================" | tee -a $LOG
 echo "部署开始: $(date '+%Y-%m-%d %H:%M:%S')" | tee -a $LOG
@@ -52,7 +56,7 @@ echo "  [4.5/5] 冒烟测试（6 项核心接口）"
 echo "  [5/5] 关闭 $ACTIVE（旧代码保留可 rollback）"
 echo ""
 
-ALERT_SCRIPT="$(dirname "$0")/push-alert.sh"
+ALERT_SCRIPT="$SCRIPT_DIR/push-alert.sh"
 
 # ── 0. 预部署测试关卡（失败立即中止，保护用户）────────────────────────
 echo "[0/5] 预部署测试（积分/认证/任务/退款核心路径）" | tee -a $LOG
@@ -150,7 +154,7 @@ echo "✅ 流量已切换到 $STANDBY" | tee -a $LOG
 
 # ── 4.5 部署后冒烟测试（流量已切，验证新 slot 对外可用）────────────────────
 echo "[4.5/5] 冒烟测试 $STANDBY (backend=$STANDBY_BACKEND frontend=$STANDBY_FRONTEND)" | tee -a $LOG
-SMOKE_SCRIPT="$(dirname "$0")/smoke-test.sh"
+SMOKE_SCRIPT="$SCRIPT_DIR/smoke-test.sh"
 
 if [ -x "$SMOKE_SCRIPT" ]; then
     if bash "$SMOKE_SCRIPT" "$STANDBY_BACKEND" "$STANDBY_FRONTEND" 2>&1 | tee -a $LOG; then
