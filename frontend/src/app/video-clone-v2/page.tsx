@@ -10,10 +10,12 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 const RANGE_COLORS = ["#dc2626", "#f97316", "#9333ea", "#06b6d4"] as const;
 const MAX_RANGES = 4;
 
-// 2026-06-16 服务器配置过低,自动打码太慢(2vCPU ~3.5min/60s)。总开关:false=整个"人脸隐私处理"
-// 功能隐藏(选择器UI不显示 + 视频/图片都不打码,原文件直传,回到打码前的"不做处理"版本)。
-// 后端打码代码 + 隐私选择器 JSX 全保留,升配/加机器后把这里改回 true 即一键恢复全部打码功能。
+// 2026-06-16 服务器配置过低,视频打码太慢(2vCPU ~3.5min/60s,视频要全片解码)。两个开关分开控:
+// SHOW_FACE_MASK=false → 隐藏"人脸隐私处理"三选一选择器 UI + 视频不打码(视频慢,先关)。
+// MASK_PERSON_IMAGE=true → 人物图片仍自动涂鸦盖脸(单图很快,保留肖像保护)+ 显示"专业版(不打码)"opt-out 按钮。
+// 后端打码代码 + 选择器 JSX 全保留,升配后把 SHOW_FACE_MASK 改回 true 即恢复视频打码 + 选择器。
 const SHOW_FACE_MASK = false;
+const MASK_PERSON_IMAGE = true;
 
 // 2026-05-10 砍单档:Tier type 删除
 type Role = "product" | "person" | "scene" | "reference";
@@ -440,7 +442,8 @@ export default function VideoCloneV2Page() {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("role", role);
-      fd.append("mask_face", String(maskFace && !noMask));  // noMask=专业版生成的脸,永不打码
+      // 图片涂鸦独立开关:MASK_PERSON_IMAGE=true 默认涂鸦;noMask=true(专业版生成的脸)永不涂鸦。
+      fd.append("mask_face", String(MASK_PERSON_IMAGE && !noMask));
       const r = await fetch(`${API_BASE}/api/video/clone-v2/upload/image`, {
         method: "POST",
         credentials: "include",
@@ -958,8 +961,8 @@ export default function VideoCloneV2Page() {
                       onFile={(f) => handleImageUpload(f, role)}
                     />
                   )}
-                  {/* 专业版不打码入口:仅在打码功能开启时才有意义(关闭时所有上传本就不打码) */}
-                  {SHOW_FACE_MASK && role === "person" && images.length < 6 && (
+                  {/* 专业版不打码入口:图片涂鸦开启时作为 opt-out(AI 生成的脸不必涂鸦) */}
+                  {MASK_PERSON_IMAGE && role === "person" && images.length < 6 && (
                     <FileInput
                       accept="image/*"
                       disabled={uploadingImage}
