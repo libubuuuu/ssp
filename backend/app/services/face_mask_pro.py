@@ -7,6 +7,7 @@
 
 性能（服务器 2vCPU 实测，496×864）：det=3 ≈145ms/帧、覆盖95%、峰值~800MB;det=1 ≈397ms/帧。默认 det=3。
 """
+import math
 import os
 import subprocess
 
@@ -16,6 +17,77 @@ import numpy as np
 from app.services.logger import log_info, log_error
 
 _scrfd_app = None
+_east_net = None
+_EAST_PATH = os.path.join(os.path.dirname(__file__), "models", "frozen_east_text_detection.pb")
+
+
+def _get_east():
+    """懒加载 EAST 文字检测(cv2.dnn,不装新库)。模型缺失返 None → 不保字幕(只打码)。"""
+    global _east_net
+    if _east_net is None:
+        if not os.path.exists(_EAST_PATH):
+            log_error("[FACE-PRO] EAST 模型缺失,字幕保护跳过(只打码)")
+            _east_net = False
+        else:
+            try:
+                _east_net = cv2.dnn.readNet(_EAST_PATH)
+                log_info("[FACE-PRO] EAST 文字检测就绪")
+            except Exception as e:
+                log_error(f"[FACE-PRO] EAST 加载失败: {e}")
+                _east_net = False
+    return _east_net or None
+
+
+def _decode_east(scores, geometry, score_thr):
+    rects, confs = [], []
+    h, w = scores.shape[2], scores.shape[3]
+    for y in range(h):
+        s = scores[0, 0, y]
+        x0, x1, x2, x3 = geometry[0, 0, y], geometry[0, 1, y], geometry[0, 2, y], geometry[0, 3, y]
+        ang = geometry[0, 4, y]
+        for x in range(w):
+            sc = s[x]
+            if sc < score_thr:
+                continue
+            ox, oy = x * 4.0, y * 4.0
+            a = ang[x]
+            cosA, sinA = math.cos(a), math.sin(a)
+            bh, bw = x0[x] + x2[x], x1[x] + x3[x]
+            endX = int(ox + cosA * x1[x] + sinA * x2[x])
+            endY = int(oy - sinA * x1[x] + cosA * x2[x])
+            rects.append((int(endX - bw), int(endY - bh), endX, endY))
+            confs.append(float(sc))
+    return rects, confs
+
+
+def _detect_text_boxes(frame, score_thr=0.5, nms_thr=0.4, cap_side=640):
+    """EAST 文字检测,返回原图坐标文字框 [[x1,y1,x2,y2],...]。无模型/失败返 []。"""
+    net = _get_east()
+    if net is None:
+        return []
+    H, W = frame.shape[:2]
+    scale = min(1.0, cap_side / float(max(W, H)))
+    tW = max(32, (int(W * scale) // 32) * 32)
+    tH = max(32, (int(H * scale) // 32) * 32)
+    rW, rH = W / float(tW), H / float(tH)
+    try:
+        blob = cv2.dnn.blobFromImage(frame, 1.0, (tW, tH), (123.68, 116.78, 103.94), True, False)
+        net.setInput(blob)
+        scores, geometry = net.forward(["feature_fusion/Conv_7/Sigmoid", "feature_fusion/concat_3"])
+        rects, confs = _decode_east(scores, geometry, score_thr)
+        if not rects:
+            return []
+        xywh = [[x1, y1, x2 - x1, y2 - y1] for (x1, y1, x2, y2) in rects]
+        idxs = cv2.dnn.NMSBoxes(xywh, confs, score_thr, nms_thr)
+        out = []
+        for i in np.array(idxs).flatten():
+            x1, y1, x2, y2 = rects[int(i)]
+            out.append([max(0, int(x1 * rW)), max(0, int(y1 * rH)),
+                        min(W, int(x2 * rW)), min(H, int(y2 * rH))])
+        return out
+    except Exception as e:
+        log_error(f"[FACE-PRO] EAST 检测失败: {str(e)[:120]}")
+        return []
 
 
 def _get_scrfd():
@@ -117,11 +189,16 @@ def _shift_box_by_flow(prev_gray, gray, box):
     return [box[0] + dx, box[1] + dy, box[2] + dx, box[3] + dy]
 
 
-def mask_faces_in_video_pro(in_path, out_path, *, detect_every=3, expand=0.2, blocks=12):
+def mask_faces_in_video_pro(in_path, out_path, *, detect_every=3, expand=0.2, blocks=12, preserve_subtitle=True):
     """视频人脸打码。返回统计 dict；全程无脸返 any_face=False（调用方用原视频）。
-    detect_every：每 N 帧检测一次（CPU 提速），非检测帧靠光流跟 + hold。默认 3（服务器实测最优）。"""
+    detect_every：每 N 帧检测一次（CPU 提速），非检测帧靠光流跟 + hold。默认 3（服务器实测最优）。
+    preserve_subtitle：存字幕原始像素 → 打码(连字幕底下也打) → 贴回字幕原始像素 → 字幕全程清晰、脸全程盖住。
+                       需 EAST 模型;缺失则自动跳过(只打码)。"""
     app = _get_scrfd()
     de = max(1, int(detect_every))
+    text_on = bool(preserve_subtitle) and (_get_east() is not None)
+    text_every = max(de * 2, 5)   # 字幕位置较稳,稀疏采样并取并集
+    all_text = []
     cap = cv2.VideoCapture(in_path)
     if not cap.isOpened():
         return {"ok": False, "error": "无法打开视频"}
@@ -151,6 +228,8 @@ def mask_faces_in_video_pro(in_path, out_path, *, detect_every=3, expand=0.2, bl
                 last_boxes = []
             elif prev_gray is not None:
                 last_boxes = [_shift_box_by_flow(prev_gray, gray, b) for b in last_boxes]
+        if text_on and (f % text_every == 0):
+            all_text.extend(_detect_text_boxes(frame))
         per_frame.append([list(b) for b in last_boxes])
         prev_gray = gray
         f += 1
@@ -164,7 +243,17 @@ def mask_faces_in_video_pro(in_path, out_path, *, detect_every=3, expand=0.2, bl
         log_info(f"[FACE-PRO] {n} 帧全程无脸,跳过")
         return {"ok": True, "any_face": False, "frames": n, "out": None}
 
-    # ── Pass 2：逐帧打椭圆码 → 写无声 mp4
+    # 字幕区并集遮罩(小幅扩边盖描边,不大扩 → 贴回时不带出脸)。打码后这些像素贴回原始 = 字幕全程清晰。
+    text_mask = None
+    if text_on and all_text:
+        text_mask = np.zeros((H, W), dtype=np.uint8)
+        for (tx1, ty1, tx2, ty2) in all_text:
+            m = 4
+            cv2.rectangle(text_mask, (max(0, tx1 - m), max(0, ty1 - m)),
+                          (min(W, tx2 + m), min(H, ty2 + m)), 255, thickness=-1)
+        log_info(f"[FACE-PRO] 字幕区 {len(all_text)} 框 → 打码后贴回原始像素(字幕保清晰)")
+
+    # ── Pass 2：逐帧 ①存原始 ②打椭圆码 ③把字幕区贴回原始像素 → 写无声 mp4
     cap = cv2.VideoCapture(in_path)
     tmp = out_path + ".noaudio.mp4"
     writer = cv2.VideoWriter(tmp, cv2.VideoWriter_fourcc(*"mp4v"), fps, (W, H))
@@ -173,8 +262,12 @@ def mask_faces_in_video_pro(in_path, out_path, *, detect_every=3, expand=0.2, bl
         ok, frame = cap.read()
         if not ok:
             break
+        orig = frame.copy() if text_mask is not None else None
         for b in (per_frame[f] if f < len(per_frame) else []):
             _ellipse_mosaic(frame, b[0], b[1], b[2], b[3], blocks=blocks, expand=expand)
+        if text_mask is not None:
+            sel = text_mask > 0
+            frame[sel] = orig[sel]    # 字幕原始像素贴回最上层(脸已在底下打码)
         writer.write(frame)
         f += 1
     cap.release()
