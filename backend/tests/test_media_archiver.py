@@ -147,3 +147,56 @@ def test_pick_ext_unit():
     assert ma._pick_ext("https://x.com/no-ext", None) == ".bin"
     # 不接受奇怪扩展名
     assert ma._pick_ext("https://x.com/file.exe?download=1", "video/mp4") == ".mp4"
+
+
+# ── is_permanent_cos_result: aiview openapi 永久链识别(2026-06-16) ──────────
+class TestIsPermanentCosResult:
+    """aiview Open API 结果已是我们桶 openapi/ 永久公有读直链 → archive_url 放行不下载。
+    严格只认 openapi/ 前缀;我们自己 uploads/ presigned 会过期签名链绝不能放行。"""
+
+    BUCKET = "ailixiao-uploads-1421174544"
+    REGION = "ap-guangzhou"
+
+    @pytest.fixture(autouse=True)
+    def _env(self, monkeypatch):
+        monkeypatch.setenv("STORAGE_BUCKET", self.BUCKET)
+        monkeypatch.setenv("STORAGE_REGION", self.REGION)
+
+    def _u(self, path):
+        return f"https://{self.BUCKET}.cos.{self.REGION}.myqcloud.com{path}"
+
+    def test_openapi_image_and_video_pass(self):
+        assert ma.is_permanent_cos_result(self._u("/openapi/image/2026-06/abc.png")) is True
+        assert ma.is_permanent_cos_result(self._u("/openapi/video/2026-06/x.mp4")) is True
+
+    def test_our_uploads_presigned_not_permanent(self):
+        # 我们自己 upload_to_cos 走 uploads/ + presigned,会过期,必须继续归档
+        assert ma.is_permanent_cos_result(
+            self._u("/uploads/deadbeef.png?q-sign-algorithm=sha1&q-signature=x")
+        ) is False
+
+    def test_fal_and_other_hosts_not_permanent(self):
+        assert ma.is_permanent_cos_result("https://fal.media/files/elephant/xyz.mp4") is False
+        assert ma.is_permanent_cos_result("https://ailixiao.com/uploads/u/2026-06/a.png") is False
+        # 别人的桶即便也叫 openapi/ 也不放行
+        assert ma.is_permanent_cos_result(
+            "https://someoneelse.cos.ap-guangzhou.myqcloud.com/openapi/image/x.png"
+        ) is False
+
+    def test_empty_and_non_http(self):
+        assert ma.is_permanent_cos_result("") is False
+        assert ma.is_permanent_cos_result("/local/path.png") is False
+
+    def test_missing_env_fails_closed(self, monkeypatch):
+        # 缺 env → 保守 False(照常归档),不误放行
+        monkeypatch.delenv("STORAGE_BUCKET", raising=False)
+        assert ma.is_permanent_cos_result(self._u("/openapi/image/x.png")) is False
+
+    def test_archive_url_skips_permanent_without_download(self, monkeypatch):
+        # archive_url 命中永久链应原样返回,且绝不发起网络下载
+        def _boom(*a, **k):
+            raise AssertionError("archive_url 不应对永久链发起下载")
+        monkeypatch.setattr(ma, "_get_client", _boom)
+        url = self._u("/openapi/image/2026-06/abc.png")
+        out = asyncio.run(ma.archive_url(url, "uid", "image"))
+        assert out == url
