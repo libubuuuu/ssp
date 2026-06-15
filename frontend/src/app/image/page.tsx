@@ -25,11 +25,8 @@ export default function ImagePage(){
   const [refImages,setRefImages]=useState<string[]>([]);
   const [refPreviews,setRefPreviews]=useState<string[]>([]);
   const [uploading,setUploading]=useState(false);
-  // 并行生成:每个进行中的任务一项,提交后不阻塞、可继续提交,完成后陆续填进网格。
-  const [pending,setPending]=useState<{id:string;prompt:string;size:string;startedAt:number}[]>([]);
-  const [submitting,setSubmitting]=useState(false);  // 仅"提交请求"那一瞬,防重复点
-  const [nowTs,setNowTs]=useState(()=>Date.now());   // 每秒 +1,用于算各任务已用时
-  const MAX_PARALLEL=6;                              // 客户端软上限(后端 Semaphore 也会兜底排队)
+  const [loading,setLoading]=useState(false);
+  const [elapsedSecs,setElapsedSecs]=useState(0);
   const [error,setError]=useState("");
   const [msg,setMsg]=useState("");
   const [gallery,setGallery]=useState<GalleryItem[]>([]);
@@ -40,21 +37,13 @@ export default function ImagePage(){
     const saved=localStorage.getItem(`img_gallery_${userId}`);
     if(saved){try{setGallery(JSON.parse(saved));}catch{}}
   },[]);
-  const getUid=()=>{try{return JSON.parse(localStorage.getItem("user")||"{}").id||"anonymous";}catch{return "anonymous";}};
-  // race-safe:并行任务可能同时完成,用函数式更新基于最新 state 前插,避免互相覆盖丢图。
-  const addToGallery=(item:GalleryItem)=>{
-    setGallery(prev=>{
-      const next=[item,...prev].slice(0,50);
-      localStorage.setItem(`img_gallery_${getUid()}`,JSON.stringify(next));
-      return next;
-    });
+  const saveGallery=(g:GalleryItem[])=>{
+    setGallery(g);
+    const userData2=localStorage.getItem("user")||"{}";
+    let userId2="anonymous";
+    try{userId2=JSON.parse(userData2).id||"anonymous";}catch{}
+    localStorage.setItem(`img_gallery_${userId2}`,JSON.stringify(g.slice(0,50)));
   };
-  // 进行中任务的"已用时"每秒刷新(仅在有任务时跑)。
-  useEffect(()=>{
-    if(pending.length===0)return;
-    const id=setInterval(()=>setNowTs(Date.now()),1000);
-    return ()=>clearInterval(id);
-  },[pending.length]);
   const handleRefUpload=async(e:React.ChangeEvent<HTMLInputElement>)=>{
     const file=e.target.files?.[0];
     if(!file)return;
@@ -87,9 +76,7 @@ export default function ImagePage(){
   };
   const generate=async()=>{
     if(!prompt.trim()){setError(t("errors.inputPrompt"));return;}
-    if(pending.length>=MAX_PARALLEL){setError(`最多同时生成 ${MAX_PARALLEL} 张，请等部分完成再继续`);return;}
-    setError("");setSubmitting(true);
-    const jobPrompt=prompt, jobSize=size;   // 锁定本次提交的 prompt/size(用户随后可改)
+    setError("");setElapsedSecs(0);setLoading(true);
     try{
       const token=localStorage.getItem("token")||"";
       const res=await fetch(`${API_BASE}/api/jobs/submit`,{
@@ -97,79 +84,83 @@ export default function ImagePage(){
         headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
         body:JSON.stringify({
           type:"image",
-          title:jobPrompt.slice(0,30),
+          title:prompt.slice(0,30),
           params:{
-            prompt:jobPrompt,
+            prompt,
             reference_images:refImages,
-            size:jobSize,
+            size,
             model,
             style,
-            aspect_ratio:jobSize,
+            aspect_ratio:size,
           },
         }),
       });
       const data=await res.json();
       if(!res.ok)throw new Error(data.detail||t("errors.submitFailed"));
       if(typeof data.cost==="number"&&data.cost>0)adjustLocalUserCredits(-data.cost);
-      // 入 pending(不阻塞,用户可立刻再点生成),后台独立监听该 job 完成。
-      setPending(p=>[...p,{id:data.job_id,prompt:jobPrompt,size:jobSize,startedAt:Date.now()}]);
-      setMsg("已提交，可继续生成下一张");
-      setTimeout(()=>setMsg(""),2500);
-      watchJob(data.job_id,jobPrompt);
+      setMsg(`任务已提交！查看右下角⚡ 我的任务`);
+      setTimeout(()=>setMsg(""),3000);
+      // 不在 finally 清 loading，由 streamJob 负责清
+      streamJob(data.job_id,prompt);
     }catch(e){
       setError(errMsg(e));
-    }finally{
-      setSubmitting(false);
+      setLoading(false);
     }
   };
-  const finishJob=(jobId:string)=>setPending(p=>p.filter(x=>x.id!==jobId));
 
-  const onJobFailed=(raw:string,jobId:string)=>{
-    if(raw.includes("content_policy_violation")||raw.includes("安全审核")){
-      setError("某张生成被安全审核拦截，请修改描述后重试（建议：减少人物动作描述，或改用英文）");
-    }else{
-      setError(raw.slice(0,120)||"某张生图失败，请重试");
-    }
-    finishJob(jobId);
-  };
   const pollJob=async(jobId:string,jobPrompt:string)=>{
     const token=localStorage.getItem("token")||"";
     let sec=0;
     while(sec<960){
       await new Promise(r=>setTimeout(r,3000));
-      sec+=3;
+      sec+=3;setElapsedSecs(sec);
       try{
         const res=await fetch(`${API_BASE}/api/jobs/${jobId}`,{
           headers:{"Authorization":`Bearer ${token}`},
         });
         const j=await res.json();
         if(j.status==="completed"&&j.result?.image_url){
-          addToGallery({url:j.result.image_url,prompt:jobPrompt,time:Date.now()});
-          finishJob(jobId);return;
+          const ud=localStorage.getItem("user")||"{}";let uid="anonymous";try{uid=JSON.parse(ud).id||"anonymous";}catch{}
+          saveGallery([{url:j.result.image_url,prompt:jobPrompt,time:Date.now()},...JSON.parse(localStorage.getItem(`img_gallery_${uid}`)||"[]")]);
+          setLoading(false);return;
         }
-        if(j.status==="failed"){onJobFailed(j.error||"",jobId);return;}
+        if(j.status==="failed"){
+          const raw=j.error||"";
+          if(raw.includes("content_policy_violation")||raw.includes("安全审核")){
+            setError("内容被安全审核拦截，请修改描述后重试（建议：减少人物动作描述，或改用英文）");
+          }else{
+            setError(raw.slice(0,120)||"生图失败，请重试");
+          }
+          setLoading(false);return;
+        }
       }catch{}
     }
-    setError("某张生成超时（>15分钟），请重试");
-    finishJob(jobId);
+    setError("生成超时（>15分钟），请重试");
+    setLoading(false);
   };
-  // 单个 job 独立监听:SSE 完成即推送,失败降级轮询。完成/失败都把它从 pending 摘掉。
-  const watchJob=(jobId:string,jobPrompt:string)=>{
+  const streamJob=(jobId:string,jobPrompt:string)=>{
+    // SSE：后端 job 完成即刻推送，无需轮询
     const sse=new EventSource(`${API_BASE}/api/jobs/${jobId}/stream`,{withCredentials:true});
-    const cleanup=()=>sse.close();
+    const timer=setInterval(()=>setElapsedSecs(s=>s+1),1000);
+    const cleanup=()=>{clearInterval(timer);sse.close();};
     sse.onmessage=(e)=>{
       cleanup();
       try{
         const d=JSON.parse(e.data);
         if(d.status==="completed"&&d.result?.image_url){
-          addToGallery({url:d.result.image_url,prompt:jobPrompt,time:Date.now()});
-          finishJob(jobId);
+          const ud=localStorage.getItem("user")||"{}";let uid="anonymous";try{uid=JSON.parse(ud).id||"anonymous";}catch{}
+          saveGallery([{url:d.result.image_url,prompt:jobPrompt,time:Date.now()},...JSON.parse(localStorage.getItem(`img_gallery_${uid}`)||"[]")]);
+          setLoading(false);
         }else if(d.status==="failed"){
-          onJobFailed(d.error||"",jobId);
-        }else{
-          finishJob(jobId);
+          const raw=d.error||"";
+          if(raw.includes("content_policy_violation")||raw.includes("安全审核")){
+            setError("内容被安全审核拦截，请修改描述后重试（建议：减少人物动作描述，或改用英文）");
+          }else{
+            setError(raw.slice(0,120)||"生图失败，请重试");
+          }
+          setLoading(false);
         }
-      }catch{finishJob(jobId);}
+      }catch{}
     };
     sse.onerror=()=>{
       // SSE 建立失败(如 token 过期)→ 降级轮询
@@ -186,30 +177,28 @@ export default function ImagePage(){
             <div style={{fontSize:"0.85rem",color:"#999",marginBottom:"0.3rem"}}>{t("dashboard.features.image.desc")}</div>
             <h1 style={{fontSize:"1.6rem",fontWeight:400,color:"#0d0d0d",margin:0,fontFamily:"Georgia,serif"}}>{t("dashboard.features.image.label")}</h1>
           </div>
-          {gallery.length>0 && <button onClick={()=>{if(confirm(t("confirms.clearCanvas"))){setGallery([]);localStorage.setItem(`img_gallery_${getUid()}`,"[]");}}} style={{background:"none",border:"1px solid #ddd",padding:"0.5rem 1rem",borderRadius:"999px",color:"#666",fontSize:"0.85rem",cursor:"pointer"}}>{t("image.clearBtn")}</button>}
+          {gallery.length>0 && <button onClick={()=>{if(confirm(t("confirms.clearCanvas"))){saveGallery([]);}}} style={{background:"none",border:"1px solid #ddd",padding:"0.5rem 1rem",borderRadius:"999px",color:"#666",fontSize:"0.85rem",cursor:"pointer"}}>{t("image.clearBtn")}</button>}
         </div>
         <div style={{marginBottom:"1rem",padding:"0.6rem 1rem",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:"8px",fontSize:"0.82rem",color:"#92400e"}}>
           生成的图片保存 <b>7 天</b>，到期后自动清除（积分记录不受影响）。请及时下载保存。
         </div>
         <div style={{background:"#fafaf7",backgroundImage:"linear-gradient(rgba(0,0,0,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.05) 1px, transparent 1px)",backgroundSize:"40px 40px",borderRadius:"24px",minHeight:"calc(100vh - 180px)",padding:"2rem",border:"2px dashed rgba(0,0,0,0.2)"}}>
-          {gallery.length===0 && pending.length===0 && (
+          {gallery.length===0 && !loading && (
             <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"500px",color:"#bbb"}}>
               <div style={{fontSize:"3.5rem",marginBottom:"1rem",color:"#ddd"}}>◧</div>
               <div style={{fontSize:"0.95rem",color:"#999"}}>{t("image.empty")}</div>
               <div style={{fontSize:"0.8rem",color:"#bbb",marginTop:"0.5rem"}}>{t("image.emptyTip")}</div>
             </div>
           )}
-          {(gallery.length>0 || pending.length>0) && (
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:"1rem"}}>
+          {loading && (
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"500px"}}>
+              <div style={{width:"40px",height:"40px",border:"3px solid #eee",borderTopColor:"#0d0d0d",borderRadius:"50%",animation:"spin 1s linear infinite"}}></div>
+              <div style={{marginTop:"1rem",color:"#888",fontSize:"0.9rem"}}>{t("image.creating")}</div>
               <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-              {/* 进行中任务:占位块(并行,各自独立计时),完成后自动从这里消失、出现在下方网格 */}
-              {pending.map((p)=>(
-                <div key={p.id} style={{borderRadius:"14px",overflow:"hidden",background:"#fff",position:"relative",aspectRatio:p.size.replace(":","/"),boxShadow:"0 4px 12px rgba(0,0,0,0.04)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",border:"1px solid #eee"}}>
-                  <div style={{width:"34px",height:"34px",border:"3px solid #eee",borderTopColor:"#0d0d0d",borderRadius:"50%",animation:"spin 1s linear infinite"}}></div>
-                  <div style={{marginTop:"0.7rem",color:"#888",fontSize:"0.82rem"}}>{t("image.creating")} {Math.max(0,Math.floor((nowTs-p.startedAt)/1000))}s</div>
-                  <div style={{position:"absolute",bottom:0,left:0,right:0,padding:"0.6rem",fontSize:"0.72rem",color:"#aaa",textAlign:"center",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{(p.prompt||"").slice(0,30)}</div>
-                </div>
-              ))}
+            </div>
+          )}
+          {gallery.length>0 && (
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:"1rem"}}>
               {gallery.map((item,i)=>(
                 <div key={i} style={{borderRadius:"14px",overflow:"hidden",background:"#fff",position:"relative",aspectRatio:size.replace(":","/"),boxShadow:"0 4px 12px rgba(0,0,0,0.04)",cursor:"pointer"}}
                   onClick={async()=>{
@@ -290,9 +279,9 @@ export default function ImagePage(){
         </div>
         {msg && <div style={{color:"#0a0",background:"#eaf7ea",padding:"0.7rem",borderRadius:"10px",fontSize:"0.8rem"}}>{msg}</div>}
         {error && <div style={{color:"#c00",background:"#ffeaea",padding:"0.7rem",borderRadius:"10px",fontSize:"0.8rem"}}>{error}</div>}
-<button onClick={generate} disabled={submitting}
-          style={{padding:"0.9rem",background:"#0d0d0d",color:"#fff",border:"none",borderRadius:"12px",cursor:submitting?"wait":"pointer",fontSize:"0.95rem",fontWeight:500,opacity:submitting?0.6:1}}>
-          {t("image.generate")}{pending.length>0?`（生成中 ${pending.length}）`:""}
+<button onClick={generate}
+          style={{padding:"0.9rem",background:"#0d0d0d",color:"#fff",border:"none",borderRadius:"12px",cursor:loading?"wait":"pointer",fontSize:"0.95rem",fontWeight:500}}>
+          {t("image.generate")}
         </button>
       </aside>
     </div>
