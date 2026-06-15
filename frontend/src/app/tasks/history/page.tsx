@@ -5,6 +5,19 @@ import Sidebar from "@/components/Sidebar";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
+// 历史时间格式化:DB 的 created_at 是 UTC 无时区串(如 "2026-06-15 17:49:21"),
+// 补成 ISO UTC("...T...Z")再按用户本地时区显示;解析失败回退原串前 16 位。
+function fmtLocal(s?: string, withSec = false): string {
+  if (!s) return "";
+  const d = new Date(s.replace(" ", "T") + "Z");
+  if (isNaN(d.getTime())) return s.slice(0, withSec ? 19 : 16);
+  return d.toLocaleString("zh-CN", {
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", ...(withSec ? { second: "2-digit" } : {}),
+    hour12: false,
+  });
+}
+
 export default function HistoryPage() {
   const { t } = useLang();
   interface HistoryItem {
@@ -254,7 +267,7 @@ export default function HistoryPage() {
                 </div>
                 <div style={{ fontSize: "0.78rem", color: "#666", marginBottom: "0.4rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.prompt}</div>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "#999" }}>
-                  <span>{item.created_at?.slice(0, 16)}</span>
+                  <span>{fmtLocal(item.created_at)}</span>
                   <span>{item.cost} {t("tasks.cost")}</span>
                 </div>
               </div>
@@ -288,7 +301,7 @@ export default function HistoryPage() {
               <strong>{t("tasks.promptLabel")}</strong>{selected.prompt}
             </div>
             <div style={{ fontSize: "0.82rem", color: "#999", marginBottom: "1.5rem" }}>
-              {selected.created_at?.slice(0, 19)} · {t("tasks.consume")} {selected.cost} {t("tasks.cost")}
+              {fmtLocal(selected.created_at, true)} · {t("tasks.consume")} {selected.cost} {t("tasks.cost")}
             </div>
 
             <div style={{ display: "flex", gap: "0.75rem" }}>
