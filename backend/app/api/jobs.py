@@ -2106,10 +2106,16 @@ async def _execute_job(job_id: str):
             # 后台异步归档（图片/视频统一），完成后静默替换 URL（含重试，保证替换）
             async def _bg_archive(j=job, r=result, u=uid, is_img=_is_image):
                 from app.services.media_archiver import archive_url as _au
+                from app.services.media_archiver import is_permanent_cos_result
                 delays = [0, 30, 90]  # 立即 / 30s 后 / 90s 后，共 3 次
                 for key, kind in (("image_url", "image"), ("video_url", "video")):
                     original_url = r.get(key)
                     if not original_url:
+                        continue
+                    # aiview 结果已是我们桶 openapi/ 永久公有读直链 → 不必再归档，直接留用。
+                    # 否则下方重试循环把"URL 没变化"误判为失败，空转 120s 还打假错误日志。
+                    if is_permanent_cos_result(original_url):
+                        log_info(f"[ARCHIVE] job={j['id']} key={key} 已是 openapi COS 永久链，跳过归档")
                         continue
                     for attempt, delay in enumerate(delays):
                         if delay:

@@ -107,6 +107,31 @@ def _safe_user_dir(user_id: str) -> str:
     return _SAFE_FILENAME_PART.sub("_", user_id)[:64] or "anon"
 
 
+def is_permanent_cos_result(url: str) -> bool:
+    """url 是否已是我们自己 COS 桶 openapi/ 前缀下的永久公有读直链。
+
+    aiview Open API(对接文档 v1.4.0)把图片/视频生成结果直接持久化到我们桶的
+    openapi/ 前缀,公有读、永久不过期 → 无需再自行下载转存,archive_url 可直接放行。
+
+    严格条件:host == {STORAGE_BUCKET}.cos.{STORAGE_REGION}.myqcloud.com
+             且 path 以 /openapi/ 开头。
+    ⚠️ 我们自己 upload_to_cos 走 uploads/ 前缀、返回的是 presigned 会过期签名 URL,
+       绝不能放行;故只认 openapi/ 前缀。缺 env → 保守返回 False(照常归档)。
+    """
+    bucket = os.environ.get("STORAGE_BUCKET", "")
+    region = os.environ.get("STORAGE_REGION", "")
+    if not (bucket and region and url):
+        return False
+    try:
+        p = urlparse(url)
+    except Exception:
+        return False
+    return (
+        p.hostname == f"{bucket}.cos.{region}.myqcloud.com"
+        and p.path.startswith("/openapi/")
+    )
+
+
 async def archive_url(url: str, user_id: str, kind: str = "media") -> str:
     """下载 url 到本地 /opt/ssp/uploads,返回新 URL。失败 fallback 返回原 URL。
 
@@ -124,6 +149,12 @@ async def archive_url(url: str, user_id: str, kind: str = "media") -> str:
 
     # 已经是我们自己的 /uploads/ URL 不重复归档
     if url.startswith(PUBLIC_BASE_URL.rstrip("/") + "/"):
+        return url
+
+    # 已经是我们自己 COS 桶 openapi/ 前缀下的永久公有读直链(aiview Open API 结果),
+    # 永久不过期,无需再下载转存(文档 v1.4.0)。只放行 openapi/,不碰 uploads/ 签名 URL。
+    if is_permanent_cos_result(url):
+        logger.info("archive_url skip(openapi COS permanent): %s", url[:100])
         return url
 
     safe_user = _safe_user_dir(user_id or "anon")
@@ -176,4 +207,4 @@ async def archive_url(url: str, user_id: str, kind: str = "media") -> str:
 # 真实现在 uploads_gc.delete_archived,这里只是按用户原话"media_archiver.py 加 delete_archived"
 # 提供一个对外稳定入口
 from app.services.uploads_gc import delete_archived  # noqa: E402  re-export
-__all__ = ["archive_url", "delete_archived"]
+__all__ = ["archive_url", "delete_archived", "is_permanent_cos_result"]
