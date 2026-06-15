@@ -10,9 +10,10 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 const RANGE_COLORS = ["#dc2626", "#f97316", "#9333ea", "#06b6d4"] as const;
 const MAX_RANGES = 4;
 
-// 2026-06-16 服务器配置过低,视频自动打码太慢(2vCPU ~3.5min/60s),暂时关闭【视频】打码。
-// 图片涂鸦不受影响,照常按 privacyMode 处理。后端打码代码全保留,升配后改回 true 即恢复视频打码。
-const ENABLE_VIDEO_FACE_MASK = false;
+// 2026-06-16 服务器配置过低,自动打码太慢(2vCPU ~3.5min/60s)。总开关:false=整个"人脸隐私处理"
+// 功能隐藏(选择器UI不显示 + 视频/图片都不打码,原文件直传,回到打码前的"不做处理"版本)。
+// 后端打码代码 + 隐私选择器 JSX 全保留,升配/加机器后把这里改回 true 即一键恢复全部打码功能。
+const SHOW_FACE_MASK = false;
 
 // 2026-05-10 砍单档:Tier type 删除
 type Role = "product" | "person" | "scene" | "reference";
@@ -176,8 +177,9 @@ export default function VideoCloneV2Page() {
   const [videoModel, setVideoModel] = useState<"seedance-2-0-fast" | "seedance-2-0">("seedance-2-0-fast");
   // 人脸隐私处理 3 选一:auto=系统自动打码 / self=用户自己已打码直接传 / none=无需处理。默认 auto(安全兜底)
   // 只有 auto 才让后端打码;self 和 none 都用原文件(self 是用户已自行打码,none 是无脸/不需要)
-  const [privacyMode, setPrivacyMode] = useState<"auto" | "self" | "none">("auto");
-  const maskFace = privacyMode === "auto";
+  const [privacyMode, setPrivacyMode] = useState<"auto" | "self" | "none">(SHOW_FACE_MASK ? "auto" : "none");
+  // SHOW_FACE_MASK=false → maskFace 恒 false,视频/图片均不打码(原文件直传)。
+  const maskFace = SHOW_FACE_MASK && privacyMode === "auto";
 
   // 提示词 @ 提及:打 @ 弹出图片/视频选择(像大厂)。pos = @ 在文本里的位置
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -394,9 +396,7 @@ export default function VideoCloneV2Page() {
     try {
       const fd = new FormData();
       fd.append("file", file);
-      // 2026-06-16 服务器配置过低,视频打码太慢 → 暂时关闭视频打码(ENABLE_VIDEO_FACE_MASK=false)。
-      // 图片涂鸦不受影响(见 handleImageUpload)。升配后改回 true 即恢复。
-      fd.append("mask_face", String(maskFace && ENABLE_VIDEO_FACE_MASK));
+      fd.append("mask_face", String(maskFace));  // SHOW_FACE_MASK=false 时 maskFace 恒 false,视频不打码
       // 1) 秒提交:后端返回 blur_job_id,后台异步(按 mask_face)打码(不在这步等,避免超时)
       const r = await fetch(`${API_BASE}/api/video/clone-v2/upload/video`, {
         method: "POST",
@@ -791,7 +791,9 @@ export default function VideoCloneV2Page() {
           </button>
         </div>
 
-        {/* 人脸隐私处理:上传前选,决定视频/人物图是否打码涂鸦盖脸 */}
+        {/* 人脸隐私处理:上传前选,决定视频/人物图是否打码涂鸦盖脸。
+            2026-06-16:服务器配置过低、打码太慢,整块隐藏(SHOW_FACE_MASK=false),回到"不做处理"版本;升配后改回。 */}
+        {SHOW_FACE_MASK && (
         <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "1rem 1.2rem", marginBottom: "1.2rem" }}>
           <div style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: 4 }}>人脸隐私处理</div>
           <div style={{ fontSize: "0.8rem", color: "#888", marginBottom: 10, lineHeight: 1.6 }}>
@@ -829,6 +831,7 @@ export default function VideoCloneV2Page() {
             <div style={{ fontSize: "0.74rem", color: "#a16207", marginTop: 8 }}>已开始上传,如需更改请先清空已上传的视频/图片再重选。</div>
           )}
         </div>
+        )}
 
         {/* Step 1:上传视频 */}
         <Section title="1. 上传参考视频(MP4/MOV,≤50MB,4-15 秒)">
@@ -955,7 +958,8 @@ export default function VideoCloneV2Page() {
                       onFile={(f) => handleImageUpload(f, role)}
                     />
                   )}
-                  {role === "person" && images.length < 6 && (
+                  {/* 专业版不打码入口:仅在打码功能开启时才有意义(关闭时所有上传本就不打码) */}
+                  {SHOW_FACE_MASK && role === "person" && images.length < 6 && (
                     <FileInput
                       accept="image/*"
                       disabled={uploadingImage}
