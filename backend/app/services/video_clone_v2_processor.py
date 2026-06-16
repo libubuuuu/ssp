@@ -296,8 +296,8 @@ async def call_aiview_seedance(
         input_video_duration=round(input_duration_sec),
         duration=out_dur,
         model=model,
-        resolution="480p",        # 统一 480p 生成(用户决议);提质交给 aiview
-        enhance=_enhance,         # 720p/1080p 档=True(aiview 拿 480p 提质),480p 档=False
+        resolution=_resolution,   # 按用户所选档传:480p/720p/1080p
+        enhance=_enhance,         # 720p/1080p=True(aiview 提质),480p=False
         ratio=ratio,
         seed=seed,
         generate_audio=gen_audio,  # 口播=True(模型出新配音) / 普通复刻=False(保留原声)
@@ -308,7 +308,7 @@ async def call_aiview_seedance(
     # credits_used 落日志:aiview 真实积分消耗,用于校准 QUALITY_RATE_TABLE 定价(含 enhance 提质成本)
     log_info(
         f"[V2-AIVIEW-SUBMIT] job={job_id} seg={seg_idx} rid={rid} "
-        f"sent_res=480p tier={_resolution} enhance={_enhance} enhanced={sub.get('enhanced')} "
+        f"resolution={_resolution} enhance={_enhance} enhanced={sub.get('enhanced')} "
         f"credits_used={sub.get('credits_used')}"
     )
     # 轮询:原始版 120×5s=10min;enhance 提质多一段(文档 5~15min),给到 240×5s=20min
