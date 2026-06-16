@@ -10,7 +10,9 @@
 import asyncio
 import json
 import os
+import sqlite3
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
 
@@ -82,6 +84,83 @@ class TestRefundPartial:
             ).fetchone()
         assert row[0] == 85  # 50 + 15 + 20
         assert jrow[0] == 35
+
+
+# ─── 退款撞 SQLite 锁安全(2026-06-17 加固回归)──────────────────────────
+
+
+@contextmanager
+def _locked_db():
+    """模拟 pending_refunds 登记 INSERT 撞 'database is locked' 写锁。"""
+    class _LockingConn:
+        def execute(self, *a, **k):
+            raise sqlite3.OperationalError("database is locked")
+        def commit(self):
+            pass
+        def close(self):
+            pass
+    yield _LockingConn()
+
+
+class TestRefundLockSafety:
+    """退款登记撞 'database is locked' 时,绝不能被静默吞掉当成"已退过"而跳过
+    add_credits(旧实现 `except: pass` + `if not row` 会凭空吃用户的钱)。
+    正确行为:照常上抛 OperationalError —— 响亮失败、可人工补救,顶层 status 守卫保证不重复退。"""
+
+    def _seed_user_and_job(self, credits_initial=100, credits_charged=650, status="refunded"):
+        from app.services.auth import create_user
+        user = create_user(email=f"u{uuid.uuid4().hex[:8]}@test.com", password="x" * 8)
+        with get_db() as conn:
+            conn.execute("UPDATE users SET credits = ? WHERE id = ?", (credits_initial, user["id"]))
+            job_id = str(uuid.uuid4())
+            conn.execute(
+                "INSERT INTO video_clone_v2_jobs (id, user_id, type, replacement_mode, "
+                "input_video_url, input_video_duration_sec, image_urls, prompt, "
+                "segments_plan, segments_count, total_credits_charged, status) "
+                "VALUES (?, ?, 'single', 'full', 'x', 8, '[]', 'p', '[]', 1, ?, ?)",
+                (job_id, user["id"], credits_charged, status),
+            )
+            conn.commit()
+        return user["id"], job_id
+
+    def test_refund_full_lock_raises_not_silent_skip(self):
+        """核心回归:撞锁必须上抛,且不留"假装已退"的脏状态(余额不变 + refunded 不被错误置位)。"""
+        user_id, job_id = self._seed_user_and_job(credits_initial=100, credits_charged=650)
+        job = {"id": job_id, "user_id": user_id, "total_credits_charged": 650}
+        with patch.object(proc_mod, "get_db", _locked_db):
+            with pytest.raises(sqlite3.OperationalError):
+                asyncio.run(proc_mod._refund_full(job))
+        with get_db() as conn:
+            credits = conn.execute("SELECT credits FROM users WHERE id = ?", (user_id,)).fetchone()[0]
+            refunded = conn.execute(
+                "SELECT total_credits_refunded FROM video_clone_v2_jobs WHERE id = ?", (job_id,)
+            ).fetchone()[0]
+        assert credits == 100   # 没多没少,没被静默吞
+        assert refunded == 0    # 没被错误标记成已退
+
+    def test_refund_partial_lock_raises_not_silent_skip(self):
+        user_id, job_id = self._seed_user_and_job(credits_initial=100, credits_charged=650)
+        job = {"id": job_id, "user_id": user_id, "total_credits_charged": 650}
+        with patch.object(proc_mod, "get_db", _locked_db):
+            with pytest.raises(sqlite3.OperationalError):
+                asyncio.run(proc_mod._refund_partial(job, 0, 80))
+        with get_db() as conn:
+            credits = conn.execute("SELECT credits FROM users WHERE id = ?", (user_id,)).fetchone()[0]
+        assert credits == 100
+
+    def test_refund_full_normal_then_idempotent(self):
+        """正常退一次 + 重复调用不再退(幂等仍成立,没被加固改坏)。"""
+        user_id, job_id = self._seed_user_and_job(credits_initial=100, credits_charged=650)
+        job = {"id": job_id, "user_id": user_id, "total_credits_charged": 650}
+        asyncio.run(proc_mod._refund_full(job))
+        asyncio.run(proc_mod._refund_full(job))  # 重复 — 不应再退
+        with get_db() as conn:
+            credits = conn.execute("SELECT credits FROM users WHERE id = ?", (user_id,)).fetchone()[0]
+            refunded = conn.execute(
+                "SELECT total_credits_refunded FROM video_clone_v2_jobs WHERE id = ?", (job_id,)
+            ).fetchone()[0]
+        assert credits == 750   # 100 + 650,只退一次
+        assert refunded == 650
 
 
 # ─── _build_segment_clip + _concat_with_demuxer 真 ffmpeg ──────────────

@@ -919,22 +919,23 @@ async def _refund_full(job: Dict[str, Any]) -> None:
     if credits <= 0:
         return
     with get_db() as conn:
-        # pending_refunds 幂等 INSERT(同表已有 PK task_id,重复 INSERT 会报错被吞)
-        try:
-            conn.execute(
-                "INSERT INTO pending_refunds (task_id, user_id, cost, registered_at, refunded) "
-                "VALUES (?, ?, ?, strftime('%s','now'), 0)",
-                (job_id, user_id, credits),
-            )
-            conn.commit()
-        except Exception:
-            pass  # 已存在,继续
-        # 检查是否已退过
+        # 幂等登记:OR IGNORE 在 SQL 层静默吞"重复主键"(已登记的正常情况),
+        # 但绝不会吞 'database is locked' 等 OperationalError —— 撞锁会照常上抛。
+        # 旧实现用裸 except 吞了所有异常,撞锁时 INSERT 失败→行不存在→被下面 `not row`
+        # 误判成"已退过"→直接 return→add_credits 永不执行→静默吞用户的钱(2026-06-17 加固)。
+        conn.execute(
+            "INSERT OR IGNORE INTO pending_refunds (task_id, user_id, cost, registered_at, refunded) "
+            "VALUES (?, ?, ?, strftime('%s','now'), 0)",
+            (job_id, user_id, credits),
+        )
+        conn.commit()
+        # 只有"确实已退过(refunded=1)"才跳过;查不到行只可能因上面 INSERT 撞锁已上抛,走不到这。
+        # 不再把 `not row` 当成"已退过",杜绝静默跳过退款。
         row = conn.execute(
             "SELECT refunded FROM pending_refunds WHERE task_id = ?", (job_id,)
         ).fetchone()
-        if not row or row[0] == 1:
-            log_info(f"refund 已退过或不存在:job_id={job_id}")
+        if row and row[0] == 1:
+            log_info(f"refund 已退过,跳过:job_id={job_id}")
             return
     add_credits(user_id, credits, reason="task_refund", ref_id=job_id, module="aiview/seedance-v2")
     with get_db() as conn:
@@ -992,20 +993,19 @@ async def _refund_partial(job: Dict[str, Any], seg_idx: int, credits: int) -> No
         return
     sub_key = f"{job_id}:seg_{seg_idx}"
     with get_db() as conn:
-        try:
-            conn.execute(
-                "INSERT INTO pending_refunds (task_id, user_id, cost, registered_at, refunded) "
-                "VALUES (?, ?, ?, strftime('%s','now'), 0)",
-                (sub_key, user_id, credits),
-            )
-            conn.commit()
-        except Exception:
-            pass  # 已写过
+        # 同 _refund_full 加固:OR IGNORE 吞重复主键但不吞 'database is locked',
+        # 且不再把 `not row` 误判成"已退过"→杜绝撞锁时静默跳过单段退款(2026-06-17)。
+        conn.execute(
+            "INSERT OR IGNORE INTO pending_refunds (task_id, user_id, cost, registered_at, refunded) "
+            "VALUES (?, ?, ?, strftime('%s','now'), 0)",
+            (sub_key, user_id, credits),
+        )
+        conn.commit()
         row = conn.execute(
             "SELECT refunded FROM pending_refunds WHERE task_id = ?", (sub_key,)
         ).fetchone()
-        if not row or row[0] == 1:
-            log_info(f"refund_partial 已退过或不存在:{sub_key}")
+        if row and row[0] == 1:
+            log_info(f"refund_partial 已退过,跳过:{sub_key}")
             return
     add_credits(user_id, credits, reason="task_partial_refund",
                 ref_id=sub_key, module="video/clone-v2")
