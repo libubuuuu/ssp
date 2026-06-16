@@ -95,8 +95,12 @@ class AiviewImageService:
             return await c.request(method, f"https://{ip}{path}", headers=headers, content=content)
 
     async def submit(self, prompt: str, ratio: str = None, size: str = "2K",
-                     n: int = 1, image_urls=None, model: str = None) -> dict:
-        """提交文生图任务。成功返回 {"request_id": ...}，失败返回 {"error": ...}。"""
+                     n: int = 1, image_urls=None, model: str = None,
+                     watermark: bool = None) -> dict:
+        """提交文生图任务。成功返回 {"request_id": ...}，失败返回 {"error": ...}。
+
+        watermark: None=不传该字段(沿用 provider 默认);False=关水印(豆包 seedream 专业版用)。
+        """
         path = "/open/v1/image/generate"
         body = {"prompt": prompt, "n": n}
         if size:
@@ -107,6 +111,9 @@ class AiviewImageService:
             body["ratio"] = ratio
         if image_urls:
             body["image_urls"] = list(image_urls)[:5]
+        if watermark is not None:
+            # 豆包 Seedream 文生图参数 watermark(bool):false=右下角不加"AI生成"水印。
+            body["watermark"] = watermark
         # 必须先序列化为字符串，签名与发送用同一份字节，避免哈希不一致
         body_str = json.dumps(body, ensure_ascii=False)
         data = None

@@ -479,9 +479,13 @@ async def _run_aiview_image_job(params: dict, aiview_model: str = None, _retry: 
     if refs:
         refs = [await _shrink_ref_for_aiview(u) for u in refs]
     _size = None if aiview_model == "gpt-image-2" else "2K"
+    # 专业版(seedream/豆包,aiview_model=None)去水印:豆包文生图 watermark=false 关右下角"AI生成"水印。
+    # 标准版 gpt-image-2(OpenAI)无此参数,不传(watermark=None)。
+    _watermark = False if aiview_model is None else None
     import time as _time
     _t_job_start = params.get("_job_created_at") or _time.time()
-    sub = await service.submit(params["prompt"], size=_size, image_urls=refs or None, model=aiview_model)
+    sub = await service.submit(params["prompt"], size=_size, image_urls=refs or None,
+                               model=aiview_model, watermark=_watermark)
     if sub.get("error"):
         raise Exception(sub["error"])
     rid = sub["request_id"]
