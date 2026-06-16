@@ -441,10 +441,20 @@ async def run_single_ai_segment_with_retry(
             return last_result
         if attempt < MAX_ATTEMPTS - 1:
             next_seed = seed + attempt + 1
+            _err = last_result.get("error") or ""
+            # 上游瞬时故障(超时/5xx/内部错误/繁忙)→ 退避给 aiview 恢复时间,立即重试只是
+            # 把 3 次机会全砸进同一个 brownout 窗口(2026-06-17 实战:同参数 02:45 成功、
+            # 03:05 后连挂)。内容类失败(非瞬时)只需短歇换 seed。
+            _transient = any(k in _err for k in (
+                "服务器内部", "稍后重试", "ReadTimeout", "Timeout", "timeout",
+                "繁忙", "502", "503", "504", "暂时", "连不上",
+            ))
+            _backoff = (20 if _transient else 3) * (attempt + 1)
             log_info(
                 f"video_clone_v2 segment idx={plan_item['idx']} attempt {attempt + 1}/{MAX_ATTEMPTS} "
-                f"失败,换 seed={next_seed} 继续重试:{(last_result.get('error') or '')[:200]}"
+                f"失败({'上游瞬时' if _transient else '内容/其他'}),{_backoff}s 后换 seed={next_seed} 重试:{_err[:200]}"
             )
+            await asyncio.sleep(_backoff)
     log_info(
         f"video_clone_v2 segment idx={plan_item['idx']} {MAX_ATTEMPTS} 次都失败,放弃"
     )

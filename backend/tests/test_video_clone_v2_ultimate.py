@@ -86,6 +86,48 @@ class TestRefundPartial:
         assert jrow[0] == 35
 
 
+# ─── 上游瞬时故障退避重试(2026-06-17)────────────────────────────────
+
+
+class TestRetryBackoff:
+    """aiview 上游 brownout(超时/5xx/内部错误)时,重试必须退避给上游恢复时间,
+    不能 3 次机会瞬间砸进同一个故障窗口(2026-06-17 实战:同参数 02:45 成功、03:05 后连挂)。"""
+
+    def _run(self, fake_seg, sleeps):
+        async def fake_sleep(s):
+            sleeps.append(s)
+        with patch.object(proc_mod, "_run_one_ai_segment", fake_seg), \
+             patch.object(proc_mod.asyncio, "sleep", fake_sleep):
+            return asyncio.run(proc_mod.run_single_ai_segment_with_retry(
+                "f", {"idx": 0}, [], "p", 100, "auto", job_id="j"))
+
+    def test_transient_error_long_backoff_then_succeeds(self):
+        calls = {"n": 0}
+
+        async def fake_seg(*a, **k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {"idx": 0, "status": "failed", "output_url": None,
+                        "error": "aiview 视频提交失败:服务器内部错误，请稍后重试"}
+            return {"idx": 0, "status": "completed", "output_url": "u", "error": None}
+
+        sleeps = []
+        res = self._run(fake_seg, sleeps)
+        assert res["status"] == "completed"
+        assert calls["n"] == 2          # 第二次成功
+        assert sleeps[0] == 20          # 上游瞬时 → 首次退避 20s(非瞬间重试)
+
+    def test_non_transient_error_short_backoff(self):
+        async def fake_seg(*a, **k):
+            return {"idx": 0, "status": "failed", "output_url": None,
+                    "error": "内容审核拒绝:涉及敏感词"}
+
+        sleeps = []
+        res = self._run(fake_seg, sleeps)
+        assert res["status"] == "failed"
+        assert sleeps == [3, 6]         # 内容类用短退避(3s,6s),不浪费用户时间
+
+
 # ─── 退款撞 SQLite 锁安全(2026-06-17 加固回归)──────────────────────────
 
 

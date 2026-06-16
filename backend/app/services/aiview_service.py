@@ -208,25 +208,44 @@ class AiviewImageService:
         if seed is not None:
             body["seed"] = seed
         body_str = json.dumps(body, ensure_ascii=False)
+        from .logger import log_error as _le
         data = None
         for _attempt in range(3):
+            status_code = None
             try:
                 # 视频提交超时调 90s:aiview 要拉取/校验参考视频,30s 常 ReadTimeout
                 resp = await self._send("POST", path, body_str, timeout=90)
+                status_code = resp.status_code
                 data = resp.json()
             except Exception as e:
                 _detail = str(e)[:200] or "(无详情,多为代理/DNS劫持/网络不通)"
+                # 网络/超时类瞬时错误:退避后重试(上游 brownout 时立即重试无意义)
+                if _attempt < 2:
+                    _le(f"[AIVIEW-VIDEO-SUBMIT-RETRY] attempt={_attempt+1}/3 瞬时网络错误,退避重试: {type(e).__name__}: {_detail}")
+                    await asyncio.sleep(8 * (_attempt + 1))
+                    continue
                 return {"error": f"aiview 视频提交失败: {type(e).__name__}: {_detail}"}
-            # 10011: 认证缓存繁忙(v1.3.0新增)，短暂重试
-            if data.get("code") == 10011 and _attempt < 2:
-                await asyncio.sleep(3)
-                continue
+            code = data.get("code")
             # 10010: 请求体过大，终态无需重试
-            if data.get("code") == 10010:
+            if code == 10010:
                 return {"error": "aiview 请求体过大(>2MB),请减少参数或图片数量"}
+            # 瞬时类需退避重试:10011 认证缓存繁忙 / HTTP 5xx / 上游"服务器内部错误·繁忙·稍后重试"
+            _msg = data.get("message") or ""
+            _transient = (
+                code == 10011
+                or (status_code is not None and status_code >= 500)
+                or any(k in _msg for k in ("服务器内部", "稍后重试", "繁忙", "超时", "暂时"))
+            )
+            if _transient and _attempt < 2:
+                _backoff = 3 if code == 10011 else 8 * (_attempt + 1)
+                _le(f"[AIVIEW-VIDEO-SUBMIT-RETRY] attempt={_attempt+1}/3 http={status_code} code={code} msg={_msg[:80]} 退避{_backoff}s重试")
+                await asyncio.sleep(_backoff)
+                continue
             break
         if data.get("code") != 0:
-            return {"error": data.get("message") or f"aiview 视频提交失败 code={data.get('code')}"}
+            # 落 error 日志含 http 状态 + code,便于下次精确定位上游故障 vs 我方问题
+            _le(f"[AIVIEW-VIDEO-SUBMIT-FAIL] http={status_code} code={data.get('code')} msg={data.get('message')}")
+            return {"error": f"{data.get('message') or 'aiview 视频提交失败'}(code={data.get('code')})"}
         d = data.get("data") or {}
         rid = d.get("request_id") or data.get("request_id")
         if not rid:
