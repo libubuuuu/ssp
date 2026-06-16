@@ -472,9 +472,12 @@ def _seg_lock(job_id: str) -> asyncio.Lock:
 
 
 def _db_update_segment_stage(job_id: str, idx: int, stage: str) -> None:
-    """Read-modify-write: 更新单段 stage 字段到 segments_results。调用方持锁。"""
+    """Read-modify-write: 更新单段 stage 字段到 segments_results。调用方持锁。
+    ⚠️ 纯进度UI记账,尽力而为:撞 'database is locked' 等 DB 异常只记日志、绝不上抛,
+    否则会被段级 except 当成"生成失败"→重试→整单退款(2026-06-17 实战 bug)。"""
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    with get_db() as conn:
+    try:
+      with get_db() as conn:
         row = conn.execute(
             "SELECT segments_results FROM video_clone_v2_jobs WHERE id = ?",
             (job_id,)
@@ -501,6 +504,8 @@ def _db_update_segment_stage(job_id: str, idx: int, stage: str) -> None:
             (json.dumps(results, ensure_ascii=False), job_id)
         )
         conn.commit()
+    except Exception as _e:
+        log_error(f"[V2] 段进度写失败(忽略,不影响生成) job={job_id} idx={idx} stage={stage}: {_e}")
 
 
 def _db_update_job(job_id: str, **fields) -> None:
