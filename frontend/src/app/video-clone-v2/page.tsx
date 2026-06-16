@@ -177,8 +177,8 @@ export default function VideoCloneV2Page() {
 
   // 视频模型(用户自选):极速版 fast(55积分/秒) / 标准版 2.0(60积分/秒)
   const [videoModel, setVideoModel] = useState<"seedance-2-0-fast" | "seedance-2-0">("seedance-2-0-fast");
-  // 2026-06-16 画质档:480p=原始(现状) / 720p→2K高清增强 / 1080p→4K(仅高质量版)。
-  // enhance 由后端按分辨率自动决定(720p/1080p 走增强),前端只选分辨率。
+  // 2026-06-16 重做:底模永远 480p 生成,选档只决定 fal 放大目标——
+  // fast 720p→1080P;2.0 720p→2K、1080p→4K(480p 不放大)。前端只选档,后端按(模型,档)放大。
   const [resolution, setResolution] = useState<"480p" | "720p" | "1080p">("480p");
   // 极速版不支持 1080p:切到极速版时若停在 1080p,回落 720p
   useEffect(() => {
@@ -1107,19 +1107,19 @@ export default function VideoCloneV2Page() {
                 ))}
               </div>
             </div>
-            {/* 2026-06-16 画质档:480p 原始 / 720p→2K / 1080p→4K(仅高质量版)。enhance 后端按分辨率自动开 */}
+            {/* 2026-06-16 重做:底模永远 480p,选档决定放大目标。fast 720p→1080P / 2.0 720p→2K / 2.0 1080p→4K。后端按(模型,档)自动放大 */}
             <div style={{ marginBottom: 14, padding: "10px 12px", background: "#f8fafc", border: "1px solid #e5e7eb", borderRadius: 10 }}>
               <label style={{ fontSize: "0.85rem", color: "#444", fontWeight: 600, display: "block", marginBottom: 8 }}>画质:</label>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 {((videoModel === "seedance-2-0-fast"
                   ? [
                       { v: "480p", name: "标清 480P", rate: 55 },
-                      { v: "720p", name: "高清 720P→2K", rate: 240 },
+                      { v: "720p", name: "高清 720P→1080P", rate: 65 },
                     ]
                   : [
                       { v: "480p", name: "标清 480P", rate: 60 },
-                      { v: "720p", name: "高清 720P→2K", rate: 300 },
-                      { v: "1080p", name: "超清 1080P→4K", rate: 780 },
+                      { v: "720p", name: "高清 720P→2K", rate: 75 },
+                      { v: "1080p", name: "超清 1080P→4K", rate: 110 },
                     ]) as { v: "480p" | "720p" | "1080p"; name: string; rate: number }[]).map((q) => (
                   <button key={q.v} onClick={() => setResolution(q.v)}
                     style={{
@@ -1134,7 +1134,7 @@ export default function VideoCloneV2Page() {
                 ))}
               </div>
               <div style={{ fontSize: "0.75rem", color: "#888", marginTop: 6 }}>
-                720P / 1080P 自动走高清增强(2K / 4K),生成更慢、积分更高;480P 为原始画质。
+                底模统一 480P 生成;选 720P / 1080P 会再放大提画质(极速版 720P→1080P,高质量版 720P→2K、1080P→4K),生成更慢、积分更高。
               </div>
             </div>
             {/* 2026-05-11 目标市场 toggle:CN 国内→中文 prompt / Global 海外→英文 prompt */}

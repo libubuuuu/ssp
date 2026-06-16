@@ -189,8 +189,8 @@ class EstimateRequest(BaseModel):
     replacement_mode: Literal["partial", "full"]
     # 用户自选视频模型,估价按所选模型费率(fast=55/秒, 标准版=60/秒)
     video_model: Literal["seedance-2-0-fast", "seedance-2-0"] = "seedance-2-0-fast"
-    # 2026-06-16 画质档:480p=原始(现状) / 720p=2K增强 / 1080p=4K增强(仅标准版)。
-    # enhance 不单独传,由 resolution 推导;fast 不支持 1080p,端点校验拒绝。
+    # 2026-06-16 重做:底模永远 480p,选档决定 fal 放大目标。
+    # fast 720p→1080P;2.0 720p→2K、1080p→4K(480p 不放大)。fast 不支持 1080p,端点校验拒绝。
     resolution: Literal["480p", "720p", "1080p"] = "480p"
     segments: List[SegmentPlanItem]
     # 2026-05-13:新计价模型按段 duration × CREDITS_PER_SEC,需要 plan_segments_v2 还原 duration
@@ -216,8 +216,8 @@ class CreateRequest(BaseModel):
     replacement_mode: Literal["partial", "full"]
     # 用户自选视频模型:fast=极速版(55积分/秒) / seedance-2-0=标准版(60积分/秒)
     video_model: Literal["seedance-2-0-fast", "seedance-2-0"] = "seedance-2-0-fast"
-    # 2026-06-16 画质档:480p=原始(现状) / 720p=2K增强 / 1080p=4K增强(仅标准版)。
-    # enhance 不单独传,由 resolution 推导;fast 不支持 1080p,端点校验拒绝。
+    # 2026-06-16 重做:底模永远 480p,选档决定 fal 放大目标。
+    # fast 720p→1080P;2.0 720p→2K、1080p→4K(480p 不放大)。fast 不支持 1080p,端点校验拒绝。
     resolution: Literal["480p", "720p", "1080p"] = "480p"
     segments: List[SegmentPlanItem]
     video_url: str

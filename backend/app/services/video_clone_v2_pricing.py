@@ -31,31 +31,45 @@ def rate_for_model(model: str) -> int:
     return CREDITS_PER_SEC_BY_MODEL.get((model or "").lower(), CREDITS_PER_SEC)
 
 
-# ─── 2026-06-16 分辨率档 + 高清增强(aiview enhance: 720p→2K / 1080p→4K)──────
-# 用户约定:enhance 跟分辨率走,不做独立开关——480p 不增强(现状),720p/1080p 一律
-# 传 enhance=true(故"720p"实际出 2K、"1080p"实际出 4K,价按增强后成本定)。
-# aiview 硬限制(文档 §3.3):enhance 仅 720P/1080P 生效(480P 自动忽略);fast 不支持 1080p。
-# 费率参考 aiview 文档 §5.2 真实成本(含输入视频,1 aiview积分=¥0.01,含40%利润率):
-#   fast 720p 含输入 ≈635积分≈¥1.27/输出秒;2.0 720p ≈808≈¥1.62/秒;2.0 1080p ≈¥4.25/秒。
-# 增强(2K/4K)成本文档未给(写"独立价、以 credits_used 为准"),故 720p/1080p 档按
-# 对应基础成本保守上浮定高,上线后用 submit 返回的 credits_used 校准本表(只改这一处)。
+# ─── 2026-06-16 重做:480p 底模 + Bytedance 放大器(不再用 aiview enhance)────────
+# 用户最终架构:底模【永远】480p 生成,用户选的档只决定"放大目标":
+#   fast 720p → 1080p;2.0 720p → 2K;2.0 1080p → 4K(480p 不放大,保持现状)。
+# 放大走 fal "fal-ai/bytedance-upscaler/upscale/video"(AI爆款视频同款端点,已生产验证)。
+# 价 = 50 × 系数(50积分=¥1,系数即"元/输出秒"):
+#   fast 480p=1.1→55、720p=1.3→65;2.0 480p=1.2→60、720p=1.5→75、1080p=2.2→110。
+# 成本校准:processor 落 aiview credits_used + fal 放大成本到日志,头几单按真实成本回校本表。
 RESOLUTION_OPTIONS_BY_MODEL: Final[Mapping[str, tuple[str, ...]]] = {
     "seedance-2-0-fast": ("480p", "720p"),            # fast 不支持 1080p
     "seedance-2-0":      ("480p", "720p", "1080p"),
 }
 
-# (model, resolution) → 站内积分/秒(50积分=¥1)。720p/1080p 含高清增强。
+# (model, 用户所选档) → 站内积分/秒(50积分=¥1)。底模均 480p,720p/1080p 含放大成本。
 QUALITY_RATE_TABLE: Final[Mapping[tuple, int]] = {
-    ("seedance-2-0-fast", "480p"):  55,    # 原始版,现状不变
-    ("seedance-2-0-fast", "720p"):  240,   # +增强 → 2K
-    ("seedance-2-0",      "480p"):  60,    # 原始版,现状不变
-    ("seedance-2-0",      "720p"):  300,   # +增强 → 2K
-    ("seedance-2-0",      "1080p"): 780,   # +增强 → 4K
+    ("seedance-2-0-fast", "480p"):  55,    # 1.1×:底模 480p,不放大
+    ("seedance-2-0-fast", "720p"):  65,    # 1.3×:底模 480p + 放大 → 1080p
+    ("seedance-2-0",      "480p"):  60,    # 1.2×:底模 480p,不放大
+    ("seedance-2-0",      "720p"):  75,    # 1.5×:底模 480p + 放大 → 2K
+    ("seedance-2-0",      "1080p"): 110,   # 2.2×:底模 480p + 放大 → 4K
+}
+
+# (model, 用户所选档) → fal 放大器 target_resolution。480p / 未知组合 = 不放大(None)。
+UPSCALE_TARGET_TABLE: Final[Mapping[tuple, str]] = {
+    ("seedance-2-0-fast", "720p"):  "1080p",
+    ("seedance-2-0",      "720p"):  "2k",
+    ("seedance-2-0",      "1080p"): "4k",
 }
 
 
+def upscale_target_for(model: str, resolution: str):
+    """返回 fal 放大目标('1080p'/'2k'/'4k');480p 或未知组合返 None(不放大)。"""
+    model = (model or "seedance-2-0-fast").lower()
+    resolution = (resolution or "480p").lower()
+    return UPSCALE_TARGET_TABLE.get((model, resolution))
+
+
 def enhance_for_resolution(resolution: str) -> bool:
-    """480p 不增强;720p/1080p 走 aiview enhance(720→2K / 1080→4K)。"""
+    """是否需要放大(720p/1080p=是,480p=否)。仅用于 DB enhance 列记录;
+    实际放大目标由 upscale_target_for(model, resolution) 决定(与模型相关)。"""
     return (resolution or "480p").lower() in ("720p", "1080p")
 
 
