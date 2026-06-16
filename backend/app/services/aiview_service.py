@@ -72,15 +72,16 @@ class AiviewImageService:
             "Content-Type": "application/json",
         }
 
-    async def _send(self, method: str, path: str, body_str: str = "") -> httpx.Response:
+    async def _send(self, method: str, path: str, body_str: str = "", timeout: float = 30) -> httpx.Response:
         """发请求(自带防代理劫持)。先正常直连(带证书校验,生产走这条);
         连不上(本地被 Clash fake-ip/SNI 劫持)→ DoH 拿真实 IP,连 IP + Host 头绕过。
-        签名不依赖 Host/IP,所以两条路径用同一份签名头都有效。"""
+        签名不依赖 Host/IP,所以两条路径用同一份签名头都有效。
+        timeout:视频提交要等 aiview 拉取/校验参考视频,传 90;查询用默认 30。"""
         headers = self._headers(method, path, body_str)
         content = body_str.encode("utf-8") if body_str else None
         # 1) 正常直连(trust_env=False:aiview 国内,不走系统代理)
         try:
-            async with httpx.AsyncClient(timeout=30, trust_env=False) as c:
+            async with httpx.AsyncClient(timeout=timeout, trust_env=False) as c:
                 return await c.request(method, self.base_url + path, headers=headers, content=content)
         except (httpx.ConnectError, httpx.ConnectTimeout):
             pass  # 本地被劫持 → 走回退
@@ -91,7 +92,7 @@ class AiviewImageService:
         if not ip:
             raise httpx.ConnectError("aiview 连不上:正常直连不通,DoH 也拿不到真实 IP")
         headers["Host"] = host
-        async with httpx.AsyncClient(timeout=30, trust_env=False, verify=False) as c:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False, verify=False) as c:
             return await c.request(method, f"https://{ip}{path}", headers=headers, content=content)
 
     async def submit(self, prompt: str, ratio: str = None, size: str = "2K",
@@ -210,7 +211,8 @@ class AiviewImageService:
         data = None
         for _attempt in range(3):
             try:
-                resp = await self._send("POST", path, body_str)
+                # 视频提交超时调 90s:aiview 要拉取/校验参考视频,30s 常 ReadTimeout
+                resp = await self._send("POST", path, body_str, timeout=90)
                 data = resp.json()
             except Exception as e:
                 _detail = str(e)[:200] or "(无详情,多为代理/DNS劫持/网络不通)"
