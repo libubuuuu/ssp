@@ -1107,19 +1107,19 @@ export default function VideoCloneV2Page() {
                 ))}
               </div>
             </div>
-            {/* 2026-06-16 重做:底模永远 480p,选档决定放大目标。fast 720p→1080P / 2.0 720p→2K / 2.0 1080p→4K。后端按(模型,档)自动放大 */}
+            {/* 画质档:按所选分辨率传 aiview(480p/720p/1080p),720p/1080p 带 enhance 由 aiview 提质。fast 不支持 1080p */}
             <div style={{ marginBottom: 14, padding: "10px 12px", background: "#f8fafc", border: "1px solid #e5e7eb", borderRadius: 10 }}>
               <label style={{ fontSize: "0.85rem", color: "#444", fontWeight: 600, display: "block", marginBottom: 8 }}>画质:</label>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 {((videoModel === "seedance-2-0-fast"
                   ? [
-                      { v: "480p", name: "标清 480P", rate: 55 },
-                      { v: "720p", name: "高清 720P→1080P", rate: 65 },
+                      { v: "480p", name: "480P", rate: 55 },
+                      { v: "720p", name: "720P", rate: 65 },
                     ]
                   : [
-                      { v: "480p", name: "标清 480P", rate: 60 },
-                      { v: "720p", name: "高清 720P→2K", rate: 75 },
-                      { v: "1080p", name: "超清 1080P→4K", rate: 110 },
+                      { v: "480p", name: "480P", rate: 60 },
+                      { v: "720p", name: "720P", rate: 75 },
+                      { v: "1080p", name: "1080P", rate: 110 },
                     ]) as { v: "480p" | "720p" | "1080p"; name: string; rate: number }[]).map((q) => (
                   <button key={q.v} onClick={() => setResolution(q.v)}
                     style={{
@@ -1134,7 +1134,7 @@ export default function VideoCloneV2Page() {
                 ))}
               </div>
               <div style={{ fontSize: "0.75rem", color: "#888", marginTop: 6 }}>
-                720P / 1080P 走高清提质(极速版 720P→1080P,高质量版 720P→2K、1080P→4K),生成更慢、积分更高;480P 为标清原始画质。
+                720P / 1080P 为高清,生成更慢、积分更高;480P 为标清。
               </div>
             </div>
             {/* 2026-05-11 目标市场 toggle:CN 国内→中文 prompt / Global 海外→英文 prompt */}
