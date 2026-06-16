@@ -29,6 +29,67 @@ CREDITS_PER_SEC_BY_MODEL: Final[dict] = {
 def rate_for_model(model: str) -> int:
     """按所选视频模型取"积分/秒"费率,认不出的回落到默认 55(fast 价)。"""
     return CREDITS_PER_SEC_BY_MODEL.get((model or "").lower(), CREDITS_PER_SEC)
+
+
+# ─── 2026-06-16 分辨率档 + 高清增强(aiview enhance: 720p→2K / 1080p→4K)──────
+# 用户约定:enhance 跟分辨率走,不做独立开关——480p 不增强(现状),720p/1080p 一律
+# 传 enhance=true(故"720p"实际出 2K、"1080p"实际出 4K,价按增强后成本定)。
+# aiview 硬限制(文档 §3.3):enhance 仅 720P/1080P 生效(480P 自动忽略);fast 不支持 1080p。
+# 费率参考 aiview 文档 §5.2 真实成本(含输入视频,1 aiview积分=¥0.01,含40%利润率):
+#   fast 720p 含输入 ≈635积分≈¥1.27/输出秒;2.0 720p ≈808≈¥1.62/秒;2.0 1080p ≈¥4.25/秒。
+# 增强(2K/4K)成本文档未给(写"独立价、以 credits_used 为准"),故 720p/1080p 档按
+# 对应基础成本保守上浮定高,上线后用 submit 返回的 credits_used 校准本表(只改这一处)。
+RESOLUTION_OPTIONS_BY_MODEL: Final[Mapping[str, tuple[str, ...]]] = {
+    "seedance-2-0-fast": ("480p", "720p"),            # fast 不支持 1080p
+    "seedance-2-0":      ("480p", "720p", "1080p"),
+}
+
+# (model, resolution) → 站内积分/秒(50积分=¥1)。720p/1080p 含高清增强。
+QUALITY_RATE_TABLE: Final[Mapping[tuple, int]] = {
+    ("seedance-2-0-fast", "480p"):  55,    # 原始版,现状不变
+    ("seedance-2-0-fast", "720p"):  240,   # +增强 → 2K
+    ("seedance-2-0",      "480p"):  60,    # 原始版,现状不变
+    ("seedance-2-0",      "720p"):  300,   # +增强 → 2K
+    ("seedance-2-0",      "1080p"): 780,   # +增强 → 4K
+}
+
+
+def enhance_for_resolution(resolution: str) -> bool:
+    """480p 不增强;720p/1080p 走 aiview enhance(720→2K / 1080→4K)。"""
+    return (resolution or "480p").lower() in ("720p", "1080p")
+
+
+def normalize_resolution(model: str, resolution: str) -> str:
+    """把 resolution 夹到"该模型支持的档",非法/缺省回落 480p(fast 选 1080p 也回落)。"""
+    model = (model or "seedance-2-0-fast").lower()
+    resolution = (resolution or "480p").lower()
+    valid = RESOLUTION_OPTIONS_BY_MODEL.get(model, ("480p",))
+    return resolution if resolution in valid else "480p"
+
+
+def is_valid_resolution(model: str, resolution: str) -> bool:
+    """(model, resolution) 是否 aiview 合法组合(fast+1080p = False)。"""
+    model = (model or "seedance-2-0-fast").lower()
+    valid = RESOLUTION_OPTIONS_BY_MODEL.get(model, ("480p",))
+    return (resolution or "480p").lower() in valid
+
+
+def rate_for_options(model: str, resolution: str = "480p") -> int:
+    """按 模型×分辨率 取站内"积分/秒"费率(720p/1080p 已含增强成本)。
+    480p 等于原 rate_for_model(向后兼容)。非法组合回落 480p 价并告警
+    (防崩兜底;正常路径由端点 is_valid_resolution 先拦)。"""
+    model = (model or "seedance-2-0-fast").lower()
+    if model not in RESOLUTION_OPTIONS_BY_MODEL:
+        model = "seedance-2-0-fast"
+    resolution = normalize_resolution(model, resolution)
+    rate = QUALITY_RATE_TABLE.get((model, resolution))
+    if rate is None:
+        from .logger import log_error
+        log_error(f"[V2-PRICING] 未知画质组合 model={model} res={resolution},回落 480p 价")
+        return rate_for_model(model)
+    return rate
+
+
 SEGMENT_LABEL:         Final[str] = "AI 替换"  # 前端段卡片显示名
 SEGMENT_INPUT_SECONDS_MAX: Final[int] = 8   # worst-case 估算上限,实际段长 4-8s
 

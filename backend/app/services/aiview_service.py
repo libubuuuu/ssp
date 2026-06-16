@@ -174,7 +174,7 @@ class AiviewImageService:
                            input_video_duration: int = None, duration: int = 5,
                            model: str = "seedance-2-0-fast", resolution: str = "480p",
                            ratio: str = "adaptive", seed: int = None,
-                           generate_audio: bool = False) -> dict:
+                           generate_audio: bool = False, enhance: bool = False) -> dict:
         """提交视频任务。成功返回 {"request_id": ...}，失败返回 {"error": ...}。"""
         path = "/open/v1/video/generate"
         body = {
@@ -185,6 +185,10 @@ class AiviewImageService:
             "ratio": ratio,
             "generate_audio": generate_audio,
         }
+        # 2026-06-16 高清增强:仅 720p/1080p 生效(aiview 文档 §3.3,480p 自动忽略)。
+        # 只在 True 时加字段,保持 480p 原始请求体不变(现有用户零感知)。
+        if enhance:
+            body["enhance"] = True
         if reference_video_url:
             body["reference_video_url"] = reference_video_url
             # 传参考视频时必须带 input_video_duration(1~15)
@@ -218,7 +222,7 @@ class AiviewImageService:
         rid = d.get("request_id") or data.get("request_id")
         if not rid:
             return {"error": "aiview 未返回 request_id"}
-        return {"request_id": rid, "credits_used": d.get("credits_used")}
+        return {"request_id": rid, "credits_used": d.get("credits_used"), "enhanced": d.get("enhanced")}
 
     async def query_video(self, request_id: str) -> dict:
         """查询视频结果。返回 {"status": "completed"/"processing"/"failed", ...}。"""

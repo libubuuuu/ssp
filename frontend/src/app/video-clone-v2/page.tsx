@@ -177,6 +177,13 @@ export default function VideoCloneV2Page() {
 
   // 视频模型(用户自选):极速版 fast(55积分/秒) / 标准版 2.0(60积分/秒)
   const [videoModel, setVideoModel] = useState<"seedance-2-0-fast" | "seedance-2-0">("seedance-2-0-fast");
+  // 2026-06-16 画质档:480p=原始(现状) / 720p→2K高清增强 / 1080p→4K(仅高质量版)。
+  // enhance 由后端按分辨率自动决定(720p/1080p 走增强),前端只选分辨率。
+  const [resolution, setResolution] = useState<"480p" | "720p" | "1080p">("480p");
+  // 极速版不支持 1080p:切到极速版时若停在 1080p,回落 720p
+  useEffect(() => {
+    if (videoModel === "seedance-2-0-fast" && resolution === "1080p") setResolution("720p");
+  }, [videoModel, resolution]);
   // 人脸隐私处理 3 选一:auto=系统自动打码 / self=用户自己已打码直接传 / none=无需处理。默认 auto(安全兜底)
   // 只有 auto 才让后端打码;self 和 none 都用原文件(self 是用户已自行打码,none 是无脸/不需要)
   const [privacyMode, setPrivacyMode] = useState<"auto" | "self" | "none">(SHOW_FACE_MASK ? "auto" : "none");
@@ -372,6 +379,7 @@ export default function VideoCloneV2Page() {
         type: preview.type,
         replacement_mode: preview.type === "ultimate" ? replacementMode : "full",
         video_model: videoModel,
+        resolution,
         segments,
         video_duration_sec: totalDur,
       }),
@@ -383,7 +391,7 @@ export default function VideoCloneV2Page() {
         setEstimate(d);
       })
       .catch(() => {});
-  }, [preview, segSelections, replacementMode, videoModel]);
+  }, [preview, segSelections, replacementMode, videoModel, resolution]);
 
   // ─── 视频上传 handler ───
   async function handleVideoUpload(file: File) {
@@ -653,6 +661,7 @@ export default function VideoCloneV2Page() {
         type: preview.type,
         replacement_mode: preview.type === "ultimate" ? replacementMode : "full",
         video_model: videoModel,
+        resolution,
         segments,
         video_url: video.url,
         video_duration_sec: video.duration,
@@ -1096,6 +1105,36 @@ export default function VideoCloneV2Page() {
                     <div style={{ fontSize: "0.78rem", color: "#666", marginTop: 2 }}>{m.desc}</div>
                   </button>
                 ))}
+              </div>
+            </div>
+            {/* 2026-06-16 画质档:480p 原始 / 720p→2K / 1080p→4K(仅高质量版)。enhance 后端按分辨率自动开 */}
+            <div style={{ marginBottom: 14, padding: "10px 12px", background: "#f8fafc", border: "1px solid #e5e7eb", borderRadius: 10 }}>
+              <label style={{ fontSize: "0.85rem", color: "#444", fontWeight: 600, display: "block", marginBottom: 8 }}>画质:</label>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {((videoModel === "seedance-2-0-fast"
+                  ? [
+                      { v: "480p", name: "标清 480P", rate: 55 },
+                      { v: "720p", name: "高清 720P→2K", rate: 240 },
+                    ]
+                  : [
+                      { v: "480p", name: "标清 480P", rate: 60 },
+                      { v: "720p", name: "高清 720P→2K", rate: 300 },
+                      { v: "1080p", name: "超清 1080P→4K", rate: 780 },
+                    ]) as { v: "480p" | "720p" | "1080p"; name: string; rate: number }[]).map((q) => (
+                  <button key={q.v} onClick={() => setResolution(q.v)}
+                    style={{
+                      flex: "1 1 160px", textAlign: "left", padding: "10px 12px", cursor: "pointer",
+                      border: resolution === q.v ? "2px solid #2563eb" : "1px solid #d1d5db",
+                      background: resolution === q.v ? "#eff6ff" : "#fff", borderRadius: 8,
+                    }}>
+                    <div style={{ fontWeight: 600, fontSize: "0.9rem", color: "#111" }}>
+                      {q.name} <span style={{ color: "#2563eb", fontSize: "0.82rem" }}>{q.rate} 积分/秒</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: "0.75rem", color: "#888", marginTop: 6 }}>
+                720P / 1080P 自动走高清增强(2K / 4K),生成更慢、积分更高;480P 为原始画质。
               </div>
             </div>
             {/* 2026-05-11 目标市场 toggle:CN 国内→中文 prompt / Global 海外→英文 prompt */}

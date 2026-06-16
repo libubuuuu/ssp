@@ -32,6 +32,7 @@ from .video_clone_v2_pricing import (
     build_prompt,
     calc_segment_credits,
     rate_for_model,
+    rate_for_options,
     sha256_file,
     sha256_url_first8,
 )
@@ -251,16 +252,22 @@ async def call_aiview_seedance(
     out_dur = max(4, min(15, math.ceil(input_duration_sec)))
     ratio = aspect_ratio if aspect_ratio in _AIVIEW_RATIO_OK else "adaptive"
     # 视频复刻只用 2.0 / 2.0-fast(支持参考视频+多图);其它(如 1.5 Pro 不支持参考视频)强制回退
-    # 优先用本单【用户所选模型】:① 显式传入 → ② 按 job_id 查库 → ③ 回落 .env 默认
-    if not model and job_id:
+    # 优先用本单【用户所选模型】+ 画质档:① 显式传入 model → ② 按 job_id 查库 → ③ 回落 .env 默认
+    # resolution/enhance 无参数传入,直接按 job_id 查库(2026-06-16 画质档)
+    _resolution = "480p"
+    _enhance = False
+    if job_id:
         try:
             from app.database import get_db
             with get_db() as _c:
                 _row = _c.execute(
-                    "SELECT video_model FROM video_clone_v2_jobs WHERE id = ?", (job_id,)
+                    "SELECT video_model, resolution, enhance FROM video_clone_v2_jobs WHERE id = ?", (job_id,)
                 ).fetchone()
-            if _row and _row[0]:
-                model = _row[0]
+            if _row:
+                if not model and _row[0]:
+                    model = _row[0]
+                _resolution = _row[1] or "480p"
+                _enhance = bool(_row[2])
         except Exception:
             pass
     model = (model or get_settings().AIVIEW_VIDEO_MODEL or "seedance-2-0-fast").lower()
@@ -288,7 +295,8 @@ async def call_aiview_seedance(
         input_video_duration=round(input_duration_sec),
         duration=out_dur,
         model=model,
-        resolution="480p",
+        resolution=_resolution,
+        enhance=_enhance,
         ratio=ratio,
         seed=seed,
         generate_audio=gen_audio,  # 口播=True(模型出新配音) / 普通复刻=False(保留原声)
@@ -296,8 +304,15 @@ async def call_aiview_seedance(
     if sub.get("error"):
         raise RuntimeError(f"aiview 视频提交失败:{sub['error']}")
     rid = sub["request_id"]
-    # 轮询最多 120 次 × 5s = 10 分钟(与 FAL 单段 300s 同量级,留足余量)
-    for _ in range(120):
+    # credits_used 落日志:aiview 真实积分消耗,用于校准 QUALITY_RATE_TABLE 定价(2026-06-16)
+    log_info(
+        f"[V2-AIVIEW-SUBMIT] job={job_id} seg={seg_idx} rid={rid} "
+        f"resolution={_resolution} enhance={_enhance} enhanced={sub.get('enhanced')} "
+        f"credits_used={sub.get('credits_used')}"
+    )
+    # 轮询:原始版 120×5s=10min;高清增强版多一段提质(文档 5~15min),给到 240×5s=20min
+    _max_poll = 240 if _enhance else 120
+    for _ in range(_max_poll):
         await asyncio.sleep(5)
         st = await service.query_video(rid)
         if st.get("status") == "completed" and st.get("video_url"):
@@ -309,7 +324,7 @@ async def call_aiview_seedance(
             return {"video_url": out_url, "actual_cost_usd": None, "raw_response": st.get("raw") or {}}
         if st.get("status") == "failed":
             raise RuntimeError(f"aiview 视频失败:{st.get('error', '未知')}")
-    raise RuntimeError("aiview 视频超时(>10min)")
+    raise RuntimeError(f"aiview 视频超时(>{_max_poll * 5 // 60}min)")
 
 
 def _estimate_cost_usd(duration_sec: float = SEGMENT_INPUT_SECONDS_MAX) -> float:
@@ -1274,7 +1289,7 @@ async def _process_ultimate(
     if ai_failed and not ai_completed:
         # 2026-05-13 改按段实际 duration × CREDITS_PER_SEC 积分退,不再固定 SEGMENT_CREDITS
         plan_by_idx_for_refund = {p["idx"]: p for p in plan}
-        _rate_rf = rate_for_model(job.get("video_model"))  # 按本单所选模型费率退,跟扣费一致
+        _rate_rf = rate_for_options(job.get("video_model"), job.get("resolution"))  # 按本单画质档费率退,跟扣费一致
         for r in ai_failed:
             dur = float(plan_by_idx_for_refund.get(r["idx"], {}).get("duration") or 0)
             await _refund_partial(job, r["idx"], calc_segment_credits(dur, _rate_rf))
@@ -1302,7 +1317,7 @@ async def _process_ultimate(
 
         # 3a. 失败段 per-seg 退款(2026-05-13 按段 duration × CREDITS_PER_SEC)
         plan_by_idx_for_refund = {p["idx"]: p for p in plan}
-        _rate_rf = rate_for_model(job.get("video_model"))  # 按本单所选模型费率退,跟扣费一致
+        _rate_rf = rate_for_options(job.get("video_model"), job.get("resolution"))  # 按本单画质档费率退,跟扣费一致
         for r in ai_failed:
             dur = float(plan_by_idx_for_refund.get(r["idx"], {}).get("duration") or 0)
             await _refund_partial(job, r["idx"], calc_segment_credits(dur, _rate_rf))

@@ -50,6 +50,9 @@ from app.services.video_clone_v2_pricing import (
     calc_credits,
     calc_segment_credits,
     rate_for_model,
+    rate_for_options,
+    is_valid_resolution,
+    enhance_for_resolution,
     sha256_file,
 )
 from app.services.video_clone_v2_split import (
@@ -186,6 +189,9 @@ class EstimateRequest(BaseModel):
     replacement_mode: Literal["partial", "full"]
     # 用户自选视频模型,估价按所选模型费率(fast=55/秒, 标准版=60/秒)
     video_model: Literal["seedance-2-0-fast", "seedance-2-0"] = "seedance-2-0-fast"
+    # 2026-06-16 画质档:480p=原始(现状) / 720p=2K增强 / 1080p=4K增强(仅标准版)。
+    # enhance 不单独传,由 resolution 推导;fast 不支持 1080p,端点校验拒绝。
+    resolution: Literal["480p", "720p", "1080p"] = "480p"
     segments: List[SegmentPlanItem]
     # 2026-05-13:新计价模型按段 duration × CREDITS_PER_SEC,需要 plan_segments_v2 还原 duration
     # 兼容:Optional,缺省时 ai 段按 worst-case 8s 估算(老前端兜底,只多报不少报)
@@ -210,6 +216,9 @@ class CreateRequest(BaseModel):
     replacement_mode: Literal["partial", "full"]
     # 用户自选视频模型:fast=极速版(55积分/秒) / seedance-2-0=标准版(60积分/秒)
     video_model: Literal["seedance-2-0-fast", "seedance-2-0"] = "seedance-2-0-fast"
+    # 2026-06-16 画质档:480p=原始(现状) / 720p=2K增强 / 1080p=4K增强(仅标准版)。
+    # enhance 不单独传,由 resolution 推导;fast 不支持 1080p,端点校验拒绝。
+    resolution: Literal["480p", "720p", "1080p"] = "480p"
     segments: List[SegmentPlanItem]
     video_url: str
     video_duration_sec: float = Field(..., gt=0)
@@ -632,7 +641,9 @@ async def estimate(
             plan_for_estimate = plan_segments_v2(req.video_duration_sec)
         except ValueError as e:
             raise HTTPException(400, str(e))
-    _rate = rate_for_model(req.video_model)  # fast=55/秒, 标准版2.0=60/秒
+    if not is_valid_resolution(req.video_model, req.resolution):
+        raise HTTPException(400, f"{req.video_model} 不支持 {req.resolution}（极速版最高 720p）")
+    _rate = rate_for_options(req.video_model, req.resolution)  # 含分辨率/增强档费率
     total_credits = calc_credits(seg_dicts, plan_for_estimate or None, rate=_rate)
     # 兼容老前端:没传 video_duration_sec 时按 ai 段 × worst-case 8s × 费率 估算
     if total_credits == 0:
@@ -759,7 +770,9 @@ async def create(
     # 4. 算总积分 + 保险 2(2026-05-13:按 ai 段 duration × CREDITS_PER_SEC,plan_back 提供 duration)
     settings = get_settings()
     seg_dicts = [s.model_dump() for s in req.segments]
-    _rate = rate_for_model(req.video_model)  # fast=55/秒, 标准版2.0=60/秒
+    if not is_valid_resolution(req.video_model, req.resolution):
+        raise HTTPException(400, f"{req.video_model} 不支持 {req.resolution}（极速版最高 720p）")
+    _rate = rate_for_options(req.video_model, req.resolution)  # 含分辨率/增强档费率
     total_credits = calc_credits(seg_dicts, plan_back, rate=_rate)
     ai_count = sum(1 for s in req.segments if s.source_type == "ai")
     estimated_usd = ai_count * SEGMENT_INPUT_SECONDS_MAX * 0.0925 * 1.3
@@ -836,8 +849,9 @@ async def create(
                 image_urls, prompt, prompt_compiled,
                 segments_plan, segments_count, segments_results,
                 total_credits_charged, status,
-                trim_start, trim_end, trimmed_seconds, trim_drop_ranges_json, video_model
-            ) VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, 'processing', ?, ?, ?, ?, ?)
+                trim_start, trim_end, trimmed_seconds, trim_drop_ranges_json, video_model,
+                resolution, enhance
+            ) VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, 'processing', ?, ?, ?, ?, ?, ?, ?)
         """, (
             job_id, user_id, req.type, req.replacement_mode,
             req.video_url, req.video_duration_sec, video_sha256,
@@ -848,6 +862,7 @@ async def create(
             total_credits,
             trim_start, trim_end, trimmed_seconds, trim_drop_ranges_json,
             req.video_model,
+            req.resolution, 1 if enhance_for_resolution(req.resolution) else 0,
         ))
         conn.execute("""
             INSERT INTO video_clone_v2_disclaimer_log (

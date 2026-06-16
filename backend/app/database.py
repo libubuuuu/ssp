@@ -67,6 +67,10 @@ def _patch_video_clone_v2_columns(cursor):
         ("trim_drop_ranges_json", "ALTER TABLE video_clone_v2_jobs ADD COLUMN trim_drop_ranges_json TEXT"),
         # aiview 切换:记录本单使用的视频模型(fast / 标准版 2.0),用于按模型费率退款
         ("video_model", "ALTER TABLE video_clone_v2_jobs ADD COLUMN video_model TEXT DEFAULT 'seedance-2-0-fast'"),
+        # 2026-06-16 画质档:记录本单分辨率 + 是否走高清增强(720p/1080p 自动 enhance),
+        # 用于 processor 提交参数 + 按画质费率退款。默认 480p/0 = 现状,老单零影响。
+        ("resolution", "ALTER TABLE video_clone_v2_jobs ADD COLUMN resolution TEXT DEFAULT '480p'"),
+        ("enhance",    "ALTER TABLE video_clone_v2_jobs ADD COLUMN enhance INTEGER DEFAULT 0"),
     ]
     for col_name, sql in patches:
         try:
