@@ -252,18 +252,23 @@ async def call_aiview_seedance(
     out_dur = max(4, min(15, math.ceil(input_duration_sec)))
     ratio = aspect_ratio if aspect_ratio in _AIVIEW_RATIO_OK else "adaptive"
     # 视频复刻只用 2.0 / 2.0-fast(支持参考视频+多图);其它(如 1.5 Pro 不支持参考视频)强制回退
-    # 优先用本单【用户所选模型】:① 显式传入 model → ② 按 job_id 查库 → ③ 回落 .env 默认
-    # 2026-06-16 重做:底模【永远】480p 生成,不传 aiview enhance。720p/1080p 的提画质
-    # 由 process 末尾的 fal 放大器单独做(见 _upscale_final),这里只管出 480p 底片。
-    if job_id and not model:
+    # 优先用本单【用户所选模型】+ 画质档:① 显式传入 model → ② 按 job_id 查库 → ③ 回落 .env 默认
+    # 2026-06-17:fal 账户锁定,改用 aiview 自带 enhance 提质(文档 §3.3,720p/1080p 生效)。
+    # aiview 直接按所选分辨率生成 + enhance 提质,不再走 fal 放大器(见 _upscale_final 已停用)。
+    _resolution = "480p"
+    _enhance = False
+    if job_id:
         try:
             from app.database import get_db
             with get_db() as _c:
                 _row = _c.execute(
-                    "SELECT video_model FROM video_clone_v2_jobs WHERE id = ?", (job_id,)
+                    "SELECT video_model, resolution, enhance FROM video_clone_v2_jobs WHERE id = ?", (job_id,)
                 ).fetchone()
-            if _row and _row[0]:
-                model = _row[0]
+            if _row:
+                if not model and _row[0]:
+                    model = _row[0]
+                _resolution = _row[1] or "480p"
+                _enhance = bool(_row[2])
         except Exception:
             pass
     model = (model or get_settings().AIVIEW_VIDEO_MODEL or "seedance-2-0-fast").lower()
@@ -291,7 +296,8 @@ async def call_aiview_seedance(
         input_video_duration=round(input_duration_sec),
         duration=out_dur,
         model=model,
-        resolution="480p",   # 底模固定 480p;提画质由末尾 fal 放大器做
+        resolution=_resolution,   # 用户所选档;720p/1080p 配合 enhance 由 aiview 提质
+        enhance=_enhance,         # 720p/1080p=True(aiview 高清提质),480p=False
         ratio=ratio,
         seed=seed,
         generate_audio=gen_audio,  # 口播=True(模型出新配音) / 普通复刻=False(保留原声)
@@ -299,13 +305,14 @@ async def call_aiview_seedance(
     if sub.get("error"):
         raise RuntimeError(f"aiview 视频提交失败:{sub['error']}")
     rid = sub["request_id"]
-    # credits_used 落日志:aiview 真实积分消耗,用于校准 QUALITY_RATE_TABLE 定价(2026-06-16)
+    # credits_used 落日志:aiview 真实积分消耗,用于校准 QUALITY_RATE_TABLE 定价(含 enhance 提质成本)
     log_info(
         f"[V2-AIVIEW-SUBMIT] job={job_id} seg={seg_idx} rid={rid} "
-        f"resolution=480p(底模固定) credits_used={sub.get('credits_used')}"
+        f"resolution={_resolution} enhance={_enhance} enhanced={sub.get('enhanced')} "
+        f"credits_used={sub.get('credits_used')}"
     )
-    # 轮询:底模固定 480p,120×5s=10min 足够(放大在 process 末尾单独做,有自己的超时)
-    _max_poll = 120
+    # 轮询:原始版 120×5s=10min;enhance 提质多一段(文档 5~15min),给到 240×5s=20min
+    _max_poll = 240 if _enhance else 120
     for _ in range(_max_poll):
         await asyncio.sleep(5)
         st = await service.query_video(rid)
@@ -774,24 +781,18 @@ async def _process_v2_job_inner(job_id: str) -> None:
         # archive_dual_versions 接受 URL 不接受 local;但 ai 段 fal 输出要先下回来归档
         archive_source = None  # 用 result.output_url 走 archive_dual_versions
 
-    # 4. 放大(720p/1080p 档)+ 归档(双版本)
+    # 4. 归档(双版本)。aiview 输出已含 enhance 提质(720p/1080p 档),不再走 fal 放大
     try:
         if seg["source_type"] == "ai":
-            # 提画质:底模出的是 480p,这里按所选档放大(480p 档返 None 跳过)
-            up_url = await _upscale_final(job, src_url=result["output_url"])
-            # 单段 AI:用 aiview/放大输出归档。generate_audio=True 时模型自带声音,
+            # 单段 AI:直接用 aiview 输出归档。generate_audio=True 时模型自带声音,
             # emit_dual_versions 的 -c:a copy 会保留模型声音。声音完全由模型+prompt 决定,
             # 后端不贴原视频原声(用户决议 2026-06-01)。模型没出声 = 成片无声,由 prompt 调。
-            urls = await archive_dual_versions(up_url or result["output_url"], job_id)
+            urls = await archive_dual_versions(result["output_url"], job_id)
         else:
-            # original 段 — 没 fal URL;先放大(本地→COS→放大),没放大就走本地归档
-            up_url = await _upscale_final(job, src_local=archive_source)
-            if up_url:
-                urls = await archive_dual_versions(up_url, job_id)
-            else:
-                urls = await _archive_local_dual(archive_source, job_id)
+            # original 段 — 没 fal URL,直接把 seg_files[0] 拷到归档目录 + 加水印
+            urls = await _archive_local_dual(archive_source, job_id)
     except Exception as e:
-        log_error(f"archive/upscale failed job_id={job_id}: {e}")
+        log_error(f"archive failed job_id={job_id}: {e}")
         _db_update_job(
             job_id, status="failed", error_step="archive",
             error_message=str(e)[:500],
@@ -1453,16 +1454,11 @@ async def _process_ultimate(
         await _refund_full(job)
         return
 
-    # 6. 放大(720p/1080p 档)+ 双版本归档
+    # 6. 双版本归档。各段 aiview 输出已含 enhance 提质,concat 后直接归档,不走 fal 放大
     try:
-        # 提画质:concat 出的是 480p 底片,按所选档放大(480p 档返 None 走本地归档)
-        up_url = await _upscale_final(job, src_local=final_raw)
-        if up_url:
-            urls = await archive_dual_versions(up_url, job_id)
-        else:
-            urls = await _archive_local_dual(final_raw, job_id)
+        urls = await _archive_local_dual(final_raw, job_id)
     except Exception as e:
-        log_error(f"video_clone_v2 ultimate 归档/放大失败 job_id={job_id}: {e}")
+        log_error(f"video_clone_v2 ultimate 归档失败 job_id={job_id}: {e}")
         _db_update_job(
             job_id, status="failed", error_step="archive",
             error_message=str(e)[:500],

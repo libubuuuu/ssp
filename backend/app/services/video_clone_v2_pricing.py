@@ -31,13 +31,14 @@ def rate_for_model(model: str) -> int:
     return CREDITS_PER_SEC_BY_MODEL.get((model or "").lower(), CREDITS_PER_SEC)
 
 
-# ─── 2026-06-16 重做:480p 底模 + Bytedance 放大器(不再用 aiview enhance)────────
-# 用户最终架构:底模【永远】480p 生成,用户选的档只决定"放大目标":
-#   fast 720p → 1080p;2.0 720p → 2K;2.0 1080p → 4K(480p 不放大,保持现状)。
-# 放大走 fal "fal-ai/bytedance-upscaler/upscale/video"(AI爆款视频同款端点,已生产验证)。
-# 价 = 50 × 系数(50积分=¥1,系数即"元/输出秒"):
-#   fast 480p=1.1→55、720p=1.3→65;2.0 480p=1.2→60、720p=1.5→75、1080p=2.2→110。
-# 成本校准:processor 落 aiview credits_used + fal 放大成本到日志,头几单按真实成本回校本表。
+# ─── 2026-06-17:fal 账户锁定,提质改回 aiview 自带 enhance(文档 §3.3)──────────
+# 机制:480p=aiview 原始生成;720p/1080p=aiview 按该分辨率生成 + enhance 高清提质。
+#   fast 720p→1080p;2.0 720p→2K;2.0 1080p→4K(用户目标;aiview 实际输出待头几单实测确认)。
+# 价 = 50 × 系数(50积分=¥1):fast 480p=55/720p=65;2.0 480p=60/720p=75/1080p=110。
+# ⚠️ 价是按"480p底模+便宜fal放大"成本定的;aiview enhance 直接高清生成,成本更高,
+#   720p/1080p 档可能偏低甚至亏。processor 落 aiview credits_used 到日志,
+#   头几单出真实成本后【必须回校本表】(尤其 1080p=110)。
+# UPSCALE_TARGET_TABLE / upscale_target_for 现已停用(fal 路径),保留备 fal 恢复时切回。
 RESOLUTION_OPTIONS_BY_MODEL: Final[Mapping[str, tuple[str, ...]]] = {
     "seedance-2-0-fast": ("480p", "720p"),            # fast 不支持 1080p
     "seedance-2-0":      ("480p", "720p", "1080p"),

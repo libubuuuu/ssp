@@ -177,8 +177,8 @@ export default function VideoCloneV2Page() {
 
   // 视频模型(用户自选):极速版 fast(55积分/秒) / 标准版 2.0(60积分/秒)
   const [videoModel, setVideoModel] = useState<"seedance-2-0-fast" | "seedance-2-0">("seedance-2-0-fast");
-  // 2026-06-16 重做:底模永远 480p 生成,选档只决定 fal 放大目标——
-  // fast 720p→1080P;2.0 720p→2K、1080p→4K(480p 不放大)。前端只选档,后端按(模型,档)放大。
+  // 2026-06-17:fal 锁定,改用 aiview enhance 提质。480p=原始;720p/1080p=aiview 高清提质。
+  // 前端只选档,后端按分辨率自动开 enhance(720p/1080p)。fast 不支持 1080p。
   const [resolution, setResolution] = useState<"480p" | "720p" | "1080p">("480p");
   // 极速版不支持 1080p:切到极速版时若停在 1080p,回落 720p
   useEffect(() => {
@@ -1134,7 +1134,7 @@ export default function VideoCloneV2Page() {
                 ))}
               </div>
               <div style={{ fontSize: "0.75rem", color: "#888", marginTop: 6 }}>
-                底模统一 480P 生成;选 720P / 1080P 会再放大提画质(极速版 720P→1080P,高质量版 720P→2K、1080P→4K),生成更慢、积分更高。
+                720P / 1080P 走高清提质(极速版 720P→1080P,高质量版 720P→2K、1080P→4K),生成更慢、积分更高;480P 为标清原始画质。
               </div>
             </div>
             {/* 2026-05-11 目标市场 toggle:CN 国内→中文 prompt / Global 海外→英文 prompt */}
