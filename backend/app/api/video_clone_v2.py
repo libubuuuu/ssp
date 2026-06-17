@@ -487,8 +487,9 @@ async def upload_image(
         tmp.write(contents)
         tmp_path = tmp.name
     try:
-        # ⭐ 隐私保护:仅当选了"需要替换人脸"才涂鸦盖脸;无脸/失败 → 用原图(不阻断上传)
-        if mask_face:
+        # ⭐ 隐私保护:仅【人物图】且选了"需要替换人脸"才涂鸦盖脸;无脸/失败 → 用原图(不阻断上传)。
+        # role 兜底:产品/场景/reference 图永不打码(产品图里若有模特脸也不能盖),只有 person 才打。
+        if mask_face and role == "person":
             try:
                 from app.services.face_blur import blur_faces_in_image
                 _blurred = tmp_path + ".blurred.jpg"
@@ -990,8 +991,15 @@ async def list_jobs(
             ORDER BY created_at DESC
             LIMIT ? OFFSET ?
         """, (user_id, limit, offset)).fetchall()
+    def _sign_item(r):
+        d = dict(r)
+        # COS video_clone_v2/ 前缀为私有桶,库里存的是裸链,直链访问 403。
+        # 与 get_job 一致:返回前现签 7 天有效 URL,否则历史列表页视频一律 AccessDenied。
+        d["final_video_url_watermarked"] = regenerate_cos_url(d.get("final_video_url_watermarked") or "")
+        d["final_video_url_raw"] = regenerate_cos_url(d.get("final_video_url_raw") or "")
+        return d
     return {
-        "items": [dict(r) for r in rows],
+        "items": [_sign_item(r) for r in rows],
         "limit": limit,
         "offset": offset,
     }
