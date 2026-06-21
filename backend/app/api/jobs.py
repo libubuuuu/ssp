@@ -466,7 +466,7 @@ def _aiview_failure_alert(err_msg: str, params: dict):
 async def _run_aiview_image_job(params: dict, aiview_model: str = None, _retry: int = 0):
     """走 aiview.club 文生图(提交→入 polling_queue→harvester 统一轮询)。
     aiview_model=None → seedream(豆包专业版); aiview_model="gpt-image-2" → gpt2 标准模式。
-    _retry: 内部重试次数,最多 1 次(瞬时失败自动重投)。
+    _retry: 已废弃(2026-06-21 取消自动重发,失败直接返回)。保留参数避免改调用方。
     """
     import uuid as _uuid
     from app.services.aiview_service import get_aiview_image_service
@@ -510,10 +510,9 @@ async def _run_aiview_image_job(params: dict, aiview_model: str = None, _retry: 
         else:
             err_msg = res.get("error") or "生成失败"
             _elapsed = int(_time.time() - _t_aiview_submit)
-            if _retry == 0:
-                log_info(f"[AIVIEW-IMG] attempt 1 failed ({_elapsed}s) ({err_msg[:60]}), auto-retrying in 3s...")
-                await asyncio.sleep(3)
-                return await _run_aiview_image_job(params, aiview_model=aiview_model, _retry=1)
+            # 2026-06-21:不再自动重发。超时/失败重发没意义(timeout 大概率仍 timeout),
+            # 且重发会在 aiview 端再登记一次生成 → 重复扣费。失败直接返回失败信息。
+            log_info(f"[AIVIEW-IMG] failed ({_elapsed}s) ({err_msg[:60]}), 不重发,直接返回失败")
             _aiview_failure_alert(err_msg, params)
             raise Exception(err_msg)
     except asyncio.TimeoutError:

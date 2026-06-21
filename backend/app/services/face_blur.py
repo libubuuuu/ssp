@@ -79,22 +79,31 @@ def _mosaic(frame, x, y, w, h, blocks=12):
 
 
 def _doodle(frame, x, y, w, h, color=(80, 90, 255)):
-    """在人脸区域画红色乱涂线条(手绘涂鸦盖脸,像用户给的示例)。color 为 BGR 橙红。"""
+    """在人脸区域画红色乱涂线条(手绘涂鸦盖脸),并【裁剪到脸部椭圆轮廓内】——
+    涂鸦只落在脸/头发的卵形区域,椭圆外恢复原像素,绝不超出头发+脸轮廓糊到脖子/肩膀/背景/四角。
+    color 为 BGR 橙红。"""
     H, W = frame.shape[:2]
-    pad = int(0.12 * max(w, h))
+    pad = int(0.08 * max(w, h))     # 外扩仅盖住脸边缘(下巴/额头/两颊),不外溢轮廓
     x0, y0 = max(0, x - pad), max(0, y - pad)
     x1, y1 = min(W, x + w + pad), min(H, y + h + pad)
     if x1 <= x0 or y1 <= y0:
         return
+    roi = frame[y0:y1, x0:x1]
+    rh, rw = roi.shape[:2]
+    overlay = roi.copy()
     thickness = max(2, int(max(w, h) / 70))     # 细线条(之前太粗糊成实心块)
-    n = max(10, (x1 - x0) * (y1 - y0) // 8000)  # 适中笔数(之前太多,糊死了)
+    n = max(10, rw * rh // 8000)                # 适中笔数(之前太多,糊死了)
     for _ in range(n):
-        # 2-4 个点的长折线,跨脸来回交错,留缝隙、不糊成实心(脸隐约可见)
+        # 2-4 个点的长折线,跨脸来回交错,留缝隙、不糊成实心(脸隐约可见)。坐标用 ROI 局部系。
         pts = np.array(
-            [[random.randint(x0, x1), random.randint(y0, y1)] for _ in range(random.randint(2, 4))],
+            [[random.randint(0, rw - 1), random.randint(0, rh - 1)] for _ in range(random.randint(2, 4))],
             dtype=np.int32,
         )
-        cv2.polylines(frame, [pts], False, color, thickness, lineType=cv2.LINE_AA)
+        cv2.polylines(overlay, [pts], False, color, thickness, lineType=cv2.LINE_AA)
+    # 只保留内切椭圆(脸部轮廓)内的涂鸦,椭圆外恢复原像素 → 不超出头发+脸轮廓
+    mask = np.zeros((rh, rw), dtype=np.uint8)
+    cv2.ellipse(mask, (rw // 2, rh // 2), (rw // 2, rh // 2), 0, 0, 360, 255, thickness=-1)
+    roi[:] = np.where(mask[..., None] > 0, overlay, roi)
 
 
 def blur_faces_in_image(in_path: str, out_path: str) -> bool:

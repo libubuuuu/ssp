@@ -253,8 +253,8 @@ async def call_aiview_seedance(
     ratio = aspect_ratio if aspect_ratio in _AIVIEW_RATIO_OK else "adaptive"
     # 视频复刻只用 2.0 / 2.0-fast(支持参考视频+多图);其它(如 1.5 Pro 不支持参考视频)强制回退
     # 优先用本单【用户所选模型】+ 画质档:① 显式传入 model → ② 按 job_id 查库 → ③ 回落 .env 默认
-    # 2026-06-17:fal 账户锁定,改用 aiview 自带 enhance 提质(文档 §3.3,720p/1080p 生效)。
-    # aiview 直接按所选分辨率生成 + enhance 提质,不再走 fal 放大器(见 _upscale_final 已停用)。
+    # 架构:我们只是传话筒。用户选 720p/1080p 时,把 resolution + enhance=True 都【转告 aiview】,
+    # 由 aiview 去提质出片(不是我们提质,也不走 fal)。enhance 必须传,否则 aiview 不会提质。
     _resolution = "480p"
     _enhance = False
     if job_id:
@@ -296,8 +296,8 @@ async def call_aiview_seedance(
         input_video_duration=round(input_duration_sec),
         duration=out_dur,
         model=model,
-        resolution=_resolution,   # 按用户所选档传:480p/720p/1080p
-        enhance=_enhance,         # 720p/1080p=True(aiview 提质),480p=False
+        resolution=_resolution,   # 转告 aiview:用户所选档 480p/720p/1080p
+        enhance=_enhance,         # 转告 aiview 去提质:720p/1080p=True,480p=False
         ratio=ratio,
         seed=seed,
         generate_audio=gen_audio,  # 口播=True(模型出新配音) / 普通复刻=False(保留原声)
@@ -305,13 +305,13 @@ async def call_aiview_seedance(
     if sub.get("error"):
         raise RuntimeError(f"aiview 视频提交失败:{sub['error']}")
     rid = sub["request_id"]
-    # credits_used 落日志:aiview 真实积分消耗,用于校准 QUALITY_RATE_TABLE 定价(含 enhance 提质成本)
+    # credits_used 落日志:aiview 真实积分消耗,用于校准 QUALITY_RATE_TABLE 定价
     log_info(
         f"[V2-AIVIEW-SUBMIT] job={job_id} seg={seg_idx} rid={rid} "
         f"resolution={_resolution} enhance={_enhance} enhanced={sub.get('enhanced')} "
         f"credits_used={sub.get('credits_used')}"
     )
-    # 轮询:原始版 120×5s=10min;enhance 提质多一段(文档 5~15min),给到 240×5s=20min
+    # 轮询:480p 给 120×5s=10min;720p/1080p 提质更久(文档 5~15min),给到 240×5s=20min
     _max_poll = 240 if _enhance else 120
     for _ in range(_max_poll):
         await asyncio.sleep(5)

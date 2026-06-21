@@ -450,8 +450,8 @@ export default function VideoCloneV2Page() {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("role", role);
-      // 图片涂鸦独立开关:MASK_PERSON_IMAGE=true 默认涂鸦;noMask=true(专业版生成的脸)永不涂鸦。
-      fd.append("mask_face", String(MASK_PERSON_IMAGE && !noMask));
+      // 图片涂鸦独立开关:仅【人物图】默认涂鸦(产品/场景/reference 永不打码);noMask=true(专业版生成的脸)永不涂鸦。
+      fd.append("mask_face", String(MASK_PERSON_IMAGE && role === "person" && !noMask));
       const r = await fetch(`${API_BASE}/api/video/clone-v2/upload/image`, {
         method: "POST",
         credentials: "include",
