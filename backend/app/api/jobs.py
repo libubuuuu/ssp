@@ -473,7 +473,7 @@ def _aiview_failure_alert(err_msg: str, params: dict):
 async def _run_aiview_image_job(params: dict, aiview_model: str = None, _retry: int = 0):
     """走 aiview.club 文生图(提交→入 polling_queue→harvester 统一轮询)。
     aiview_model=None → seedream(豆包专业版); aiview_model="gpt-image-2" → gpt2 标准模式。
-    _retry: 0=首次;1=对 aiview 瞬时 "Invalid image" 误报重投一次(2026-06-24)。其余失败/超时不重发。
+    _retry: 已废弃(2026-06-24 移除自动重发,失败直接透传)。保留参数避免改调用方。
     """
     import uuid as _uuid
     from app.services.aiview_service import get_aiview_image_service
@@ -524,19 +524,7 @@ async def _run_aiview_image_job(params: dict, aiview_model: str = None, _retry: 
         else:
             err_msg = res.get("error") or "生成失败"
             _elapsed = int(_time.time() - _t_aiview_submit)
-            # 2026-06-21:默认不再自动重发。超时/失败重发没意义(timeout 大概率仍 timeout),
-            # 且重发会在 aiview 端再登记一次生成 → 重复扣费。失败直接返回失败信息。
-            #
-            # 2026-06-24 例外:"Invalid image: format not supported or resolution
-            # out of range" 真因是 aiview 异步拉取我们的参考图 URL 失败(负载过大
-            # 跨网慢/超时/截断),被它误报成图格式问题(同一张图既成功又失败=网络抖动,
-            # 非图内容,已实测)。根治在上面 _shrink_ref_for_aiview 已把负载 1.66MB→~280KB;
-            # 这里再兜一层:该类失败 aiview credits_used=0 不扣费,重投一次能自愈,
-            # 不踩重复扣费的雷;只重一次,且只命中该签名,NSFW/策略类失败仍直接返回。
-            _transient = ("Invalid image" in err_msg) or ("resolution out of range" in err_msg)
-            if _retry == 0 and _transient:
-                log_info(f"[AIVIEW-IMG] 瞬时失败({err_msg[:50]}),重投一次")
-                return await _run_aiview_image_job(params, aiview_model, _retry=1)
+            # 不自动重发:失败就失败,aiview 返回什么错就原样透传给用户(老板 2026-06-24 决定)。
             log_info(f"[AIVIEW-IMG] failed ({_elapsed}s) ({err_msg[:60]}), 不重发,直接返回失败")
             _aiview_failure_alert(err_msg, params)
             raise Exception(err_msg)
