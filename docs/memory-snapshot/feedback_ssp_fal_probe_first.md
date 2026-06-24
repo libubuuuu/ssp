@@ -40,3 +40,5 @@ asyncio.run(probe(...))
 3. **NSFW 容忍**:用真用户的 vton 图(不是 demo 图)测,带货场景图常被 partner_validation_failed
 4. **fal Status 判定**:`type(s).__name__ == 'Completed'`,不要 `hasattr(s,'status')`(永远 False)
 5. **fake completed**:错的 slug submit 可能假成功返 request_id,但 result 阶段才暴露 path not found。**必须等到 result 才算 OK**
+6. **⚠️ 必须看视频实际质量,不只是"submit OK + 出 video URL"**:2026-05-05 P115 踩坑 — Kling Avatar v2 通过 Flux Kontext reframe 调通,probe 显示 submit OK + 拿到 video URL,我立刻上线。但**实际视频质量被 reframe 弄坏**:产品弱化、背景被换工作室、嘴型夸张。用户骂死。
+   probe 通过的标准必须是:**视频实际质量 ≥ 现状**。要 ffprobe + 抽帧 + 人眼对比关键画面(产品、背景、嘴型自然度)。光看 fal 返 200 OK 不算 probe 通过。
