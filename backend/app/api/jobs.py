@@ -412,12 +412,18 @@ AIVIEW_IMAGE_MODELS = {"aiview-pro", "专业版模式"}
 
 
 async def _shrink_ref_for_aiview(url: str) -> str:
-    """传 aiview 前把参考图转存 COS(国内,aiview 才拉得到)+ 转 PNG。失败返回原 url 不阻断。"""
+    """传 aiview 前把参考图转存 COS(国内,aiview 才拉得到)+ 压成轻量 JPEG。失败返回原 url 不阻断。
+
+    2026-06-24:原来转 PNG 且只缩到 2048,一张照片型参考图 = 1.66MB。aiview 是异步
+    拉取我们这个 URL 再校验,负载越大跨网拉取越容易慢/超时/截断,aiview 把拉取失败
+    误报成 "Invalid image: format not supported or resolution out of range"(同一张
+    图既成功又失败 = 网络抖动特征,非图内容问题,已实测)。改 JPEG q90 + 缩到 1536,
+    1.66MB → ~280KB(6x),大幅降低 aiview 拉取失败概率。"""
     import io, os, tempfile, asyncio
     import httpx
     from PIL import Image
     from app.services.cos_upload import upload_to_cos
-    MAX_SIDE = 2048
+    MAX_SIDE = 1536
     try:
         async with httpx.AsyncClient(timeout=60) as cli:
             r = await cli.get(url); r.raise_for_status()
@@ -427,16 +433,17 @@ async def _shrink_ref_for_aiview(url: str) -> str:
         w, h = img.size; m = max(w, h)
         if m > MAX_SIDE:
             s = MAX_SIDE / m
-            img = img.resize((max(1, int(w*s)), max(1, int(h*s))))
-        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+            img = img.resize((max(1, int(w*s)), max(1, int(h*s))), Image.LANCZOS)
+        tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
         tmp_path = tmp.name; tmp.close()
-        img.save(tmp_path, format="PNG")
+        img.save(tmp_path, "JPEG", quality=90, optimize=True)
+        out_kb = os.path.getsize(tmp_path) // 1024
         try:
             new_url = await asyncio.to_thread(upload_to_cos, tmp_path)
         finally:
             try: os.unlink(tmp_path)
             except Exception: pass
-        log_info(f"[AIVIEW-IMG] 参考图预处理 {w}x{h} -> COS PNG url={str(new_url)[:80]}")
+        log_info(f"[AIVIEW-IMG] 参考图预处理 {w}x{h} -> {img.size[0]}x{img.size[1]} JPEG {out_kb}KB url={str(new_url)[:80]}")
         return new_url or url
     except Exception as e:
         log_error(f"[AIVIEW-IMG] 参考图预处理失败,回退原图: {type(e).__name__}: {str(e)[:160]}")
@@ -513,10 +520,11 @@ async def _run_aiview_image_job(params: dict, aiview_model: str = None, _retry: 
             # 2026-06-21:默认不再自动重发。超时/失败重发没意义(timeout 大概率仍 timeout),
             # 且重发会在 aiview 端再登记一次生成 → 重复扣费。失败直接返回失败信息。
             #
-            # 2026-06-24 例外:aiview 偶发对合法图误报
-            # "Invalid image: format not supported or resolution out of range"
-            # (同一张 2048² 图同 prompt,14:36 连失败两次、14:38 即成功,已实测)。
-            # 这类瞬时失败 aiview 返回 credits_used=0 不扣费,重投一次能自愈,
+            # 2026-06-24 例外:"Invalid image: format not supported or resolution
+            # out of range" 真因是 aiview 异步拉取我们的参考图 URL 失败(负载过大
+            # 跨网慢/超时/截断),被它误报成图格式问题(同一张图既成功又失败=网络抖动,
+            # 非图内容,已实测)。根治在上面 _shrink_ref_for_aiview 已把负载 1.66MB→~280KB;
+            # 这里再兜一层:该类失败 aiview credits_used=0 不扣费,重投一次能自愈,
             # 不踩重复扣费的雷;只重一次,且只命中该签名,NSFW/策略类失败仍直接返回。
             _transient = ("Invalid image" in err_msg) or ("resolution out of range" in err_msg)
             if _retry == 0 and _transient:
