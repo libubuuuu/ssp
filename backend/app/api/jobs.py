@@ -486,12 +486,19 @@ async def _run_aiview_image_job(params: dict, aiview_model: str = None, _retry: 
     if refs:
         refs = [await _shrink_ref_for_aiview(u) for u in refs]
     _size = None if aiview_model == "gpt-image-2" else "2K"
+    # 2026-06-24:把用户选的比例传给 aiview(此前没传 → 选了白选,一直按默认出图)。
+    # aiview ratio 字段收 "宽:高" 字符串(实测 9:16/16:9 均认):
+    #   - 专业版 seedream:精确按比例出(9:16→1440x2560);
+    #   - 标准版 gpt-image-2:方向对,但 OpenAI 模型只给 1:1/2:3/3:2 三档(模型限制)。
+    _ratio = params.get("aspect_ratio") or params.get("size") or None
     # 专业版(seedream/豆包,aiview_model=None)去水印:豆包文生图 watermark=false 关右下角"AI生成"水印。
     # 标准版 gpt-image-2(OpenAI)无此参数,不传(watermark=None)。
     _watermark = False if aiview_model is None else None
     import time as _time
     _t_job_start = params.get("_job_created_at") or _time.time()
-    sub = await service.submit(params["prompt"], size=_size, image_urls=refs or None,
+    if _retry == 0:
+        log_info(f"[AIVIEW-IMG] ratio={_ratio} size={_size}")
+    sub = await service.submit(params["prompt"], ratio=_ratio, size=_size, image_urls=refs or None,
                                model=aiview_model, watermark=_watermark)
     if sub.get("error"):
         raise Exception(sub["error"])
