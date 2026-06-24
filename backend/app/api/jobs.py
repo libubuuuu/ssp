@@ -411,6 +411,34 @@ _GPT_IMAGE_SIZE_MAP = {
 AIVIEW_IMAGE_MODELS = {"aiview-pro", "专业版模式"}
 
 
+# ── 视频生成 i2v(aiview Seedance)按 模型×分辨率 分档计费 ─────────────────
+# 2026-06-25:图生视频从 fal kling 切到 aiview seedance,每秒积分(1 积分=0.02 元)。
+# fast 无 1080p;不支持的档由 _resolve_i2v_resolution 降到该模型最高档,不静默回 480p。
+VIDEO_I2V_RATES = {
+    "seedance-2-0-fast": {"480p": 45, "720p": 55},
+    "seedance-2-0":      {"480p": 50, "720p": 65, "1080p": 100},
+}
+DEFAULT_VIDEO_I2V_MODEL = "seedance-2-0-fast"
+DEFAULT_VIDEO_I2V_RESOLUTION = "480p"
+
+
+def _normalize_i2v_model(raw, strict=False):
+    """规范化视频模型名;未知模型 strict=True 时 400,否则回默认。"""
+    m = (raw or DEFAULT_VIDEO_I2V_MODEL).strip().lower()
+    if m in VIDEO_I2V_RATES:
+        return m
+    if strict:
+        raise HTTPException(status_code=400, detail=f"不支持的视频模型: {raw}")
+    return DEFAULT_VIDEO_I2V_MODEL
+
+
+def _resolve_i2v_resolution(model, raw):
+    """不支持的分辨率(如 fast+1080p)降到该模型最高档,不静默回 480p。"""
+    allowed = list(VIDEO_I2V_RATES[model].keys())
+    r = (raw or DEFAULT_VIDEO_I2V_RESOLUTION).strip().lower()
+    return r if r in allowed else allowed[-1]
+
+
 async def _shrink_ref_for_aiview(url: str) -> str:
     """传 aiview 前把参考图转存 COS(国内,aiview 才拉得到)+ 压成轻量 JPEG。失败返回原 url 不阻断。
 
@@ -581,16 +609,56 @@ async def _run_image_job(params: dict):
     return result
 
 
+async def _run_aiview_i2v_job(params: dict):
+    """图生视频 i2v 走 aiview seedance(纯图,不传 reference_video_url)。
+    2026-06-25:从 fal kling 切来。失败原样透传 aiview 错误,零重试。
+    轮询走 harvester 的 aiview_video 通道(query_video),最多 120×5s 兜底。"""
+    import uuid as _uuid
+    from app.services.aiview_service import get_aiview_image_service
+    service = get_aiview_image_service()
+    if not service.is_available():
+        raise Exception("aiview 暂未配置")
+    model = _normalize_i2v_model(params.get("model"))
+    resolution = _resolve_i2v_resolution(model, params.get("resolution"))
+    duration = max(3, min(15, int(params.get("duration_sec") or 5)))
+    log_info(f"[AIVIEW-I2V] model={model} resolution={resolution} duration={duration}s")
+    sub = await service.submit_video(
+        image_url=params["image_url"],
+        dynamic_prompt=params.get("prompt", ""),
+        duration=duration, model=model, resolution=resolution,
+        ratio="adaptive", generate_audio=False,
+    )
+    if sub.get("error"):
+        raise Exception(sub["error"])
+    rid = sub["request_id"]
+    poll_id = _uuid.uuid4().hex
+    _pq_insert(poll_id, params.get("_job_id", ""), rid, "aiview_video",
+               user_id=params.get("_user_id"))
+    event = asyncio.Event()
+    _poll_events[poll_id] = event
+    try:
+        await asyncio.wait_for(event.wait(), timeout=120 * 5)  # 10 分钟兜底
+        res = _poll_results.pop(poll_id, {})
+        if res.get("ok"):
+            st = res["data"]
+            return {"video_url": st["video_url"], "type": "video", "model": f"aiview/{model}"}
+        err_msg = res.get("error") or "生成失败"
+        log_info(f"[AIVIEW-I2V] failed ({err_msg[:60]}), 原样透传 aiview 错误,不重试")
+        raise Exception(err_msg)
+    except asyncio.TimeoutError:
+        raise Exception("timeout (10 min)")
+    finally:
+        _poll_events.pop(poll_id, None)
+        _pq_delete(poll_id)
+
+
 async def _run_video_job(params: dict, job_type: str):
     import uuid as _uuid
-    service = get_video_service()
+    # 2026-06-25:图生视频切 aiview seedance(edit/clone 仍走 fal,不动)
     if job_type == "video_i2v":
-        duration_sec = int(params.get("duration_sec") or 5)
-        r = await service.generate_from_image(
-            params["image_url"], params.get("prompt", ""), params.get("tail_image_url"),
-            duration_sec=duration_sec,
-        )
-    elif job_type == "video_edit":
+        return await _run_aiview_i2v_job(params)
+    service = get_video_service()
+    if job_type == "video_edit":
         r = await service.replace_element(params["video_url"], params["element_image_url"], params["instruction"], params.get("product_image_url"))
     elif job_type == "video_clone":
         r = await service.clone_video(params["reference_video_url"], params["model_image_url"], params.get("product_image_url"))
@@ -2252,7 +2320,7 @@ def _module_from_type(job_type: str, params: dict) -> str:
             return "aiview/gpt-image-2"
         return "image/multi-reference" if params.get("reference_images") else "image/style"
     if job_type == "video_i2v":
-        return "video/image-to-video"
+        return f"aiview/{_normalize_i2v_model(params.get('model'))}"
     if job_type == "video_edit":
         return "video/replace/element"
     if job_type == "video_clone":
@@ -2271,11 +2339,15 @@ async def submit_job(req: SubmitJobRequest, current_user: dict = Depends(get_cur
     # 2026-06-03:豆包(aiview seedream)25 积分/张
     if req.type == "image" and (req.params.get("model") or "").lower() in AIVIEW_IMAGE_MODELS:
         cost = 25
-    # 2026-05-13 动态定价:视频类按 duration_sec × 50 计,clamp 到端点限制
+    # 2026-06-25:图生视频 aiview seedance,按 模型×分辨率 每秒积分计费。
+    # 未知模型 → 400;分辨率不支持降到该模型最高档;规范化后回写 params,保证计费与执行同档绝不算错价。
     elif req.type == "video_i2v":
-        # kling o3 standard image-to-video 支持 3/5/10/15s
+        model = _normalize_i2v_model(req.params.get("model"), strict=True)
+        resolution = _resolve_i2v_resolution(model, req.params.get("resolution"))
+        req.params["model"] = model
+        req.params["resolution"] = resolution
         safe_dur = max(3, min(15, int(req.params.get("duration_sec") or 5)))
-        cost = safe_dur * 40
+        cost = safe_dur * VIDEO_I2V_RATES[model][resolution]
     else:
         cost = get_task_cost(module)
 

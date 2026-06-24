@@ -8,12 +8,33 @@ import { compressImage } from "@/lib/utils/imageCompress";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
+// 2026-06-25:图生视频 aiview seedance,按 模型×分辨率 每秒积分(须与后端 VIDEO_I2V_RATES 一致)
+const I2V_RATES: Record<string, Record<string, number>> = {
+  "seedance-2-0-fast": { "480p": 45, "720p": 55 },
+  "seedance-2-0": { "480p": 50, "720p": 65, "1080p": 100 },
+};
+const I2V_MODELS: { value: string; label: string }[] = [
+  { value: "seedance-2-0-fast", label: "Seedance 2.0 Fast" },
+  { value: "seedance-2-0", label: "Seedance 2.0" },
+];
+// 该模型下分辨率合法则用之,否则降到该模型最高档(与后端 _resolve_i2v_resolution 同语义)
+const resolveRes = (model: string, res: string): string => {
+  const tbl = I2V_RATES[model] || I2V_RATES["seedance-2-0-fast"];
+  return tbl[res] !== undefined ? res : Object.keys(tbl).slice(-1)[0];
+};
+const rateOf = (model: string, res: string): number => {
+  const tbl = I2V_RATES[model] || I2V_RATES["seedance-2-0-fast"];
+  return tbl[resolveRes(model, res)];
+};
+
 interface Card {
   id: string;
   imageFile: File | null;
   imagePreview: string;
   prompt: string;
   duration: number;
+  model: string;
+  resolution: string;
   jobId: string;
   status: string; // idle / uploading / pending / running / completed / failed
   progress: string;
@@ -30,6 +51,7 @@ export default function VideoPage() {
     return {
       id: Math.random().toString(36).slice(2, 10),
       imageFile: null, imagePreview: "", prompt: "", duration: 5,
+      model: "seedance-2-0-fast", resolution: "480p",
       jobId: "", status: "idle", progress: "", resultUrl: "", error: "",
     };
   }
@@ -86,7 +108,7 @@ export default function VideoPage() {
         body: JSON.stringify({
           type: "video_i2v",
           title: card.prompt.slice(0, 30) || t("tasks.mod_i2v"),
-          params: { image_url: imgUrl, prompt: card.prompt, duration_sec: card.duration },
+          params: { image_url: imgUrl, prompt: card.prompt, duration_sec: card.duration, model: card.model, resolution: card.resolution },
         }),
       });
       const d = await res.json();
@@ -164,6 +186,29 @@ export default function VideoPage() {
                 </label>
               </div>
 
+              {/* 模型 */}
+              <div style={{ marginBottom: "0.8rem" }}>
+                <div style={{ fontSize: "0.75rem", color: "#999", marginBottom: "0.3rem" }}>模型</div>
+                <select value={c.model} onChange={e => {
+                    const model = e.target.value;
+                    updateCard(c.id, { model, resolution: resolveRes(model, c.resolution) });
+                  }}
+                  style={{ width: "100%", padding: "0.5rem", border: "1px solid #ddd", borderRadius: 8, fontSize: "0.85rem", background: "#fff" }}>
+                  {I2V_MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                </select>
+              </div>
+
+              {/* 分辨率(按模型动态 + 单价) */}
+              <div style={{ marginBottom: "0.8rem" }}>
+                <div style={{ fontSize: "0.75rem", color: "#999", marginBottom: "0.3rem" }}>分辨率</div>
+                <select value={resolveRes(c.model, c.resolution)} onChange={e => updateCard(c.id, { resolution: e.target.value })}
+                  style={{ width: "100%", padding: "0.5rem", border: "1px solid #ddd", borderRadius: 8, fontSize: "0.85rem", background: "#fff" }}>
+                  {Object.keys(I2V_RATES[c.model] || {}).map(r => (
+                    <option key={r} value={r}>{r}（{I2V_RATES[c.model][r]}积分/秒）</option>
+                  ))}
+                </select>
+              </div>
+
               {/* 时长 */}
               <div style={{ marginBottom: "0.8rem" }}>
                 <div style={{ fontSize: "0.75rem", color: "#999", marginBottom: "0.3rem" }}>{t("video.duration")}</div>
@@ -206,7 +251,7 @@ export default function VideoPage() {
                   width: "100%", padding: "0.7rem", background: (c.status === "uploading" || c.status === "pending" || c.status === "running") ? "#999" : "#0d0d0d",
                   color: "#fff", border: "none", borderRadius: 10, cursor: "pointer", fontSize: "0.88rem", fontWeight: 500,
                 }}>
-                {c.status === "completed" ? t("video.regenerate") : (c.status === "pending" || c.status === "running" || c.status === "uploading") ? t("video.generating") : `${t("video.generate")}（扣${c.duration * 40}积分）`}
+                {c.status === "completed" ? t("video.regenerate") : (c.status === "pending" || c.status === "running" || c.status === "uploading") ? t("video.generating") : `${t("video.generate")}（扣${c.duration * rateOf(c.model, c.resolution)}积分）`}
               </button>
             </div>
           ))}

@@ -64,13 +64,46 @@ def test_module_from_type_image_no_refs():
 
 
 def test_module_from_type_video_variants():
-    assert jobs_module._module_from_type("video_i2v", {}) == "video/image-to-video"
+    # 2026-06-25:video_i2v 切 aiview seedance 后 module 归供应商 aiview/{规范化model}
+    assert jobs_module._module_from_type("video_i2v", {}) == "aiview/seedance-2-0-fast"
+    assert jobs_module._module_from_type("video_i2v", {"model": "Seedance-2-0"}) == "aiview/seedance-2-0"
     assert jobs_module._module_from_type("video_edit", {}) == "video/replace/element"
     assert jobs_module._module_from_type("video_clone", {}) == "video/clone"
 
 
 def test_module_from_type_unknown_falls_back():
     assert jobs_module._module_from_type("totally_unknown", {}) == "image/style"
+
+
+# === 视频 i2v aiview seedance 分档计费(钱的逻辑,回归保护)===
+def test_i2v_normalize_model():
+    import pytest
+    from fastapi import HTTPException
+    assert jobs_module._normalize_i2v_model("Seedance-2-0-Fast") == "seedance-2-0-fast"
+    assert jobs_module._normalize_i2v_model(None) == "seedance-2-0-fast"
+    assert jobs_module._normalize_i2v_model("seedance-2-0") == "seedance-2-0"
+    # 非严格未知 → 回默认
+    assert jobs_module._normalize_i2v_model("kling") == "seedance-2-0-fast"
+    # 严格未知 → 400
+    with pytest.raises(HTTPException) as e:
+        jobs_module._normalize_i2v_model("kling", strict=True)
+    assert e.value.status_code == 400
+
+
+def test_i2v_resolve_resolution_downgrades_not_silent_480():
+    # fast 不支持 1080p → 降到该模型最高档 720p,绝不静默回 480p
+    assert jobs_module._resolve_i2v_resolution("seedance-2-0-fast", "1080p") == "720p"
+    assert jobs_module._resolve_i2v_resolution("seedance-2-0-fast", "480p") == "480p"
+    assert jobs_module._resolve_i2v_resolution("seedance-2-0", "1080p") == "1080p"
+    assert jobs_module._resolve_i2v_resolution("seedance-2-0", None) == "480p"
+
+
+def test_i2v_rates_table():
+    R = jobs_module.VIDEO_I2V_RATES
+    assert R["seedance-2-0-fast"] == {"480p": 45, "720p": 55}
+    assert R["seedance-2-0"] == {"480p": 50, "720p": 65, "1080p": 100}
+    # fast 无 1080p
+    assert "1080p" not in R["seedance-2-0-fast"]
 
 
 # === _save_jobs / _load_jobs(fcntl 锁 + 文件持久化)===
@@ -162,24 +195,57 @@ def test_run_video_job_unknown_type_raises():
 
 
 def test_run_video_job_no_task_id_raises(monkeypatch):
+    # 2026-06-25:video_i2v 已切 aiview,无 task_id 是 fal 路径行为,改测仍走 fal 的 video_edit
     mock_service = MagicMock()
-    mock_service.generate_from_image = AsyncMock(return_value={"task_id": None})
+    mock_service.replace_element = AsyncMock(return_value={"task_id": None})
     monkeypatch.setattr(jobs_module, "get_video_service", lambda: mock_service)
     with pytest.raises(Exception, match="no task_id"):
-        _run(jobs_module._run_video_job({"image_url": "x"}, "video_i2v"))
+        _run(jobs_module._run_video_job(
+            {"video_url": "v", "element_image_url": "e", "instruction": "swap"}, "video_edit"))
 
 
 def test_run_video_job_completed_immediately(monkeypatch):
-    """polling 第一轮就 completed → 立刻返回"""
+    """polling 第一轮就 completed → 立刻返回(fal 路径,改用 video_edit)"""
     mock_service = MagicMock()
-    mock_service.generate_from_image = AsyncMock(return_value={"task_id": "t1", "endpoint_tag": "i2v"})
+    mock_service.replace_element = AsyncMock(return_value={"task_id": "t1", "endpoint_tag": "edit"})
     monkeypatch.setattr(jobs_module, "get_video_service", lambda: mock_service)
     monkeypatch.setattr(jobs_module, "_pq_insert",
                         _make_fake_pq_insert(True, data={"status": "completed", "video_url": "https://v.mp4"}))
 
-    result = _run(jobs_module._run_video_job({"image_url": "x"}, "video_i2v"))
+    result = _run(jobs_module._run_video_job(
+        {"video_url": "v", "element_image_url": "e", "instruction": "swap"}, "video_edit"))
     assert result["video_url"] == "https://v.mp4"
     assert result["type"] == "video"
+
+
+def _mock_aiview_video(monkeypatch, submit_ret):
+    """mock aiview seedance video service(_run_aiview_i2v_job 用)"""
+    svc = MagicMock()
+    svc.is_available.return_value = True
+    svc.submit_video = AsyncMock(return_value=submit_ret)
+    import app.services.aiview_service as _av
+    monkeypatch.setattr(_av, "get_aiview_image_service", lambda: svc)
+    return svc
+
+
+def test_run_aiview_i2v_completed(monkeypatch):
+    """video_i2v 走 aiview seedance:完成返回 video_url + model=aiview/{规范化}"""
+    _mock_aiview_video(monkeypatch, {"request_id": "r1"})
+    monkeypatch.setattr(jobs_module, "_pq_insert",
+                        _make_fake_pq_insert(True, data={"status": "completed", "video_url": "https://i.mp4"}))
+    result = _run(jobs_module._run_video_job(
+        {"image_url": "img", "prompt": "p", "model": "Seedance-2-0", "resolution": "720p", "duration_sec": 5},
+        "video_i2v"))
+    assert result["video_url"] == "https://i.mp4"
+    assert result["type"] == "video"
+    assert result["model"] == "aiview/seedance-2-0"
+
+
+def test_run_aiview_i2v_error_passthrough(monkeypatch):
+    """submit_video 返回 error → 原样透传 raise,零重试"""
+    _mock_aiview_video(monkeypatch, {"error": "Invalid image: format not supported"})
+    with pytest.raises(Exception, match="Invalid image"):
+        _run(jobs_module._run_video_job({"image_url": "img"}, "video_i2v"))
 
 
 def test_run_video_job_failed_raises(monkeypatch):
